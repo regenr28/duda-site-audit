@@ -1,6 +1,6 @@
 // GET /api/fetch?host=<editor host>&site=<siteId>&path=/about-us&device=desktop|tablet|mobile
 // Proxies Duda's per-device preview HTML (the same thing the editor's Desktop/Tablet/Mobile preview shows).
-import { authorize, allowedHost, fetchWithTimeout, UA_DESKTOP } from './_lib.js';
+import { requireUser, allowedHost, fetchWithTimeout, UA_DESKTOP } from './_lib.js';
 
 const UAS = {
   desktop: UA_DESKTOP,
@@ -9,7 +9,7 @@ const UAS = {
 };
 
 export default async function handler(req, res) {
-  if (!authorize(req, res)) return;
+  if (!(await requireUser(req, res))) return;
   const { host, site, device = 'desktop' } = req.query;
   let path = String(req.query.path || '/');
   if (!allowedHost(host)) return res.status(400).json({ error: 'Host not allowed' });

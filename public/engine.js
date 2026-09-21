@@ -555,12 +555,22 @@
           add(img, { code: 'ALT_FILENAME', severity: 'warning', category: 'Images / Alt', message: 'Alt text looks like a file name', found: a });
         else if (/^(image|photo|picture|logo|icon|img|graphic|banner|placeholder|alt|alt text|default)$/i.test(a))
           add(img, { code: 'ALT_GENERIC', severity: 'warning', category: 'Images / Alt', message: 'Alt text is generic', found: a });
+        // Logo detection — strict, so ordinary photos (galleries, service images) are never treated as logos
         const locImg = locationOf(img);
-        const inChrome = locImg === 'Header' || locImg === 'Footer' || locImg === 'Side panel';
-        const isLogo = /logo/i.test(file) || img.id === 'footer-logo' || (inChrome && (/logo/i.test(a) || /\blogo\b/i.test(cls(img.parentElement)) || !!img.closest('a[href]')));
+        const inGallery = !!img.closest('.dmPhotoGallery, .photoGalleryThumbs, [class*="Gallery"], [class*="slider"], [class*="Slider"]');
+        const link = img.closest('a[href]');
+        let linksHome = false;
+        if (link) {
+          const hp = (link.getAttribute('href') || '').split(/[?#]/)[0].replace(/\/+$/, '');
+          linksHome = hp === '' || hp === '/site/' + ctx.siteId || hp === '/' || (truth.domain && /^https?:\/\//i.test(hp) && hp.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/+$/, '') === truth.domain.replace(/^www\./, ''));
+        }
+        const logoHint = /logo/i.test(file) || /logo/i.test(img.id || '') || /\blogo\b|imageWidget.*logo/i.test(cls(img) + ' ' + cls(img.parentElement));
+        const isLogo = !inGallery && (logoHint || ((locImg === 'Header' || locImg === 'Side panel' || locImg === 'Footer') && linksHome));
+        // A descriptive alt ("A man is spraying film on a car") describes the photo — it's never a business name
+        const descriptive = /^(a|an|the|this|close[- ]up|photo|image|picture)\b/i.test(a) || a.split(/\s+/).length >= 7 || /\b(is|are|was|were|being|with|on|of|in)\b/i.test(a) && a.split(/\s+/).length >= 5;
         if (isLogo && truth.businessName && !matchesBusiness(a, truth)) {
           const meaningful = nameTokens(a).filter((t) => !/^(logo|footer|header|image|icon|main|site|brand|white|black|dark|light|color|colour|transparent|png|jpg)$/.test(t));
-          if (meaningful.length) add(img, { code: 'ALT_LOGO_NAME', severity: 'critical', category: 'Business name', message: "Logo alt text names a different business", found: a, expected: truth.businessName, foreignName: a });
+          if (meaningful.length && !descriptive) add(img, { code: 'ALT_LOGO_NAME', severity: 'critical', category: 'Business name', message: 'Logo alt text names a different business', found: a, expected: truth.businessName, foreignName: a });
           else add(img, { code: 'ALT_LOGO_GENERIC', severity: 'warning', category: 'Images / Alt', message: 'Logo alt text should include the business name', found: a, expected: truth.businessName + ' logo' });
         }
         if (a.length > 150) add(img, { code: 'ALT_LONG', severity: 'info', category: 'Images / Alt', message: `Alt text is very long (${a.length} chars)`, found: cut(a, 80) });

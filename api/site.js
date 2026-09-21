@@ -1,6 +1,6 @@
 // GET /api/site?editor=<editor link>
 // Returns the Business Info "truth" source data from the Duda API (site details, Content Library, pages list).
-import { authorize, parseEditorLink, allowedHost, fetchWithTimeout } from './_lib.js';
+import { requireUser, parseEditorLink, allowedHost, fetchWithTimeout } from './_lib.js';
 
 const DUDA = 'https://api.duda.co/api';
 
@@ -17,7 +17,7 @@ async function duda(path) {
 }
 
 export default async function handler(req, res) {
-  if (!authorize(req, res)) return;
+  if (!(await requireUser(req, res))) return;
   const { host, siteId } = parseEditorLink(req.query.editor || req.query.site || '');
   if (!siteId) return res.status(400).json({ error: 'Could not find a site ID in that link. Paste the editor link, e.g. https://…/home/site/f981a954/home' });
   if (!host || !allowedHost(host)) return res.status(400).json({ error: `Editor host "${host}" is not allowed. Add it to ALLOWED_EDITOR_HOSTS in Vercel.` });
