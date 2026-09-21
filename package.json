@@ -1,0 +1,11 @@
+{
+  "name": "duda-site-auditor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Audit Duda websites (desktop, tablet, mobile) against their Business Info.",
+  "scripts": {
+    "dev": "node dev-server.js",
+    "build:console": "node -e \"const fs=require('fs');fs.writeFileSync('console-audit.js',fs.readFileSync('public/engine.js','utf8')+fs.readFileSync('src/console-runner.js','utf8'))\""
+  }
+}
