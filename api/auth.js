@@ -47,7 +47,7 @@ export default async function handler(req, res) {
   if (!hasRedis()) return res.status(500).json({ error: 'Upstash Redis is not connected to this Vercel project.' });
   try {
     if (req.method === 'GET') {
-      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled() });
+      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, '') });
       const u = await currentUser(req);
       return res.status(200).json({ user: publicUser(u) });
     }

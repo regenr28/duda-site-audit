@@ -12,6 +12,7 @@ Add these **before** uploading, so the new deployment picks them up:
 | `RESEND_API_KEY` + `EMAIL_FROM` | see README → "Optional: email" | For emails (codes, approvals, suggestions) |
 | `GEMINI_API_KEY` | aistudio.google.com → Get API key (free, no card) | For the free ✨ AI checks (alt text + page text) |
 | `GROQ_API_KEY` | console.groq.com → API Keys (free, no card) | Backup model when Gemini hits its limit |
+| `ABLY_API_KEY` | ably.com → your app → API Keys → Root key (free, no card) | Instant "someone is on this website" pop-ups without using the database |
 | `OPENROUTER_API_KEY` | openrouter.ai → Keys (free, no card) | Optional third backup |
 | `AI_GATEWAY_API_KEY` | Vercel → AI Gateway → API Keys → Create key | Later, when you have budget. Takes priority over Gemini automatically |
 | `GOOGLE_CLIENT_ID` | see README → "Sign in with Google" | For the Google button |

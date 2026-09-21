@@ -375,13 +375,18 @@ export default async function handler(req, res) {
     if (!items.length) return res.status(200).json({ results: [] });
 
     // Cache per business + item, so the same alt text / paragraph is never paid for twice
-    const keyOf = (x) => P + (b.op === 'alt' ? 'ai2:' : 'ai:') + b.op + ':' + sha([business.name, business.city, business.region, (business.areaPages || []).length, x[field], x.isLogo ? 1 : 0, b.op === 'alt' ? (x.brandLogo ? 'b' : '') + (x.logoRow || 0) : ''].join('|'));
-    const cached = await redis(...items.map((x) => ['GET', keyOf(x)]));
+    // One small hash per business holds every cached answer for it (much lighter than one key per item)
+    const cacheKey = P + 'aic:' + sha([business.name, business.city, business.region, (business.areaPages || []).length].join('|')).slice(0, 20);
+    const keyOf = (x) => (b.op === 'alt' ? 'a2' : 't') + sha([x[field], x.isLogo ? 1 : 0, b.op === 'alt' ? (x.brandLogo ? 'b' : '') + (x.logoRow || 0) : ''].join('|')).slice(0, 18);
+    const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
+    const cached = cachedRaw || [];
     const results = []; const todo = [];
     items.forEach((x, k) => {
-      const c = jparse(cached[k]);
+      const raw = cached[k];
+      if (raw == null) return todo.push(x);
+      const c = raw === '0' ? { issues: [] } : jparse(raw);
       if (!c) return todo.push(x);
-      if (b.op === 'alt') results.push(Object.assign({}, c, { i: x.i, cached: true }));
+      if (b.op === 'alt') results.push({ i: x.i, cached: true, verdict: c.v || c.verdict, confidence: c.c !== undefined ? c.c : c.confidence, reason: c.r || c.reason || '', suggestion: c.s || c.suggestion || '' });
       else (c.issues || []).forEach((iss) => results.push(Object.assign({}, iss, { i: x.i, cached: true })));
       if (b.op === 'text') results.push({ i: x.i, cachedOnly: true });
     });
@@ -412,7 +417,7 @@ export default async function handler(req, res) {
           const r = { i: Number(x.i), verdict: x.verdict, confidence: Math.max(0, Math.min(1, Number(x.confidence) || 0)), reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200) };
           results.push(r);
           const t = todo.find((y) => y.i === r.i);
-          cmds.push(['SET', keyOf(t), JSON.stringify({ verdict: r.verdict, confidence: r.confidence, reason: r.reason, suggestion: r.suggestion }), 'EX', 5184000]);
+          cmds.push([keyOf(t), JSON.stringify({ v: r.verdict, c: Math.round(r.confidence * 100) / 100, r: r.reason, s: r.suggestion || undefined })]);
         });
       } else {
         const byI = new Map(todo.map((t) => [t.i, []]));
@@ -421,9 +426,9 @@ export default async function handler(req, res) {
           results.push(r); byI.get(r.i).push(r);
         });
         // Cache every block, including the ones with no problems
-        byI.forEach((issues, i) => { const t = todo.find((y) => y.i === i); cmds.push(['SET', keyOf(t), JSON.stringify({ issues: issues.map(({ i: _i, ...rest }) => rest) }), 'EX', 5184000]); });
+        byI.forEach((issues, i) => { const t = todo.find((y) => y.i === i); cmds.push([keyOf(t), issues.length ? JSON.stringify({ issues: issues.map(({ i: _i, ...rest }) => rest) }) : '0']); });
       }
-      if (cmds.length) await redis(...cmds);
+      if (cmds.length) await redis(['HSET', cacheKey, ...[].concat(...cmds)], ['EXPIRE', cacheKey, 45 * 86400]);
     }
     return res.status(200).json({ results: results.filter((r) => !r.cachedOnly), cachedCount: items.length - todo.length,
       alias: pvUsed ? aliasOf(pvUsed.id) : '', ...(owner && pvUsed ? { realProvider: pvUsed.label, realModel: pvUsed.model } : {}), providers: publicStatus(await loadStatus(list).catch(() => []), owner), now: Date.now() });

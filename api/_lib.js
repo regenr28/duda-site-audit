@@ -1,5 +1,6 @@
 // Shared helpers for the Vercel serverless functions (Node 18+, zero dependencies).
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 
 export const UA_DESKTOP = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
 export const P = process.env.STORE_PREFIX || 'dsa:';
@@ -93,7 +94,7 @@ export async function putUser(u) {
   await redis(['SET', P + 'user:' + u.email, JSON.stringify(u)], ['SADD', P + 'users', u.email]);
   return u;
 }
-export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt });
+export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
@@ -138,7 +139,8 @@ export async function currentUser(req) {
   const [email] = await redis(['GET', P + 'sess:' + sha(t)]);
   if (!email) return null;
   const user = await getUser(email);
-  if (user) cache.set(t, { user, exp: Date.now() + 30000 });
+  // Cached for 3 minutes per server instance: saves two database reads on almost every request
+  if (user) cache.set(t, { user, exp: Date.now() + 180000 });
   return user;
 }
 /** Require a signed-in, approved user. Sends 401/403 and returns null otherwise. */
@@ -184,11 +186,11 @@ export async function slack(text) {
 
 // ---------- in-app notifications + global (admin) activity log ----------
 export async function notifyUser(email, n) {
-  await redis(['LPUSH', P + 'notif:' + email, JSON.stringify({ id: newId(6), at: now(), ...n })], ['LTRIM', P + 'notif:' + email, 0, 199]);
+  await redis(['LPUSH', P + 'notif:' + email, JSON.stringify({ id: newId(6), at: now(), ...n })], ['LTRIM', P + 'notif:' + email, 0, 99]);
 }
 export async function globalLog(actor, type, text, extra = {}) {
   const e = { id: newId(6), at: now(), by: actor ? actor.email : '', byName: actor ? actor.name : 'System', type, text, ...extra };
-  await redis(['LPUSH', P + 'gact', JSON.stringify(e)], ['LTRIM', P + 'gact', 0, 1999]);
+  await redis(['LPUSH', P + 'gact', JSON.stringify(e)], ['LTRIM', P + 'gact', 0, 999]);
 }
 export const OWNER_EMAIL = normEmail(process.env.SUGGESTIONS_OWNER || 'regencia.reymark28@gmail.com');
 
@@ -205,4 +207,13 @@ export async function announceSignup(user, req) {
       <p><a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none">Review in Members</a></p>`)).catch(() => {});
   }
   await slack(`:wave: *${user.name}* (${user.email}) created a Duda Site Auditor account and is waiting for admin approval. <${link}|Review in Members>`);
+}
+
+// ---------- compact storage ----------
+// Large records (website audits) are stored deflate-compressed: typically 5-8x smaller than plain JSON.
+export function packJSON(obj) { return 'z1:' + zlib.deflateRawSync(Buffer.from(JSON.stringify(obj)), { level: 9 }).toString('base64'); }
+export function unpackJSON(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'string' && raw.startsWith('z1:')) { try { return JSON.parse(zlib.inflateRawSync(Buffer.from(raw.slice(3), 'base64')).toString()); } catch (e) { return null; } }
+  return jparse(raw);
 }

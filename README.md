@@ -90,6 +90,14 @@ What the AI checks after every scan (tuned for Detailers Roadmap detailing clien
 - **Alt text:** does it describe the photo, name this business, name **another** business, mention the **wrong city**, or look like placeholder text?
 - **Page text** (headings, paragraphs, side panels, titles and descriptions): mentions of **another business** (template leftovers), a **city/state that doesn't match** the business location or its service-area pages, and **misspelled variants** of the business name. Each finding shows the quote, the reason and suggested wording.
 
+### Optional (recommended): instant "someone is on this website" pop-ups with Ably
+Browsers signal each other directly through Ably's free realtime service. Nothing is written to your database for this.
+1. Sign up at https://ably.com (free plan: 200 people connected at once, 6 million messages a month).
+2. In the dashboard open your app → **API Keys** → copy the **Root** key (it looks like `abc123.XyZ9:long-secret`).
+3. Add it in Vercel as `ABLY_API_KEY` (tick **Sensitive**) and redeploy.
+
+The key stays on the server: each browser gets a short-lived pass that only allows joining website presence channels. Without `ABLY_API_KEY`, the app uses its regular heartbeat instead: the person entering still sees who is there right away, but people already inside hear about a newcomer within about 2 minutes.
+
 ### Optional: Sign in with Google
 1. https://console.cloud.google.com → create or select a project.
 2. **APIs & Services → OAuth consent screen**: choose External, enter the app name and support email, save, then click **Publish app** so it's "In production". No review is needed for basic sign-in.
@@ -106,7 +114,9 @@ A Google account and an email/password account with the same email are treated a
 2. **+ Add website** → paste one or many editor links, one per line (e.g. `https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home`), choose an assignee and click **Add & start audit**.
 3. Keep the tab open while it scans. Two sites run at a time, and each shows `Scanning 40/120`, then **✓ Scan complete**.
 4. Open a site. Every audit item has an ID (#12). Click a row to open it: set its status (**Open / For clarification / Done / On hold / False alarm**), reassign it, comment, paste screenshots and reply.
-5. Admins see an app-wide **Activity** page (websites added or deleted, sign-ups, approvals, with date and time). The dots at the top right show who has the app open: green = active, grey = idle for 1 hour or more.
+5. Click anyone in **Team status** (the dots at the top right) to see what they worked on: the website they have open right now, their latest audit item (status change or comment), recent websites, and their full activity log across all websites, filterable by audit items, comments, scans and websites.
+6. **Working on the same website:** when you open a website someone else has open, you get a pop-up ("Cler is currently working on this website"), and they get one too ("Euch just entered this website"), with a reminder to coordinate so two people don't work on the same audit item. A bar under the website title shows who else is there. Pop-ups appear top right, stack, show the date and time, and fade after the time each person picks under their account (avatar → Pop-up notifications stay on screen for…). Hover to pause; ✕ to close.
+7. Admins see an app-wide **Activity** page (websites added or deleted, sign-ups, approvals, with date and time). The dots at the top right show who has the app open: green = active, grey = idle for 1 hour or more.
 6. **💡 Suggest a feature** sends an idea privately to the app owner, who can mark it New, On going, Done or Nope and reply in comments.
 7. Screenshots pasted or uploaded into comments are optimized automatically in the browser: resized to 1600px wide at most and saved as WebP (usually 30–400 KB).
 8. Use the **Comments** tab for general discussion: `@` tags a member, `#12` links an audit item, and **Reply** quotes a comment. The **Activity log** tab records every comment, reply, status and assignee change.
@@ -154,6 +164,19 @@ A Google account and an email/password account with the same email are treated a
 **Run locally:** copy `.env.example` to `.env.local`, fill it in, run `npm run dev` and open http://localhost:3000.
 
 **Console-only version:** `console-audit.js` runs the same engine in DevTools on the site's preview page (`https://{editor-host}/preview/{siteId}`). It uses the site schema as the reference, prints a table and downloads a CSV. Useful for one-off checks without the app.
+
+## Database usage (planned for 800+ websites)
+Upstash's free plan allows 256 MB of data, 500K commands a month and 10 GB of bandwidth. It never charges you unless you add a card; over the limit it may slow down.
+
+What the app stores and how it stays small:
+- **Website audits:** compressed (about 7–9x smaller), roughly 5–25 KB per website, so 800 websites ≈ 5–20 MB.
+- **Website list:** one small summary per website, loaded only when something changed (open tabs first ask "anything new?" with one tiny read).
+- **Activity logs:** last 300 entries per website and per member; app-wide log last 1,000; notifications last 100 per person.
+- **AI answers:** one small cache per business, removed automatically 45 days after the last scan.
+- **Screenshots:** the biggest items (up to ~250 KB each after automatic optimization). They are deleted when their comment or website is deleted.
+- **Presence:** with Ably, nothing is stored. The heartbeat runs every 2 minutes (5 minutes in background tabs).
+
+Rough monthly total for 5 people auditing daily: about 200–350K commands, and 30–60 MB of data plus screenshots. Check real numbers any time in Upstash → your database → **Usage**. Admins can click **🧹 Optimize database** on the **Activity** page once after updating: it compresses older website records, trims long logs and removes the old AI cache format.
 
 ## Security notes
 - Duda API credentials only live in Vercel environment variables and are never sent to the browser.

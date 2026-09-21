@@ -176,7 +176,18 @@
   // DATA
   // =====================================================================
   async function loadUsers() { const r = await api('/api/users'); state.users = r.users; state.me = r.me; }
-  async function loadSites() { const r = await api('/api/store?op=list'); state.sites = r.sites || []; }
+  /** Loads the website list. With onlyIfChanged, first asks whether anything changed (returns false if not). */
+  async function loadSites(onlyIfChanged) {
+    const r = await api('/api/store?op=list' + (onlyIfChanged && state.sitesVer ? '&since=' + encodeURIComponent(state.sitesVer) : ''));
+    if (r.unchanged) return false;
+    state.sites = r.sites || []; state.sitesVer = r.ver || ''; return true;
+  }
+  async function refreshSite(id) {
+    const v = state.current && state.current.id === id ? state.current.ver : '';
+    const r = await api('/api/store?op=site&id=' + encodeURIComponent(id) + (v ? '&since=' + encodeURIComponent(v) : ''));
+    if (r.unchanged) return false;
+    state.current = r; return true;
+  }
   async function loadNotifs() { try { state.notifs = await api('/api/store?op=notifs'); renderBell(); } catch (e) { /* ignore */ } }
   async function loadSite(id) { state.current = await api('/api/store?op=site&id=' + encodeURIComponent(id)); return state.current; }
   function upsertSummary(sum) { if (!sum) return; const i = state.sites.findIndex((s) => s.id === sum.id); if (i >= 0) state.sites[i] = sum; else state.sites.push(sum); }
@@ -242,16 +253,19 @@
   let lastActive = Date.now(), lastPulse = 0, serverSkew = 0;
   ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach((ev) => window.addEventListener(ev, () => { lastActive = Date.now(); }, { passive: true }));
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastActive = Date.now(); if (Date.now() - lastPulse > 60000) pulse(); } });
-  async function pulse() {
-    if (!state.me) return;
+  async function pulse(force) {
+    if (!state.me || (!force && Date.now() - lastPulse < 3000)) return;
     lastPulse = Date.now();
     try {
-      const r = await post('/api/pulse', { lastActive: new Date(lastActive).toISOString() });
+      const rt = route();
+      const sum = rt.name === 'site' ? (state.current && state.current.id === rt.id ? state.current : state.sites.find((x) => x.id === rt.id)) : null;
+      const where = rt.name === 'site' ? { siteKey: rt.id, name: (sum && (sum.businessName || sum.siteId)) || '', item: rt.item || null, tab: rt.tab } : null;
+      const r = await post('/api/pulse', { lastActive: new Date(lastActive).toISOString(), where });
       serverSkew = Date.parse(r.serverTime) - Date.now();
       state.presence = r.presence || {};
       const hadUnread = state.notifs.unread;
       state.notifs = r.notifs || state.notifs;
-      renderBell(); renderPresence();
+      renderBell(); renderPresence(); roomFromPulse();
       if (state.notifs.unread > hadUnread && state.me.role === 'admin' && state.notifs.items.some((n) => n.kind === 'signup')) { loadUsers().then(renderTop).catch(() => {}); }
     } catch (e) { /* ignore */ }
   }
@@ -260,7 +274,7 @@
     const p = (state.presence || {})[email];
     if (!p || !p.seen) return { st: 'offline' };
     const nowS = Date.now() + serverSkew;
-    if (nowS - Date.parse(p.seen) > 4 * 60000) return { st: 'offline', seen: p.seen };
+    if (nowS - Date.parse(p.seen) > 6.5 * 60000) return { st: 'offline', seen: p.seen }; // background tabs check in every 5 min
     if (nowS - Date.parse(p.active || p.seen) >= 3600000) return { st: 'idle', active: p.active };
     return { st: 'active', active: p.active };
   }
@@ -282,10 +296,182 @@
   function fillPresencePanel(p) {
     const order = { active: 0, idle: 1, offline: 2 };
     const rows = activeUsers().map((u) => ({ u, pr: presenceOf(u.email) })).sort((a, b) => order[a.pr.st] - order[b.pr.st] || a.u.name.localeCompare(b.u.name));
-    p.innerHTML = `<div class="np-head"><b>Team status</b> <span class="small faint">green = active · grey = idle 1h+</span></div>` + rows.map((x) => `
-      <div class="np-item"><span class="pav">${avatar(x.u.email, 28)}<span class="pdot ${x.pr.st}"></span></span>
-        <div><div><b>${esc(x.u.name)}</b>${x.u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''} <span class="badge subtle">${esc(x.u.role)}</span></div>
-        <div class="small ${x.pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(presenceText(x.pr))}</div></div></div>`).join('');
+    p.innerHTML = `<div class="np-head"><b>Team status</b></div>` + rows.map((x) => {
+      const w = x.pr.st !== 'offline' ? whereOf(x.u.email) : null;
+      return `<button type="button" class="np-item np-member" data-member="${esc(x.u.email)}" title="See what ${esc(x.u.name)} worked on">
+        <span class="pav">${avatar(x.u.email, 28)}<span class="pdot ${x.pr.st}"></span></span>
+        <div class="grow"><div><b>${esc(x.u.name)}</b>${x.u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''} <span class="badge subtle">${esc(x.u.role)}</span></div>
+        <div class="small ${x.pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(presenceText(x.pr))}</div>
+        ${w ? `<div class="small muted np-where">Now on <b>${esc(w.name)}</b>${w.item ? ` · #${w.item}` : ''}</div>` : ''}</div><span class="faint">›</span></button>`;
+    }).join('');
+    $$('[data-member]', p).forEach((b) => (b.onclick = () => { p.remove(); openMemberActivity(b.dataset.member); }));
+  }
+  // ---------- Pop-up notifications (top right, macOS style) ----------
+  /** Shows a card that fades out after the member's chosen time (profile). Several stack with a small offset. */
+  function popNotify({ email, emails, title, body, note, secs, at }) {
+    let stack = $('#popStack');
+    if (!stack) { stack = document.createElement('div'); stack.id = 'popStack'; stack.setAttribute('aria-live', 'polite'); document.body.appendChild(stack); }
+    const life = secs !== undefined ? secs : Number(state.me && state.me.notifySecs !== undefined ? state.me.notifySecs : 8);
+    const when = new Date(at || Date.now());
+    const card = document.createElement('div'); card.className = 'pop'; card.setAttribute('role', 'status');
+    const avs = (emails || [email]).filter(Boolean).slice(0, 3);
+    card.innerHTML = `<div class="pop-av">${avs.map((e) => avatar(e, 30)).join('')}</div>
+      <div class="pop-main"><div class="pop-top"><b>${esc(title)}</b><span class="pop-time">${esc(when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))} · ${esc(when.toLocaleDateString([], { month: 'short', day: 'numeric' }))}</span></div>
+        ${body ? `<div class="pop-body">${body}</div>` : ''}${note ? `<div class="pop-note">${esc(note)}</div>` : ''}</div>
+      <button class="pop-x" type="button" aria-label="Close notification">✕</button>${life ? `<i class="pop-bar" style="animation-duration:${life}s"></i>` : ''}`;
+    stack.prepend(card);
+    requestAnimationFrame(() => card.classList.add('in')); setTimeout(() => card.classList.add('in'), 50);
+    const close = () => { if (card.dataset.closing) return; card.dataset.closing = 1; card.classList.remove('in'); card.classList.add('out'); setTimeout(() => card.remove(), 350); };
+    card.querySelector('.pop-x').onclick = close;
+    // Timer pauses while the pointer is over the card
+    let left = life * 1000, started = Date.now(), timer = null;
+    const start = () => { if (life && !timer && !card.dataset.closing) { started = Date.now(); timer = setTimeout(close, Math.max(800, left)); } };
+    // Background tab: start the countdown only once the person can actually see it
+    if (document.hidden) document.addEventListener('visibilitychange', function v() { if (!document.hidden) { document.removeEventListener('visibilitychange', v); card.classList.add('in'); start(); } });
+    else start();
+    card.addEventListener('mouseenter', () => { if (!timer) return; clearTimeout(timer); timer = null; left -= Date.now() - started; card.classList.add('paused'); });
+    card.addEventListener('mouseleave', () => { if (!life || timer || card.dataset.closing || document.hidden) return; card.classList.remove('paused'); start(); });
+    [...stack.children].slice(6).forEach((c) => c.remove());
+    return card;
+  }
+
+  // ---------- Who else is on this website ----------
+  // With ABLY_API_KEY set, browsers signal each other instantly through Ably presence (no database at all).
+  // Without it, the regular heartbeat (every ~2 min, sent right away when you open a website) is used instead.
+  const ROOM_NOTE = 'Make sure to communicate with them to avoid working on the same audit item.';
+  const room = { siteKey: null, known: null, people: [], ch: null, joining: null };
+  const namesList = (arr) => { const n = arr.map((p) => `<b>${esc(p.name || nameOf(p.email))}</b>`); return n.length <= 1 ? n.join('') : n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1]; };
+  function roomBarHtml() {
+    const others = room.people.filter((p) => p.email !== (state.me && state.me.email));
+    if (!others.length || !state.current || room.siteKey !== state.current.id) return '';
+    return `<div class="room-bar" title="${esc(others.map((p) => `${p.name}${p.since ? ' · here since ' + new Date(p.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}${p.item ? ' · on #' + p.item : ''}`).join('\n'))}">
+      <span class="pstack">${others.slice(0, 4).map((p) => `<span class="pav">${avatar(p.email, 22)}<span class="pdot active"></span></span>`).join('')}</span>
+      <span>${namesList(others)} ${others.length > 1 ? 'are' : 'is'} also here${others.length === 1 && others[0].item ? ` · on <a href="#/site/${esc(room.siteKey)}/item/${others[0].item}">#${others[0].item}</a>` : ''}</span></div>`;
+  }
+  /** Compare who's here now with who was here before, and announce the difference. */
+  function roomSeen(siteKey, people) {
+    if (room.siteKey !== siteKey) return;
+    const byEmail = new Map(); people.forEach((p) => { if (!byEmail.has(p.email)) byEmail.set(p.email, p); });
+    room.people = [...byEmail.values()];
+    const others = room.people.filter((p) => p.email !== state.me.email);
+    const siteName = state.current && state.current.id === siteKey ? (state.current.businessName || state.current.siteId) : 'this website';
+    if (room.known === null) {
+      if (others.length) popNotify({ emails: others.map((p) => p.email), title: others.length > 1 ? 'Others are on this website' : 'Someone is on this website',
+        body: `${namesList(others)} ${others.length > 1 ? 'are inside' : 'is currently working on'} <b>${esc(siteName)}</b>.`, note: ROOM_NOTE });
+    } else {
+      const fresh = others.filter((p) => !room.known.has(p.email));
+      if (fresh.length) popNotify({ emails: fresh.map((p) => p.email), title: fresh.length > 1 ? 'People just joined' : 'Someone just joined',
+        body: `${namesList(fresh)} just entered <b>${esc(siteName)}</b>.`, note: ROOM_NOTE });
+    }
+    room.known = new Set(others.map((p) => p.email));
+    const bar = $('#roomBar'); if (bar) bar.innerHTML = roomBarHtml();
+  }
+  // --- Ably (instant) ---
+  let ablyClient = null, ablyLoading = null;
+  function ablyReady() {
+    if (!state.config || !state.config.realtime) return Promise.resolve(null);
+    if (ablyClient) return Promise.resolve(ablyClient);
+    if (!ablyLoading) ablyLoading = new Promise((ok) => {
+      const sc = document.createElement('script'); sc.src = 'https://cdn.ably.com/lib/ably.min-2.js'; sc.async = true;
+      sc.onload = () => {
+        try {
+          ablyClient = new window.Ably.Realtime({ clientId: state.me.email, echoMessages: false,
+            authCallback: (params, cb) => { api('/api/realtime').then((t) => cb(null, t)).catch((e) => cb(e.message, null)); } });
+          ok(ablyClient);
+        } catch (e) { ok(null); }
+      };
+      sc.onerror = () => ok(null); // blocked or offline: fall back to the heartbeat
+      document.head.appendChild(sc);
+    });
+    return ablyLoading;
+  }
+  const memberOf = (m) => ({ email: m.clientId, name: (m.data && m.data.name) || nameOf(m.clientId), item: (m.data && m.data.item) || null, since: (m.data && m.data.since) || m.timestamp });
+  async function roomSync(siteKey) {
+    const ch = room.ch; if (!ch || room.siteKey !== siteKey) return;
+    try { const members = await ch.presence.get(); roomSeen(siteKey, members.map(memberOf)); } catch (e) { /* ignore */ }
+  }
+  async function roomEnter(siteKey, item) {
+    const client = await ablyReady();
+    if (!client || room.siteKey !== siteKey) return false;
+    const ch = client.channels.get(`${state.config.realtimePrefix || 'dsa'}-site:${siteKey}`);
+    room.ch = ch;
+    try {
+      await ch.presence.subscribe(['enter', 'leave', 'update'], () => roomSync(siteKey));
+      await ch.presence.enter({ name: state.me.name, item: item || null, since: Date.now() });
+      await roomSync(siteKey);
+      return true;
+    } catch (e) { return false; }
+  }
+  function roomLeave() {
+    const ch = room.ch; room.ch = null;
+    if (ch) { try { ch.presence.unsubscribe(); ch.presence.leave(); ch.detach(); } catch (e) { /* ignore */ } }
+  }
+  // --- Heartbeat fallback: people whose last heartbeat says they have this website open ---
+  function roomFromPulse() {
+    if (!room.siteKey || room.ch || (state.config && state.config.realtime && ablyClient)) return;
+    // Everyone with a recent heartbeat (including people who joined after this page loaded)
+    const emails = [...new Set([state.me.email, ...Object.keys(state.presence || {})])];
+    const people = emails.filter((e) => { const w = whereOf(e); return presenceOf(e).st !== 'offline' && w && w.siteKey === room.siteKey; })
+      .map((e) => { const w = whereOf(e) || {}; const u = state.users.find((x) => x.email === e); return { email: e, name: (u && u.name) || ((state.presence || {})[e] || {}).name || e, item: w.item || null }; });
+    if (emails.some((e) => !state.users.find((x) => x.email === e))) loadUsers().catch(() => {});
+    roomSeen(room.siteKey, people);
+  }
+  /** Called on navigation: leave the previous website, join the new one. */
+  async function roomTick() {
+    if (!state.me) return;
+    const rt = route();
+    const siteKey = rt.name === 'site' ? rt.id : null;
+    if (room.siteKey && room.siteKey !== siteKey) { roomLeave(); room.siteKey = null; room.known = null; room.people = []; }
+    if (!siteKey) return;
+    if (siteKey === room.siteKey) { if (room.ch) { try { await room.ch.presence.update({ name: state.me.name, item: rt.item || null, since: (room.people.find((p) => p.email === state.me.email) || {}).since || Date.now() }); } catch (e) { /* ignore */ } } return; }
+    room.siteKey = siteKey; room.known = null; room.people = [];
+    const live = await roomEnter(siteKey, rt.item);
+    if (!live) { await pulse(true); roomFromPulse(); }
+  }
+  window.addEventListener('pagehide', () => roomLeave());
+
+  /** The website / item a teammate has open right now (from their heartbeat). */
+  function whereOf(email) {
+    if (email === state.me.email) { const rt = route(); return rt.name === 'site' && state.current ? { siteKey: rt.id, name: state.current.businessName || state.current.siteId, item: rt.item } : null; }
+    const p = (state.presence || {})[email]; return p && p.where ? p.where : null;
+  }
+  const MA_FILTERS = { all: ['All', () => true], items: ['Audit items', (e) => /^item-/.test(e.type) && e.type !== 'item-comment'], comments: ['Comments', (e) => /comment|reply/.test(e.type)], scans: ['Scans', (e) => /scan|^ai$/.test(e.type)], sites: ['Websites', (e) => /^site|^status$|^assign$/.test(e.type)] };
+  async function openMemberActivity(email) {
+    const u = state.users.find((x) => x.email === email) || { email, name: email, role: '' };
+    let data = null, filter = 'all';
+    const draw = () => {
+      const pr = presenceOf(email); const w = pr.st !== 'offline' ? whereOf(email) : null;
+      const link = (e) => e.siteKey && !e.global ? `#/site/${encodeURIComponent(e.siteKey)}${e.findingNum ? '/item/' + e.findingNum : /comment|reply/.test(e.type) && !e.findingNum ? '/comments' : ''}` : '';
+      const body = !data ? '<div class="empty small">Loading…</div>' : (() => {
+        const list = data.items.filter(MA_FILTERS[filter][1]);
+        const recentOthers = data.recent.filter((r, k) => (w ? r.siteKey !== w.siteKey : k > 0));
+        let lastDay = '';
+        return `
+        <div class="ma-now panel panel-pad">
+          ${w ? `<div class="k">Working on now</div><a class="ma-site" href="#/site/${encodeURIComponent(w.siteKey)}${w.item ? '/item/' + w.item : ''}" data-close-nav><b>${esc(w.name)}</b>${w.item ? ` · audit item #${w.item}` : ''} ›</a>`
+            : data.recent[0] ? `<div class="k">Last worked on</div><a class="ma-site" href="${link(data.recent[0])}" data-close-nav><b>${esc(data.recent[0].siteName)}</b> ›</a><div class="small muted">${esc(data.recent[0].text)} · ${esc(ago(data.recent[0].at))}</div>`
+            : '<div class="small muted">No activity yet.</div>'}
+          ${data.lastItem ? `<div class="k" style="margin-top:12px">Latest audit item</div><a class="ma-item" href="${link(data.lastItem)}" data-close-nav><span class="item-id">#${data.lastItem.findingNum}</span> ${esc(data.lastItem.type === 'item-status' ? data.lastItem.text.replace(/^changed #\d+ /, 'status changed ') : data.lastItem.type === 'item-assign' ? data.lastItem.text.replace(/#\d+ /, '') : data.lastItem.type === 'reply' ? 'replied to a comment' : 'commented')} <span class="muted">on</span> <b>${esc(data.lastItem.siteName)}</b> <span class="faint">· ${esc(ago(data.lastItem.at))}</span></a>` : ''}
+          ${recentOthers.length ? `<div class="k" style="margin-top:12px">Recent websites</div><div class="ma-recent">${recentOthers.map((r) => `<a href="${link(r)}" data-close-nav class="chipbtn"><b>${esc(r.siteName)}</b> <span class="faint">${esc(ago(r.at))}</span></a>`).join('')}</div>` : ''}
+        </div>
+        <div class="ma-stats"><div><b>${data.counts.sites}</b><span>websites</span></div><div><b>${data.counts.items}</b><span>item status changes</span></div><div><b>${data.counts.comments}</b><span>comments</span></div><div><b>${data.counts.scans}</b><span>scans started</span></div></div>
+        <div class="chips" style="margin:12px 0 6px">${Object.entries(MA_FILTERS).map(([k, [lbl, fn]]) => `<button class="chipbtn ${filter === k ? 'active' : ''}" data-maf="${k}">${lbl} <span class="faint">${data.items.filter(fn).length}</span></button>`).join('')}</div>
+        ${list.length ? `<ul class="activity ma-list">${list.map((e) => {
+          const day = new Date(e.at).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+          const head = day !== lastDay ? `<li class="ma-day">${esc(day)}</li>` : ''; lastDay = day;
+          const text = esc(e.text).replace(/#(\d+)/g, (m, n) => e.siteKey && !e.global ? `<a class="item-ref" href="#/site/${encodeURIComponent(e.siteKey)}/item/${n}" data-close-nav>#${n}</a>` : m);
+          return `${head}<li><span class="a-ic">${ACT_ICON[e.type] || '•'}</span><div class="grow">${text}${e.siteName ? ` <span class="muted">on</span> ${link(e) ? `<a href="${link(e)}" data-close-nav><b>${esc(e.siteName)}</b></a>` : `<b>${esc(e.siteName)}</b>`}` : ''}</div><div class="a-time"><div>${esc(new Date(e.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</div><div class="faint">${esc(ago(e.at))}</div></div></li>`;
+        }).join('')}</ul>` : '<div class="empty small">Nothing here yet.</div>'}`;
+      })();
+      $('.modal').innerHTML = `<header><div style="display:flex;gap:12px;align-items:center"><span class="pav">${avatar(email, 36)}<span class="pdot ${pr.st}"></span></span><div><h2 style="margin:0">${esc(u.name)}</h2><div class="small ${pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(presenceText(pr))}${u.role ? ' · ' + esc(u.role) : ''}</div></div></div><button class="btn ghost" data-close>✕</button></header>
+        <div class="body ma-body">${body}</div>`;
+      $$('[data-close]', $('.modal')).forEach((b) => (b.onclick = closeModal));
+      $$('[data-close-nav]', $('.modal')).forEach((a) => a.addEventListener('click', () => closeModal()));
+      $$('[data-maf]', $('.modal')).forEach((b) => (b.onclick = () => { filter = b.dataset.maf; draw(); }));
+    };
+    modal('<div></div>', { wide: true }); draw();
+    try { data = await api('/api/store?op=userActivity&email=' + encodeURIComponent(email)); } catch (e) { data = { items: [], recent: [], counts: { sites: 0, items: 0, comments: 0, scans: 0 } }; toast(e.message); }
+    if ($('.modal')) draw();
   }
   function togglePresence() {
     const ex = $('.presence-panel'); if (ex) return ex.remove();
@@ -296,10 +482,14 @@
   function openMe() {
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)} · ${esc(state.me.role)}</div></div></div>
-      <label class="field">Display name<input type="text" id="meName" value="${esc(state.me.name)}"></label></div>
+      <label class="field">Display name<input type="text" id="meName" value="${esc(state.me.name)}"></label>
+      <label class="field">Pop-up notifications stay on screen for
+        <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <button class="btn sm ghost" id="meTest" type="button" style="justify-self:start">Show a test notification</button></div>
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
-    $('#meSave').onclick = async () => { try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); } };
+    $('#meTest').onclick = () => popNotify({ email: state.me.email, title: 'Test notification', body: 'This is how long pop-ups will stay on screen.', secs: Number($('#meSecs').value) });
+    $('#meSave').onclick = async () => { try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value) }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); } };
   }
 
   // =====================================================================
@@ -565,6 +755,7 @@
     state.ai.providers = r.providers;
     if (r.now) state.aiSkew = r.now - Date.now();
     renderAiChip();
+    const ac = $('#aiCredits'); if (ac) ac.innerHTML = aiCreditsHtml();
     if (route().name === 'ai' && !aiPageTimer) { aiPageTimer = setTimeout(() => { aiPageTimer = null; if (route().name === 'ai') renderAiPage(); }, 300); }
   }
   /** POST to the AI with a time limit, so a slow or stuck request never freezes the scan. "Skip AI" aborts it. */
@@ -705,7 +896,10 @@
     if (!state.me || !state.ai || !state.ai.enabled || aiResumeBusy || state.running || state.queue.length) return;
     const waiting = (state.sites || []).filter((x) => x.counts && x.counts.aiPending > 0 && !state.scanning[x.id]);
     if (!waiting.length) return;
-    try { const r = await api('/api/ai'); aiUpdate(r); } catch (e) { return; }
+    // Only ask the server when a model should be back by now (or every 15 min), to keep database reads low
+    const due = aiResumeAt();
+    if (due !== 0 && due !== null && due > srvNow() && Date.now() - (state.aiCheckedAt || 0) < 15 * 60000) return;
+    try { const r = await api('/api/ai'); state.aiCheckedAt = Date.now(); aiUpdate(r); } catch (e) { return; }
     if (aiResumeAt() !== 0) return;
     await aiResume(waiting[0].id, false);
   }
@@ -713,6 +907,24 @@
   setTimeout(aiResumeTick, 8000);
 
   // ---------- AI Status page ----------
+  /** Today's AI credit totals (requests) across the free models. */
+  function aiTotals() {
+    const list = (state.ai && state.ai.providers) || [];
+    const now = srvNow();
+    const free = list.filter((p) => p.free);
+    const leftOf = (p) => { const parked = !p.ready && p.until > now && (p.state === 'limit' || p.state === 'credits' || p.state === 'error'); return parked ? 0 : p.limit ? Math.max(0, p.limit - p.used) : 0; };
+    return { total: free.reduce((a, p) => a + (p.limit || 0), 0), left: free.reduce((a, p) => a + leftOf(p), 0), ready: list.filter((p) => p.ready || !(p.until > now)).length, count: list.length };
+  }
+  /** Small "AI credits left" line for the website page; updates live as the scan uses credits. */
+  function aiCreditsHtml() {
+    if (!state.ai || !state.ai.enabled) return '';
+    const t = aiTotals(); const at = aiResumeAt();
+    if (!t.total) return `<a href="#/ai" class="ai-credits" title="Open AI Status">✨ AI: ${at === 0 ? `${t.ready} of ${t.count} models ready · no daily cap` : at ? `paused, back in ${countdown(at)}` : 'not available'}</a>`;
+    const pct = t.total ? Math.round((t.left / t.total) * 100) : 0;
+    return `<a href="#/ai" class="ai-credits" title="Open AI Status">✨ AI credits left today: <b>${t.left.toLocaleString()}</b> of ${t.total.toLocaleString()}
+      <span class="meter mini"><span style="width:${pct}%" class="${t.left ? '' : 'full'}"></span></span>
+      <span class="faint">${at === 0 ? `${t.ready} of ${t.count} AI models ready` : at ? `paused, back in ${countdown(at)}` : ''}</span></a>`;
+  }
   function renderAiPage() {
     const list = (state.ai && state.ai.providers) || [];
     const now = srvNow();
@@ -830,6 +1042,7 @@
         try { await loadSite(r.id); } catch (e) { state.current = null; }
         lastSiteId = r.id;
       }
+      if (state.ai && state.ai.enabled) api('/api/ai').then((x) => { state.ai = Object.assign(state.ai, x); aiUpdate(x); }).catch(() => {});
       return renderSite();
     }
     lastSiteId = null; state.current = null; closeDrawer(true);
@@ -1096,8 +1309,8 @@
   }
   /**
    * Every pasted or uploaded image is optimized in the browser before upload:
-   * resized to at most 1600px wide (and ~4 megapixels for tall full-page screenshots), then saved as WebP
-   * (JPEG where WebP isn't supported), stepping the quality down until it's under ~400 KB.
+   * resized to at most 1440px wide (and ~3 megapixels for tall full-page screenshots), then saved as WebP
+   * (JPEG where WebP isn't supported), stepping the quality down until it's under ~250 KB.
    * Small PNG screenshots stay PNG when that is smaller, so text stays crisp.
    */
   function compressImage(file) {
@@ -1106,14 +1319,14 @@
       img.onload = () => {
         URL.revokeObjectURL(url);
         let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-        const scale = Math.min(1, 1600 / w, Math.sqrt(4200000 / (w * h)));
+        const scale = Math.min(1, 1440 / w, Math.sqrt(3200000 / (w * h)));
         w = Math.max(1, Math.round(w * scale)); h = Math.max(1, Math.round(h * scale));
         const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
         const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.imageSmoothingQuality = 'high'; cx.drawImage(img, 0, 0, w, h);
         const bytes = (d) => Math.round((d.length - d.indexOf(',') - 1) * 0.75);
         const webpOk = cv.toDataURL('image/webp', 0.8).startsWith('data:image/webp');
         const type = webpOk ? 'image/webp' : 'image/jpeg';
-        const TARGET = 400 * 1024;
+        const TARGET = 250 * 1024; // screenshots are the biggest thing in the database, so keep them small
         let q = 0.82, best = cv.toDataURL(type, q);
         while (bytes(best) > TARGET && q > 0.45) { q -= 0.08; best = cv.toDataURL(type, q); }
         let outType = type;
@@ -1172,7 +1385,7 @@
           <h1>${esc(s.businessName || s.siteId)}</h1>
           <div class="muted mono small">${esc(s.siteId)} · ${esc(s.host)}</div>
           <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtFull(s.createdAt)) : ''}</div>
-          <div class="last-scan">${sc.finishedAt ? `🕑 Last scan: <b>${esc(fmtFull(sc.finishedAt))}</b>${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}` : '🕑 Not scanned yet'}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</div></div>
+          <div class="last-scan">${sc.finishedAt ? `🕑 Last scan: <b>${esc(fmtFull(sc.finishedAt))}</b>${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}` : '🕑 Not scanned yet'}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</div><div id="roomBar">${roomBarHtml()}</div></div>
         <div class="head-actions">
           <span class="member-select">${avatar(s.assignee)}<select id="sAssign">${userOptions(s.assignee)}</select></span>
           <select class="pill st-${slug(s.status)}" id="sStatus">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
@@ -1216,7 +1429,7 @@
     const activeCount = findings.filter((f) => ['open', 'clarification'].includes(f.status));
     const sevCount = (sev) => activeCount.filter((f) => f.severity === sev).length;
     body.innerHTML = `
-      <div class="panel panel-pad" style="margin-bottom:16px">${scanBadge(s)}
+      <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> blocks read${sc.ai.text.truncated ? ` (of ${sc.ai.text.of}, the rest skipped to limit cost)` : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
@@ -1323,7 +1536,7 @@
     bindComments(body, s, siteComposer);
   }
 
-  const ACT_ICON = { ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
+  const ACT_ICON = { maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
   function renderActivityTab(body, s) {
     const act = s.activity || [];
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {
@@ -1568,7 +1781,7 @@
     const draw = () => {
       const f = state.gfilter;
       const list = items.filter((e) => !f || (f === 'accounts' ? ['signup', 'approve', 'reject', 'remove', 'role', 'reset'].includes(e.type) : e.type === f));
-      $('#view').innerHTML = `<div class="page-head"><div><h1>Activity log</h1><div class="muted">Admin only. Who added or deleted websites, and account changes, with date and time.</div></div></div>
+      $('#view').innerHTML = `<div class="page-head"><div><h1>Activity log</h1><div class="muted">Admin only. Who added or deleted websites, and account changes, with date and time.</div></div><button class="btn" id="dbOpt" title="Compresses older website records, trims long logs and removes the old AI cache format. Safe to run any time.">🧹 Optimize database</button></div>
         <div class="panel"><div class="toolbar"><span class="chips">${GFILTERS.map((x) => `<button class="chipbtn ${f === x.v ? 'active' : ''}" data-gf="${x.v}">${x.label}</button>`).join('')}</span><span class="spacer"></span><span class="small muted">${list.length} entries</span></div>
         ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Date &amp; time</th><th>Who</th><th>What happened</th></tr></thead><tbody>${list.map((e) => {
           const site = e.siteId && state.sites.find((x) => x.id === e.siteId);
@@ -1577,6 +1790,15 @@
             <td><span class="a-ic">${ACT_ICON[e.type] || '•'}</span> ${esc(e.text)}${site ? ` · <a href="#/site/${esc(site.id)}">${esc(site.businessName || site.siteId)}</a>` : ''}${e.type === 'site-delete' && e.addedByName ? ` <span class="small faint">(originally added by ${esc(e.addedByName)})</span>` : ''}</td></tr>`;
         }).join('')}</tbody></table></div>` : '<div class="empty">Nothing here yet.</div>'}</div>`;
       $$('[data-gf]').forEach((b) => (b.onclick = () => { state.gfilter = b.dataset.gf; draw(); }));
+      $('#dbOpt').onclick = async () => {
+        const btn = $('#dbOpt'); btn.disabled = true; btn.textContent = 'Optimizing…';
+        try {
+          const r = await store({ op: 'maintenance' });
+          const kb = (n) => (n / 1024).toFixed(0) + ' KB';
+          toast(`Done: ${r.sitesCompressed} website records compressed (${kb(r.bytesBefore)} → ${kb(r.bytesAfter)}), ${r.oldKeysRemoved} old cache entries removed${r.totalKeys ? `, ${r.totalKeys} keys in total` : ''}.`);
+          await loadSites(); items = (await api('/api/store?op=gactivity')).items; draw();
+        } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = '🧹 Optimize database'; }
+      };
     };
     draw();
   }
@@ -1672,8 +1894,11 @@
     renderTop();
     pulse();
     render();
+    setTimeout(roomTick, 1500);
   }
   window.addEventListener('hashchange', () => {
+    if (state.me && Date.now() - lastPulse > 5000) setTimeout(pulse, 1500);
+    setTimeout(roomTick, 600);
     const r = route();
     if (state.me && r.name === 'site' && state.current && state.current.id === r.id) {
       // same site: switch tab / open drawer without refetching
@@ -1693,15 +1918,16 @@
     setInterval(async () => {
       if (!state.me || document.hidden || modalOpts) return;
       try {
-        if (Date.now() - lastPulse > 85000) pulse();
         const r = route();
-        if (r.name === 'sites') { await loadSites(); renderSites(); }
+        // Ask "anything new?" first (one tiny read); only reload when something changed
+        if (r.name === 'sites') { if (await loadSites(true)) renderSites(); }
         else if (r.name === 'site' && state.current && !state.scanning[state.current.id]) {
           const busy = (siteComposer && document.body.contains($('#siteComposer')) && siteComposer.busy()) || (drawerComposer && drawerComposer.busy()) || document.activeElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName);
-          if (!busy) { await loadSite(state.current.id); renderSite(); }
+          if (!busy && await refreshSite(state.current.id)) renderSite();
         }
       } catch (e) { /* ignore */ }
-    }, 45000);
-    setInterval(() => { if (Date.now() - lastPulse > 85000) pulse(); }, 30000);
+    }, 60000);
+    // Heartbeat: every 2 min while the tab is visible, every 5 min in the background
+    setInterval(() => { if (Date.now() - lastPulse > (document.hidden ? 290000 : 115000)) pulse(); }, 30000);
   })();
 })();

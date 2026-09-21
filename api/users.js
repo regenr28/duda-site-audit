@@ -18,7 +18,10 @@ export default async function handler(req, res) {
     if (b.op === 'profile') {
       const name = String(b.name || '').trim().slice(0, 60);
       if (!name) return res.status(400).json({ error: 'Name required' });
-      me.name = name; await putUser(me);
+      me.name = name;
+      // How long pop-up notifications stay on screen (seconds; 0 = until closed)
+      if (b.notifySecs !== undefined) { const n = Number(b.notifySecs); if (Number.isFinite(n) && n >= 0 && n <= 600) me.notifySecs = Math.round(n); }
+      await putUser(me);
       return res.status(200).json({ user: publicUser(me) });
     }
     if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });

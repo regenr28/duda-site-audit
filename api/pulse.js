@@ -2,6 +2,12 @@
 // Returns who is online (presence) + this user's notifications in one round trip.
 import { redis, P, readBody, requireUser, jparse, now } from './_lib.js';
 
+// Which website / audit item this person has open right now (shown in Team status)
+function where(w) {
+  if (!w || typeof w !== 'object' || !w.siteKey) return null;
+  return { siteKey: String(w.siteKey).slice(0, 40), name: String(w.name || '').slice(0, 120), item: Number(w.item) || null, tab: String(w.tab || '').slice(0, 20) };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
@@ -10,7 +16,7 @@ export default async function handler(req, res) {
     const b = readBody(req);
     let active = b.lastActive && !isNaN(Date.parse(b.lastActive)) ? new Date(Math.min(Date.parse(b.lastActive), Date.now())).toISOString() : now();
     const [, pres, list, seen] = await redis(
-      ['HSET', P + 'presence', me.email, JSON.stringify({ seen: now(), active })],
+      ['HSET', P + 'presence', me.email, JSON.stringify({ seen: now(), active, name: me.name, where: where(b.where) })],
       ['HGETALL', P + 'presence'],
       ['LRANGE', P + 'notif:' + me.email, 0, 49],
       ['GET', P + 'notifseen:' + me.email],
