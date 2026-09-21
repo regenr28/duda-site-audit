@@ -14,11 +14,24 @@
 // Order: AI_ORDER (default "gateway,gemini,groq,openrouter,anthropic"). Only providers with a key take part.
 // Our own daily request cap per provider: <GEMINI|GROQ|OPENROUTER|AI_GATEWAY|ANTHROPIC>_DAILY_LIMIT (0 = no cap).
 // Results are cached for 60 days so rescans don't use any quota.
-import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse } from './_lib.js';
+import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL } from './_lib.js';
+
+// ---------- made-up names: the team never sees which AI company or model is used ----------
+// Only the app owner (SUGGESTIONS_OWNER) sees real provider and model names, for troubleshooting.
+// Rename with AI_ALIASES, e.g. "gemini=Nova,groq=Orion".
+const ALIASES = Object.assign({ gateway: 'Atlas', gemini: 'Nova', groq: 'Orion', openrouter: 'Vega', anthropic: 'Lyra' },
+  Object.fromEntries(String(process.env.AI_ALIASES || '').split(',').map((x) => x.split('=').map((y) => y.trim())).filter((x) => x[0] && x[1])));
+const aliasOf = (id) => ALIASES[id] || 'AI';
+const GENERIC_NOTE = { limit: 'Daily free limit reached.', cooling: 'Busy right now (per-minute limit). Resting briefly.', credits: 'Out of credits. Checking again later.', error: 'Setup problem. Retrying automatically; the app owner can see details.' };
+function publicStatus(st, owner) {
+  return (st || []).map((x) => owner
+    ? Object.assign({}, x, { id: aliasOf(x.id).toLowerCase(), realLabel: x.label, label: aliasOf(x.id) })
+    : { id: aliasOf(x.id).toLowerCase(), label: aliasOf(x.id), free: x.free, state: x.state, ready: x.ready, until: x.until, note: x.note ? (GENERIC_NOTE[x.state] || '') : '', used: x.used, limit: x.limit, resetsAt: x.resetsAt, auto: false });
+}
 
 const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 5000); // items (alt texts + text blocks) per day, all users
 const AGENCIES = (process.env.AGENCY_NAMES || 'Detailers Roadmap, 8bit Creative').split(',').map((s) => s.trim()).filter(Boolean);
-const ALT_VERDICTS = ['describes_image', 'this_business', 'other_business', 'wrong_location', 'placeholder', 'unclear'];
+const ALT_VERDICTS = ['describes_image', 'this_business', 'partner_logo', 'other_business', 'wrong_location', 'placeholder', 'unclear'];
 const TEXT_TYPES = ['other_business', 'wrong_location', 'name_variant'];
 
 const env = (k, d) => (process.env[k] !== undefined && process.env[k] !== '' ? process.env[k] : d);
@@ -245,17 +258,18 @@ async function callChain(list, system, user) {
 }
 
 const CONTEXT = `The websites belong to car-care businesses: auto detailing, ceramic coating, paint protection film (PPF), window tint, wraps and similar. They are built from shared templates by the marketing agency ${AGENCIES.join(' / ')}, so a common, costly mistake is content left over from a PREVIOUS client: another shop's name or another city.
-NOT other businesses: car makes/models (BMW, Tesla Model 3), product and film brands (Ceramic Pro, XPEL, SunTek, 3M, Llumar, Gtechniq, Gyeon, IGL, Meguiar's, Chemical Guys, Koch-Chemie), certifications and associations (IDA, IDA Certified Detailer), platforms (Google, Yelp, Facebook, Instagram), booking/payment tools (Urable, Square), the agency itself (${AGENCIES.join(', ')}), customer/reviewer names, dealerships named as places cars came from, and generic phrases.`;
+NOT other businesses: car makes/models (BMW, Tesla Model 3), product and film brands (Ceramic Pro, XPEL, SunTek, 3M, Llumar, Gtechniq, Gyeon, IGL, Meguiar's, Chemical Guys, Koch-Chemie), wheel, tire, lift and accessory brands (Fuel Off-Road, KMC, Method, Black Rhino, Toyo, Nitto, BFGoodrich, Falken, Rough Country, Fox), any brand the shop sells, installs or partners with, warranties, certifications and associations (IDA, IDA Certified Detailer), platforms (Google, Yelp, Facebook, Instagram), booking/payment tools (Urable, Square), the agency itself (${AGENCIES.join(', ')}), customer/reviewer names, dealerships named as places cars came from, and generic phrases.`;
 
 const ALT_SYSTEM = `You review image ALT TEXT. ${CONTEXT}
 Classify each alt text into exactly one verdict:
 - "describes_image": describes the photo (cars, people, work being done, a building, a product). Fine even without the business name.
 - "this_business": names or clearly refers to THIS business, including abbreviations, LLC/Co. variations, "<name> logo".
-- "other_business": presents a DIFFERENT business as if it were this one (e.g. a logo alt with another shop's name, "at Smith's Detailing").
+- "partner_logo": the logo or badge of a brand, manufacturer, product line, supplier, partner, dealer program, certification, warranty or association (e.g. "Fuel Off Road logo", "KMC wheels logo", "XPEL certified installer badge", "IDA member"). These are CORRECT: the alt should name that brand. Images marked "brand-logo" or shown in a row of several logos are almost always this.
+- "other_business": presents a DIFFERENT car-care shop as if it were THIS business: the site's own logo (marked "site-logo") naming another shop, or text like "at Smith's Detailing", "Joe's Auto Spa team". Never use this for brand, product, partner or certification logos.
 - "wrong_location": claims a city/state that conflicts with this business's location and service-area pages (only when clearly a location claim).
 - "placeholder": template, stock or filler text ("stock photo", "placeholder", "image 12", "lorem ipsum", "your logo here").
 - "unclear": cannot tell.
-Be conservative: only use "other_business" or "wrong_location" when the text clearly names another business or place.
+Be conservative: only use "other_business" or "wrong_location" when the text clearly names another shop or place. A brand logo is never "other_business".
 Respond with JSON only: {"results":[{"i":<number>,"verdict":"<verdict>","confidence":<0..1>,"reason":"<max 20 words>","suggestion":"<better alt text, only for other_business/wrong_location/placeholder, else empty>"}]}`;
 
 const TEXT_SYSTEM = `You proofread WEBSITE TEXT for one business and report ONLY real problems about its business name and location. ${CONTEXT}
@@ -275,35 +289,82 @@ Service-area / location pages on the site: ${(b.areaPages || []).slice(0, 40).jo
 ${b.foreignNames && b.foreignNames.length ? `Names already found on this site that belong to another business: ${b.foreignNames.slice(0, 10).join(', ')}\n` : ''}`;
 }
 const altPrompt = (b, items) => `${businessHeader(b)}
-ALT TEXTS (i | where | logo? | alt text | image file)
-${items.map((x) => `${x.i} | ${x.location || 'Body'} | ${x.isLogo ? 'logo' : '-'} | ${String(x.alt).replace(/\s+/g, ' ').slice(0, 300)} | ${String(x.file || '').slice(0, 80)}`).join('\n')}`;
+ALT TEXTS (i | where | logo type | alt text | image file)
+${items.map((x) => `${x.i} | ${x.location || 'Body'} | ${x.isLogo ? 'site-logo' : x.brandLogo ? `brand-logo${x.logoRow >= 3 ? ` (in a row of ${x.logoRow} logos)` : ''}` : '-'} | ${String(x.alt).replace(/\s+/g, ' ').slice(0, 300)} | ${String(x.file || '').slice(0, 80)}`).join('\n')}`;
 const textPrompt = (b, items) => `${businessHeader(b)}
 TEXT BLOCKS (each starts with [i] then where it appears)
 ${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n')}`;
+
+// ---------- look at the actual image (Gemini can see images; used only for alts flagged as another business) ----------
+const IMG_HOSTS = /(^|\.)(cdn-website\.com|multiscreensite\.com|dudamobile\.com|cdn\.dudaone\.com|irp\.cdn-website\.com)$/i;
+async function fetchImage(src) {
+  try {
+    const u = new URL(src);
+    if (!IMG_HOSTS.test(u.hostname) && !process.env.AI_IMAGE_ANY_HOST) return null;
+    const r = await fetchWithTimeout(u.href, {}, 10000);
+    if (!r.ok) return null;
+    const type = (r.headers.get('content-type') || '').split(';')[0];
+    if (!/^image\/(png|jpeg|webp|heic|heif)$/.test(type)) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length > 3.5 * 1024 * 1024) return null;
+    return { mimeType: type, data: buf.toString('base64') };
+  } catch (e) { return null; }
+}
+const VISION_SYSTEM = `You check website images against their ALT TEXT. ${CONTEXT}
+For each image decide:
+- "partner_logo": a logo or badge of a brand, manufacturer, product line, supplier, partner, certification, warranty or association, and the alt text names it. This is CORRECT.
+- "describes_image": a photo or graphic the alt text describes. CORRECT.
+- "this_business": the image is THIS business's own logo or sign. CORRECT.
+- "other_business": the image or alt presents a different car-care shop as if it were this business (e.g. another shop's logo used as the site logo, a photo of another shop's sign). Rare.
+- "unclear": cannot tell.
+Respond with JSON only: {"results":[{"i":<number>,"verdict":"<verdict>","confidence":<0..1>,"reason":"<max 20 words>","suggestion":"<better alt text only if the alt is wrong, else empty>"}]}`;
+async function visionCheck(list, business, items) {
+  const status = await loadStatus(list);
+  const p = list.find((x, k) => x.kind === 'gemini' && status[k].ready);
+  if (!p) return null;
+  const imgs = [];
+  for (const t of items.slice(0, 8)) { const im = t.src ? await fetchImage(t.src) : null; if (im) imgs.push({ t, im }); }
+  if (!imgs.length) return null;
+  const parts = [{ text: businessHeader(business) + '\nIMAGES (each preceded by its number, location and alt text):' }];
+  imgs.forEach(({ t, im }) => { parts.push({ text: `[${t.i}] (${t.location || 'Body'}${t.brandLogo ? ', brand-logo' : ''}) alt: "${String(t.alt).slice(0, 200)}"` }); parts.push({ inlineData: im }); });
+  const r = await fetchWithTimeout(`${p.base}/models/${encodeURIComponent(p.model)}:generateContent`, {
+    method: 'POST', headers: { 'x-goog-api-key': p.key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ systemInstruction: { parts: [{ text: VISION_SYSTEM }] }, contents: [{ role: 'user', parts }], generationConfig: { temperature: 0, maxOutputTokens: 4096, responseMimeType: 'application/json' } }),
+  }, 40000);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const f = classify(p, r, j); if (!f.model) await park(p, f.reason, f.until, f.note); return null; }
+  const [u] = await redis(['INCR', useKey(p)]); if (u === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]);
+  const text = ((((j.candidates || [])[0] || {}).content || {}).parts || []).map((x) => x.text || '').join('');
+  const m = text.match(/\{[\s\S]*\}/); const parsed = m ? jparse(m[0], {}) : {};
+  const out = new Map();
+  (parsed.results || []).forEach((x) => { if (x && ALT_VERDICTS.includes(x.verdict)) out.set(Number(x.i), { verdict: x.verdict, confidence: Math.max(0, Math.min(1, Number(x.confidence) || 0)), reason: String(x.reason || '').slice(0, 160), suggestion: String(x.suggestion || '').slice(0, 200) }); });
+  return out;
+}
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
   const list = await applySavedModels(providers()).catch(() => providers());
+  const owner = me.email === OWNER_EMAIL;
   if (req.method === 'POST' && readBody(req).op === 'test') {
     // Clear resting states and send a tiny request to each model (1 request each)
     const only = readBody(req).id;
     const out = [];
-    for (const p of list.filter((x) => !only || x.id === only)) {
+    for (const p of list.filter((x) => !only || aliasOf(x.id).toLowerCase() === String(only).toLowerCase())) {
       await redis(['DEL', stateKey(p.id)]);
       const r = await callWithModelFix(p, 'You are a health check. Reply with JSON only.', 'Reply exactly {"ok":true}');
-      if (r.parsed) { const [u] = await redis(['INCR', useKey(p)]); if (u === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]); out.push({ id: p.id, ok: true, model: p.model }); }
-      else { await park(p, r.fail.reason, r.fail.until, r.fail.note); out.push({ id: p.id, ok: false, note: r.fail.note }); }
+      if (r.parsed) { const [u] = await redis(['INCR', useKey(p)]); if (u === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]); out.push({ id: aliasOf(p.id).toLowerCase(), ok: true, alias: aliasOf(p.id), model: owner ? p.model : '' }); }
+      else { await park(p, r.fail.reason, r.fail.until, r.fail.note); out.push({ id: aliasOf(p.id).toLowerCase(), ok: false, alias: aliasOf(p.id), note: owner ? r.fail.note : GENERIC_NOTE[r.fail.reason] || '' }); }
     }
-    return res.status(200).json({ tested: out, providers: await loadStatus(list), now: Date.now(), enabled: list.length > 0 });
+    return res.status(200).json({ tested: out, providers: publicStatus(await loadStatus(list), owner), now: Date.now(), enabled: list.length > 0 });
   }
   if (req.method === 'GET') {
     const st = await loadStatus(list).catch(() => []);
     const first = st.find((x) => x.ready) || st[0];
-    return res.status(200).json({ enabled: list.length > 0, providers: st, provider: first ? first.label : '', model: first ? first.model : '', free: list.length > 0 && list.every((p) => p.free), now: Date.now() });
+    return res.status(200).json({ enabled: list.length > 0, providers: publicStatus(st, owner), owner, alias: first ? aliasOf(first.id) : '', free: list.length > 0 && list.every((p) => p.free), now: Date.now() });
   }
-  if (!list.length) return res.status(400).json({ error: 'AI is not set up. Add a free GEMINI_API_KEY or GROQ_API_KEY in Vercel.' });
+  if (!list.length) return res.status(400).json({ error: 'AI is not set up yet.' });
   try {
     let pvUsed = null;
     const b = readBody(req);
@@ -314,7 +375,7 @@ export default async function handler(req, res) {
     if (!items.length) return res.status(200).json({ results: [] });
 
     // Cache per business + item, so the same alt text / paragraph is never paid for twice
-    const keyOf = (x) => P + 'ai:' + b.op + ':' + sha([business.name, business.city, business.region, (business.areaPages || []).length, x[field], x.isLogo ? 1 : 0].join('|'));
+    const keyOf = (x) => P + (b.op === 'alt' ? 'ai2:' : 'ai:') + b.op + ':' + sha([business.name, business.city, business.region, (business.areaPages || []).length, x[field], x.isLogo ? 1 : 0, b.op === 'alt' ? (x.brandLogo ? 'b' : '') + (x.logoRow || 0) : ''].join('|'));
     const cached = await redis(...items.map((x) => ['GET', keyOf(x)]));
     const results = []; const todo = [];
     items.forEach((x, k) => {
@@ -335,6 +396,18 @@ export default async function handler(req, res) {
       const clean = (parsed.results || []).filter((x) => x && Number.isFinite(Number(x.i)) && todo.some((t) => t.i === Number(x.i)));
       const cmds = [];
       if (b.op === 'alt') {
+        // Second look WITH the image for anything flagged as another business (except the site's own logo)
+        const flagged = clean.filter((x) => x.verdict === 'other_business').map((x) => todo.find((t) => t.i === Number(x.i))).filter((t) => t && !t.isLogo);
+        if (flagged.length) {
+          const seen = await visionCheck(list, business, flagged).catch(() => null);
+          clean.forEach((x) => {
+            const t = todo.find((y) => y.i === Number(x.i));
+            if (x.verdict !== 'other_business' || !t || t.isLogo) return;
+            const v = seen && seen.get(t.i);
+            if (v) { x.verdict = v.verdict; x.confidence = v.confidence; x.reason = '(checked the image) ' + v.reason; x.suggestion = v.suggestion || x.suggestion; x.vision = true; }
+            else if (t.brandLogo || t.logoRow >= 3) { x.verdict = 'partner_logo'; x.reason = 'Brand / partner logo (it is in a row of logos, not the site logo)'; x.suggestion = ''; }
+          });
+        }
         clean.filter((x) => ALT_VERDICTS.includes(x.verdict)).forEach((x) => {
           const r = { i: Number(x.i), verdict: x.verdict, confidence: Math.max(0, Math.min(1, Number(x.confidence) || 0)), reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200) };
           results.push(r);
@@ -353,10 +426,10 @@ export default async function handler(req, res) {
       if (cmds.length) await redis(...cmds);
     }
     return res.status(200).json({ results: results.filter((r) => !r.cachedOnly), cachedCount: items.length - todo.length,
-      provider: pvUsed ? pvUsed.label : '', model: pvUsed ? pvUsed.model : '', providers: await loadStatus(list).catch(() => []), now: Date.now() });
+      alias: pvUsed ? aliasOf(pvUsed.id) : '', ...(owner && pvUsed ? { realProvider: pvUsed.label, realModel: pvUsed.model } : {}), providers: publicStatus(await loadStatus(list).catch(() => []), owner), now: Date.now() });
   } catch (e) {
-    if (e.allBusy) return res.status(429).json({ error: String(e.message), allBusy: true, retryAt: e.retryAt, providers: e.providers, now: Date.now() });
-    return res.status(e.status === 429 ? 429 : 500).json({ error: String(e.message || e) });
+    if (e.allBusy) return res.status(429).json({ error: String(e.message), allBusy: true, retryAt: e.retryAt, providers: publicStatus(e.providers, owner), now: Date.now() });
+    return res.status(e.status === 429 ? 429 : 500).json({ error: owner ? String(e.message || e) : 'The AI check failed. Please try again later.' });
   }
 }
-export const _test = { applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };
+export const _test = { visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };

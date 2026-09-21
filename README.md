@@ -72,6 +72,8 @@ Tick **Sensitive** for each, then redeploy.
 
 **How the fallback works:** models are tried in `AI_ORDER`. When one hits its per-minute limit, its daily limit, this app's daily cap, or runs out of credits, it rests until it resets and the next one answers. If every model is resting for up to 3 minutes, the scan waits with a countdown; for longer, it finishes and the rest becomes **AI check pending** items (below).
 
+**Made-up AI names:** the team only ever sees made-up names: **Atlas** (AI Gateway), **Nova** (Gemini), **Orion** (Groq), **Vega** (OpenRouter), **Lyra** (Anthropic). The real provider and model never reach their browser, including in the app's network responses and saved scan results. Only the app owner (`SUGGESTIONS_OWNER`) sees the real names on the AI Status tab, for troubleshooting. Rename them with `AI_ALIASES`, e.g. `gemini=Nova,groq=Orion`.
+
 **Model names update themselves:** providers retire model names often. When a model is refused, the app lists that provider's current models, picks the best one (for example the newest Gemini Flash, or Groq's largest general model), remembers it for 7 days and marks it **auto-selected** on the AI Status tab. **Test all models** on that tab checks each model right away (1 credit each).
 
 **AI Status tab:** shows today's free credits (requests) across all free models, how many are used and left, each model's status, and a live countdown to when it's back and when its daily limit resets. It also lists websites waiting for AI credits.
@@ -112,7 +114,13 @@ A Google account and an email/password account with the same email are treated a
 9. **Rescan** after fixing. IDs, statuses, assignees and comments stay with issues that still exist, and fixed ones drop off.
 10. **Export CSV** for a report.
 
-**Jumping to an element:** click the selector (or **👁 Show on page**) on any audit item. A preview of that page opens on the right device with the element outlined in red and scrolled into view. Side-panel and device-hidden items are opened/shown automatically. Switch Desktop/Tablet/Mobile or the page at the top, or click **Open live preview ↗** to see the real page. **Copy** copies the selector, and **⌖ Copy highlight snippet** in the item still works in DevTools.
+**Jumping to an element:** click the selector (or **👁 Show on page**) on any audit item. A preview of that page opens on the right device with the element outlined in red and scrolled into view. Side-panel and device-hidden items are opened/shown automatically. Switch Desktop/Tablet/Mobile or the page at the top, or click **Open live preview ↗** to see the real page. **Copy** copies the selector, and **⌖ Copy highlight snippet** in the item still works in DevTools. Elements hidden on the live page (display:none or visibility:hidden on the element or a parent, opacity 0 while waiting for a scroll animation, off-screen, collapsed or screen-reader-only) are shown anyway, and the note says exactly what hides them.
+
+**Adding a site that already exists** is skipped: the dialog shows it with **Open existing audit**.
+
+**Live scan status:** a pulsing line shows how long the current step has taken. During AI steps there is a **Skip AI for now** button; skipped pages become AI check pending items that resume later. AI requests time out after about 2 minutes and retry once.
+
+**Brand, partner and certification logos** (e.g. Fuel Off-Road, KMC, XPEL, IDA) are treated as correct when the alt text names them. Only the site's own logo (header / side panel, or footer linking home) must name this business. If the AI still flags a logo as another business, it takes a second look at the actual image (Gemini) before reporting it.
 
 ---
 

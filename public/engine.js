@@ -610,8 +610,14 @@
           linksHome = hp === '' || hp === '/site/' + ctx.siteId || hp === '/' || (truth.domain && /^https?:\/\//i.test(hp) && hp.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/+$/, '') === truth.domain.replace(/^www\./, ''));
         }
         const logoHint = /logo/i.test(file) || /logo/i.test(img.id || '') || /\blogo\b|imageWidget.*logo/i.test(cls(img) + ' ' + cls(img.parentElement));
-        const isLogo = !inGallery && (logoHint || ((locImg === 'Header' || locImg === 'Side panel' || locImg === 'Footer') && linksHome));
-        altList.push({ alt: a, file, selector: uniqueSelector(img), location: locImg, linksHome, isLogo, inGallery, hiddenBy: hiddenReason(img, device) || '' });
+        // The SITE's own logo sits in the header / side panel (or links home from the footer).
+        // Logos elsewhere (a row of brand, partner or certification logos) belong to other companies on purpose.
+        const isLogo = !inGallery && ((((locImg === 'Header' || locImg === 'Side panel') && (linksHome || logoHint))) || (locImg === 'Footer' && linksHome));
+        const row = img.closest('.dmRespRow, .dmRespColsWrapper, section, [class*="row"], ul') || (img.parentElement && img.parentElement.parentElement);
+        const rowImgs = row ? Array.from(row.querySelectorAll('img')) : [];
+        const logoRow = rowImgs.filter((x) => /logo|brand|partner|badge|certif/i.test((x.getAttribute('alt') || '') + ' ' + (x.getAttribute('src') || x.getAttribute('data-src') || ''))).length;
+        const brandLogo = !isLogo && (logoHint || /\blogo\b/i.test(a) || logoRow >= 3);
+        altList.push({ alt: a, file, src: abs, selector: uniqueSelector(img), location: locImg, linksHome, isLogo, brandLogo, logoRow: Math.max(logoRow, brandLogo ? 1 : 0), rowImgs: rowImgs.length, inGallery, hiddenBy: hiddenReason(img, device) || '' });
         // A descriptive alt ("A man is spraying film on a car") describes the photo — it's never a business name
         const descriptive = /^(a|an|the|this|close[- ]up|photo|image|picture)\b/i.test(a) || a.split(/\s+/).length >= 7 || /\b(is|are|was|were|being|with|on|of|in)\b/i.test(a) && a.split(/\s+/).length >= 5;
         if (isLogo && truth.businessName && !matchesBusiness(a, truth)) {
@@ -778,7 +784,7 @@
           r.images.forEach((x) => { if (!images.has(x.url)) images.set(x.url, Object.assign({ path, device }, x)); });
           (r.alts || []).forEach((x) => {
             let m = altMap.get(x.alt);
-            if (!m) { if (altMap.size >= 400) return; m = { alt: x.alt, file: x.file, selector: x.selector, location: x.location, linksHome: x.linksHome, isLogo: x.isLogo, pages: [], devices: [], visibleOn: [], hiddenOn: [] }; altMap.set(x.alt, m); }
+            if (!m) { if (altMap.size >= 400) return; m = { alt: x.alt, file: x.file, src: x.src, selector: x.selector, location: x.location, linksHome: x.linksHome, isLogo: x.isLogo, brandLogo: x.brandLogo, logoRow: x.logoRow, rowImgs: x.rowImgs, pages: [], devices: [], visibleOn: [], hiddenOn: [] }; altMap.set(x.alt, m); }
             if (!m.pages.includes(path)) m.pages.push(path);
             if (!m.devices.includes(device)) m.devices.push(device);
             if (!x.hiddenBy) { if (!m.visibleOn.includes(device)) m.visibleOn.push(device); } else m.hiddenOn.push(`${DEVICE_LABEL[device]} (${x.hiddenBy})`);

@@ -15,7 +15,7 @@
 
   const state = {
     config: {}, me: null, users: [], sites: [], current: null,
-    scanning: {}, queue: [], running: 0,
+    scanning: {}, queue: [], running: 0, skipAI: {}, aiAbort: {},
     filters: { q: '', status: '', assignee: '' },
     ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' },
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
@@ -353,20 +353,45 @@
         <p class="small muted" style="margin:0">Each site is scanned on Desktop, Tablet and Mobile and compared to its Duda Business Info. Keep this tab open while scans run (${SCAN_CONCURRENCY_SITES} at a time).</p>
       </div>
       <footer><button class="btn" data-close>Cancel</button><button class="btn primary" id="addGo">Add &amp; start audit</button></footer>`);
+    const addBody = $('.modal .body');
+    // Warn about duplicates while typing
+    const dupHint = document.createElement('div'); dupHint.id = 'addDup'; addBody.insertBefore(dupHint, addBody.children[1]);
+    const findExisting = (siteId) => state.sites.find((x) => x.siteId === siteId);
+    const showDups = () => {
+      const ids = [...new Set($('#addLinks').value.split(/\s+/).map((l) => parseLink(l).siteId).filter(Boolean))];
+      const d = ids.map(findExisting).filter(Boolean);
+      dupHint.innerHTML = d.length ? `<div class="note unk">${d.map((x) => `<div><b>Already exists:</b> ${esc(x.businessName || x.siteId)} <span class="faint mono">${esc(x.siteId)}</span> · <a href="#/site/${esc(x.id)}" data-open-existing>Open existing audit</a></div>`).join('')}<div class="small faint">These are skipped. Use <b>Rescan</b> on the existing audit instead.</div></div>` : '';
+      $$('[data-open-existing]', dupHint).forEach((a) => (a.onclick = () => closeModal()));
+    };
+    $('#addLinks').addEventListener('input', showDups);
     $('#addGo').onclick = async () => {
       const lines = $('#addLinks').value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
       if (!lines.length) return toast('Paste at least one editor link');
       $('#addGo').disabled = true;
-      let added = 0, dup = 0, bad = 0;
+      let added = 0, bad = 0; const dups = []; const seen = new Set();
       for (const link of lines) {
         const p = parseLink(link);
         if (!p.siteId) { bad++; continue; }
+        if (seen.has(p.siteId)) continue; seen.add(p.siteId);
+        const ex = findExisting(p.siteId);
+        if (ex) { dups.push(ex); continue; }
         try { const sum = await store({ op: 'create', siteId: p.siteId, host: p.host, editorUrl: link, assignee: $('#addWho').value }); upsertSummary(sum); enqueue(sum.id); added++; }
-        catch (e) { if (e.status === 409) dup++; else { bad++; toast(e.message); } }
+        catch (e) {
+          if (e.status === 409) { await loadSites().catch(() => {}); dups.push(findExisting(p.siteId) || { id: e.data && e.data.id, siteId: p.siteId }); }
+          else { bad++; toast(e.message); }
+        }
       }
-      closeModal();
-      toast(`${added} added${dup ? ` · ${dup} already in list` : ''}${bad ? ` · ${bad} invalid` : ''}`);
       render();
+      if (!dups.length) { closeModal(); toast(`${added} added${bad ? ` · ${bad} invalid` : ''}`); return; }
+      // Keep the dialog open to show which ones already exist, with a way to open them
+      $('.modal').innerHTML = `<header><h2>${added ? `${added} added · ` : ''}${dups.length} already exist${dups.length > 1 ? '' : 's'}</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body"><table class="grid"><thead><tr><th>Website</th><th>Status</th><th>Last scan</th><th></th></tr></thead><tbody>
+        ${dups.map((x) => `<tr><td><b>${esc(x.businessName || x.siteId)}</b><div class="faint mono small">${esc(x.siteId)}</div></td><td>${esc(x.status || '')}</td><td class="small">${x.scan && x.scan.finishedAt ? esc(fmtDate(x.scan.finishedAt)) : '—'}</td>
+          <td><a class="btn sm primary" href="#/site/${esc(x.id)}" data-open-existing>Open existing audit</a></td></tr>`).join('')}
+        </tbody></table>${bad ? `<p class="small muted">${bad} link(s) weren't valid Duda editor links.</p>` : ''}</div>
+        <footer><button class="btn" data-close>Close</button></footer>`;
+      $$('[data-close]', $('.modal')).forEach((b) => (b.onclick = closeModal));
+      $$('[data-open-existing]', $('.modal')).forEach((a) => (a.onclick = () => closeModal()));
     };
   }
   function enqueue(id) {
@@ -386,6 +411,7 @@
   async function scanSite(id) {
     const site = await api('/api/store?op=site&id=' + encodeURIComponent(id));
     const t0 = Date.now();
+    delete state.skipAI[id];
     const startedAt = new Date().toISOString();
     state.scanning[id] = { done: 0, total: 0, message: 'Reading Business Info…' };
     upsertSummary(await store({ op: 'scanState', id, scan: { state: 'scanning', startedAt, error: '' } })); render();
@@ -421,7 +447,7 @@
       if (aiAlt || aiText) {
         const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || []))];
         const paused = (aiText && aiText.paused) || (aiAlt && aiAlt.paused) || null;
-        aiSummary = Object.assign({}, aiAlt || { checked: 0, cached: 0, flagged: 0, softened: 0 }, { text: aiText, provider: used.map((u) => u.split(' · ')[0]).join(', '), model: used.map((u) => u.split(' · ')[1]).filter(Boolean).join(', '), paused });
+        aiSummary = Object.assign({}, aiAlt || { checked: 0, cached: 0, flagged: 0, softened: 0 }, { text: aiText, aliases: used.join(', '), paused });
         const pend = [].concat(pendingFindings('alt', (aiAlt && aiAlt.pending) || [], paused), pendingFindings('text', (aiText && aiText.pending) || [], paused));
         aiSummary.pendingItems = pend.length;
         res.findings.push(...pend);
@@ -443,28 +469,31 @@
     if (state.current && state.current.id === id) await loadSite(id);
   }
   // ---------- AI alt-text judgement ----------
-  const AI_LABEL = { describes_image: 'Describes the photo (OK)', this_business: 'Refers to this business (OK)', other_business: 'Names another business', wrong_location: "Location doesn't match", placeholder: 'Placeholder / stock text', unclear: 'Unclear', name_variant: 'Business name written differently' };
+  const AI_LABEL = { describes_image: 'Describes the photo (OK)', this_business: 'Refers to this business (OK)', other_business: 'Names another business', wrong_location: "Location doesn't match", placeholder: 'Placeholder / stock text', unclear: 'Unclear', partner_logo: 'Brand / partner logo (OK)', name_variant: 'Business name written differently' };
   async function aiAltCheck(res, id, log) {
     if (!state.ai || !state.ai.enabled || !(res.alts || []).length) return null;
     const t = res.truth || {};
     const compact = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const business = aiBusiness(res);
     const skip = res.aiSkip || new Set();
-    const items = res.alts.map((a, i) => ({ i, alt: a.alt, file: a.file, location: a.location, isLogo: a.isLogo }))
+    const items = res.alts.map((a, i) => ({ i, alt: a.alt, file: a.file, src: a.src || '', location: a.location, isLogo: !!a.isLogo, brandLogo: !!a.brandLogo, logoRow: a.logoRow || 0 }))
       .filter((x) => compact(x.alt) !== compact(t.businessName) && x.alt.length >= 2 && !skip.has('alt|' + ((res.alts[x.i].pages || [])[0] || '/')));
     let pending = [];
     const verdicts = new Array(res.alts.length);
-    let done = 0, cached = 0, errors = 0, waits = 0, paused = null; const used = new Set();
+    let done = 0, cached = 0, errors = 0, waits = 0, paused = null; const used = new Set(); const slow = {};
     for (let k = 0; k < items.length; k += 50) {
       state.scanning[id] = Object.assign({}, state.scanning[id], { message: `✨ AI checking alt text ${Math.min(k + 50, items.length)}/${items.length}` }); renderProgress(id);
       try {
-        const r = await post('/api/ai', { op: 'alt', business, items: items.slice(k, k + 50) });
-        aiUpdate(r); if (r.provider) used.add(r.provider + ' · ' + r.model);
+        if (state.skipAI[id]) { paused = { retryAt: aiResumeAt() || srvNow(), next: '', skipped: true }; pending = pending.concat(items.slice(k).map((x) => res.alts[x.i])); break; }
+        const r = await aiPost(id, { op: 'alt', business, items: items.slice(k, k + 50) });
+        aiUpdate(r); if (r.alias) used.add(r.alias);
         (r.results || []).forEach((v) => { verdicts[v.i] = v; done++; if (v.cached) cached++; });
       } catch (e) {
+        if (state.skipAI[id]) { k -= 50; continue; }
+        if (e.status === 504) { if (!slow[k]) { slow[k] = 1; k -= 50; continue; } pending.push(...items.slice(k, k + 50).map((x) => res.alts[x.i])); log.push('AI alt-text check: no answer in time for one batch, kept as pending'); continue; }
         const w = await aiWait(e, id, waits++);
         if (w === 'retry') { k -= 50; continue; }
-        if (w && w.paused) { paused = w.paused; pending = items.slice(k).map((x) => res.alts[x.i]); break; }
+        if (w && w.paused) { paused = w.paused; pending = pending.concat(items.slice(k).map((x) => res.alts[x.i])); break; }
         errors++; log.push('AI alt-text check: ' + e.message); if (e.status === 429 || e.status === 400) break;
       }
     }
@@ -496,17 +525,20 @@
     const batches = []; let cur = [], size = 0;
     blocks.forEach((b) => { if (cur.length && (size + b.text.length > BATCH_CHARS || cur.length >= BATCH_ITEMS)) { batches.push(cur); cur = []; size = 0; } cur.push(b); size += b.text.length; });
     if (cur.length) batches.push(cur);
-    const issues = []; let cached = 0, errors = 0, sent = 0, waits = 0, paused = null, pending = []; const used = new Set();
+    const issues = []; let cached = 0, errors = 0, sent = 0, waits = 0, paused = null, pending = []; const used = new Set(); const slow = {};
     for (let k = 0; k < batches.length; k++) {
       state.scanning[id] = Object.assign({}, state.scanning[id], { message: `✨ AI reading page text ${k + 1}/${batches.length}` }); renderProgress(id);
       try {
-        const r = await post('/api/ai', { op: 'text', business, items: batches[k] });
-        aiUpdate(r); if (r.provider) used.add(r.provider + ' · ' + r.model);
+        if (state.skipAI[id]) { paused = { retryAt: aiResumeAt() || srvNow(), next: '', skipped: true }; pending = pending.concat([].concat(...batches.slice(k)).map((x) => res.texts[x.i])); break; }
+        const r = await aiPost(id, { op: 'text', business, items: batches[k] });
+        aiUpdate(r); if (r.alias) used.add(r.alias);
         issues.push(...(r.results || [])); cached += r.cachedCount || 0; sent += batches[k].length;
       } catch (e) {
+        if (state.skipAI[id]) { k--; continue; }
+        if (e.status === 504) { if (!slow[k]) { slow[k] = 1; k--; continue; } pending.push(...batches[k].map((x) => res.texts[x.i])); log.push('AI page-text check: no answer in time for one batch, kept as pending'); continue; }
         const w = await aiWait(e, id, waits++);
         if (w === 'retry') { k--; continue; }
-        if (w && w.paused) { paused = w.paused; pending = [].concat(...batches.slice(k)).map((x) => res.texts[x.i]); break; }
+        if (w && w.paused) { paused = w.paused; pending = pending.concat([].concat(...batches.slice(k)).map((x) => res.texts[x.i])); break; }
         errors++; log.push('AI page-text check: ' + e.message);
         if (e.status === 429 || e.status === 400) break;
       }
@@ -535,6 +567,17 @@
     renderAiChip();
     if (route().name === 'ai' && !aiPageTimer) { aiPageTimer = setTimeout(() => { aiPageTimer = null; if (route().name === 'ai') renderAiPage(); }, 300); }
   }
+  /** POST to the AI with a time limit, so a slow or stuck request never freezes the scan. "Skip AI" aborts it. */
+  async function aiPost(id, body) {
+    const ctl = new AbortController();
+    state.aiAbort[id] = ctl;
+    const t = setTimeout(() => ctl.abort(), 125000);
+    try { return await api('/api/ai', { method: 'POST', body: JSON.stringify(body), signal: ctl.signal }); }
+    catch (e) { if (e.name === 'AbortError') throw Object.assign(new Error(state.skipAI[id] ? 'Skipped' : 'The AI took too long to answer'), { status: state.skipAI[id] ? 499 : 504 }); throw e; }
+    finally { clearTimeout(t); if (state.aiAbort[id] === ctl) delete state.aiAbort[id]; }
+  }
+  function skipAI(id) { state.skipAI[id] = true; const c = state.aiAbort[id]; if (c) c.abort(); toast('Skipping the AI check. Unchecked pages become "AI check pending" items.'); }
+
   /** All models busy? Wait with a live countdown when it's short, otherwise pause the AI check for this scan. */
   async function aiWait(e, id, waits) {
     if (!(e && e.status === 429 && e.data && e.data.allBusy)) return null;
@@ -577,7 +620,7 @@
       const first = arr[0];
       const union = (k) => [...new Set([].concat(...arr.map((x) => x[k] || [])))];
       const items = arr.slice(0, 80).map((x) => kind === 'alt'
-        ? { alt: x.alt, file: x.file || '', location: x.location, isLogo: !!x.isLogo, selector: x.selector, pages: x.pages, devices: x.devices, visibleOn: x.visibleOn, hiddenOn: x.hiddenOn }
+        ? { alt: x.alt, file: x.file || '', src: x.src || '', location: x.location, isLogo: !!x.isLogo, brandLogo: !!x.brandLogo, logoRow: x.logoRow || 0, selector: x.selector, pages: x.pages, devices: x.devices, visibleOn: x.visibleOn, hiddenOn: x.hiddenOn }
         : { text: String(x.text).slice(0, 1500), selector: x.selector, location: x.location, pages: x.pages, devices: x.devices, visibleOn: x.visibleOn, hiddenOn: x.hiddenOn });
       const f = {
         code: kind === 'alt' ? 'AI_PENDING_ALT' : 'AI_PENDING_TEXT', severity: 'warning', category: 'AI check pending',
@@ -633,7 +676,8 @@
       const alts = [].concat(...open.filter((f) => f.code === 'AI_PENDING_ALT').map((f) => f.aiPending.items || []));
       const texts = [].concat(...open.filter((f) => f.code === 'AI_PENDING_TEXT').map((f) => f.aiPending.items || []));
       const res = { truth: s.truth || {}, pages: s.pages || [], findings: rest, alts, texts };
-      state.scanning[siteId] = { done: 0, total: 0, message: '✨ Resuming AI check…' }; renderProgress(siteId);
+      delete state.skipAI[siteId];
+      state.scanning[siteId] = { done: 0, total: 0, message: '✨ Resuming AI check…', ai: true }; renderProgress(siteId);
       const log = [];
       const before = rest.length;
       const aiAlt = alts.length ? await aiAltCheck(res, siteId, log) : null;
@@ -645,7 +689,8 @@
       const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || []))];
       const scan = Object.assign({}, s.scan || {}, { counts });
       scan.ai = Object.assign({}, scan.ai || {}, { paused, pendingItems: pend.length, resumedAt: new Date().toISOString(), resumedBy: state.me.email,
-        provider: [...new Set([].concat(String((scan.ai || {}).provider || '').split(', ').filter(Boolean), used.map((u) => u.split(' · ')[0])))].join(', ') });
+        aliases: [...new Set([].concat(String((scan.ai || {}).aliases || '').split(', ').filter(Boolean), used))].join(', ') });
+      delete scan.ai.provider; delete scan.ai.model;
       const checked = ((aiAlt && aiAlt.checked) || 0) + ((aiText && aiText.blocks) || 0);
       const sum = await store({ op: 'saveScan', mode: 'aiResume', id: siteId, result: { findings: res.findings, scan }, aiLog: { checked, flagged: res.findings.length - before - pend.length, stillPending: pend.length } });
       upsertSummary(sum);
@@ -681,7 +726,7 @@
     const waiting = (state.sites || []).filter((x) => x.counts && x.counts.aiPending > 0);
     const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
     $('#view').innerHTML = `<div class="page-head"><h1>✨ AI Status</h1><div class="row-between"><button class="btn" id="aiTest" title="Sends one tiny request to each model (uses 1 credit each)">Test all models</button><button class="btn" id="aiRefresh">Refresh</button></div></div>
-      ${!state.ai || !state.ai.enabled ? `<div class="panel panel-pad"><p>No AI keys are set up yet. Add a free <code>GEMINI_API_KEY</code> or <code>GROQ_API_KEY</code> in Vercel, then redeploy.</p></div>` : `
+      ${!state.ai || !state.ai.enabled ? `<div class="panel panel-pad"><p>AI checks aren't set up yet.${state.ai && state.ai.owner ? ' Add the AI keys in Vercel (see the README), then redeploy.' : ' Ask the app owner to turn them on.'}</p></div>` : `
       <div class="ai-stats">
         <div class="panel panel-pad stat"><div class="k">Free credits per day</div><div class="big">${total || '—'}</div><div class="small faint">requests, all free models</div></div>
         <div class="panel panel-pad stat"><div class="k">Used today</div><div class="big">${used}</div><div class="meter"><span style="width:${pct(used, total)}%"></span></div></div>
@@ -694,7 +739,7 @@
         const l = leftOf(p);
         return `<div class="panel panel-pad ai-card">
           <div class="row-between"><div><span class="faint small">#${k + 1}</span> <b>${esc(p.label)}</b> ${p.free ? '<span class="badge scan-complete">Free</span>' : '<span class="badge">Paid</span>'}</div><span class="small"><span class="ai-dot ${cls}"></span> ${esc(lbl)}</span></div>
-          <div class="small faint mono" style="margin:2px 0 10px">${esc(p.model)}${p.auto ? ` <span class="badge subtle" title="${esc(p.configured)} was retired, so the app picked the current model automatically">auto-selected</span>` : ''}</div>
+          <div class="small faint" style="margin:2px 0 10px">${p.realLabel ? `<span class="mono" title="Only you (the app owner) can see this">${esc(p.realLabel)} · ${esc(p.model)}</span>${p.auto ? ` <span class="badge subtle" title="${esc(p.configured)} was retired, so the app picked the current model automatically">auto-selected</span>` : ''}` : 'AI model'}</div>
           <div class="row-between small"><span>Used today <b>${p.used}</b>${p.limit ? ` of ${p.limit}` : ''}</span><span>${l === null ? 'No daily cap' : `<b>${l}</b> left`}</span></div>
           ${p.limit ? `<div class="meter"><span style="width:${pct(Math.min(p.used, p.limit), p.limit)}%" class="${l === 0 ? 'full' : ''}"></span></div>` : ''}
           ${parked ? `<div class="note ${cls === 'bad' ? 'bad' : 'unk'}" style="margin-top:10px">${p.state === 'error' ? 'Retrying automatically' : 'Back'} in <b>${countdown(p.until)}</b> · ${esc(fmtWhen(p.until))}${p.note ? `<div class="small faint">${esc(p.note)}</div>` : ''}${p.state === 'error' ? `<div style="margin-top:6px"><button class="btn sm" data-aitest="${esc(p.id)}">Try again now</button></div>` : ''}</div>` : ''}
@@ -716,7 +761,7 @@
       try {
         const r = await post('/api/ai', { op: 'test', id });
         aiUpdate(r); renderAiPage();
-        toast((r.tested || []).map((x) => `${(r.providers.find((p) => p.id === x.id) || {}).label || x.id}: ${x.ok ? 'working (' + x.model + ')' : 'still failing'}`).join(' · ') || 'Nothing to test');
+        toast((r.tested || []).map((x) => `${x.alias || 'AI'}: ${x.ok ? 'working' + (x.model ? ' (' + x.model + ')' : '') : 'still failing'}`).join(' · ') || 'Nothing to test');
       } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = t; }
     };
     const tb = $('#aiTest'); if (tb) tb.onclick = () => runTest(tb);
@@ -725,7 +770,7 @@
 
   function aiNote(f, full) {
     if (!f.ai) return '';
-    const ok = ['describes_image', 'this_business'].includes(f.ai.verdict);
+    const ok = ['describes_image', 'this_business', 'partner_logo'].includes(f.ai.verdict);
     return `<div class="ai-note ${ok ? 'ok' : 'bad'}"><span class="badge ai-badge">✨ AI</span> <b>${esc(AI_LABEL[f.ai.verdict] || f.ai.verdict)}</b>${f.ai.reason ? ' · ' + esc(f.ai.reason) : ''} <span class="faint">(${Math.round((f.ai.confidence || 0) * 100)}% sure)</span>
       ${full && f.ai.suggestion ? `<div class="ai-sugg">${/^AI_TEXT/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
   }
@@ -804,7 +849,8 @@
     if (live) {
       if (live.queued) return `<span class="badge scan-queued">Queued</span>`;
       const pct = live.total ? Math.round((live.done / live.total) * 100) : 3;
-      return `<span class="badge scan-scanning" id="pb-${esc(s.id)}">Scanning ${live.total ? `${live.done}/${live.total}` : '…'}</span><div class="progress"><i id="pg-${esc(s.id)}" style="width:${pct}%"></i></div><div class="small faint" id="pm-${esc(s.id)}">${esc(live.message || '')}</div>`;
+      if (live.message !== live._m) { live._m = live.message; live.since = Date.now(); }
+      return `<span class="badge scan-scanning" id="pb-${esc(s.id)}">${live.ai && !live.total ? 'AI check' : `Scanning ${live.total ? `${live.done}/${live.total}` : '…'}`}</span><div class="progress"><i id="pg-${esc(s.id)}" style="width:${pct}%"></i></div><div class="small faint" id="pm-${esc(s.id)}">${esc(live.message || '')}</div><div class="live-line small" id="pl-${esc(s.id)}">${liveLine(s.id, live)}</div>`;
     }
     const sc = s.scan || {};
     if (sc.state === 'complete') return `<span class="badge scan-complete">✓ Scan complete</span><div class="small faint">${esc(fmtDate(sc.finishedAt))} · ${sc.pages || 0} pages</div>`;
@@ -821,8 +867,26 @@
     if (!bar) { if (!document.getElementById('pb-' + id) && route().name === 'sites') renderSites(); return; }
     bar.style.width = (live.total ? Math.round((live.done / live.total) * 100) : 3) + '%';
     const m = document.getElementById('pm-' + id); if (m) m.textContent = live.message || '';
+    if (live.message !== live._m) { live._m = live.message; live.since = Date.now(); const l = document.getElementById('pl-' + id); if (l) l.innerHTML = liveLine(id, live); }
     const b = document.getElementById('pb-' + id); if (b) b.textContent = `Scanning ${live.done}/${live.total}`;
   }
+  /** Live line under the progress bar: a pulsing dot, seconds on the current step, and "Skip AI" during AI steps. */
+  function liveLine(id, live) {
+    const isAI = /✨/.test(live.message || '');
+    return `<span class="pulse-dot"></span> <span data-since="${live.since || Date.now()}" data-ai="${isAI ? 1 : 0}">working…</span>${isAI && !state.skipAI[id] ? ` · <button class="linkbtn" data-skipai="${esc(id)}" title="Stop the AI check for this scan. Unchecked pages become 'AI check pending' items that resume later.">Skip AI for now</button>` : ''}`;
+  }
+  setInterval(() => {
+    $$('[data-since]').forEach((el) => {
+      const sec = Math.floor((Date.now() - Number(el.dataset.since)) / 1000);
+      const ai = el.dataset.ai === '1';
+      let t = sec < 2 ? 'working…' : `${sec < 60 ? sec + 's' : Math.floor(sec / 60) + 'm ' + String(sec % 60).padStart(2, '0') + 's'} on this step`;
+      if (ai && sec >= 30 && sec < 130) t += '. Still working: the AI can take up to 2 minutes when models are busy';
+      else if (ai && sec >= 130) t += '. This looks stuck: it will retry automatically, or skip the AI for now';
+      else if (!ai && sec >= 45) t += '. Waiting for a slow page to load';
+      el.textContent = t; el.classList.toggle('slow', (ai && sec >= 130) || (!ai && sec >= 45));
+    });
+  }, 1000);
+  document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-skipai]'); if (b) { e.preventDefault(); e.stopPropagation(); skipAI(b.dataset.skipai); b.remove(); } });
   function issueChips(c, done) {
     c = c || {};
     const chips = [];
@@ -1156,11 +1220,11 @@
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> blocks read${sc.ai.text.truncated ? ` (of ${sc.ai.text.of}, the rest skipped to limit cost)` : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
-            ${sc.ai.provider ? `<span class="faint">Answered by ${esc(sc.ai.provider)}${sc.ai.model ? ' · ' + esc(sc.ai.model) : ''}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI models ↗</a></div>
+            ${sc.ai.aliases ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI models ↗</a></div>
             ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: every AI model ran out of free credits during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
               ${aiResumeAt(sc.ai.paused.retryAt) ? `They resume automatically after <b>${esc(fmtWhen(aiResumeAt(sc.ai.paused.retryAt)))}</b> (in ${countdown(aiResumeAt(sc.ai.paused.retryAt))}).` : 'AI credits are available again, so they resume automatically within a minute.'}
               Check them by hand and mark them <b>Done</b> if you can't wait. <a href="#/ai">AI Status ↗</a></div>` : ''}`
-          : state.ai && !state.ai.enabled && state.me.role === 'admin' && sc.state === 'complete' ? '<div class="small faint" style="margin-top:6px">✨ AI checks are off. Add a free <code>GEMINI_API_KEY</code> or <code>GROQ_API_KEY</code> in Vercel to turn them on.</div>' : ''}
+          : state.ai && !state.ai.enabled && state.me.role === 'admin' && sc.state === 'complete' ? '<div class="small faint" style="margin-top:6px">✨ AI checks are off. Add the AI keys in Vercel (see the README) to turn them on.</div>' : ''}
         ${sc.error ? `<div class="note bad">${esc(sc.error)}</div>` : ''}
         ${(sc.log || []).length ? `<details style="margin-top:8px"><summary class="small">Scan notes (${sc.log.length})</summary>${sc.log.map((l) => `<div class="note unk">${esc(l)}</div>`).join('')}</details>` : ''}
       </div>
@@ -1344,6 +1408,62 @@
   }
 
   // ---------- Page inspector: open the page for a device and highlight the element ----------
+  /**
+   * Runs INSIDE the sandboxed preview. Walks from the element up to <html> and undoes anything that hides it:
+   * display:none, visibility:hidden, opacity 0 (scroll animations), hidden attribute, content-visibility,
+   * screen-reader-only clipping, off-screen transforms/positions and 0-height collapsed containers.
+   * Then scrolls to it and reports back what it had to force.
+   */
+  function inspectorRuntime() {
+    var forced = [];
+    function label(e) { var s = e.tagName.toLowerCase(); if (e.id) s += '#' + e.id; else if (e.classList && e.classList.length) s += '.' + [].slice.call(e.classList, 0, 2).join('.'); return s; }
+    function setI(e, k, v) { e.style.setProperty(k, v, 'important'); }
+    function note(e, why) { var t = (e.hasAttribute('data-dsa-hl') ? 'the element itself' : 'parent ' + label(e)) + ': ' + why; if (forced.indexOf(t) < 0) forced.push(t); }
+    function fix() {
+      var target = document.querySelector('[data-dsa-hl]'); if (!target) return null;
+      for (var e = target; e && e !== document.documentElement; e = e.parentElement) {
+        var c = getComputedStyle(e);
+        if (e.hasAttribute('hidden')) { e.removeAttribute('hidden'); note(e, 'hidden attribute'); c = getComputedStyle(e); }
+        if (c.display === 'none') { setI(e, 'display', 'revert'); if (getComputedStyle(e).display === 'none') setI(e, 'display', 'block'); note(e, 'display: none'); }
+        if (c.visibility === 'hidden' || c.visibility === 'collapse') { setI(e, 'visibility', 'visible'); note(e, 'visibility: hidden'); }
+        if (parseFloat(c.opacity) < 0.05) { setI(e, 'opacity', '1'); note(e, (e.getAttribute('data-anim-desktop') || e.getAttribute('data-aos') || /anim|aos|wow|fade|reveal/i.test(String(e.className))) ? 'opacity 0 until a scroll animation plays' : 'opacity: 0'); }
+        if (c.contentVisibility === 'hidden') { setI(e, 'content-visibility', 'visible'); note(e, 'content-visibility: hidden'); }
+        if (c.clipPath && c.clipPath !== 'none') { setI(e, 'clip-path', 'none'); }
+        if (c.position === 'absolute' && c.clip && c.clip !== 'auto') { setI(e, 'clip', 'auto'); setI(e, 'width', 'auto'); setI(e, 'height', 'auto'); note(e, 'clipped (screen-reader-only)'); }
+        var r = e.getBoundingClientRect();
+        if (c.transform && c.transform !== 'none') {
+          var m = c.transform.match(/\(([^)]+)\)/); var v = m ? m[1].split(',').map(parseFloat) : [];
+          var zero = v.length >= 4 && Math.abs(v[0]) < 0.01 && Math.abs(v[3]) < 0.01;
+          if (zero || r.right < 0 || r.left > innerWidth * 1.2 || r.bottom < -100) { setI(e, 'transform', 'none'); note(e, zero ? 'scaled to 0' : 'moved off-screen (transform)'); r = e.getBoundingClientRect(); }
+        }
+        if ((c.position === 'fixed' || c.position === 'absolute') && (r.right <= 0 || r.left >= document.documentElement.scrollWidth || r.bottom <= -50)) {
+          setI(e, 'position', 'relative'); setI(e, 'left', 'auto'); setI(e, 'right', 'auto'); setI(e, 'top', 'auto'); setI(e, 'transform', 'none'); note(e, 'positioned off-screen');
+        }
+        if ((parseFloat(c.maxHeight) === 0 || (parseFloat(c.height) === 0 && e.scrollHeight > 0)) && c.overflow !== 'visible') { setI(e, 'max-height', 'none'); setI(e, 'height', 'auto'); setI(e, 'overflow', 'visible'); note(e, 'collapsed to 0 height'); }
+        if (e.tagName === 'DETAILS' && !e.open) { e.open = true; note(e, 'closed <details>'); }
+      }
+      var rr = target.getBoundingClientRect();
+      return { w: Math.round(rr.width), h: Math.round(rr.height) };
+    }
+    var sent = false;
+    function go(final) {
+      var size = fix(); var t = document.querySelector('[data-dsa-hl]');
+      if (t) t.scrollIntoView({ block: 'center' });
+      if (final && !sent) { sent = true; parent.postMessage({ dsaInspector: true, forced: forced, size: size, found: !!t }, '*'); }
+    }
+    document.addEventListener('DOMContentLoaded', function () { go(false); });
+    window.addEventListener('load', function () { go(false); setTimeout(function () { go(true); }, 400); });
+    setTimeout(function () { go(true); }, 2500);
+    document.addEventListener('click', function (ev) { var a = ev.target.closest('a'); if (a) ev.preventDefault(); }, true);
+  }
+  window.addEventListener('message', (ev) => {
+    const d = ev.data; const box = $('#inForced');
+    if (!d || !d.dsaInspector || !box) return;
+    const parts = [];
+    if (d.forced && d.forced.length) parts.push(`👁 <b>Shown anyway.</b> On the live page it's hidden by ${d.forced.map((x) => `<code>${esc(x)}</code>`).join(', ')}.`);
+    if (d.size && (d.size.w < 2 || d.size.h < 2)) parts.push('⚠ The element has no visible size here (it may be empty, or sized by scripts that don\'t run in this snapshot). Use <b>Open live preview</b> to check.');
+    box.innerHTML = parts.map((x) => `<div style="margin-top:4px">${x}</div>`).join('');
+  });
   const VIEW_W = { desktop: 1280, tablet: 800, mobile: 390 };
   async function openInspector(s, f, device) {
     const devs = A.DEVICES.filter((d) => (f.devices || []).includes(d));
@@ -1399,13 +1519,16 @@
         if (msg) el.setAttribute('data-dsa-force', '1');
       }
       const style = doc.createElement('style');
-      style.textContent = `[data-dsa-hl]{outline:4px solid #e11d48!important;outline-offset:3px!important;background-color:rgba(255,214,0,.35)!important;animation:dsaPulse 1.2s ease-in-out 3;scroll-margin:120px}
+      // Snapshot has no scripts: finish every animation instantly and reveal elements that wait for a scroll animation
+      style.textContent = `*,*::before,*::after{animation-delay:0s!important;animation-duration:.001s!important;animation-iteration-count:1!important;transition:none!important;scroll-behavior:auto!important}
+        [data-anim-desktop],[data-anim-tablet],[data-anim-mobile],[data-anim],[data-aos],.aos-init,.wow,.animated,[data-animation],.dmAnimated,[class*="animate__"]{opacity:1!important;visibility:visible!important;transform:none!important}
+        [data-dsa-hl]{outline:4px solid #e11d48!important;outline-offset:3px!important;background-color:rgba(255,214,0,.35)!important;animation:dsaPulse 1.2s ease-in-out 3!important;scroll-margin:120px}
         @keyframes dsaPulse{50%{outline-color:#fbbf24;outline-offset:8px}}`;
       doc.head.appendChild(style);
       const sc = doc.createElement('script');
-      sc.textContent = `(function(){function fix(){var e=document.querySelector('[data-dsa-force]');for(;e&&e!==document.body;e=e.parentElement){var c=getComputedStyle(e);if(c.display==='none')e.style.setProperty('display','block','important');if(c.visibility==='hidden')e.style.setProperty('visibility','visible','important');if(+c.opacity<0.1)e.style.setProperty('opacity','1','important');if(c.position==='fixed'){['position:relative','left:auto','right:auto','top:auto','transform:none'].forEach(function(d){var p=d.split(':');e.style.setProperty(p[0],p[1],'important');});}if(c.transform&&c.transform!=='none')e.style.setProperty('transform','none','important');if(c.maxHeight==='0px'||c.height==='0px'){e.style.setProperty('max-height','none','important');e.style.setProperty('height','auto','important');}if(c.overflow==='hidden'&&e.clientHeight<5)e.style.setProperty('overflow','visible','important');}}function go(){fix();var e=document.querySelector('[data-dsa-hl]');if(e)e.scrollIntoView({block:'center'});}document.addEventListener('DOMContentLoaded',go);window.addEventListener('load',go);setTimeout(go,600);document.addEventListener('click',function(ev){var a=ev.target.closest('a');if(a)ev.preventDefault();},true);})();`;
+      sc.textContent = `(${inspectorRuntime.toString()})();`;
       doc.body.appendChild(sc);
-      note.innerHTML = msg || `Showing <b>${esc(page)}</b> on <b>${A.DEVICE_LABEL[device]}</b>. The element is outlined in red. <span class="faint">Snapshot without scripts, so sliders and animations may look static.</span>`;
+      note.innerHTML = (msg || `Showing <b>${esc(page)}</b> on <b>${A.DEVICE_LABEL[device]}</b>. The element is outlined in red. <span class="faint">Snapshot without scripts, so sliders and animations may look static.</span>`) + '<div id="inForced" class="small"></div>';
       const w = VIEW_W[device];
       const scale = Math.min(1, (stage.clientWidth - 2) / w);
       const frame = document.createElement('iframe');
