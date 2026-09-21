@@ -72,6 +72,8 @@ Tick **Sensitive** for each, then redeploy.
 
 **How the fallback works:** models are tried in `AI_ORDER`. When one hits its per-minute limit, its daily limit, this app's daily cap, or runs out of credits, it rests until it resets and the next one answers. If every model is resting for up to 3 minutes, the scan waits with a countdown; for longer, it finishes and the rest becomes **AI check pending** items (below).
 
+**Model names update themselves:** providers retire model names often. When a model is refused, the app lists that provider's current models, picks the best one (for example the newest Gemini Flash, or Groq's largest general model), remembers it for 7 days and marks it **auto-selected** on the AI Status tab. **Test all models** on that tab checks each model right away (1 credit each).
+
 **AI Status tab:** shows today's free credits (requests) across all free models, how many are used and left, each model's status, and a live countdown to when it's back and when its daily limit resets. It also lists websites waiting for AI credits.
 
 **When credits run out mid-scan:** the pages the AI couldn't read become audit items in the **AI check pending** category, with a button like "No more AI credits · will resume after Tue, Sep 22, 3:00 PM". You can check them by hand (the item lists every text block or image with **👁 Show on page**) and mark it **Done**: the AI will then skip that page, including on later rescans. Anything not marked Done resumes automatically once a model is back, as long as someone has the app open (or click **Run now** on the AI Status tab).
@@ -104,7 +106,8 @@ A Google account and an email/password account with the same email are treated a
 4. Open a site. Every audit item has an ID (#12). Click a row to open it: set its status (**Open / For clarification / Done / On hold / False alarm**), reassign it, comment, paste screenshots and reply.
 5. Admins see an app-wide **Activity** page (websites added or deleted, sign-ups, approvals, with date and time). The dots at the top right show who has the app open: green = active, grey = idle for 1 hour or more.
 6. **💡 Suggest a feature** sends an idea privately to the app owner, who can mark it New, On going, Done or Nope and reply in comments.
-7. Use the **Comments** tab for general discussion: `@` tags a member, `#12` links an audit item, and **Reply** quotes a comment. The **Activity log** tab records every comment, reply, status and assignee change.
+7. Screenshots pasted or uploaded into comments are optimized automatically in the browser: resized to 1600px wide at most and saved as WebP (usually 30–400 KB).
+8. Use the **Comments** tab for general discussion: `@` tags a member, `#12` links an audit item, and **Reply** quotes a comment. The **Activity log** tab records every comment, reply, status and assignee change.
 8. Set the website status: **Not started / In progress / Complete with query / Complete / On hold**.
 9. **Rescan** after fixing. IDs, statuses, assignees and comments stay with issues that still exist, and fixed ones drop off.
 10. **Export CSV** for a report.

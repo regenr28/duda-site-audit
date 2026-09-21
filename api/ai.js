@@ -63,7 +63,8 @@ function parseDuration(v) {
 }
 
 // ---------- provider state (shared by the whole team, in Redis) ----------
-const stateKey = (id) => P + 'aiprov:' + id;
+const stateKey = (id) => P + 'aiprov2:' + id;
+const modelKey = (id) => P + 'aimodel:' + id;
 const useKey = (p) => P + 'aiuse:' + p.id + ':' + dayKey(p.tz);
 async function loadStatus(list) {
   if (!list.length) return [];
@@ -76,7 +77,7 @@ async function loadStatus(list) {
     let state = 'ready', until = 0, note = '';
     if (st.until && st.until > now) { state = st.reason || 'cooling'; until = st.until; note = st.note || ''; }
     if (state === 'ready' && p.limit && used >= p.limit) { state = 'limit'; until = resetsAt; note = `Reached this app's daily cap of ${p.limit} requests.`; }
-    return { id: p.id, label: p.label, model: p.model, free: p.free, state, ready: state === 'ready', until, note, used, limit: p.limit, resetsAt };
+    return { id: p.id, label: p.label, model: p.model, auto: !!p.auto, configured: p.configured || '', free: p.free, state, ready: state === 'ready', until, note, used, limit: p.limit, resetsAt };
   });
 }
 async function park(p, reason, until, note) {
@@ -106,7 +107,8 @@ function classify(p, r, j) {
   if (r.status === 402 || (r.status === 403 && /credit|fund|balance|billing|payment|free tier|not available on the free/.test(low)))
     return { reason: 'credits', until: now + 12 * 3600000, note: 'No credits for this model. Checking again later.' + (msg ? ' (' + msg + ')' : '') };
   if (r.status === 401 || r.status === 403) return { reason: 'error', until: now + 3600000, note: 'API key was rejected. Check the key in Vercel.' + (msg ? ' (' + msg + ')' : '') };
-  if (r.status === 404 || (r.status === 400 && /model/.test(low))) return { reason: 'error', until: now + 3600000, note: `Model "${p.model}" isn't available. Set a different model in Vercel.` + (msg ? ' (' + msg + ')' : '') };
+  if (r.status === 404 || ((r.status === 400 || r.status === 403) && /model/.test(low) && /not found|does not exist|no longer available|not available|not supported|decommission|deprecat|invalid model|unknown model/.test(low)))
+    return { reason: 'error', model: true, until: now + 15 * 60000, note: `Model "${p.model}" isn't available and no replacement was found.` + (msg ? ' (' + msg + ')' : ''), raw: body };
   return { reason: 'cooling', until: now + 60000, note: `Error ${r.status}. Retrying in a minute.` + (msg ? ' (' + msg + ')' : '') };
 }
 
@@ -116,7 +118,7 @@ async function callOnce(p, system, user) {
     if (p.kind === 'gemini') {
       r = await fetchWithTimeout(`${p.base}/models/${encodeURIComponent(p.model)}:generateContent`, {
         method: 'POST', headers: { 'x-goog-api-key': p.key, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature: 0, maxOutputTokens: 4000, responseMimeType: 'application/json' } }),
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature: 0, maxOutputTokens: 8192, responseMimeType: 'application/json' } }),
       }, 40000);
       j = await r.json().catch(() => ({}));
       if (r.ok) text = ((((j.candidates || [])[0] || {}).content || {}).parts || []).map((x) => x.text || '').join('');
@@ -132,7 +134,7 @@ async function callOnce(p, system, user) {
       if (p.id === 'openrouter') { if (process.env.APP_URL) headers['HTTP-Referer'] = process.env.APP_URL; headers['X-Title'] = 'Duda Site Auditor'; }
       r = await fetchWithTimeout(`${p.base}/chat/completions`, {
         method: 'POST', headers,
-        body: JSON.stringify({ model: p.model, temperature: 0, max_tokens: 4000, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+        body: JSON.stringify(Object.assign({ model: p.model, temperature: 0, max_tokens: 8000, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }, p.id === 'groq' && /gpt-oss/.test(p.model) ? { reasoning_effort: 'low' } : {})),
       }, 40000);
       j = await r.json().catch(() => ({}));
       if (r.ok) text = (((j.choices || [])[0] || {}).message || {}).content || '';
@@ -145,6 +147,71 @@ async function callOnce(p, system, user) {
   const parsed = m ? jparse(m[0], null) : null;
   if (!parsed) return { fail: { reason: 'cooling', until: Date.now() + 60000, note: 'Returned an answer that could not be read. Trying another model.' } };
   return { parsed };
+}
+
+// ---------- automatic model selection ----------
+// Providers retire model names often. When a model is refused, list the provider's current models,
+// pick the best free-friendly one, remember it for 7 days and carry on.
+const BAD = /(embed|whisper|tts|audio|speech|image|imagen|veo|vision-only|guard|safeguard|orpheus|playai|distil|live|aqa|learnlm|robotics|computer-use|native-audio|transcri|moderation|rerank|compound|allam)/i;
+const PREFS = [/gpt-oss-120b/i, /llama-4-maverick/i, /llama.*70b/i, /qwen.*(235b|32b|30b|27b)/i, /deepseek/i, /kimi/i, /glm/i, /llama-4-scout/i, /gemma.*(27b|31b)/i, /gpt-oss-20b/i, /mistral/i, /qwen/i, /gemma/i, /llama.*(8b|instant)/i, /llama/i];
+function rankGemini(names) {
+  const score = (n) => {
+    const v = Number((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
+    const tier = /flash-lite/.test(n) ? 2 : /flash/.test(n) ? 3 : /pro/.test(n) ? 1 : 0;
+    const unstable = /preview|exp|experimental|\d{2}-\d{2}/.test(n) ? 0.5 : 0;
+    const alias = /latest/.test(n) ? 0.2 : 0;
+    return tier * 1000 + v * 10 - unstable - alias;
+  };
+  return names.filter((n) => /^gemini-/.test(n) && !BAD.test(n)).sort((a, b) => score(b) - score(a));
+}
+function rankGeneric(ids) {
+  const ok = ids.filter((n) => !BAD.test(n));
+  const idx = (n) => { const k = PREFS.findIndex((re) => re.test(n)); return k < 0 ? 99 : k; };
+  return ok.sort((a, b) => idx(a) - idx(b));
+}
+async function listModels(p) {
+  try {
+    if (p.kind === 'gemini') {
+      const r = await fetchWithTimeout(`${p.base}/models?pageSize=300`, { headers: { 'x-goog-api-key': p.key } }, 15000);
+      const j = await r.json().catch(() => ({}));
+      return (j.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => String(m.name || '').replace(/^models\//, ''));
+    }
+    const headers = p.kind === 'anthropic' ? { 'x-api-key': p.key, 'anthropic-version': '2023-06-01' } : { Authorization: `Bearer ${p.key}` };
+    const r = await fetchWithTimeout(`${p.base}/models`, { headers }, 15000);
+    const j = await r.json().catch(() => ({}));
+    let ids = (j.data || j.models || []).filter((m) => m && m.active !== false).map((m) => m.id || m.name).filter(Boolean);
+    if (p.id === 'openrouter') ids = ids.filter((x) => /:free$/.test(x));
+    return ids;
+  } catch (e) { return []; }
+}
+async function discoverModel(p, failed, errText) {
+  const all = await listModels(p);
+  if (!all.length) return null;
+  const tried = new Set([].concat(failed || []));
+  // The error message sometimes names the replacement ("use models/gemini-3.6-flash")
+  const hint = (String(errText || '').match(/models\/([a-z0-9][\w.-]+)/i) || [])[1];
+  if (hint && all.includes(hint) && !tried.has(hint)) return hint;
+  const ranked = p.kind === 'gemini' ? rankGemini(all) : p.kind === 'anthropic' ? all.filter((n) => /haiku/.test(n)).sort().reverse() : rankGeneric(all);
+  return ranked.find((m) => !tried.has(m)) || null;
+}
+async function applySavedModels(list) {
+  if (!list.length) return list;
+  const rows = await redis(...list.map((p) => ['GET', modelKey(p.id)]));
+  list.forEach((p, k) => { const m = jparse(rows[k]); if (m && m.model && m.from === p.model) { p.configured = p.model; p.model = m.model; p.auto = true; } });
+  return list;
+}
+async function callWithModelFix(p, system, user) {
+  let out = await callOnce(p, system, user);
+  const failed = [p.model];
+  for (let n = 0; n < 3 && out.fail && out.fail.model; n++) {
+    const next = await discoverModel(p, failed, out.fail.raw);
+    if (!next) break;
+    const from = p.configured || p.model;
+    await redis(['SET', modelKey(p.id), JSON.stringify({ model: next, from, at: Date.now() }), 'EX', 7 * 86400]);
+    p.configured = from; p.model = next; p.auto = true; failed.push(next);
+    out = await callOnce(p, system, user);
+  }
+  return out;
 }
 
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
@@ -164,7 +231,7 @@ async function callChain(list, system, user) {
     }
     for (const p of ready) {
       tried.add(p.id);
-      const out = await callOnce(p, system, user);
+      const out = await callWithModelFix(p, system, user);
       if (out.parsed) {
         const [used] = await redis(['INCR', useKey(p)]);
         if (used === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]);
@@ -218,7 +285,19 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
-  const list = providers();
+  const list = await applySavedModels(providers()).catch(() => providers());
+  if (req.method === 'POST' && readBody(req).op === 'test') {
+    // Clear resting states and send a tiny request to each model (1 request each)
+    const only = readBody(req).id;
+    const out = [];
+    for (const p of list.filter((x) => !only || x.id === only)) {
+      await redis(['DEL', stateKey(p.id)]);
+      const r = await callWithModelFix(p, 'You are a health check. Reply with JSON only.', 'Reply exactly {"ok":true}');
+      if (r.parsed) { const [u] = await redis(['INCR', useKey(p)]); if (u === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]); out.push({ id: p.id, ok: true, model: p.model }); }
+      else { await park(p, r.fail.reason, r.fail.until, r.fail.note); out.push({ id: p.id, ok: false, note: r.fail.note }); }
+    }
+    return res.status(200).json({ tested: out, providers: await loadStatus(list), now: Date.now(), enabled: list.length > 0 });
+  }
   if (req.method === 'GET') {
     const st = await loadStatus(list).catch(() => []);
     const first = st.find((x) => x.ready) || st[0];
@@ -280,4 +359,4 @@ export default async function handler(req, res) {
     return res.status(e.status === 429 ? 429 : 500).json({ error: String(e.message || e) });
   }
 }
-export const _test = { classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };
+export const _test = { applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };

@@ -672,20 +672,21 @@
     const list = (state.ai && state.ai.providers) || [];
     const now = srvNow();
     const free = list.filter((p) => p.free);
-    const leftOf = (p) => { const parked = !p.ready && p.until > now && (p.state === 'limit' || p.state === 'credits'); return parked ? 0 : p.limit ? Math.max(0, p.limit - p.used) : null; };
+    const leftOf = (p) => { const parked = !p.ready && p.until > now && (p.state === 'limit' || p.state === 'credits' || p.state === 'error'); return parked ? 0 : p.limit ? Math.max(0, p.limit - p.used) : null; };
+    const broken = list.length && list.every((p) => !p.ready && p.until > now && p.state === 'error');
     const total = free.reduce((a, p) => a + (p.limit || 0), 0);
     const used = free.reduce((a, p) => a + (p.limit ? Math.min(p.used, p.limit) : 0), 0);
     const left = free.reduce((a, p) => a + (leftOf(p) || 0), 0);
     const at = aiResumeAt();
     const waiting = (state.sites || []).filter((x) => x.counts && x.counts.aiPending > 0);
     const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
-    $('#view').innerHTML = `<div class="page-head"><h1>✨ AI Status</h1><button class="btn" id="aiRefresh">Refresh</button></div>
+    $('#view').innerHTML = `<div class="page-head"><h1>✨ AI Status</h1><div class="row-between"><button class="btn" id="aiTest" title="Sends one tiny request to each model (uses 1 credit each)">Test all models</button><button class="btn" id="aiRefresh">Refresh</button></div></div>
       ${!state.ai || !state.ai.enabled ? `<div class="panel panel-pad"><p>No AI keys are set up yet. Add a free <code>GEMINI_API_KEY</code> or <code>GROQ_API_KEY</code> in Vercel, then redeploy.</p></div>` : `
       <div class="ai-stats">
         <div class="panel panel-pad stat"><div class="k">Free credits per day</div><div class="big">${total || '—'}</div><div class="small faint">requests, all free models</div></div>
         <div class="panel panel-pad stat"><div class="k">Used today</div><div class="big">${used}</div><div class="meter"><span style="width:${pct(used, total)}%"></span></div></div>
         <div class="panel panel-pad stat"><div class="k">Left today</div><div class="big ${left ? 'ok' : 'bad'}">${left}</div><div class="small faint">${pct(left, total)}% of today's free credits</div></div>
-        <div class="panel panel-pad stat"><div class="k">AI right now</div><div class="big ${at === 0 ? 'ok' : 'bad'}">${at === 0 ? 'Available' : 'Paused'}</div><div class="small faint">${at === 0 ? 'At least one model can answer' : at ? `Back in ${countdown(at)} · ${esc(fmtWhen(at))}` : ''}</div></div>
+        <div class="panel panel-pad stat"><div class="k">AI right now</div><div class="big ${at === 0 ? 'ok' : 'bad'}">${at === 0 ? 'Available' : broken ? 'Needs attention' : 'Paused'}</div><div class="small faint">${at === 0 ? 'At least one model can answer' : broken ? 'Every model has a setup problem (see below). Click <b>Test all models</b> to retry now.' : at ? `Back in ${countdown(at)} · ${esc(fmtWhen(at))}` : ''}</div></div>
       </div>
       <div class="ai-cards">${list.map((p, k) => {
         const parked = !p.ready && p.until > now;
@@ -693,10 +694,10 @@
         const l = leftOf(p);
         return `<div class="panel panel-pad ai-card">
           <div class="row-between"><div><span class="faint small">#${k + 1}</span> <b>${esc(p.label)}</b> ${p.free ? '<span class="badge scan-complete">Free</span>' : '<span class="badge">Paid</span>'}</div><span class="small"><span class="ai-dot ${cls}"></span> ${esc(lbl)}</span></div>
-          <div class="small faint mono" style="margin:2px 0 10px">${esc(p.model)}</div>
+          <div class="small faint mono" style="margin:2px 0 10px">${esc(p.model)}${p.auto ? ` <span class="badge subtle" title="${esc(p.configured)} was retired, so the app picked the current model automatically">auto-selected</span>` : ''}</div>
           <div class="row-between small"><span>Used today <b>${p.used}</b>${p.limit ? ` of ${p.limit}` : ''}</span><span>${l === null ? 'No daily cap' : `<b>${l}</b> left`}</span></div>
           ${p.limit ? `<div class="meter"><span style="width:${pct(Math.min(p.used, p.limit), p.limit)}%" class="${l === 0 ? 'full' : ''}"></span></div>` : ''}
-          ${parked ? `<div class="note ${cls === 'bad' ? 'bad' : 'unk'}" style="margin-top:10px">Back in <b>${countdown(p.until)}</b> · ${esc(fmtWhen(p.until))}${p.note ? `<div class="small faint">${esc(p.note)}</div>` : ''}</div>` : ''}
+          ${parked ? `<div class="note ${cls === 'bad' ? 'bad' : 'unk'}" style="margin-top:10px">${p.state === 'error' ? 'Retrying automatically' : 'Back'} in <b>${countdown(p.until)}</b> · ${esc(fmtWhen(p.until))}${p.note ? `<div class="small faint">${esc(p.note)}</div>` : ''}${p.state === 'error' ? `<div style="margin-top:6px"><button class="btn sm" data-aitest="${esc(p.id)}">Try again now</button></div>` : ''}</div>` : ''}
           <div class="small muted" style="margin-top:8px">Daily reset in ${countdown(p.resetsAt)} · ${esc(fmtWhen(p.resetsAt))}</div></div>`;
       }).join('')}</div>
       <div class="panel panel-pad" style="margin-top:16px"><h2>Waiting for AI credits (${waiting.length})</h2>
@@ -710,6 +711,16 @@
       <p class="small muted" style="margin-top:12px">Credits are counted as requests. One request checks up to about 45 text blocks or 50 image alt texts. Models are tried top to bottom (<code>AI_ORDER</code> in Vercel); when one runs out, the next one answers. Results are cached for 60 days, so rescans don't use credits. Audit items marked <b>Done</b> by hand are never sent to the AI.</p>`}`;
     const rf = $('#aiRefresh'); if (rf) rf.onclick = async () => { try { const r = await api('/api/ai'); aiUpdate(r); renderAiPage(); } catch (e) { toast(e.message); } };
     $$('[data-resume]').forEach((b) => (b.onclick = () => aiResume(b.dataset.resume, true)));
+    const runTest = async (btn, id) => {
+      btn.disabled = true; const t = btn.textContent; btn.textContent = 'Testing…';
+      try {
+        const r = await post('/api/ai', { op: 'test', id });
+        aiUpdate(r); renderAiPage();
+        toast((r.tested || []).map((x) => `${(r.providers.find((p) => p.id === x.id) || {}).label || x.id}: ${x.ok ? 'working (' + x.model + ')' : 'still failing'}`).join(' · ') || 'Nothing to test');
+      } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = t; }
+    };
+    const tb = $('#aiTest'); if (tb) tb.onclick = () => runTest(tb);
+    $$('[data-aitest]').forEach((b) => (b.onclick = () => runTest(b, b.dataset.aitest)));
   }
 
   function aiNote(f, full) {
@@ -1019,18 +1030,31 @@
     };
     return api_;
   }
+  /**
+   * Every pasted or uploaded image is optimized in the browser before upload:
+   * resized to at most 1600px wide (and ~4 megapixels for tall full-page screenshots), then saved as WebP
+   * (JPEG where WebP isn't supported), stepping the quality down until it's under ~400 KB.
+   * Small PNG screenshots stay PNG when that is smaller, so text stays crisp.
+   */
   function compressImage(file) {
     return new Promise((resolve, reject) => {
       const img = new Image(); const url = URL.createObjectURL(file);
       img.onload = () => {
-        const max = 1800; let { width: w, height: h } = img;
-        if (w > max) { h = Math.round(h * (max / w)); w = max; }
-        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-        const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
         URL.revokeObjectURL(url);
-        const type = file.size < 350000 && file.type === 'image/png' && img.width <= max ? 'image/png' : 'image/jpeg';
-        const dataUrl = cv.toDataURL(type, 0.86);
-        resolve({ data: dataUrl.split(',')[1], type });
+        let w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+        const scale = Math.min(1, 1600 / w, Math.sqrt(4200000 / (w * h)));
+        w = Math.max(1, Math.round(w * scale)); h = Math.max(1, Math.round(h * scale));
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.imageSmoothingQuality = 'high'; cx.drawImage(img, 0, 0, w, h);
+        const bytes = (d) => Math.round((d.length - d.indexOf(',') - 1) * 0.75);
+        const webpOk = cv.toDataURL('image/webp', 0.8).startsWith('data:image/webp');
+        const type = webpOk ? 'image/webp' : 'image/jpeg';
+        const TARGET = 400 * 1024;
+        let q = 0.82, best = cv.toDataURL(type, q);
+        while (bytes(best) > TARGET && q > 0.45) { q -= 0.08; best = cv.toDataURL(type, q); }
+        let outType = type;
+        if (file.type === 'image/png' && scale === 1 && file.size < bytes(best)) { const png = cv.toDataURL('image/png'); if (bytes(png) <= bytes(best)) { best = png; outType = 'image/png'; } }
+        resolve({ data: best.split(',')[1], type: outType, bytes: bytes(best), original: file.size, width: w, height: h });
       };
       img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that image')); };
       img.src = url;
