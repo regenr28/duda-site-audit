@@ -314,3 +314,56 @@ body.drawer-open { overflow: hidden; }
 @media (max-width: 1100px) { .hide-sm { display: none; } }
 [hidden] { display: none !important; }
 .pstack .pav + .pav { margin-left: -6px; }
+
+/* ===== v4: AI ===== */
+.ai-badge { background: linear-gradient(90deg, #7c3aed22, #2563eb22); color: var(--query); border-color: transparent; }
+.ai-note { margin-top: 6px; font-size: 12.5px; padding: 6px 8px; border-radius: 8px; background: var(--query-soft); }
+.ai-note.ok { background: var(--ok-soft); }
+.ai-sugg { margin-top: 6px; }
+
+/* ===== v5: page inspector ===== */
+.sel.inspect { cursor: pointer; }
+.sel.inspect:hover { border-color: var(--accent); background: var(--accent-soft); }
+.sel-actions { display: flex; gap: 10px; margin-top: 4px; }
+.modal.full { width: min(1500px, 100%); height: calc(100vh - 32px); max-height: none; display: flex; flex-direction: column; overflow: hidden; }
+.insp { display: flex; flex-direction: column; height: 100%; }
+.insp-bar { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.insp-title { min-width: 0; flex: 1 1 300px; }
+.insp-title .mono { word-break: break-all; }
+.insp-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chipbtn:disabled { opacity: .4; cursor: not-allowed; }
+.insp-note { padding: 8px 14px; font-size: 13px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.insp-stage { flex: 1; overflow: hidden; background: repeating-conic-gradient(var(--panel-2) 0 25%, var(--bg) 0 50%) 50% / 20px 20px; display: flex; justify-content: center; }
+.insp-stage iframe { border: 0; background: #fff; transform-origin: top center; box-shadow: 0 4px 24px rgba(0,0,0,.2); flex: none; }
+
+/* ---------- v6: AI models status ---------- */
+.ai-chip { display: inline-flex; align-items: center; gap: 6px; }
+.ai-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; vertical-align: middle; }
+.ai-dot.good { background: #22c55e; }
+.ai-dot.unk { background: #f59e0b; }
+.ai-dot.bad { background: #ef4444; }
+.ai-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ai-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.ai-table td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.ai-table .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cd { font-variant-numeric: tabular-nums; }
+.cd-done { color: #16a34a; font-weight: 600; }
+@media (max-width: 640px) { .ai-table th:nth-child(5), .ai-table td:nth-child(5) { display: none; } }
+
+/* ---------- v7: AI Status page + pending AI items ---------- */
+.ai-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.ai-stats .stat .big { font-size: 28px; font-weight: 700; line-height: 1.2; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.ai-stats .stat .big.ok { color: var(--ok); } .ai-stats .stat .big.bad { color: var(--crit); }
+.ai-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.ai-card .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.meter { height: 8px; background: var(--panel-2); border-radius: 99px; overflow: hidden; margin-top: 6px; border: 1px solid var(--border); }
+.meter > span { display: block; height: 100%; background: var(--ok); border-radius: 99px; transition: width .3s; }
+.meter > span.full { background: var(--crit); }
+.ai-pend { display: block; margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; text-decoration: none; color: inherit; border: 1px solid var(--border); background: var(--panel-2); }
+.ai-pend.wait { border-color: color-mix(in srgb, var(--warn) 55%, transparent); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
+.ai-pend.wait:hover { border-color: var(--warn); }
+.ai-pend.ready { border-color: color-mix(in srgb, var(--ok) 55%, transparent); background: color-mix(in srgb, var(--ok) 10%, var(--panel)); }
+.ai-pend.ok { color: var(--muted); }
+.pend-list { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 8px; font-size: 13px; max-height: 420px; overflow: auto; }
+.pend-list li { padding: 6px 8px; background: var(--panel-2); border-radius: 6px; }
+@media (max-width: 900px) { .ai-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

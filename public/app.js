@@ -64,7 +64,7 @@
   let modalOpts = null;
   function modal(html, opts = {}) {
     modalOpts = opts;
-    $('#modalRoot').innerHTML = `<div class="modal-back"><div class="modal ${opts.wide ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`;
+    $('#modalRoot').innerHTML = `<div class="modal-back"><div class="modal ${opts.wide ? 'wide' : ''} ${opts.full ? 'full' : ''}" role="dialog" aria-modal="true">${html}</div></div>`;
     const back = $('.modal-back');
     back.addEventListener('mousedown', (e) => { if (e.target === back) closeModal(); });
     $$('[data-close]', back).forEach((b) => (b.onclick = closeModal));
@@ -189,9 +189,11 @@
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Websites</a>
       ${state.me.role === 'admin' ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
       <a href="#/suggestions" data-nav="suggestions">${isOwner ? 'Suggestions' : 'My suggestions'}</a>
+      <a href="#/ai" data-nav="ai">AI Status</a>
       <a href="#/about" data-nav="about">About</a>`;
     $('#topRight').innerHTML = `
       <div class="presence" id="presence" title="Who's online"></div>
+      <button class="btn ghost ai-chip" id="btnAi" type="button" hidden></button>
       <button class="btn ghost" id="btnSuggest" type="button" title="Suggest a feature">💡 <span class="hide-sm">Suggest a feature</span></button>
       <button class="btn ghost bell" id="btnBell" title="Notifications" aria-label="Notifications">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
@@ -204,6 +206,7 @@
     $('#btnBell').onclick = toggleNotifs;
     $('#btnMe').onclick = openMe;
     $('#btnSuggest').onclick = openSuggest;
+    $('#btnAi').onclick = () => { location.hash = '#/ai'; }; renderAiChip();
     $('#presence').onclick = togglePresence;
     renderBell(); renderPresence(); markNav();
   }
@@ -409,10 +412,26 @@
         onProgress: (p) => { state.scanning[id] = p; renderProgress(id); },
       });
       log.push(...res.log);
+      // Pages whose "AI check pending" item was checked by hand: the AI skips them, and the item stays as Done
+      const manual = (site.findings || []).filter((f) => /^AI_PENDING/.test(f.code) && (f.status === 'done' || f.status === 'false'));
+      res.aiSkip = new Set(manual.map((f) => pendKey(f)));
+      const aiAlt = await aiAltCheck(res, id, log);
+      const aiText = await aiTextCheck(res, id, log, aiAlt && aiAlt.paused);
+      let aiSummary = null;
+      if (aiAlt || aiText) {
+        const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || []))];
+        const paused = (aiText && aiText.paused) || (aiAlt && aiAlt.paused) || null;
+        aiSummary = Object.assign({}, aiAlt || { checked: 0, cached: 0, flagged: 0, softened: 0 }, { text: aiText, provider: used.map((u) => u.split(' · ')[0]).join(', '), model: used.map((u) => u.split(' · ')[1]).filter(Boolean).join(', '), paused });
+        const pend = [].concat(pendingFindings('alt', (aiAlt && aiAlt.pending) || [], paused), pendingFindings('text', (aiText && aiText.pending) || [], paused));
+        aiSummary.pendingItems = pend.length;
+        res.findings.push(...pend);
+      }
+      manual.forEach((f) => { if (!res.findings.some((x) => x.id === f.id)) res.findings.push(stripState(f)); });
+      res.counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
       const profiles = await checkProfiles(res.truth);
       const sum = await store({ op: 'saveScan', id, result: {
         host, businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages,
-        scan: { state: 'complete', startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email },
+        scan: { state: 'complete', startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
       upsertSummary(sum);
       toast(`Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
@@ -423,23 +442,310 @@
     }
     if (state.current && state.current.id === id) await loadSite(id);
   }
+  // ---------- AI alt-text judgement ----------
+  const AI_LABEL = { describes_image: 'Describes the photo (OK)', this_business: 'Refers to this business (OK)', other_business: 'Names another business', wrong_location: "Location doesn't match", placeholder: 'Placeholder / stock text', unclear: 'Unclear', name_variant: 'Business name written differently' };
+  async function aiAltCheck(res, id, log) {
+    if (!state.ai || !state.ai.enabled || !(res.alts || []).length) return null;
+    const t = res.truth || {};
+    const compact = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const business = aiBusiness(res);
+    const skip = res.aiSkip || new Set();
+    const items = res.alts.map((a, i) => ({ i, alt: a.alt, file: a.file, location: a.location, isLogo: a.isLogo }))
+      .filter((x) => compact(x.alt) !== compact(t.businessName) && x.alt.length >= 2 && !skip.has('alt|' + ((res.alts[x.i].pages || [])[0] || '/')));
+    let pending = [];
+    const verdicts = new Array(res.alts.length);
+    let done = 0, cached = 0, errors = 0, waits = 0, paused = null; const used = new Set();
+    for (let k = 0; k < items.length; k += 50) {
+      state.scanning[id] = Object.assign({}, state.scanning[id], { message: `✨ AI checking alt text ${Math.min(k + 50, items.length)}/${items.length}` }); renderProgress(id);
+      try {
+        const r = await post('/api/ai', { op: 'alt', business, items: items.slice(k, k + 50) });
+        aiUpdate(r); if (r.provider) used.add(r.provider + ' · ' + r.model);
+        (r.results || []).forEach((v) => { verdicts[v.i] = v; done++; if (v.cached) cached++; });
+      } catch (e) {
+        const w = await aiWait(e, id, waits++);
+        if (w === 'retry') { k -= 50; continue; }
+        if (w && w.paused) { paused = w.paused; pending = items.slice(k).map((x) => res.alts[x.i]); break; }
+        errors++; log.push('AI alt-text check: ' + e.message); if (e.status === 429 || e.status === 400) break;
+      }
+    }
+    res.findings = A.applyAltVerdicts(res.findings, res.alts, verdicts, t);
+    res.counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
+    const flagged = res.findings.filter((f) => f.ai && /^AI_/.test(f.code)).length;
+    const softened = res.findings.filter((f) => f.ai && f.code === 'ALT_LOGO_NAME' && f.severity !== 'critical').length;
+    return { checked: done, cached, flagged, softened, errors, total: items.length, used: [...used], paused, pending };
+  }
+  function aiBusiness(res) {
+    const t = res.truth || {};
+    const addr = (t.addresses || [])[0] || {};
+    return {
+      name: t.businessName, names: t.names || [], street: addr.street || '', city: addr.city || '', region: addr.region || '', zip: addr.zip || '',
+      areaPages: (res.pages || []).map((p) => p.path).filter((p) => p !== '/').slice(0, 60),
+      foreignNames: [...new Set(res.findings.filter((f) => f.foreignName).map((f) => f.foreignName))],
+    };
+  }
+  /** AI reads the page text (service pages first, then blog posts) looking for another business's name, a wrong city, or a misspelled business name. */
+  async function aiTextCheck(res, id, log, pausedAlready) {
+    if (!state.ai || !state.ai.enabled || !(res.texts || []).length) return null;
+    const skip = res.aiSkip || new Set();
+    const todoTexts = res.texts.filter((b) => !skip.has('text|' + ((b.pages || [])[0] || '/')));
+    if (pausedAlready) return { blocks: 0, of: res.texts.length, truncated: false, cached: 0, flagged: 0, errors: 0, used: [], paused: pausedAlready, pending: (() => { let n = 0; return todoTexts.filter((b) => (n += Math.min(1500, b.text.length)) <= 120000); })() };
+    const MAX_CHARS = 120000, BATCH_CHARS = 9000, BATCH_ITEMS = 45;
+    const business = aiBusiness(res);
+    const blocks = []; let total = 0;
+    res.texts.forEach((b, i) => { if (skip.has('text|' + ((b.pages || [])[0] || '/'))) return; if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, 1500), location: b.location, page: b.pages[0] }); total += Math.min(1500, b.text.length); } });
+    const batches = []; let cur = [], size = 0;
+    blocks.forEach((b) => { if (cur.length && (size + b.text.length > BATCH_CHARS || cur.length >= BATCH_ITEMS)) { batches.push(cur); cur = []; size = 0; } cur.push(b); size += b.text.length; });
+    if (cur.length) batches.push(cur);
+    const issues = []; let cached = 0, errors = 0, sent = 0, waits = 0, paused = null, pending = []; const used = new Set();
+    for (let k = 0; k < batches.length; k++) {
+      state.scanning[id] = Object.assign({}, state.scanning[id], { message: `✨ AI reading page text ${k + 1}/${batches.length}` }); renderProgress(id);
+      try {
+        const r = await post('/api/ai', { op: 'text', business, items: batches[k] });
+        aiUpdate(r); if (r.provider) used.add(r.provider + ' · ' + r.model);
+        issues.push(...(r.results || [])); cached += r.cachedCount || 0; sent += batches[k].length;
+      } catch (e) {
+        const w = await aiWait(e, id, waits++);
+        if (w === 'retry') { k--; continue; }
+        if (w && w.paused) { paused = w.paused; pending = [].concat(...batches.slice(k)).map((x) => res.texts[x.i]); break; }
+        errors++; log.push('AI page-text check: ' + e.message);
+        if (e.status === 429 || e.status === 400) break;
+      }
+    }
+    const before = res.findings.length;
+    res.findings = A.applyTextIssues(res.findings, res.texts, issues, res.truth);
+    return { blocks: sent, of: res.texts.length, truncated: blocks.length < res.texts.length, cached, flagged: res.findings.length - before, errors, used: [...used], paused, pending };
+  }
+  // ---------- AI models: status, countdowns, waiting ----------
+  const srvNow = () => Date.now() + (state.aiSkew || 0);
+  function fmtLeft(ms) {
+    if (ms <= 0) return 'now';
+    const t = Math.ceil(ms / 1000), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+    return h ? `${h}h ${String(m).padStart(2, '0')}m` : m ? `${m}m ${String(sec).padStart(2, '0')}s` : `${sec}s`;
+  }
+  const countdown = (until) => `<span class="cd" data-until="${Number(until) || 0}">${fmtLeft(until - srvNow())}</span>`;
+  setInterval(() => {
+    $$('[data-until]').forEach((el) => { const left = Number(el.dataset.until) - srvNow(); el.textContent = left > 0 ? fmtLeft(left) : 'available now'; el.classList.toggle('cd-done', left <= 0); });
+  }, 1000);
+  document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-ai-status]')) { e.preventDefault(); location.hash = '#/ai'; } });
+  let aiPageTimer = null;
+  function aiUpdate(r) {
+    if (!r || !r.providers || !state.ai) return;
+    state.ai.providers = r.providers;
+    if (r.now) state.aiSkew = r.now - Date.now();
+    renderAiChip();
+    if (route().name === 'ai' && !aiPageTimer) { aiPageTimer = setTimeout(() => { aiPageTimer = null; if (route().name === 'ai') renderAiPage(); }, 300); }
+  }
+  /** All models busy? Wait with a live countdown when it's short, otherwise pause the AI check for this scan. */
+  async function aiWait(e, id, waits) {
+    if (!(e && e.status === 429 && e.data && e.data.allBusy)) return null;
+    aiUpdate(e.data);
+    const next = (e.data.providers || []).filter((p) => p.until).sort((a, b) => a.until - b.until)[0];
+    const left = (e.data.retryAt || 0) - srvNow();
+    if (left > 3 * 60000 || waits > 8) return { paused: { retryAt: e.data.retryAt, next: next ? next.label : '' } };
+    const end = Date.now() + Math.max(1500, left + 1500);
+    while (Date.now() < end) {
+      state.scanning[id] = Object.assign({}, state.scanning[id], { message: `✨ All AI models busy. ${next ? next.label + ' is' : 'One is'} free again in ${fmtLeft(end - Date.now())}` });
+      renderProgress(id);
+      await new Promise((ok) => setTimeout(ok, 1000));
+    }
+    return 'retry';
+  }
+  const AI_STATE = {
+    ready: ['Ready', 'good'], cooling: ['Resting (per-minute limit)', 'unk'], limit: ['Daily limit reached', 'bad'],
+    credits: ['Out of credits', 'bad'], error: ['Problem', 'bad'],
+  };
+  function renderAiChip() {
+    const b = $('#btnAi'); if (!b) return;
+    const list = (state.ai && state.ai.providers) || [];
+    b.hidden = !(state.ai && state.ai.enabled);
+    const ready = list.filter((p) => p.ready || !(p.until > srvNow())).length;
+    b.innerHTML = `<span class="ai-dot ${ready ? 'good' : 'unk'}"></span> ✨ <span class="hide-sm">AI ${ready}/${list.length}</span>`;
+    b.title = ready ? `${ready} of ${list.length} AI models ready` : 'All AI models are resting. Click to see when they come back.';
+  }
+
+
+
+  // ---------- "AI check pending" audit items (created when every AI model ran out mid-scan) ----------
+  const pendKey = (f) => (f.code === 'AI_PENDING_ALT' ? 'alt|' : 'text|') + (f.path || '/');
+  function stripState(f) { const c = Object.assign({}, f); ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done'].forEach((k) => delete c[k]); return c; }
+  function pendingFindings(kind, list, paused) {
+    if (!list || !list.length) return [];
+    const byPage = new Map();
+    list.forEach((x) => { const pg = (x.pages || [])[0] || '/'; if (!byPage.has(pg)) byPage.set(pg, []); byPage.get(pg).push(x); });
+    const out = [];
+    byPage.forEach((arr, pg) => {
+      const first = arr[0];
+      const union = (k) => [...new Set([].concat(...arr.map((x) => x[k] || [])))];
+      const items = arr.slice(0, 80).map((x) => kind === 'alt'
+        ? { alt: x.alt, file: x.file || '', location: x.location, isLogo: !!x.isLogo, selector: x.selector, pages: x.pages, devices: x.devices, visibleOn: x.visibleOn, hiddenOn: x.hiddenOn }
+        : { text: String(x.text).slice(0, 1500), selector: x.selector, location: x.location, pages: x.pages, devices: x.devices, visibleOn: x.visibleOn, hiddenOn: x.hiddenOn });
+      const f = {
+        code: kind === 'alt' ? 'AI_PENDING_ALT' : 'AI_PENDING_TEXT', severity: 'warning', category: 'AI check pending',
+        message: kind === 'alt' ? `Image alt text not AI-checked yet (${items.length} image${items.length > 1 ? 's' : ''})` : `Page copy not AI-checked yet (${items.length} text block${items.length > 1 ? 's' : ''})`,
+        found: kind === 'alt' ? items.map((x) => `"${x.alt}"`).slice(0, 3).join(', ') + (items.length > 3 ? ` +${items.length - 3} more` : '') : '"' + items[0].text.slice(0, 140) + (items[0].text.length > 140 ? '…' : '') + '"',
+        expected: kind === 'alt' ? 'Alt text describes the image or names this business, with no other business or wrong city' : 'Only this business name and its own city / service areas',
+        path: pg, pages: [pg], devices: union('devices'), visibleOn: union('visibleOn'), hiddenOn: [],
+        selector: first.selector, location: kind === 'alt' ? 'Images' : 'Page copy', snippet: '',
+        aiPending: { kind, items, since: new Date().toISOString(), retryAt: paused ? paused.retryAt : 0 },
+      };
+      f.id = A.hash([f.code, pg].join('|'));
+      out.push(f);
+    });
+    return out;
+  }
+  /** When will the AI be back? 0 = a model is ready now, null = no AI set up. */
+  function aiResumeAt(fallback) {
+    const list = (state.ai && state.ai.providers) || [];
+    if (!list.length) return fallback || null;
+    const now = srvNow();
+    if (list.some((p) => p.ready || !(p.until > now))) return 0;
+    return Math.min(...list.map((p) => p.until));
+  }
+  const fmtWhen = (t) => new Date(t - (state.aiSkew || 0)).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  function aiPendingHtml(f, full) {
+    if (!f.aiPending) return '';
+    if (f.status === 'done' || f.status === 'false') return `<div class="ai-pend ok">✓ Checked manually. The AI will skip this.</div>`;
+    const at = aiResumeAt(f.aiPending.retryAt);
+    if (at === 0) return `<div class="ai-pend ready">✨ AI credits available again. This resumes automatically while someone has the app open.${full ? ' <button class="btn sm primary" id="drAiNow">Run AI check now</button>' : ''}</div>`;
+    return `<a class="ai-pend wait" href="#/ai" data-stop>⏳ No more AI credits · will resume after <b>${esc(at ? fmtWhen(at) : 'the next reset')}</b>${at ? ` <span class="faint">(in ${countdown(at)})</span>` : ''}</a>
+      ${full ? '<div class="small muted" style="margin-top:6px">You can check this by hand now: read the text below, then mark this item <b>Done</b>. The AI will not recheck it.</div>' : ''}`;
+  }
+  function aiPendingList(f) {
+    if (!f.aiPending) return '';
+    const items = f.aiPending.items || [];
+    return `<div class="k" style="margin-top:14px">${f.aiPending.kind === 'alt' ? 'Images to check' : 'Text to check'} (${items.length})</div>
+      <ol class="pend-list">${items.map((x, k) => `<li>${f.aiPending.kind === 'alt' ? `<b>${esc(x.alt)}</b> <span class="faint small">${esc(x.file || '')}</span>` : esc(x.text.length > 400 ? x.text.slice(0, 400) + '…' : x.text)}
+        <div class="small"><span class="faint">${esc(x.location || '')}</span> · <button class="linkbtn" data-pshow="${k}">👁 Show on page</button></div></li>`).join('')}</ol>`;
+  }
+
+  // ---------- Resume the AI check for "AI check pending" items once a model is back ----------
+  let aiResumeBusy = false;
+  async function aiResume(siteId, manual) {
+    if (aiResumeBusy) { if (manual) toast('An AI check is already running'); return; }
+    aiResumeBusy = true;
+    try {
+      const lock = await store({ op: 'aiLock', id: siteId });
+      if (!lock.ok) { if (manual) toast('Someone else is already resuming this AI check'); return; }
+      const s = await api('/api/store?op=site&id=' + encodeURIComponent(siteId));
+      const open = (s.findings || []).filter((f) => /^AI_PENDING/.test(f.code) && f.status !== 'done' && f.status !== 'false');
+      if (!open.length) { await store({ op: 'aiUnlock', id: siteId }); return; }
+      const rest = (s.findings || []).filter((f) => !open.includes(f)).map(stripState);
+      const alts = [].concat(...open.filter((f) => f.code === 'AI_PENDING_ALT').map((f) => f.aiPending.items || []));
+      const texts = [].concat(...open.filter((f) => f.code === 'AI_PENDING_TEXT').map((f) => f.aiPending.items || []));
+      const res = { truth: s.truth || {}, pages: s.pages || [], findings: rest, alts, texts };
+      state.scanning[siteId] = { done: 0, total: 0, message: '✨ Resuming AI check…' }; renderProgress(siteId);
+      const log = [];
+      const before = rest.length;
+      const aiAlt = alts.length ? await aiAltCheck(res, siteId, log) : null;
+      const aiText = texts.length ? await aiTextCheck(res, siteId, log, aiAlt && aiAlt.paused) : null;
+      const paused = (aiText && aiText.paused) || (aiAlt && aiAlt.paused) || null;
+      const pend = [].concat(pendingFindings('alt', (aiAlt && aiAlt.pending) || [], paused), pendingFindings('text', (aiText && aiText.pending) || [], paused));
+      res.findings.push(...pend);
+      const counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { counts[f.severity]++; });
+      const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || []))];
+      const scan = Object.assign({}, s.scan || {}, { counts });
+      scan.ai = Object.assign({}, scan.ai || {}, { paused, pendingItems: pend.length, resumedAt: new Date().toISOString(), resumedBy: state.me.email,
+        provider: [...new Set([].concat(String((scan.ai || {}).provider || '').split(', ').filter(Boolean), used.map((u) => u.split(' · ')[0])))].join(', ') });
+      const checked = ((aiAlt && aiAlt.checked) || 0) + ((aiText && aiText.blocks) || 0);
+      const sum = await store({ op: 'saveScan', mode: 'aiResume', id: siteId, result: { findings: res.findings, scan }, aiLog: { checked, flagged: res.findings.length - before - pend.length, stillPending: pend.length } });
+      upsertSummary(sum);
+      if (checked || manual) toast(`✨ AI check resumed for ${s.businessName || s.siteId}: ${checked} checked${pend.length ? `, ${pend.length} item(s) still waiting` : ''}`);
+      if (state.current && state.current.id === siteId) { await loadSite(siteId); renderSite(); }
+    } catch (e) {
+      console.error(e); try { await store({ op: 'aiUnlock', id: siteId }); } catch (x) { /* ignore */ }
+      if (manual) toast('AI check failed: ' + e.message);
+    } finally { aiResumeBusy = false; delete state.scanning[siteId]; if (route().name === 'sites') renderSites(); if (route().name === 'ai') renderAiPage(); }
+  }
+  async function aiResumeTick() {
+    if (!state.me || !state.ai || !state.ai.enabled || aiResumeBusy || state.running || state.queue.length) return;
+    const waiting = (state.sites || []).filter((x) => x.counts && x.counts.aiPending > 0 && !state.scanning[x.id]);
+    if (!waiting.length) return;
+    try { const r = await api('/api/ai'); aiUpdate(r); } catch (e) { return; }
+    if (aiResumeAt() !== 0) return;
+    await aiResume(waiting[0].id, false);
+  }
+  setInterval(aiResumeTick, 60000);
+  setTimeout(aiResumeTick, 8000);
+
+  // ---------- AI Status page ----------
+  function renderAiPage() {
+    const list = (state.ai && state.ai.providers) || [];
+    const now = srvNow();
+    const free = list.filter((p) => p.free);
+    const leftOf = (p) => { const parked = !p.ready && p.until > now && (p.state === 'limit' || p.state === 'credits'); return parked ? 0 : p.limit ? Math.max(0, p.limit - p.used) : null; };
+    const total = free.reduce((a, p) => a + (p.limit || 0), 0);
+    const used = free.reduce((a, p) => a + (p.limit ? Math.min(p.used, p.limit) : 0), 0);
+    const left = free.reduce((a, p) => a + (leftOf(p) || 0), 0);
+    const at = aiResumeAt();
+    const waiting = (state.sites || []).filter((x) => x.counts && x.counts.aiPending > 0);
+    const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+    $('#view').innerHTML = `<div class="page-head"><h1>✨ AI Status</h1><button class="btn" id="aiRefresh">Refresh</button></div>
+      ${!state.ai || !state.ai.enabled ? `<div class="panel panel-pad"><p>No AI keys are set up yet. Add a free <code>GEMINI_API_KEY</code> or <code>GROQ_API_KEY</code> in Vercel, then redeploy.</p></div>` : `
+      <div class="ai-stats">
+        <div class="panel panel-pad stat"><div class="k">Free credits per day</div><div class="big">${total || '—'}</div><div class="small faint">requests, all free models</div></div>
+        <div class="panel panel-pad stat"><div class="k">Used today</div><div class="big">${used}</div><div class="meter"><span style="width:${pct(used, total)}%"></span></div></div>
+        <div class="panel panel-pad stat"><div class="k">Left today</div><div class="big ${left ? 'ok' : 'bad'}">${left}</div><div class="small faint">${pct(left, total)}% of today's free credits</div></div>
+        <div class="panel panel-pad stat"><div class="k">AI right now</div><div class="big ${at === 0 ? 'ok' : 'bad'}">${at === 0 ? 'Available' : 'Paused'}</div><div class="small faint">${at === 0 ? 'At least one model can answer' : at ? `Back in ${countdown(at)} · ${esc(fmtWhen(at))}` : ''}</div></div>
+      </div>
+      <div class="ai-cards">${list.map((p, k) => {
+        const parked = !p.ready && p.until > now;
+        const [lbl, cls] = parked ? (AI_STATE[p.state] || [p.state, 'unk']) : ['Ready', 'good'];
+        const l = leftOf(p);
+        return `<div class="panel panel-pad ai-card">
+          <div class="row-between"><div><span class="faint small">#${k + 1}</span> <b>${esc(p.label)}</b> ${p.free ? '<span class="badge scan-complete">Free</span>' : '<span class="badge">Paid</span>'}</div><span class="small"><span class="ai-dot ${cls}"></span> ${esc(lbl)}</span></div>
+          <div class="small faint mono" style="margin:2px 0 10px">${esc(p.model)}</div>
+          <div class="row-between small"><span>Used today <b>${p.used}</b>${p.limit ? ` of ${p.limit}` : ''}</span><span>${l === null ? 'No daily cap' : `<b>${l}</b> left`}</span></div>
+          ${p.limit ? `<div class="meter"><span style="width:${pct(Math.min(p.used, p.limit), p.limit)}%" class="${l === 0 ? 'full' : ''}"></span></div>` : ''}
+          ${parked ? `<div class="note ${cls === 'bad' ? 'bad' : 'unk'}" style="margin-top:10px">Back in <b>${countdown(p.until)}</b> · ${esc(fmtWhen(p.until))}${p.note ? `<div class="small faint">${esc(p.note)}</div>` : ''}</div>` : ''}
+          <div class="small muted" style="margin-top:8px">Daily reset in ${countdown(p.resetsAt)} · ${esc(fmtWhen(p.resetsAt))}</div></div>`;
+      }).join('')}</div>
+      <div class="panel panel-pad" style="margin-top:16px"><h2>Waiting for AI credits (${waiting.length})</h2>
+        ${waiting.length ? `<table class="grid"><thead><tr><th>Website</th><th>Items waiting</th><th>Resumes</th><th></th></tr></thead><tbody>${waiting.map((x) => `<tr>
+          <td><a href="#/site/${esc(x.id)}">${esc(x.businessName || x.siteId)}</a></td>
+          <td>${x.counts.aiPending} item(s) · ${x.counts.aiPendingBlocks} text blocks / images</td>
+          <td>${state.scanning[x.id] ? '<span class="badge sev-info">Resuming now…</span>' : at === 0 ? 'Automatically, within a minute' : at ? `after ${esc(fmtWhen(at))} <span class="faint">(${countdown(at)})</span>` : '—'}</td>
+          <td>${at === 0 && !state.scanning[x.id] ? `<button class="btn sm" data-resume="${esc(x.id)}">Run now</button>` : ''}</td></tr>`).join('')}</tbody></table>`
+          : '<p class="muted small">Nothing is waiting. When every model runs out during a scan, the unchecked pages show up here and resume automatically.</p>'}
+      </div>
+      <p class="small muted" style="margin-top:12px">Credits are counted as requests. One request checks up to about 45 text blocks or 50 image alt texts. Models are tried top to bottom (<code>AI_ORDER</code> in Vercel); when one runs out, the next one answers. Results are cached for 60 days, so rescans don't use credits. Audit items marked <b>Done</b> by hand are never sent to the AI.</p>`}`;
+    const rf = $('#aiRefresh'); if (rf) rf.onclick = async () => { try { const r = await api('/api/ai'); aiUpdate(r); renderAiPage(); } catch (e) { toast(e.message); } };
+    $$('[data-resume]').forEach((b) => (b.onclick = () => aiResume(b.dataset.resume, true)));
+  }
+
+  function aiNote(f, full) {
+    if (!f.ai) return '';
+    const ok = ['describes_image', 'this_business'].includes(f.ai.verdict);
+    return `<div class="ai-note ${ok ? 'ok' : 'bad'}"><span class="badge ai-badge">✨ AI</span> <b>${esc(AI_LABEL[f.ai.verdict] || f.ai.verdict)}</b>${f.ai.reason ? ' · ' + esc(f.ai.reason) : ''} <span class="faint">(${Math.round((f.ai.confidence || 0) * 100)}% sure)</span>
+      ${full && f.ai.suggestion ? `<div class="ai-sugg">${/^AI_TEXT/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
+  }
+
   async function checkProfiles(truth) {
     const urls = [];
     const add = (net, u) => { if (u && !urls.some((x) => x.url === u)) urls.push({ net, url: u }); };
     const links = truth.socialLinks || {};
-    (links.facebook || truth.socials.facebook || []).forEach((h) => add('Facebook', /^https?:/i.test(h) ? h : 'https://www.facebook.com/' + String(h).replace(/^\/+/, '')));
-    (links.google_my_business || []).forEach((h) => { if (/^https?:/i.test(h)) add('Google Business', h); else if (/\./.test(h)) add('Google Business', 'https://' + h); });
+    (links.facebook || truth.socials.facebook || []).forEach((h) => add('Facebook', A.socialUrl('facebook', h)));
+    (links.google_my_business || []).forEach((h) => add('Google Business', A.socialUrl('google_my_business', h)));
     if (!urls.length) return { checked: false, items: [], note: 'No Facebook or Google Business profile in Business Info.' };
     let out = [];
     try { out = await post('/api/social', { urls: urls.map((u) => u.url) }); } catch (e) { return { checked: false, items: [], note: 'Profile check failed: ' + e.message }; }
     const items = out.map((r, i) => {
       const net = urls[i].net;
-      if (!r.ok) return { net, url: r.url, result: 'unverified', text: `Could not read the ${net} page automatically (${r.error || 'login wall / blocked'}). Open it and compare name, phone and email manually.` };
+      if (!r.ok) {
+        // Google Maps links carry the place name in the URL, so the name can still be compared without reading the page
+        const place = net === 'Google Business' ? A.placeNameFromUrl(urls[i].url) : '';
+        if (place && truth.businessName) {
+          const same = A.matchesBusiness(place, truth);
+          return { net, url: urls[i].url, title: place, result: same ? 'match' : 'mismatch', text: same
+            ? `Google Business listing "${place}" (from the link) matches the business name. Phone and email could not be read automatically, so compare those by hand.`
+            : `Google Business link points to "${place}", but Business Info says "${truth.businessName}". Check it's the right listing.` };
+        }
+        return { net, url: urls[i].url, result: 'unverified', text: `Could not read the ${net} page automatically (${r.error || 'login wall / blocked'}). Open it and compare name, phone and email manually.` };
+      }
       const issues = [];
       if (r.title && truth.businessName && !A.matchesBusiness(r.title, truth)) issues.push(`Name on ${net} is "${r.title}" (Business Info: "${truth.businessName}")`);
       (r.phones || []).forEach((p) => { if (truth.phones.length && !truth.phones.includes(p.slice(-10))) issues.push(`${net} shows phone ${A.fmtPhone(p)} (Business Info: ${truth.phones.map(A.fmtPhone).join(', ')})`); });
       (r.emails || []).forEach((em) => { if (truth.emails.length && !truth.emails.includes(em)) issues.push(`${net} shows email ${em} (Business Info: ${truth.emails.join(', ')})`); });
-      return { net, url: r.url, title: r.title, result: issues.length ? 'mismatch' : 'match', text: issues.length ? issues.join(' · ') : `${net} profile "${r.title}" matches the business name.` };
+      return { net, url: urls[i].url, title: r.title, result: issues.length ? 'mismatch' : 'match', text: issues.length ? issues.join(' · ') : `${net} profile "${r.title}" matches the business name.` };
     });
     return { checked: true, items };
   }
@@ -453,6 +759,7 @@
     if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'activity') return { name: 'activity' };
+    if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'suggestions') return { name: 'suggestions' };
     return { name: 'sites' };
   }
@@ -472,6 +779,7 @@
     lastSiteId = null; state.current = null; closeDrawer(true);
     if (r.name === 'about') return renderAbout();
     if (r.name === 'activity') return renderGlobalActivity();
+    if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
     if (/members=1/.test(location.hash)) { history.replaceState(null, '', '#/'); setTimeout(openMembers, 50); }
     return renderSites();
@@ -749,7 +1057,7 @@
       if (ff.st === 'active' && !['open', 'clarification'].includes(f.status)) return false;
       if (ff.st !== 'active' && ff.st !== 'all' && f.status !== ff.st) return false;
       if (ff.sev && f.severity !== ff.sev) return false;
-      if (ff.cat && f.category !== ff.cat) return false;
+      if (ff.cat === '__ai' ? !f.ai : ff.cat && f.category !== ff.cat) return false;
       if (ff.loc && f.location !== ff.loc) return false;
       if (ff.dev === 'hidden' && (f.visibleOn || []).length) return false;
       if (ff.dev && ff.dev !== 'hidden' && !(f.visibleOn || []).includes(ff.dev)) return false;
@@ -812,12 +1120,23 @@
     const cats = [...new Set(findings.map((f) => f.category))].sort();
     const locs = [...new Set(findings.map((f) => f.location))].sort();
     const shown = filteredFindings(s);
-    const socials = Object.entries(t.socials || {}).map(([k, v]) => `${esc(k.replace('google_my_business', 'Google Business'))}: ${esc(v.join(', '))}`).join('<br>');
+    const socials = Object.entries(t.socials || {}).map(([k, v]) => {
+      const links = (t.socialLinks || {})[k] || [];
+      const items = v.map((h, i) => { const u = A.socialUrl(k, links[i] || h); const label = k === 'google_my_business' ? (A.placeNameFromUrl(u) || h) : (h || links[i]); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)} ↗</a>` : esc(label); });
+      return `${esc(k.replace('google_my_business', 'Google Business'))}: ${items.join(', ')}`;
+    }).join('<br>');
     const activeCount = findings.filter((f) => ['open', 'clarification'].includes(f.status));
     const sevCount = (sev) => activeCount.filter((f) => f.severity === sev).length;
     body.innerHTML = `
       <div class="panel panel-pad" style="margin-bottom:16px">${scanBadge(s)}
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
+        ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
+            ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> blocks read${sc.ai.text.truncated ? ` (of ${sc.ai.text.of}, the rest skipped to limit cost)` : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
+            ${sc.ai.provider ? `<span class="faint">Answered by ${esc(sc.ai.provider)}${sc.ai.model ? ' · ' + esc(sc.ai.model) : ''}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI models ↗</a></div>
+            ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: every AI model ran out of free credits during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
+              ${aiResumeAt(sc.ai.paused.retryAt) ? `They resume automatically after <b>${esc(fmtWhen(aiResumeAt(sc.ai.paused.retryAt)))}</b> (in ${countdown(aiResumeAt(sc.ai.paused.retryAt))}).` : 'AI credits are available again, so they resume automatically within a minute.'}
+              Check them by hand and mark them <b>Done</b> if you can't wait. <a href="#/ai">AI Status ↗</a></div>` : ''}`
+          : state.ai && !state.ai.enabled && state.me.role === 'admin' && sc.state === 'complete' ? '<div class="small faint" style="margin-top:6px">✨ AI checks are off. Add a free <code>GEMINI_API_KEY</code> or <code>GROQ_API_KEY</code> in Vercel to turn them on.</div>' : ''}
         ${sc.error ? `<div class="note bad">${esc(sc.error)}</div>` : ''}
         ${(sc.log || []).length ? `<details style="margin-top:8px"><summary class="small">Scan notes (${sc.log.length})</summary>${sc.log.map((l) => `<div class="note unk">${esc(l)}</div>`).join('')}</details>` : ''}
       </div>
@@ -837,7 +1156,7 @@
           </div>
           <div class="panel panel-pad">
             <h2>Facebook / Google Business check</h2>
-            ${s.profiles ? (s.profiles.items || []).map((p) => `<div class="note ${p.result === 'match' ? 'good' : p.result === 'mismatch' ? 'bad' : 'unk'}"><b>${esc(p.net)}</b>: ${esc(p.text)} <a href="${esc(p.url)}" target="_blank" rel="noopener">open ↗</a></div>`).join('') + (s.profiles.note ? `<div class="note unk">${esc(s.profiles.note)}</div>` : '') : '<p class="muted small">Runs with each scan.</p>'}
+            ${s.profiles ? (s.profiles.items || []).map((p) => `<div class="note ${p.result === 'match' ? 'good' : p.result === 'mismatch' ? 'bad' : 'unk'}"><b>${esc(p.net)}</b>: ${esc(p.text)} <a href="${esc(A.socialUrl(p.net === 'Google Business' ? 'google_my_business' : String(p.net).toLowerCase(), p.url))}" target="_blank" rel="noopener">open ↗</a></div>`).join('') + (s.profiles.note ? `<div class="note unk">${esc(s.profiles.note)}</div>` : '') : '<p class="muted small">Runs with each scan.</p>'}
             <p class="small faint" style="margin:8px 0 0">General note only. Facebook and Google often block automated reads, so verify anything marked yellow by hand.</p>
           </div>
         </div>
@@ -856,7 +1175,7 @@
             <option value="all" ${ff.st === 'all' ? 'selected' : ''}>All (${findings.length})</option>
           </select>
           <input type="search" id="ffq" placeholder="Search, or #12 to jump to an ID…" value="${esc(ff.q)}">
-          <select id="ffcat"><option value="">All categories</option>${cats.map((c) => `<option ${c === ff.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+          <select id="ffcat"><option value="">All categories</option>${findings.some((f) => f.ai) ? `<option value="__ai" ${ff.cat === '__ai' ? 'selected' : ''}>✨ AI-reviewed (${findings.filter((f) => f.ai).length})</option>` : ''}${cats.map((c) => `<option ${c === ff.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="ffloc"><option value="">All locations</option>${locs.map((c) => `<option ${c === ff.loc ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="ffdev"><option value="">All devices</option>${A.DEVICES.map((d) => `<option value="${d}" ${ff.dev === d ? 'selected' : ''}>Visible on ${A.DEVICE_LABEL[d]}</option>`).join('')}<option value="hidden" ${ff.dev === 'hidden' ? 'selected' : ''}>Hidden on all devices</option></select>
           <select id="ffwho"><option value="">Anyone</option><option value="_mine" ${ff.who === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${ff.who === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${ff.who === u.email ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
@@ -874,10 +1193,11 @@
               <td style="max-width:200px" data-stop><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small" title="Open ${esc(A.DEVICE_LABEL[dev])} preview">${esc(f.path)}</a>
                 ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more pages</div>` : ''}</td>
               <td><div class="loc">${esc(f.location)}</div>${devChips(f)}</td>
-              <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel" data-copy="${esc(f.selector)}" title="Click to copy selector">${esc(f.selector)}</code>` : '<span class="faint">(whole page)</span>'}</td>
+              <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
+                <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>` : '<span class="faint">(whole page)</span>'}</td>
               <td style="min-width:240px"><div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
-                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}</td>
+                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
               <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
             </tr>`;
@@ -892,6 +1212,7 @@
     $('#ffq') && ($('#ffq').oninput = (e) => { ff.q = e.target.value; const p = e.target.selectionStart; renderSite(); const i = $('#ffq'); i.focus(); i.setSelectionRange(p, p); });
     [['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
     $$('[data-copy]', body).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
+    $$('[data-inspect]', body).forEach((c) => (c.onclick = () => { const f = s.findings.find((x) => x.id === c.dataset.inspect); if (f) openInspector(s, f); }));
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
@@ -914,7 +1235,7 @@
     bindComments(body, s, siteComposer);
   }
 
-  const ACT_ICON = { 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
+  const ACT_ICON = { ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
   function renderActivityTab(body, s) {
     const act = s.activity || [];
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {
@@ -960,12 +1281,15 @@
         ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
         ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
+        ${aiNote(f, true)}${aiPendingHtml(f, true)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}</div>
-          <div class="span2"><div class="k">Unique CSS selector</div>${f.selector && f.selector !== '(page)' ? `<code class="sel" data-copy="${esc(f.selector)}">${esc(f.selector)}</code>
-            <button class="btn sm ghost" id="drSnip" title="Copy a console snippet that scrolls to and highlights this element">⌖ Copy highlight snippet</button>` : '<span class="faint">(whole page)</span>'}</div>
+          <div class="span2"><div class="k">Unique CSS selector</div>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" id="drInspect2" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
+            <button class="btn sm primary" id="drInspect">👁 Show on page</button> <button class="btn sm ghost" data-copy="${esc(f.selector)}">Copy selector</button>
+            <button class="btn sm ghost" id="drSnip" title="Copy a console snippet that scrolls to and highlights this element">⌖ Console snippet</button>` : '<span class="faint">(whole page)</span>'}</div>
         </div>
+        ${aiPendingList(f)}
         <div class="k" style="margin-top:14px">Status</div>
         <div class="status-btns">${FSTATUS.map((x) => `<button class="sbtn fs-${x.v} ${f.status === x.v ? 'on' : ''}" data-set="${x.v}">${x.label}</button>`).join('')}</div>
         ${f.statusBy ? `<div class="small faint" style="margin-top:4px">Last changed by ${esc(nameOf(f.statusBy))} · ${esc(fmtFull(f.statusAt))}</div>` : ''}
@@ -980,7 +1304,10 @@
     $('#drPrev').onclick = () => { if (idx > 0) location.hash = `#/site/${s.id}/item/${list[idx - 1].num}`; };
     $('#drNext').onclick = () => { if (idx < list.length - 1) location.hash = `#/site/${s.id}/item/${list[idx + 1].num}`; };
     $('#drLink').onclick = () => copy(`${location.origin}/#/site/${s.id}/item/${f.num}`, 'Link to #' + f.num + ' copied');
-    $$('[data-copy]', d).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
+    $$('[data-copy]', d).forEach((c) => (c.onclick = () => copy(c.dataset.copy, c.closest('.ai-sugg') ? 'Suggestion copied' : 'Selector copied')));
+    ['#drInspect', '#drInspect2'].forEach((sel) => { const b = $(sel, d); if (b) b.onclick = () => openInspector(s, f); });
+    $$('[data-pshow]', d).forEach((b) => (b.onclick = () => { const x = f.aiPending.items[Number(b.dataset.pshow)]; openInspector(s, Object.assign({}, f, { selector: x.selector, path: (x.pages || [f.path])[0], pages: x.pages || [f.path], devices: x.devices || f.devices, visibleOn: x.visibleOn || f.visibleOn, location: x.location })); }));
+    if ($('#drAiNow')) $('#drAiNow').onclick = () => aiResume(s.id, true);
     if ($('#drSnip')) $('#drSnip').onclick = () => {
       const snip = `(s=>{const e=document.querySelector(s);if(!e)return console.warn('Not found on this device view:',s);let p=e;while(p){if(p.id==='hamburger-drawer'){console.log('This element is inside the side panel (hamburger menu), so open it to see.');}p=p.parentElement;}e.scrollIntoView({block:'center'});e.style.outline='4px solid #e11d48';e.style.outlineOffset='2px';console.log(e);})(${JSON.stringify(f.selector)})`;
       copy(snip, `Snippet copied. Paste it in the ${A.DEVICE_LABEL[dev]} preview's console.`);
@@ -990,6 +1317,85 @@
     drawerComposer = composer($('#drComposer'), { site: s, target: f.id, placeholder: 'Comment on this item… @ to tag, # to link another item, paste screenshots with Cmd/Ctrl+V.', onPosted: async () => { await loadSite(s.id); renderSite(); setTimeout(() => { const b = $('#drawer .dr-body'); if (b) b.scrollTop = b.scrollHeight; }, 50); } });
     bindComments(d, s, drawerComposer);
     if (prevScroll) $('.dr-body', d).scrollTop = prevScroll;
+  }
+
+  // ---------- Page inspector: open the page for a device and highlight the element ----------
+  const VIEW_W = { desktop: 1280, tablet: 800, mobile: 390 };
+  async function openInspector(s, f, device) {
+    const devs = A.DEVICES.filter((d) => (f.devices || []).includes(d));
+    device = device || (f.visibleOn && f.visibleOn[0]) || devs[0] || 'desktop';
+    const pages = f.pages && f.pages.length ? f.pages : [f.path];
+    let page = pages[0];
+    const draw = () => modal(`<div class="insp">
+      <div class="insp-bar">
+        <div class="insp-title"><b>${f.num ? '#' + f.num + ' · ' : ''}${esc(f.message)}</b><div class="small muted mono">${esc(f.selector)}</div></div>
+        <div class="insp-controls">
+          ${pages.length > 1 ? `<select id="inPage" class="sm-select">${pages.slice(0, 50).map((p) => `<option ${p === page ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>` : `<span class="mono small">${esc(page)}</span>`}
+          <span class="chips">${A.DEVICES.map((d) => `<button class="chipbtn ${d === device ? 'active' : ''}" data-dev="${d}" ${devs.includes(d) ? '' : 'disabled title="Not on this device"'}>${A.DEVICE_LABEL[d]}</button>`).join('')}</span>
+          <a class="btn sm" href="${esc(previewUrl(s, page, device))}" target="_blank" rel="noopener">Open live preview ↗</a>
+          <button class="btn sm ghost" data-close>✕</button>
+        </div>
+      </div>
+      <div class="insp-note" id="inNote">Loading the ${A.DEVICE_LABEL[device]} page…</div>
+      <div class="insp-stage" id="inStage"></div></div>`, { wide: true, full: true });
+    draw();
+    const load = async () => {
+      const note = $('#inNote'), stage = $('#inStage');
+      let html = '';
+      try { const r = await api('/api/fetch?' + new URLSearchParams({ host: s.host, site: s.siteId, path: page, device })); html = r.html || ''; if (!html) throw new Error(r.error || 'empty page'); }
+      catch (e) { note.textContent = 'Could not load the page: ' + e.message; return; }
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      let el = null; try { el = doc.querySelector(f.selector); } catch (e) { /* bad selector */ }
+      if (el && el.closest('head')) {
+        note.innerHTML = `This item is in the page's <b>SEO settings</b> (not visible on the page). Current value: <b>${esc(el.tagName === 'TITLE' ? el.textContent : el.getAttribute('content') || '')}</b>. Edit it in Duda under <b>Pages → Page settings → SEO</b>.`;
+        stage.innerHTML = ''; return;
+      }
+      // Make it render safely as a static snapshot: no Duda scripts, real image sources, assets from the preview host
+      doc.querySelectorAll('script:not([type="application/ld+json"])').forEach((x) => x.remove());
+      doc.querySelectorAll('img[data-src]').forEach((im) => { if (!im.getAttribute('src')) im.setAttribute('src', im.getAttribute('data-src')); });
+      doc.querySelectorAll('[data-srcset]').forEach((im) => im.setAttribute('srcset', im.getAttribute('data-srcset')));
+      const base = doc.createElement('base'); base.href = `https://${s.host}/`; doc.head.prepend(base);
+      let msg = '';
+      if (!el) msg = `This element wasn't found on the <b>${A.DEVICE_LABEL[device]}</b> version of <b>${esc(page)}</b>. Try another device or page above.`;
+      else {
+        const hidden = A.hiddenReason(el, device);
+        const inPanel = !!el.closest('#hamburger-drawer, .hamburger-drawer, .layout-drawer');
+        if (hidden || inPanel || el.closest('.dmPopup, #dmPopup')) {
+          // Force the element (and whatever hides it) to show, so it can be seen in the snapshot
+          for (let e = el; e && e !== doc.body; e = e.parentElement) {
+            const cs = e.style;
+            if (A.hiddenReason(e, device) || e.id === 'hamburger-drawer' || /hamburger-drawer|layout-drawer|dmPopup|p_hfcontainer|showOn|hide-for/.test(e.getAttribute('class') || '')) {
+              ['display:block', 'visibility:visible', 'opacity:1', 'transform:none', 'position:relative', 'left:auto', 'right:auto', 'top:auto', 'max-height:none', 'height:auto', 'width:auto']
+                .forEach((d) => { const [k, v] = d.split(':'); cs.setProperty(k, v, 'important'); });
+            }
+          }
+          msg = inPanel ? '📌 This element is inside the <b>side panel</b> (hamburger menu). It has been opened below so you can see it.' : `📌 This element is <b>hidden on ${A.DEVICE_LABEL[device]}</b> (${esc(hidden || 'popup')}). It is shown below anyway.`;
+        }
+        el.setAttribute('data-dsa-hl', '1');
+        if (msg) el.setAttribute('data-dsa-force', '1');
+      }
+      const style = doc.createElement('style');
+      style.textContent = `[data-dsa-hl]{outline:4px solid #e11d48!important;outline-offset:3px!important;background-color:rgba(255,214,0,.35)!important;animation:dsaPulse 1.2s ease-in-out 3;scroll-margin:120px}
+        @keyframes dsaPulse{50%{outline-color:#fbbf24;outline-offset:8px}}`;
+      doc.head.appendChild(style);
+      const sc = doc.createElement('script');
+      sc.textContent = `(function(){function fix(){var e=document.querySelector('[data-dsa-force]');for(;e&&e!==document.body;e=e.parentElement){var c=getComputedStyle(e);if(c.display==='none')e.style.setProperty('display','block','important');if(c.visibility==='hidden')e.style.setProperty('visibility','visible','important');if(+c.opacity<0.1)e.style.setProperty('opacity','1','important');if(c.position==='fixed'){['position:relative','left:auto','right:auto','top:auto','transform:none'].forEach(function(d){var p=d.split(':');e.style.setProperty(p[0],p[1],'important');});}if(c.transform&&c.transform!=='none')e.style.setProperty('transform','none','important');if(c.maxHeight==='0px'||c.height==='0px'){e.style.setProperty('max-height','none','important');e.style.setProperty('height','auto','important');}if(c.overflow==='hidden'&&e.clientHeight<5)e.style.setProperty('overflow','visible','important');}}function go(){fix();var e=document.querySelector('[data-dsa-hl]');if(e)e.scrollIntoView({block:'center'});}document.addEventListener('DOMContentLoaded',go);window.addEventListener('load',go);setTimeout(go,600);document.addEventListener('click',function(ev){var a=ev.target.closest('a');if(a)ev.preventDefault();},true);})();`;
+      doc.body.appendChild(sc);
+      note.innerHTML = msg || `Showing <b>${esc(page)}</b> on <b>${A.DEVICE_LABEL[device]}</b>. The element is outlined in red. <span class="faint">Snapshot without scripts, so sliders and animations may look static.</span>`;
+      const w = VIEW_W[device];
+      const scale = Math.min(1, (stage.clientWidth - 2) / w);
+      const frame = document.createElement('iframe');
+      frame.setAttribute('sandbox', 'allow-scripts'); // isolated: no access to this app
+      frame.setAttribute('title', 'Page preview');
+      frame.style.width = w + 'px'; frame.style.height = Math.round(stage.clientHeight / scale) + 'px'; frame.style.transform = `scale(${scale})`;
+      frame.srcdoc = '<!doctype html>' + doc.documentElement.outerHTML;
+      stage.innerHTML = ''; stage.appendChild(frame);
+    };
+    const bind = () => {
+      $$('[data-dev]').forEach((b) => (b.onclick = () => { if (b.disabled) return; device = b.dataset.dev; draw(); bind(); load(); }));
+      const ps = $('#inPage'); if (ps) ps.onchange = () => { page = ps.value; draw(); bind(); load(); };
+    };
+    bind(); load();
   }
 
   function exportCsv(s) {
@@ -1115,7 +1521,7 @@
   async function boot2() {
     document.body.classList.remove('auth-mode');
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
-    await Promise.all([loadUsers(), loadSites()]);
+    await Promise.all([loadUsers(), loadSites(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
     renderTop();
     pulse();
     render();

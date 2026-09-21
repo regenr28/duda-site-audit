@@ -131,6 +131,43 @@
     return v.replace(/^@/, '').replace(/\/+$/, '');
   }
 
+  // Duda's Business Info stores social accounts as handles or partial paths
+  // (e.g. google_my_business: "Upscale+Detail+Co+LLC/@32.53,-84.95,17z/data=..."). Turn them into full, openable URLs.
+  const SOCIAL_BASE = {
+    google_my_business: 'https://www.google.com/maps/place/', facebook: 'https://www.facebook.com/', instagram: 'https://www.instagram.com/',
+    youtube: 'https://www.youtube.com/', tiktok: 'https://www.tiktok.com/@', twitter: 'https://x.com/', linkedin: 'https://www.linkedin.com/',
+    yelp: 'https://www.yelp.com/biz/', pinterest: 'https://www.pinterest.com/', houzz: 'https://www.houzz.com/', tripadvisor: 'https://www.tripadvisor.com/',
+  };
+  function socialUrl(net, value) {
+    let v = String(value || '').trim();
+    if (!v) return '';
+    if (/^https?:\/\//i.test(v)) return v;
+    if (/^\/\//.test(v)) return 'https:' + v;
+    // Already includes a known host (e.g. "facebook.com/xyz", "maps.app.goo.gl/abc", "google.com/maps/place/...")
+    if (/^(www\.)?([a-z0-9-]+\.)+[a-z]{2,}(\/|$)/i.test(v) && socialNetOf('https://' + v)) return 'https://' + v;
+    if (net === 'google_my_business') {
+      v = v.replace(/^\/+/, '').replace(/^maps\/place\//i, '');
+      return SOCIAL_BASE.google_my_business + v;
+    }
+    const base = SOCIAL_BASE[net];
+    if (!base) return /\./.test(v.split('/')[0]) ? 'https://' + v.replace(/^\/+/, '') : '';
+    v = v.replace(/^\/+/, '');
+    if (net === 'tiktok') v = v.replace(/^@/, '');
+    else if (net !== 'youtube') v = v.replace(/^@/, '');
+    return base + v;
+  }
+
+  function flatSocials(sa, out) {
+    out = out || {};
+    Object.keys(sa || {}).forEach((k) => {
+      const v = sa[k];
+      if (!v) return;
+      if (typeof v === 'object' && !Array.isArray(v)) return flatSocials(v, out); // e.g. { socialAccounts: { … } }
+      [].concat(v).forEach((x) => { if (x && typeof x !== 'object') (out[k] = out[k] || []).push(String(x)); });
+    });
+    return out;
+  }
+
   function placeNameFromUrl(href) {
     const m = String(href).match(/\/maps\/place\/([^/@?]+)/i) || String(href).match(/!2s([^!]+)/);
     if (m) return safeDecode(m[1].replace(/\+/g, ' ')).trim();
@@ -159,8 +196,15 @@
       (L.phones || []).forEach((p) => addPhone(pick(p, 'phoneNumber', 'phone_number', 'number') || p));
       (L.emails || []).forEach((e) => addEmail(pick(e, 'emailAddress', 'email_address', 'email') || e));
       const a = normAddress(L.address); if (a && (a.street || a.zip)) t.addresses.push(a);
-      const sa = L.social_accounts || L.socialAccounts || {};
-      Object.keys(sa).forEach((k) => { if (sa[k]) { const net = k === 'google_my_business' || k === 'google' ? 'google_my_business' : k; t.socials[net] = t.socials[net] || []; t.socials[net].push(socialHandle(net, sa[k])); (t.socialLinks[net] = t.socialLinks[net] || []).push(String(sa[k])); } });
+      const sa = flatSocials(L.social_accounts || L.socialAccounts || {});
+      Object.keys(sa).forEach((k) => {
+        const net = /^(google_my_business|google|gmb|google_business|googlemybusiness)$/i.test(k) ? 'google_my_business' : k.toLowerCase();
+        sa[k].forEach((val) => {
+          const url = socialUrl(net, val);
+          t.socials[net] = t.socials[net] || []; t.socials[net].push(socialHandle(net, url || val));
+          (t.socialLinks[net] = t.socialLinks[net] || []).push(url || val);
+        });
+      });
       if (L.label) t.notes.push('Location label: ' + L.label);
     };
 
@@ -312,6 +356,7 @@
     const internal = new Set();
     const external = new Map(); // url -> {selector,...}
     const images = new Map();
+    const altList = [];
     const textIndex = [];
     const seen = new Set();
     const now = new Date();
@@ -566,6 +611,7 @@
         }
         const logoHint = /logo/i.test(file) || /logo/i.test(img.id || '') || /\blogo\b|imageWidget.*logo/i.test(cls(img) + ' ' + cls(img.parentElement));
         const isLogo = !inGallery && (logoHint || ((locImg === 'Header' || locImg === 'Side panel' || locImg === 'Footer') && linksHome));
+        altList.push({ alt: a, file, selector: uniqueSelector(img), location: locImg, linksHome, isLogo, inGallery, hiddenBy: hiddenReason(img, device) || '' });
         // A descriptive alt ("A man is spraying film on a car") describes the photo — it's never a business name
         const descriptive = /^(a|an|the|this|close[- ]up|photo|image|picture)\b/i.test(a) || a.split(/\s+/).length >= 7 || /\b(is|are|was|were|being|with|on|of|in)\b/i.test(a) && a.split(/\s+/).length >= 5;
         if (isLogo && truth.businessName && !matchesBusiness(a, truth)) {
@@ -607,6 +653,7 @@
       internal: Array.from(internal),
       external: Array.from(external.keys()).map((url) => ({ url, selector: uniqueSelector(external.get(url).el), location: locationOf(external.get(url).el), hiddenBy: hiddenReason(external.get(url).el, device) || '' })),
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
+      alts: altList,
       textIndex: textIndex.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)) },
       schema: schemas.map((s) => s.data),
@@ -682,6 +729,7 @@
     const pageInfo = {};
     const external = new Map();
     const images = new Map();
+    const altMap = new Map();
     const textIdx = [];
     const queue = [];
     const queued = new Set();
@@ -728,6 +776,14 @@
           r.internal.forEach((p) => { if (!queued.has(p)) enqueue(p, path); (pageInfo[p] || {}).linkedFrom = (pageInfo[p] || {}).linkedFrom || { path, device }; });
           r.external.forEach((x) => { if (!external.has(x.url)) external.set(x.url, Object.assign({ path, device }, x)); });
           r.images.forEach((x) => { if (!images.has(x.url)) images.set(x.url, Object.assign({ path, device }, x)); });
+          (r.alts || []).forEach((x) => {
+            let m = altMap.get(x.alt);
+            if (!m) { if (altMap.size >= 400) return; m = { alt: x.alt, file: x.file, selector: x.selector, location: x.location, linksHome: x.linksHome, isLogo: x.isLogo, pages: [], devices: [], visibleOn: [], hiddenOn: [] }; altMap.set(x.alt, m); }
+            if (!m.pages.includes(path)) m.pages.push(path);
+            if (!m.devices.includes(device)) m.devices.push(device);
+            if (!x.hiddenBy) { if (!m.visibleOn.includes(device)) m.visibleOn.push(device); } else m.hiddenOn.push(`${DEVICE_LABEL[device]} (${x.hiddenBy})`);
+            m.isLogo = m.isLogo || x.isLogo;
+          });
           r.textIndex.forEach((x) => textIdx.push(Object.assign({ path, device }, x)));
         }
       }
@@ -791,6 +847,29 @@
     Object.entries(byTitle).forEach(([t, ps]) => { if (ps.length > 1) ps.forEach((p) => raw.push({ code: 'META_TITLE_DUP', severity: 'warning', category: 'Meta / SEO', message: `Same SEO title used on ${ps.length} pages`, found: t, expected: 'Unique title per page (' + ps.join(', ') + ')', path: p, device: 'desktop', selector: 'head > title', location: 'Head / Meta', visible: true, hiddenBy: '', snippet: '' })); });
     Object.entries(byDesc).forEach(([t, ps]) => { if (ps.length > 1) ps.forEach((p) => raw.push({ code: 'META_DESC_DUP', severity: 'info', category: 'Meta / SEO', message: `Same meta description used on ${ps.length} pages`, found: cut(t, 160), path: p, device: 'desktop', selector: 'meta[name="description"]', location: 'Head / Meta', visible: true, hiddenBy: '', snippet: '' })); });
 
+    // Unique text blocks (for the AI page-text check): real site pages first, blog posts after
+    function buildTextBlocks() {
+      const map = new Map();
+      textIdx.forEach((x) => {
+        if (x.text.length < 25) return;
+        let m = map.get(x.text);
+        if (!m) { if (map.size >= 2500) return; m = { text: x.text, selector: x.selector, location: x.location, pages: [], devices: [], visibleOn: [], hiddenOn: [] }; map.set(x.text, m); }
+        if (!m.pages.includes(x.path)) m.pages.push(x.path);
+        if (!m.devices.includes(x.device)) m.devices.push(x.device);
+        if (!x.hiddenBy) { if (!m.visibleOn.includes(x.device)) m.visibleOn.push(x.device); } else if (m.hiddenOn.length < 6) m.hiddenOn.push(`${DEVICE_LABEL[x.device]} (${x.hiddenBy})`);
+      });
+      Object.values(pageInfo).forEach((p) => {
+        [['head > title', p.title], ['meta[name="description"]', p.description]].forEach(([sel, t]) => {
+          if (!t || t.length < 15) return;
+          let m = map.get(t);
+          if (!m) { m = { text: t, selector: sel, location: 'Head / Meta', pages: [], devices: ['desktop'], visibleOn: ['desktop'], hiddenOn: [] }; map.set(t, m); }
+          if (!m.pages.includes(p.path)) m.pages.push(p.path);
+        });
+      });
+      const prio = (b) => (b.location === 'Head / Meta' ? 1 : 0) + (b.pages.some((p) => p === '/' || pagesMeta[p]) ? 0 : 2);
+      return Array.from(map.values()).sort((a, b) => prio(a) - prio(b));
+    }
+
     const merged = sortFindings(groupAcrossPages(mergeDevices(raw)));
     const counts = { critical: 0, warning: 0, info: 0 };
     merged.forEach((f) => { counts[f.severity]++; });
@@ -800,9 +879,87 @@
       pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
       externalLinks: external.size,
       images: images.size,
+      alts: Array.from(altMap.values()),
+      texts: buildTextBlocks(),
       counts,
       log,
     };
+  }
+
+  /**
+   * Apply AI verdicts about alt text. verdicts[i] belongs to alts[i]:
+   * { verdict: describes_image | this_business | other_business | wrong_location | placeholder | unclear, confidence 0-1, reason, suggestion }
+   * - Confirms or softens the rule-based logo findings
+   * - Adds new findings for alts the rules couldn't judge (another business, wrong city, placeholder text)
+   */
+  function applyAltVerdicts(findings, alts, verdicts, truth) {
+    const byAlt = new Map();
+    alts.forEach((a, i) => { if (verdicts[i]) byAlt.set(a.alt, { a, v: verdicts[i] }); });
+    const sure = (v) => v && Number(v.confidence) >= 0.6;
+    const logoFlagged = new Set();
+    findings.forEach((f) => {
+      if (!/^ALT_/.test(f.code)) return;
+      const m = byAlt.get(f.found); if (!m) return;
+      f.ai = m.v;
+      if (f.code === 'ALT_LOGO_NAME') {
+        logoFlagged.add(f.found);
+        if (sure(m.v) && m.v.verdict === 'this_business') { f.severity = 'info'; f.message = 'Logo alt text is worded differently from the business name (AI: it refers to this business)'; delete f.foreignName; }
+        else if (sure(m.v) && m.v.verdict === 'describes_image') { f.severity = 'warning'; f.category = 'Images / Alt'; f.message = 'Logo alt text describes the image; it should include the business name'; delete f.foreignName; }
+      }
+    });
+    const RULES = {
+      other_business: ['AI_ALT_OTHER_BUSINESS', 'critical', 'Business name', 'AI: alt text names a different business'],
+      wrong_location: ['AI_ALT_LOCATION', 'warning', 'Images / Alt', "AI: alt text mentions a location that doesn't match this business"],
+      placeholder: ['AI_ALT_PLACEHOLDER', 'warning', 'Images / Alt', 'AI: alt text looks like placeholder or stock-photo text'],
+    };
+    alts.forEach((a, i) => {
+      const v = verdicts[i];
+      if (!sure(v) || !RULES[v.verdict] || logoFlagged.has(a.alt)) return;
+      const [code, severity, category, message] = RULES[v.verdict];
+      const pages = a.pages.slice().sort();
+      const f = {
+        code, severity, category, message, found: a.alt,
+        expected: v.suggestion ? 'Suggested alt: ' + v.suggestion : (truth && truth.businessName) || '',
+        path: pages[0], pages, devices: a.devices, visibleOn: a.visibleOn, hiddenOn: a.hiddenOn,
+        selector: a.selector, location: a.location, snippet: `<img alt="${a.alt}" … ${a.file}>`, ai: v,
+      };
+      f.id = hash([f.code, f.selector, f.found, f.message, pages.length > 1 ? '*' : f.path].join('|'));
+      findings.push(f);
+    });
+    return sortFindings(findings);
+  }
+
+  /** Apply AI page-text issues ({ i, type, quote, confidence, reason, suggestion }, i = index into texts). */
+  function applyTextIssues(findings, texts, issues, truth) {
+    const RULES = {
+      other_business: ['AI_TEXT_OTHER_BUSINESS', 'critical', 'Business name', 'AI: text names a different business'],
+      wrong_location: ['AI_TEXT_LOCATION', 'critical', 'Location', "AI: text mentions a location that doesn't match this business"],
+      name_variant: ['AI_TEXT_NAME_VARIANT', 'warning', 'Business name', 'AI: business name is written differently'],
+    };
+    const loc = truth && truth.addresses && truth.addresses[0] ? [truth.addresses[0].city, truth.addresses[0].region].filter(Boolean).join(', ') : '';
+    issues.forEach((v) => {
+      const blk = texts[v.i];
+      if (!blk || !RULES[v.type] || Number(v.confidence) < 0.6) return;
+      const [code, severity, category, message] = RULES[v.type];
+      // Already caught by a rule on the same element? Attach the AI opinion instead of duplicating
+      const existing = findings.find((f) => f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)) && /OTHER_BUSINESS|COPYRIGHT_NAME/.test(f.code) && v.type === 'other_business');
+      if (existing) { existing.ai = { verdict: 'other_business', confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote }; return; }
+      const pages = blk.pages.slice().sort();
+      const t = blk.text;
+      const at = v.quote ? t.toLowerCase().indexOf(v.quote.toLowerCase()) : -1;
+      const context = at > 80 ? '…' + t.slice(at - 80, at + v.quote.length + 80) + '…' : t.slice(0, 220) + (t.length > 220 ? '…' : '');
+      const f = {
+        code, severity, category, message,
+        found: v.quote ? `"${v.quote}"` : context,
+        expected: v.suggestion ? 'Suggested: ' + v.suggestion : v.type === 'wrong_location' ? loc : (truth && truth.businessName) || '',
+        path: pages[0], pages, devices: blk.devices, visibleOn: blk.visibleOn, hiddenOn: blk.hiddenOn,
+        selector: blk.selector, location: blk.location, snippet: context,
+        ai: { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote },
+      };
+      f.id = hash([f.code, f.selector, f.found, f.message, pages.length > 1 ? '*' : f.path].join('|'));
+      if (!findings.some((x) => x.id === f.id)) findings.push(f);
+    });
+    return sortFindings(findings);
   }
 
   function toCSV(findings, siteLabel) {
@@ -814,7 +971,7 @@
 
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, toCSV, fingerprint, hash, normalizePath,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 

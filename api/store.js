@@ -35,9 +35,10 @@ function pairs(arr, json) {
   return o;
 }
 function summary(site, comments) {
-  const c = { critical: 0, warning: 0, info: 0, clarification: 0, hold: 0, closed: 0, total: 0, comments: 0 };
+  const c = { critical: 0, warning: 0, info: 0, clarification: 0, hold: 0, closed: 0, total: 0, comments: 0, aiPending: 0, aiPendingBlocks: 0 };
   (site.findings || []).forEach((f) => {
     c.total++;
+    if (/^AI_PENDING/.test(f.code) && f.status !== 'done' && f.status !== 'false') { c.aiPending++; c.aiPendingBlocks += ((f.aiPending && f.aiPending.items) || []).length; }
     if (f.status === 'done' || f.status === 'false') c.closed++;
     else if (f.status === 'hold') c.hold++;
     else { c[f.severity]++; if (f.status === 'clarification') c.clarification++; }
@@ -134,9 +135,21 @@ export default async function handler(req, res) {
         if (add.length) cmds.push(['HSET', P + 'fnum:' + b.id, ...add]);
         await redis(...cmds);
         const c = (r.scan && r.scan.counts) || {};
+        if (b.mode === 'aiResume') {
+          const a = b.aiLog || {};
+          await log(b.id, me, 'ai', `resumed the AI check: ${a.checked || 0} item(s) checked, ${a.flagged || 0} new finding(s)${a.stillPending ? `, ${a.stillPending} still waiting for AI credits` : ''}`);
+          await redis(['DEL', P + 'ailock:' + b.id]);
+          return res.status(200).json(await saveIndex(b.id));
+        }
         await log(b.id, me, 'scan', `completed a scan: ${site.findings.length} findings (${c.critical || 0} critical)${add.length && Number(seqRaw || 0) ? `, ${add.length / 2} new` : ''}`);
         return res.status(200).json(await saveIndex(b.id));
       }
+      case 'aiLock': {
+        // Only one browser resumes a site's AI check at a time
+        const [ok] = await redis(['SET', P + 'ailock:' + b.id, me.email, 'NX', 'PX', 10 * 60000]);
+        return res.status(200).json({ ok: ok === 'OK' });
+      }
+      case 'aiUnlock': { await redis(['DEL', P + 'ailock:' + b.id]); return res.status(200).json({ ok: true }); }
       case 'patchSite': {
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
         const site = jparse(raw); if (!site) return res.status(404).json({ error: 'Not found' });

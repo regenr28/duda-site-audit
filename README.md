@@ -27,6 +27,15 @@ Each finding shows **page path · where (Header / Footer / Side panel / Popup / 
 | `RESEND_API_KEY` | API key from resend.com | recommended. Needed for email verification codes, forgot password, and @mention emails. |
 | `EMAIL_FROM` | e.g. `Duda Site Auditor <audit@yourdomain.com>` | with Resend. Must use a domain you verified in Resend. |
 | `GOOGLE_CLIENT_ID` | OAuth Client ID from Google Cloud | optional. Shows the "Sign in with Google" button. |
+| `GEMINI_API_KEY` | free key from aistudio.google.com | optional, **free**, no card. ✨ AI checks. |
+| `GROQ_API_KEY` | free key from console.groq.com | optional, **free**, no card. Backup AI model. |
+| `OPENROUTER_API_KEY` | free key from openrouter.ai | optional, **free**, no card (about 50 requests a day). |
+| `AI_GATEWAY_API_KEY` | key from Vercel → AI Gateway | optional, paid. Add it once you have budget. (Or `ANTHROPIC_API_KEY`.) |
+| `AI_ORDER` | `gateway,gemini,groq,openrouter,anthropic` (default) | optional. The order the models are tried in. |
+| `GEMINI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `AI_GATEWAY_MODEL` | model names | optional. Defaults: `gemini-2.5-flash`, `llama-3.3-70b-versatile`, `qwen/qwen3.8-27b:free`, `anthropic/claude-haiku-4.5`. |
+| `GEMINI_DAILY_LIMIT`, `GROQ_DAILY_LIMIT`, `OPENROUTER_DAILY_LIMIT` | defaults 250 / 1000 / 50 | optional. This app's own daily request cap per model (0 = no cap). |
+| `AI_DAILY_LIMIT` | `5000` (default) | optional. Maximum items sent to AI per day across all models. |
+| `AGENCY_NAMES` | `Detailers Roadmap, 8bit Creative` (default) | optional. Names the AI should never flag as "another business" (e.g. "Website by …"). |
 | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL | optional. Posts to Slack when someone signs up and needs approval. |
 | `SUGGESTIONS_OWNER` | `regencia.reymark28@gmail.com` (default) | optional. The only person who sees every feature suggestion. |
 | `ALLOWED_EMAIL_DOMAINS` | e.g. `8bitcreative.com` | optional. People with these email domains skip admin approval. |
@@ -53,6 +62,30 @@ Until a domain is verified, Resend's test sender only delivers to your own Resen
 
 Every admin also gets an email (if Resend is set up) and a bell notification when someone signs up.
 
+### Optional: ✨ AI checks (free models, with automatic fallback)
+Add one or more free keys. None of them need a credit card:
+1. **Gemini:** https://aistudio.google.com → **Get API key → Create API key** → `GEMINI_API_KEY`.
+2. **Groq:** https://console.groq.com → **API Keys → Create API Key** → `GROQ_API_KEY`.
+3. **OpenRouter** (optional third backup): https://openrouter.ai → **Keys → Create key** → `OPENROUTER_API_KEY`.
+
+Tick **Sensitive** for each, then redeploy.
+
+**How the fallback works:** models are tried in `AI_ORDER`. When one hits its per-minute limit, its daily limit, this app's daily cap, or runs out of credits, it rests until it resets and the next one answers. If every model is resting for up to 3 minutes, the scan waits with a countdown; for longer, it finishes and the rest becomes **AI check pending** items (below).
+
+**AI Status tab:** shows today's free credits (requests) across all free models, how many are used and left, each model's status, and a live countdown to when it's back and when its daily limit resets. It also lists websites waiting for AI credits.
+
+**When credits run out mid-scan:** the pages the AI couldn't read become audit items in the **AI check pending** category, with a button like "No more AI credits · will resume after Tue, Sep 22, 3:00 PM". You can check them by hand (the item lists every text block or image with **👁 Show on page**) and mark it **Done**: the AI will then skip that page, including on later rescans. Anything not marked Done resumes automatically once a model is back, as long as someone has the app open (or click **Run now** on the AI Status tab).
+
+Daily resets: Gemini at midnight Pacific time; Groq's daily limits roll (the countdown uses the time Groq reports); OpenRouter at midnight UTC.
+
+**Later, with budget:** add `AI_GATEWAY_API_KEY`. It's first in the default order, so it answers first and the free models become the backup. Its free tier only covers a few niche models, so don't add the key until you buy credits (or set `AI_GATEWAY_MODEL` to one of its free-tier models).
+
+Privacy: free tiers may use requests to improve their models. The app only sends public page text and alt text.
+
+What the AI checks after every scan (tuned for Detailers Roadmap detailing clients; product brands like Ceramic Pro, XPEL, SunTek or Gtechniq, booking tools like Urable, and `AGENCY_NAMES` are never treated as another business):
+- **Alt text:** does it describe the photo, name this business, name **another** business, mention the **wrong city**, or look like placeholder text?
+- **Page text** (headings, paragraphs, side panels, titles and descriptions): mentions of **another business** (template leftovers), a **city/state that doesn't match** the business location or its service-area pages, and **misspelled variants** of the business name. Each finding shows the quote, the reason and suggested wording.
+
 ### Optional: Sign in with Google
 1. https://console.cloud.google.com → create or select a project.
 2. **APIs & Services → OAuth consent screen**: choose External, enter the app name and support email, save, then click **Publish app** so it's "In production". No review is needed for basic sign-in.
@@ -76,7 +109,7 @@ A Google account and an email/password account with the same email are treated a
 9. **Rescan** after fixing. IDs, statuses, assignees and comments stay with issues that still exist, and fixed ones drop off.
 10. **Export CSV** for a report.
 
-**Jumping to an element:** click a selector to copy it, or open the item and click **⌖ Copy highlight snippet**. Then open the page's device preview (click the path), open DevTools (Cmd+Option+J / Ctrl+Shift+J) and paste. The element scrolls into view with a red outline. "Side panel" items are inside the hamburger menu, so open it first.
+**Jumping to an element:** click the selector (or **👁 Show on page**) on any audit item. A preview of that page opens on the right device with the element outlined in red and scrolled into view. Side-panel and device-hidden items are opened/shown automatically. Switch Desktop/Tablet/Mobile or the page at the top, or click **Open live preview ↗** to see the real page. **Copy** copies the selector, and **⌖ Copy highlight snippet** in the item still works in DevTools.
 
 ---
 
