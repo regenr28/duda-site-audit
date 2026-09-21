@@ -5,8 +5,15 @@
 //                 { op: 'patchSite', id, changes } | { op: 'patchFinding', siteId, findingId, changes }
 import { authorize, readBody } from './_lib.js';
 
-const URL_ = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+// Accepts the default names, or names with a custom prefix added by the Vercel integration
+// (e.g. dr_site_audit_KV_REST_API_URL).
+const findEnv = (suffixes) => {
+  for (const s of suffixes) if (process.env[s]) return process.env[s];
+  const key = Object.keys(process.env).find((k) => suffixes.some((s) => k.endsWith('_' + s) && !k.endsWith('READ_ONLY_TOKEN')));
+  return key ? process.env[key] : undefined;
+};
+const URL_ = findEnv(['KV_REST_API_URL', 'UPSTASH_REDIS_REST_URL']);
+const TOKEN = findEnv(['KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN']);
 const P = process.env.STORE_PREFIX || 'dsa:';
 
 async function redis(...cmds) {
