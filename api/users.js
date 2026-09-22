@@ -12,7 +12,9 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const all = await listUsers();
       const visible = me.role === 'admin' ? all : all.filter((u) => u.status === 'active');
-      return res.status(200).json({ me: publicUser(me), users: visible.map(publicUser).sort((a, b) => a.name.localeCompare(b.name)) });
+      // Members don't see who is an admin (avoids "why are they admin?" friction); admins see roles to manage them
+      const shape = (u) => { const x = publicUser(u); if (me.role !== 'admin' && u.email !== me.email) delete x.role; return x; };
+      return res.status(200).json({ me: publicUser(me), users: visible.map(shape).sort((a, b) => a.name.localeCompare(b.name)) });
     }
     const b = readBody(req);
     if (b.op === 'profile') {

@@ -4,8 +4,7 @@
 import crypto from 'node:crypto';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
-  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup,
-} from './_lib.js';
+  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel } from './_lib.js';
 
 const CODE_TTL = 15 * 60;
 const code6 = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -47,9 +46,9 @@ export default async function handler(req, res) {
   if (!hasRedis()) return res.status(500).json({ error: 'Upstash Redis is not connected to this Vercel project.' });
   try {
     if (req.method === 'GET') {
-      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, '') });
+      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), editorHost: (process.env.DUDA_EDITOR_HOST || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') });
       const u = await currentUser(req);
-      return res.status(200).json({ user: publicUser(u) });
+      return res.status(200).json({ user: publicUser(u), rtChannel: u ? userChannel(u.email) : '' });
     }
     if (req.headers.origin) {
       try { if (new URL(req.headers.origin).host !== (req.headers['x-forwarded-host'] || req.headers.host)) return res.status(403).json({ error: 'Bad origin' }); } catch (e) { /* ignore */ }

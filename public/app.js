@@ -197,7 +197,8 @@
   // =====================================================================
   function renderTop() {
     const isOwner = state.me.email === OWNER;
-    $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Websites</a>
+    $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
+      <a href="#/live" data-nav="live">Live DR Sites</a>
       ${state.me.role === 'admin' ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
       <a href="#/suggestions" data-nav="suggestions">${isOwner ? 'Suggestions' : 'My suggestions'}</a>
       <a href="#/ai" data-nav="ai">AI Status</a>
@@ -238,11 +239,14 @@
   function toggleNotifs() {
     const ex = $('.notif-panel'); if (ex) return ex.remove();
     const p = document.createElement('div'); p.className = 'notif-panel panel';
-    p.innerHTML = `<div class="np-head"><b>Notifications</b></div>` + (state.notifs.items.length ? state.notifs.items.map((n) => `
+    const ds = deskState();
+    p.innerHTML = `<div class="np-head"><b>Notifications</b></div>` + (ds === 'default' ? `<div class="np-desk">🔔 Get desktop alerts when this app is minimized <button class="btn sm primary" id="npDesk">Turn on</button></div>`
+      : ds === 'denied' ? `<div class="np-desk faint small">Desktop alerts are blocked in this browser's site settings. You'll still see everything here.</div>` : '') + (state.notifs.items.length ? state.notifs.items.map((n) => `
       <a class="np-item" href="${esc(notifLink(n))}">${avatar(n.by, 26)}
         <div><div><b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : ''}</div>
         <div class="small muted np-text">${esc(n.text || '')}</div><div class="small faint">${esc(fmtFull(n.at))}</div></div></a>`).join('') : '<div class="empty small">No notifications yet.</div>');
     document.body.appendChild(p);
+    const nd = $('#npDesk', p); if (nd) nd.onclick = (e) => { e.preventDefault(); askDesktop(); };
     p.addEventListener('click', (e) => { if (e.target.closest('a')) p.remove(); });
     setTimeout(() => document.addEventListener('mousedown', function h(e) { if (!p.contains(e.target) && !e.target.closest('#btnBell')) { p.remove(); document.removeEventListener('mousedown', h); } }), 0);
     if (state.notifs.unread) { store({ op: 'readNotifs' }).catch(() => {}); state.notifs.unread = 0; renderBell(); }
@@ -265,7 +269,7 @@
       state.presence = r.presence || {};
       const hadUnread = state.notifs.unread;
       state.notifs = r.notifs || state.notifs;
-      renderBell(); renderPresence(); roomFromPulse();
+      renderBell(); renderPresence(); roomFromPulse(); announceNotifs(state.notifs.items || []);
       if (state.notifs.unread > hadUnread && state.me.role === 'admin' && state.notifs.items.some((n) => n.kind === 'signup')) { loadUsers().then(renderTop).catch(() => {}); }
     } catch (e) { /* ignore */ }
   }
@@ -300,12 +304,67 @@
       const w = x.pr.st !== 'offline' ? whereOf(x.u.email) : null;
       return `<button type="button" class="np-item np-member" data-member="${esc(x.u.email)}" title="See what ${esc(x.u.name)} worked on">
         <span class="pav">${avatar(x.u.email, 28)}<span class="pdot ${x.pr.st}"></span></span>
-        <div class="grow"><div><b>${esc(x.u.name)}</b>${x.u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''} <span class="badge subtle">${esc(x.u.role)}</span></div>
+        <div class="grow"><div><b>${esc(x.u.name)}</b>${x.u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${state.me.role === 'admin' ? ` <span class="badge subtle">${esc(x.u.role)}</span>` : ''}</div>
         <div class="small ${x.pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(presenceText(x.pr))}</div>
         ${w ? `<div class="small muted np-where">Now on <b>${esc(w.name)}</b>${w.item ? ` · #${w.item}` : ''}</div>` : ''}</div><span class="faint">›</span></button>`;
     }).join('');
     $$('[data-member]', p).forEach((b) => (b.onclick = () => { p.remove(); openMemberActivity(b.dataset.member); }));
   }
+  // ---------- Desktop (system) notifications ----------
+  // Shown by the operating system when the app is minimized or in a background tab. If the person declines
+  // or ignores the permission request, everything keeps working with the in-app pop-ups and the bell.
+  const ICON = (document.querySelector('link[rel="icon"]') || {}).href || '';
+  const deskState = () => ('Notification' in window ? Notification.permission : 'unsupported'); // default | granted | denied
+  function desktopNotify({ title, body, tag, link }) {
+    if (deskState() !== 'granted') return false;
+    try {
+      const n = new Notification(title, { body: String(body || '').replace(/<[^>]+>/g, ''), tag, icon: ICON, badge: ICON });
+      n.onclick = () => { window.focus(); if (link) location.hash = link; n.close(); };
+      return true;
+    } catch (e) { return false; } // e.g. mobile browsers that only allow notifications from a service worker
+  }
+  async function askDesktop() {
+    if (!('Notification' in window)) return toast('This browser does not support desktop notifications');
+    let p = 'default';
+    try { p = await Notification.requestPermission(); } catch (e) { /* ignore */ }
+    if (p === 'granted') { desktopNotify({ title: 'Desktop notifications are on', body: "You'll get alerts even when the app is minimized." }); toast('Desktop notifications are on'); }
+    else if (p === 'denied') toast("Desktop notifications are blocked. You'll still see them in the app.");
+    const b = $('.notif-panel'); if (b) { b.remove(); toggleNotifs(); }
+  }
+  /** Minimized / background tab → system notification; otherwise the in-app pop-up. */
+  function alertUser(opts) {
+    if (document.hidden && desktopNotify({ title: opts.title, body: opts.deskBody || opts.body, tag: opts.tag, link: opts.link })) return;
+    popNotify(opts);
+  }
+  /** New bell notifications since the last check (signups for admins, mentions, replies, assignments…). */
+  function announceNotifs(items) {
+    if (!state.notifKnown) { state.notifKnown = new Set(items.map((n) => n.id)); return; } // first load: don't replay old ones
+    const fresh = items.filter((n) => !state.notifKnown.has(n.id));
+    fresh.forEach((n) => state.notifKnown.add(n.id));
+    fresh.slice(0, 3).reverse().forEach((n) => {
+      const title = `${n.byName || 'Someone'} ${NOTIF_TEXT[n.kind] || 'notified you'}`;
+      const body = [n.siteName, n.findingNum ? '#' + n.findingNum : '', n.text].filter(Boolean).join(' · ');
+      alertUser({ email: n.by, title, deskBody: body || 'Open the app to see details.', body: esc(body || 'Open the bell to see details.') + ` <a href="${esc(notifLink(n))}">Open</a>`, tag: n.id, link: notifLink(n), at: n.at });
+    });
+  }
+  /** Ask once (in-app, never a surprise browser prompt), mainly so admins hear about new sign-ups. */
+  function offerDesktop() {
+    if (deskState() !== 'default' || navigator.webdriver) return;
+    let asked = false; try { asked = localStorage.getItem('dsa-desk-asked') === '1'; } catch (e) { /* ignore */ }
+    if (asked) return;
+    try { localStorage.setItem('dsa-desk-asked', '1'); } catch (e) { /* ignore */ }
+    const card = popNotify({ email: state.me.email, title: 'Get desktop notifications?', secs: 25,
+      body: `${state.me.role === 'admin' ? 'See new sign-ups, mentions and replies' : 'See mentions, replies and assignments'} even when this app is minimized.<div style="margin-top:8px;display:flex;gap:6px"><button class="btn sm primary" data-desk-yes>Turn on</button><button class="btn sm ghost" data-desk-no>Not now</button></div>` });
+    card.querySelector('[data-desk-yes]').onclick = () => { card.querySelector('.pop-x').click(); askDesktop(); };
+    card.querySelector('[data-desk-no]').onclick = () => card.querySelector('.pop-x').click();
+  }
+  /** Instant nudges from the server on this person's own Ably channel (no database polling). */
+  async function listenPersonal() {
+    if (!state.rtChannel || !state.config || !state.config.realtime) return;
+    const client = await ablyReady(); if (!client) return;
+    try { client.channels.get(state.rtChannel).subscribe('notif', () => pulse(true)); } catch (e) { /* ignore */ }
+  }
+
   // ---------- Pop-up notifications (top right, macOS style) ----------
   /** Shows a card that fades out after the member's chosen time (profile). Several stack with a small offset. */
   function popNotify({ email, emails, title, body, note, secs, at }) {
@@ -356,11 +415,11 @@
     const others = room.people.filter((p) => p.email !== state.me.email);
     const siteName = state.current && state.current.id === siteKey ? (state.current.businessName || state.current.siteId) : 'this website';
     if (room.known === null) {
-      if (others.length) popNotify({ emails: others.map((p) => p.email), title: others.length > 1 ? 'Others are on this website' : 'Someone is on this website',
+      if (others.length) alertUser({ emails: others.map((p) => p.email), link: '#/site/' + siteKey, title: others.length > 1 ? 'Others are on this website' : 'Someone is on this website',
         body: `${namesList(others)} ${others.length > 1 ? 'are inside' : 'is currently working on'} <b>${esc(siteName)}</b>.`, note: ROOM_NOTE });
     } else {
       const fresh = others.filter((p) => !room.known.has(p.email));
-      if (fresh.length) popNotify({ emails: fresh.map((p) => p.email), title: fresh.length > 1 ? 'People just joined' : 'Someone just joined',
+      if (fresh.length) alertUser({ emails: fresh.map((p) => p.email), link: '#/site/' + siteKey, title: fresh.length > 1 ? 'People just joined' : 'Someone just joined',
         body: `${namesList(fresh)} just entered <b>${esc(siteName)}</b>.`, note: ROOM_NOTE });
     }
     room.known = new Set(others.map((p) => p.email));
@@ -463,7 +522,7 @@
           return `${head}<li><span class="a-ic">${ACT_ICON[e.type] || '•'}</span><div class="grow">${text}${e.siteName ? ` <span class="muted">on</span> ${link(e) ? `<a href="${link(e)}" data-close-nav><b>${esc(e.siteName)}</b></a>` : `<b>${esc(e.siteName)}</b>`}` : ''}</div><div class="a-time"><div>${esc(new Date(e.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</div><div class="faint">${esc(ago(e.at))}</div></div></li>`;
         }).join('')}</ul>` : '<div class="empty small">Nothing here yet.</div>'}`;
       })();
-      $('.modal').innerHTML = `<header><div style="display:flex;gap:12px;align-items:center"><span class="pav">${avatar(email, 36)}<span class="pdot ${pr.st}"></span></span><div><h2 style="margin:0">${esc(u.name)}</h2><div class="small ${pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(presenceText(pr))}${u.role ? ' · ' + esc(u.role) : ''}</div></div></div><button class="btn ghost" data-close>✕</button></header>
+      $('.modal').innerHTML = `<header><div style="display:flex;gap:12px;align-items:center"><span class="pav">${avatar(email, 36)}<span class="pdot ${pr.st}"></span></span><div><h2 style="margin:0">${esc(u.name)}</h2><div class="small ${pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(presenceText(pr))}${u.role && state.me.role === 'admin' ? ' · ' + esc(u.role) : ''}</div></div></div><button class="btn ghost" data-close>✕</button></header>
         <div class="body ma-body">${body}</div>`;
       $$('[data-close]', $('.modal')).forEach((b) => (b.onclick = closeModal));
       $$('[data-close-nav]', $('.modal')).forEach((a) => a.addEventListener('click', () => closeModal()));
@@ -481,7 +540,7 @@
   }
   function openMe() {
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
-      <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)} · ${esc(state.me.role)}</div></div></div>
+      <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.me.role === 'admin' ? ' · admin' : ''}</div></div></div>
       <label class="field">Display name<input type="text" id="meName" value="${esc(state.me.name)}"></label>
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -503,10 +562,10 @@
       $('#memList').innerHTML = (isAdmin && pending.length ? `<h3>Admin for Approval (${pending.length})</h3>` + pending.map((u) => `
         <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span><div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
         <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : '') +
-        active.map((u) => `<div class="member-row"><span class="pav">${avatar(u.email, 30)}${pdot(u.email)}</span><div class="grow"><b>${esc(u.name)}</b>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''} <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.role === 'admin' ? 'Admin' : 'Member'}</span>
+        active.map((u) => `<div class="member-row"><span class="pav">${avatar(u.email, 30)}${pdot(u.email)}</span><div class="grow"><b>${esc(u.name)}</b>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${isAdmin ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.role === 'admin' ? 'Admin' : 'Member'}</span>` : ''}
           <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(presenceText(presenceOf(u.email)))}</div></div>
           ${isAdmin ? `<select data-role="${esc(u.email)}" class="sm-select"><option value="member" ${u.role === 'member' ? 'selected' : ''}>Member</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select>
-          ${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Remove">✕</button>` : ''}` : `<span class="badge subtle">${esc(u.role)}</span>`}</div>`).join('');
+          ${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Remove">✕</button>` : ''}` : ''}</div>`).join('');
       const act = (sel, fn) => $$(sel, $('#memList')).forEach((b) => (b.onclick = b.onchange = null, b.tagName === 'SELECT' ? (b.onchange = () => fn(b)) : (b.onclick = () => fn(b))));
       act('[data-approve]', async (b) => { await post('/api/users', { op: 'approve', email: b.dataset.approve }); await loadUsers(); draw(); renderTop(); toast('Approved'); });
       act('[data-remove]', async (b) => { if (!confirm('Remove this account?')) return; await post('/api/users', { op: 'remove', email: b.dataset.remove }); await loadUsers(); draw(); renderTop(); });
@@ -518,7 +577,7 @@
       });
     };
     modal(`<header><h2>Team members</h2><button class="btn ghost" data-close>✕</button></header>
-      <div class="body"><p class="small muted" style="margin:0">Everyone who registers (admins and members) is listed here automatically. New accounts show as <b>Admin for Approval</b> until ${isAdmin ? 'you approve them' : 'an admin approves them'}.</p><div id="memList"></div></div>
+      <div class="body"><p class="small muted" style="margin:0">${isAdmin ? 'Everyone who registers is listed here automatically. New accounts show as <b>Admin for Approval</b> until you approve them.' : 'Everyone on the team. Click the dots at the top right to see who is online and what they are working on.'}</p><div id="memList"></div></div>
       <footer><button class="btn" data-close>Done</button></footer>`);
     draw();
     loadUsers().then(draw).catch(() => {});
@@ -906,6 +965,88 @@
   setInterval(aiResumeTick, 60000);
   setTimeout(aiResumeTick, 8000);
 
+  // ---------- Live DR Sites: every published site in the Duda account ----------
+  const live = { data: null, loading: false, error: '', q: '', audit: '', sort: 'published', page: 0 };
+  /** The editor host used to build editor links for new audits (the most common one among existing audits). */
+  function editorHost() {
+    if (state.config && state.config.editorHost) return state.config.editorHost;
+    const count = {}; state.sites.forEach((x) => { if (x.host) count[x.host] = (count[x.host] || 0) + 1; });
+    return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || '';
+  }
+  async function loadLive(refresh) {
+    live.loading = true; live.error = ''; if (route().name === 'live') renderLive();
+    try { const [d] = await Promise.all([api('/api/dudasites' + (refresh ? '?refresh=1' : '')), loadSites().catch(() => {})]); live.data = d; }
+    catch (e) { live.error = e.message; }
+    live.loading = false; if (route().name === 'live') renderLive();
+  }
+  const sameId = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  /** The existing audit for a Duda site, however it was added (Live DR Sites or a pasted editor link). */
+  const auditFor = (id) => state.sites.find((s) => sameId(s.siteId, id));
+  function auditCell(x) {
+    const a = auditFor(x.id);
+    if (!a) return '<span class="faint small">Not audited</span>';
+    const running = state.scanning[a.id];
+    const sc = a.scan || {};
+    const c = a.counts || {};
+    const open = (c.critical || 0) + (c.warning || 0);
+    return `<a class="live-audit" href="#/site/${esc(a.id)}">${running ? '<span class="badge scan-scanning">Scanning…</span>'
+      : sc.finishedAt ? `<span class="badge ${c.critical ? 'sev-critical' : open ? 'sev-warning' : 'scan-complete'}">${c.critical ? c.critical + ' critical' : open ? open + ' open' : '✓ Clean'}</span> <span class="small">Audited ${esc(fmtFull(sc.finishedAt))}</span>`
+      : '<span class="badge">Added, not scanned</span>'}<div class="small faint">${esc(a.status || '')}${a.assignee ? ' · ' + esc(nameOf(a.assignee)) : ''}</div></a>`;
+  }
+  function renderLive() {
+    const d = live.data;
+    if (!d && !live.loading && !live.error) { loadLive(false); }
+    const all = (d && d.sites) || [];
+    const q = live.q.trim().toLowerCase();
+    const audited = new Set(state.sites.map((x) => String(x.siteId || '').toLowerCase()));
+    const isAudited = (id) => audited.has(String(id || '').toLowerCase());
+    let list = all.filter((x) => !q || [x.id, x.name, x.domain, x.defaultDomain, ...(x.labels || [])].some((v) => String(v || '').toLowerCase().includes(q)));
+    if (live.audit === 'no') list = list.filter((x) => !isAudited(x.id));
+    if (live.audit === 'yes') list = list.filter((x) => isAudited(x.id));
+    if (live.audit === 'issues') list = list.filter((x) => { const a = auditFor(x.id); return a && a.counts && (a.counts.critical || a.counts.warning); });
+    list = list.slice().sort((a, b) => live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
+    const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
+    const shown = list.slice(live.page * PER, live.page * PER + PER);
+    const host = editorHost();
+    $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
+        <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(new Date(d.at).toISOString()))}</b> <span class="faint">(${esc(ago(new Date(d.at).toISOString()))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div></div>
+      ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
+      ${!host ? `<div class="note unk">Add one audit with a normal editor link first (or set <code>DUDA_EDITOR_HOST</code> in Vercel), so the app knows your editor address for new audits.</div>` : ''}
+      <div class="panel"><div class="toolbar">
+        <input type="search" id="liveQ" placeholder="Search by name, site ID, domain or label…" value="${esc(live.q)}" style="flex:1;min-width:220px">
+        <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option></select>
+        <select id="liveSort"><option value="published">Recently published first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
+      </div>
+      ${!d ? `<div class="empty">${live.loading ? 'Loading published sites from Duda…' : 'No data yet.'}</div>` : !list.length ? '<div class="empty">No sites match.</div>' : `
+      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Last published</th><th>Audit</th><th></th></tr></thead><tbody>
+      ${shown.map((x) => { const a = auditFor(x.id); const dom = x.domain || x.defaultDomain; return `<tr>
+        <td><b>${esc(x.name || '(no business name)')}</b>${dom ? `<div class="small"><a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a></div>` : ''}${(x.labels || []).length ? `<div class="small faint">${x.labels.map(esc).join(' · ')}</div>` : ''}</td>
+        <td class="mono small">${esc(x.id)} <button class="linkbtn" data-copy="${esc(x.id)}" title="Copy site ID">Copy</button></td>
+        <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
+        <td>${auditCell(x)}</td>
+        <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : `<button class="btn sm primary" data-audit="${esc(x.id)}" ${host ? '' : 'disabled'}>Audit this website</button>`}
+          ${host ? `<a class="btn sm ghost" href="https://${esc(host)}/home/site/${esc(x.id)}/home" target="_blank" rel="noopener" title="Open in the Duda editor">Editor ↗</a>` : ''}</td></tr>`; }).join('')}
+      </tbody></table></div>
+      ${pages > 1 ? `<div class="row-between" style="padding:10px 14px"><span class="small muted">${live.page * PER + 1}–${Math.min(list.length, live.page * PER + PER)} of ${list.length}</span><span><button class="btn sm" id="livePrev" ${live.page ? '' : 'disabled'}>← Prev</button> <button class="btn sm" id="liveNext" ${live.page < pages - 1 ? '' : 'disabled'}>Next →</button></span></div>` : ''}`}
+      </div>`;
+    const qi = $('#liveQ'); qi.oninput = (e) => { live.q = e.target.value; live.page = 0; const pos = e.target.selectionStart; renderLive(); const n = $('#liveQ'); n.focus(); n.setSelectionRange(pos, pos); };
+    $('#liveAudit').onchange = (e) => { live.audit = e.target.value; live.page = 0; renderLive(); };
+    $('#liveSort').onchange = (e) => { live.sort = e.target.value; renderLive(); };
+    $('#liveRefresh').onclick = () => loadLive(true);
+    if ($('#livePrev')) $('#livePrev').onclick = () => { live.page--; renderLive(); window.scrollTo(0, 0); };
+    if ($('#liveNext')) $('#liveNext').onclick = () => { live.page++; renderLive(); window.scrollTo(0, 0); };
+    $$('#view [data-copy]').forEach((b) => (b.onclick = () => copy(b.dataset.copy, 'Site ID copied')));
+    $$('[data-audit]').forEach((b) => (b.onclick = async () => {
+      const id = b.dataset.audit; b.disabled = true; b.textContent = 'Adding…';
+      try {
+        const sum = await store({ op: 'create', siteId: id, host, editorUrl: `https://${host}/home/site/${id}/home`, assignee: state.me.email });
+        upsertSummary(sum); enqueue(sum.id); toast('Added to Audits. Scanning now.'); renderLive();
+      } catch (e) {
+        if (e.status === 409) { await loadSites(); toast('Already in Audits'); renderLive(); } else { toast(e.message); b.disabled = false; b.textContent = 'Audit this website'; }
+      }
+    }));
+  }
+
   // ---------- AI Status page ----------
   /** Today's AI credit totals (requests) across the free models. */
   function aiTotals() {
@@ -1028,6 +1169,7 @@
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'activity') return { name: 'activity' };
     if (parts[0] === 'ai') return { name: 'ai' };
+    if (parts[0] === 'live') return { name: 'live' };
     if (parts[0] === 'suggestions') return { name: 'suggestions' };
     return { name: 'sites' };
   }
@@ -1048,6 +1190,7 @@
     lastSiteId = null; state.current = null; closeDrawer(true);
     if (r.name === 'about') return renderAbout();
     if (r.name === 'activity') return renderGlobalActivity();
+    if (r.name === 'live') return renderLive();
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
     if (/members=1/.test(location.hash)) { history.replaceState(null, '', '#/'); setTimeout(openMembers, 50); }
@@ -1120,9 +1263,9 @@
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0 };
     state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; });
     $('#view').innerHTML = `
-      <div class="page-head"><div><h1>Websites</h1><div class="muted">Audit Duda sites against their Business Info on every device.</div></div></div>
+      <div class="page-head"><div><h1>Audits</h1><div class="muted">Audit Duda sites against their Business Info on every device. <a href="#/live">Browse Live DR Sites</a> to add more.</div></div></div>
       <div class="stats">
-        <div class="panel stat"><div class="n">${state.sites.length}</div><div class="l">Websites</div></div>
+        <div class="panel stat"><div class="n">${state.sites.length}</div><div class="l">Audits</div></div>
         <div class="panel stat"><div class="n">${tot.scanned}</div><div class="l">Scan complete</div></div>
         <div class="panel stat"><div class="n" style="color:var(--crit)">${tot.crit}</div><div class="l">Open critical issues</div></div>
         <div class="panel stat"><div class="n" style="color:var(--query)">${tot.clar}</div><div class="l">For clarification</div></div>
@@ -1381,7 +1524,7 @@
     const sc = s.scan || {};
     $('#view').innerHTML = `
       <div class="page-head">
-        <div><div class="small"><a href="#/">← All websites</a></div>
+        <div><div class="small"><a href="#/">← All audits</a></div>
           <h1>${esc(s.businessName || s.siteId)}</h1>
           <div class="muted mono small">${esc(s.siteId)} · ${esc(s.host)}</div>
           <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtFull(s.createdAt)) : ''}</div>
@@ -1891,10 +2034,13 @@
     document.body.classList.remove('auth-mode');
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
     await Promise.all([loadUsers(), loadSites(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
+    if (!state.rtChannel) { try { state.rtChannel = (await api('/api/auth?op=me')).rtChannel || ''; } catch (e) { /* ignore */ } }
     renderTop();
     pulse();
     render();
     setTimeout(roomTick, 1500);
+    listenPersonal();
+    setTimeout(offerDesktop, 4000);
   }
   window.addEventListener('hashchange', () => {
     if (state.me && Date.now() - lastPulse > 5000) setTimeout(pulse, 1500);
@@ -1909,7 +2055,7 @@
   });
   (async () => {
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
-    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; }
+    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; }
     catch (e) { $('#view').innerHTML = `<div class="empty">Could not start the app: ${esc(e.message)}</div>`; return; }
     if (!state.me) return renderAuth();
     if (state.me.status !== 'active') { state.auth.mode = 'pending'; state.me = null; return renderAuth(); }
@@ -1921,6 +2067,7 @@
         const r = route();
         // Ask "anything new?" first (one tiny read); only reload when something changed
         if (r.name === 'sites') { if (await loadSites(true)) renderSites(); }
+        else if (r.name === 'live') { if (await loadSites(true)) renderLive(); }
         else if (r.name === 'site' && state.current && !state.scanning[state.current.id]) {
           const busy = (siteComposer && document.body.contains($('#siteComposer')) && siteComposer.busy()) || (drawerComposer && drawerComposer.busy()) || document.activeElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName);
           if (!busy && await refreshSite(state.current.id)) renderSite();

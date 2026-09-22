@@ -3,7 +3,7 @@
 // GET /api/realtime → an Ably TokenRequest for this signed-in member (their browser then talks to Ably directly).
 // Without ABLY_API_KEY the app falls back to the regular heartbeat (slower, but no extra database traffic).
 import crypto from 'node:crypto';
-import { requireUser } from './_lib.js';
+import { requireUser, userChannel, RT_PREFIX } from './_lib.js';
 
 export function tokenRequest(apiKey, clientId, capability, ttlMs = 60 * 60 * 1000, now = Date.now(), nonce = crypto.randomBytes(16).toString('hex')) {
   const [keyName, secret] = String(apiKey).split(':');
@@ -20,7 +20,6 @@ export default async function handler(req, res) {
   if (!me) return;
   const key = process.env.ABLY_API_KEY;
   if (!key || !key.includes(':')) return res.status(200).json({ enabled: false });
-  // Members may only join website presence channels, nothing else
-  const prefix = (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, '');
-  return res.status(200).json(tokenRequest(key, me.email, { [`${prefix}-site:*`]: ['presence', 'subscribe'] }));
+  // Members may only join website presence channels and listen on their own notification channel
+  return res.status(200).json(tokenRequest(key, me.email, { [`${RT_PREFIX}-site:*`]: ['presence', 'subscribe'], [userChannel(me.email)]: ['subscribe'] }));
 }

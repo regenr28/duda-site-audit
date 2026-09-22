@@ -39,6 +39,7 @@ Each finding shows **page path · where (Header / Footer / Side panel / Popup / 
 | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL | optional. Posts to Slack when someone signs up and needs approval. |
 | `SUGGESTIONS_OWNER` | `regencia.reymark28@gmail.com` (default) | optional. The only person who sees every feature suggestion. |
 | `ALLOWED_EMAIL_DOMAINS` | e.g. `8bitcreative.com` | optional. People with these email domains skip admin approval. |
+| `DUDA_EDITOR_HOST` | e.g. `8bitcreative.responsivesiteeditor.com` | optional. Editor address used when adding sites from **Live DR Sites** (otherwise the most common one from existing audits). |
 | `ALLOWED_EDITOR_HOSTS` | `responsivesiteeditor.com` | optional. Add your white-label editor domain(s). |
 
 ### Step 4: Shared storage (required)
@@ -111,12 +112,14 @@ A Google account and an email/password account with the same email are treated a
 ## 2. Using it
 
 1. Everyone creates an account on the sign-in page (email + code, or Google). Admins approve new people under **Members**.
-2. **+ Add website** → paste one or many editor links, one per line (e.g. `https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home`), choose an assignee and click **Add & start audit**.
+2. **Live DR Sites** (top menu) lists every published website in the Duda account (refreshed from Duda every 6 hours, or with **↻ Refresh from Duda**). Search by name, site ID, domain or label, filter by audited / not audited / open issues, and click **Audit this website** to add it to **Audits** and scan it. Audited sites show their last audit date and issue count and link straight to the audit. Or use **+ Add website** → paste one or many editor links, one per line (e.g. `https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home`), choose an assignee and click **Add & start audit**.
 3. Keep the tab open while it scans. Two sites run at a time, and each shows `Scanning 40/120`, then **✓ Scan complete**.
 4. Open a site. Every audit item has an ID (#12). Click a row to open it: set its status (**Open / For clarification / Done / On hold / False alarm**), reassign it, comment, paste screenshots and reply.
 5. Click anyone in **Team status** (the dots at the top right) to see what they worked on: the website they have open right now, their latest audit item (status change or comment), recent websites, and their full activity log across all websites, filterable by audit items, comments, scans and websites.
 6. **Working on the same website:** when you open a website someone else has open, you get a pop-up ("Cler is currently working on this website"), and they get one too ("Euch just entered this website"), with a reminder to coordinate so two people don't work on the same audit item. A bar under the website title shows who else is there. Pop-ups appear top right, stack, show the date and time, and fade after the time each person picks under their account (avatar → Pop-up notifications stay on screen for…). Hover to pause; ✕ to close.
-7. Admins see an app-wide **Activity** page (websites added or deleted, sign-ups, approvals, with date and time). The dots at the top right show who has the app open: green = active, grey = idle for 1 hour or more.
+7. **Desktop notifications:** the app offers once (and the bell has a **Turn on** button) to show system notifications when it's minimized or in a background tab: new sign-ups for admins, mentions, replies, assignments and "someone joined this website". If someone declines or ignores it, the in-app pop-ups and the bell work as before. With `ABLY_API_KEY` these arrive instantly; without it, within a few minutes.
+8. Members don't see who is an admin; only admins see roles.
+9. Admins see an app-wide **Activity** page (websites added or deleted, sign-ups, approvals, with date and time). The dots at the top right show who has the app open: green = active, grey = idle for 1 hour or more.
 6. **💡 Suggest a feature** sends an idea privately to the app owner, who can mark it New, On going, Done or Nope and reply in comments.
 7. Screenshots pasted or uploaded into comments are optimized automatically in the browser: resized to 1600px wide at most and saved as WebP (usually 30–400 KB).
 8. Use the **Comments** tab for general discussion: `@` tags a member, `#12` links an audit item, and **Reply** quotes a comment. The **Activity log** tab records every comment, reply, status and assignee change.

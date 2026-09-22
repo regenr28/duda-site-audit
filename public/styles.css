@@ -423,3 +423,10 @@ body.drawer-open { overflow: hidden; }
 @keyframes popBar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) { .pop { transition: none; } }
 .room-bar { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; padding: 5px 10px 5px 6px; border-radius: 999px; font-size: 12.5px; background: var(--accent-soft); color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.np-desk { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12.5px; display: flex; gap: 8px; align-items: center; justify-content: space-between; background: var(--accent-soft); }
+.np-desk.faint { background: none; }
+.live-table td { vertical-align: top; }
+.live-audit { text-decoration: none; color: inherit; display: block; }
+.live-audit:hover .small { text-decoration: underline; }
+.live-pull { text-align: right; line-height: 1.5; }
+@media (max-width: 640px) { .live-pull { text-align: left; } }

@@ -5,7 +5,7 @@
 // Keys:  site:<id> (scan results + meta)   index (hash id → summary)   fstate:<id> (hash findingId → {status, assignee})
 //        fnum:<id> (hash findingId → #)   seq:<id>   cmt:<id> (hash commentId → comment)   act:<id> (list)
 //        notif:<email> (list)   notifseen:<email>
-import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser } from './_lib.js';
 
 const FSTATUS = ['open', 'clarification', 'done', 'hold', 'false'];
 const FLABEL = { open: 'Open', clarification: 'For clarification', done: 'Done', hold: 'On hold', false: 'False alarm' };
@@ -72,9 +72,7 @@ async function log(siteId, me, type, text, extra = {}) {
     // Same entry in the member's own list, so "what did this person work on" is one read instead of one per website
     ['LPUSH', P + 'uact:' + me.email, JSON.stringify(Object.assign({ siteKey: siteId, siteName: extra.siteName || '' }, e))], ['LTRIM', P + 'uact:' + me.email, 0, 299]);
 }
-async function notify(email, n) {
-  await redis(['LPUSH', P + 'notif:' + email, JSON.stringify({ id: newId(6), at: now(), ...n })], ['LTRIM', P + 'notif:' + email, 0, 99]);
-}
+const notify = (email, n) => notifyUser(email, n);
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');

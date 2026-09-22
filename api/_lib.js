@@ -186,7 +186,25 @@ export async function slack(text) {
 
 // ---------- in-app notifications + global (admin) activity log ----------
 export async function notifyUser(email, n) {
-  await redis(['LPUSH', P + 'notif:' + email, JSON.stringify({ id: newId(6), at: now(), ...n })], ['LTRIM', P + 'notif:' + email, 0, 99]);
+  const item = { id: newId(6), at: now(), ...n };
+  await redis(['LPUSH', P + 'notif:' + email, JSON.stringify(item)], ['LTRIM', P + 'notif:' + email, 0, 99]);
+  // Nudge that person's open app right away (no database involved), so desktop notifications are instant
+  await ablyPublish(userChannel(email), 'notif', { id: item.id });
+}
+
+// ---------- realtime (Ably) ----------
+export const RT_PREFIX = (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, '');
+export const userChannel = (email) => `${RT_PREFIX}-user:${sha(normEmail(email)).slice(0, 16)}`;
+export async function ablyPublish(channel, name, data) {
+  const key = process.env.ABLY_API_KEY;
+  if (!key || !key.includes(':')) return false;
+  try {
+    const r = await fetchWithTimeout(`${process.env.ABLY_REST_BASE || 'https://rest.ably.io'}/channels/${encodeURIComponent(channel)}/messages`, {
+      method: 'POST', headers: { Authorization: 'Basic ' + Buffer.from(key).toString('base64'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, data }),
+    }, 4000);
+    return r.ok;
+  } catch (e) { return false; }
 }
 export async function globalLog(actor, type, text, extra = {}) {
   const e = { id: newId(6), at: now(), by: actor ? actor.email : '', byName: actor ? actor.name : 'System', type, text, ...extra };
