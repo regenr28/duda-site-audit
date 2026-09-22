@@ -4,7 +4,7 @@
 // POST /api/dudasites { op: 'names', ids }    → fills in business names (the list endpoint doesn't include them)
 // POST /api/dudasites { op: 'domains', ids }  → checks each site's live domain (working, redirecting elsewhere, 404, DNS…)
 // Uses Duda's List Sites endpoint (100 per page), so 800 sites = 8 API calls. Stored compressed in one small key.
-import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse } from './_lib.js';
+import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, learnEditorHost } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const KEY = P + 'dudasites';
@@ -51,6 +51,8 @@ async function fetchAll() {
 async function businessName(id) {
   try {
     const site = await duda(`/sites/multiscreen/${encodeURIComponent(id)}`);
+    // Learn the agency's editor address from Duda, so audits added by site ID get the right links
+    await learnEditorHost(site.preview_site_url || site.site_default_domain_url || '');
     let name = (site.site_business_info && site.site_business_info.business_name) || '';
     if (!name) { const c = await duda(`/sites/multiscreen/${encodeURIComponent(id)}/content`).catch(() => null); name = (c && c.business_data && c.business_data.name) || (c && c.location_data && c.location_data.label) || ''; }
     return String(name || '').trim();

@@ -4,7 +4,7 @@
 import crypto from 'node:crypto';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
-  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, OWNER_EMAIL } from './_lib.js';
+  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, OWNER_EMAIL , savedEditorHost } from './_lib.js';
 
 const CODE_TTL = 15 * 60;
 const code6 = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
   if (!hasRedis()) return res.status(500).json({ error: 'The database is not connected. Please contact the app owner.' });
   try {
     if (req.method === 'GET') {
-      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), slackDM: /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || ''), editorHost: (process.env.DUDA_EDITOR_HOST || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') });
+      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), slackDM: /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || ''), editorHost: await savedEditorHost() });
       const u = await currentUser(req);
       return res.status(200).json({ user: publicUser(u), rtChannel: u ? userChannel(u.email) : '', ...(u && u.email === OWNER_EMAIL ? { superAdmin: true } : {}) });
     }

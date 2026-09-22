@@ -1,6 +1,6 @@
 // GET /api/site?editor=<editor link>
 // Returns the Business Info "truth" source data from the Duda API (site details, Content Library, pages list).
-import { requireUser, parseEditorLink, allowedHost, fetchWithTimeout, redis, P } from './_lib.js';
+import { requireUser, parseEditorLink, allowedHost, fetchWithTimeout, redis, P, learnEditorHost } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 
@@ -27,6 +27,7 @@ export default async function handler(req, res) {
   if (req.query.light) {
     try {
       const d = await duda(`/sites/multiscreen/${siteId}`);
+      await learnEditorHost(d.preview_site_url || '');
       const domain = String(d.site_domain || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase();
       if (domain) await redis(['SET', P + 'livedom:' + siteId, domain, 'EX', 3600]);
       res.setHeader('Cache-Control', 'no-store');
@@ -41,6 +42,7 @@ export default async function handler(req, res) {
   const errors = [];
   const val = (p, label) => { if (p.status === 'fulfilled') return p.value; errors.push(`${label}: ${p.reason && p.reason.message}`); return null; };
   const siteJson = val(site, 'Site details');
+  if (siteJson && siteJson.preview_site_url) await learnEditorHost(siteJson.preview_site_url);
   const contentJson = val(content, 'Business Info (Content Library)');
   const pagesJson = val(pages, 'Pages');
 

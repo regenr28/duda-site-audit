@@ -696,7 +696,7 @@
   function parseLink(input) {
     const raw = String(input || '').trim().replace(/^[,;]+|[,;]+$/g, '');
     if (/^[A-Za-z0-9_-]{6,20}$/.test(raw) && !/^https?$/i.test(raw)) {
-      const host = editorHost() || DUDA_HOST;
+      const host = editorHostOr();
       return { host, siteId: raw, link: `https://${host}/home/site/${raw}/home` };
     }
     try {
@@ -1181,11 +1181,14 @@
     live.doms = null; liveRedraw();
   }
   /** The editor host used to build editor links for new audits (the most common one among existing audits). */
+  /** The agency's editor address: from the app settings, learned from Duda, or the most common one among audits. */
   function editorHost() {
     if (state.config && state.config.editorHost) return state.config.editorHost;
     const count = {}; state.sites.forEach((x) => { if (x.host && x.host !== DUDA_HOST) count[x.host] = (count[x.host] || 0) + 1; });
     return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || '';
   }
+  /** Never blocks adding a website: falls back to Duda's own address. */
+  const editorHostOr = () => editorHost() || DUDA_HOST;
   async function loadLive(refresh) {
     live.loading = true; live.error = ''; if (route().name === 'live') renderLive();
     try { const [d] = await Promise.all([api('/api/dudasites' + (refresh ? '?refresh=1' : '')), loadSites().catch(() => {})]); live.data = d; }
@@ -1225,11 +1228,11 @@
     list = list.slice().sort((a, b) => live.sort === 'domain' ? (domProblem(b.dom) ? 1 : 0) - (domProblem(a.dom) ? 1 : 0) || String(b.published).localeCompare(String(a.published)) : live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
     const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
     const shown = list.slice(live.page * PER, live.page * PER + PER);
-    const host = editorHost();
+    const host = editorHostOr();
     $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
         <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(new Date(d.at).toISOString()))}</b> <span class="faint">(${esc(ago(new Date(d.at).toISOString()))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div><button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div></div>
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
-      ${!host ? `<div class="note unk">Add one audit with a normal editor link first, so the app knows your editor address for new audits.</div>` : ''}
+
       <div class="panel"><div class="toolbar">
         <input type="search" id="liveQ" placeholder="Search by name, site ID, domain or label…" value="${esc(live.q)}" style="flex:1;min-width:220px">
         <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option></select>
@@ -1245,7 +1248,7 @@
         <td class="dom-cell">${domBadge(x.dom)}</td>
         <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
         <td>${auditCell(x)}</td>
-        <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : `<button class="btn sm primary" data-audit="${esc(x.id)}" ${host ? '' : 'disabled'}>Audit this website</button>`}
+        <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : `<button class="btn sm primary" data-audit="${esc(x.id)}">Audit this website</button>`}
           ${host ? `<a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(x.id)}/home" target="_blank" rel="noopener" title="Open in the Duda editor">Editor ↗</a>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div>
       ${pages > 1 ? `<div class="row-between" style="padding:10px 14px"><span class="small muted">${live.page * PER + 1}–${Math.min(list.length, live.page * PER + PER)} of ${list.length}</span><span><button class="btn sm" id="livePrev" ${live.page ? '' : 'disabled'}>← Prev</button> <button class="btn sm" id="liveNext" ${live.page < pages - 1 ? '' : 'disabled'}>Next →</button></span></div>` : ''}`}

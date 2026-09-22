@@ -45,6 +45,21 @@ export async function fetchWithTimeout(url, opts = {}, ms = 20000) {
   const t = setTimeout(() => ctl.abort(), ms);
   try { return await fetch(url, { ...opts, signal: ctl.signal }); } finally { clearTimeout(t); }
 }
+/** Remembers the agency's white-label editor address, learned from Duda (preview/editor URLs). */
+export async function learnEditorHost(url) {
+  try {
+    const h = new URL(String(url)).hostname.toLowerCase();
+    if (!allowedHost(h) || /^my\.duda\.co$/.test(h)) return;
+    const [cur] = await redis(['GET', P + 'edhost']);
+    if (cur !== h) await redis(['SET', P + 'edhost', h]);
+  } catch (e) { /* ignore */ }
+}
+export async function savedEditorHost() {
+  const env = String(process.env.DUDA_EDITOR_HOST || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (env) return env;
+  const [h] = await redis(['GET', P + 'edhost']);
+  return h || '';
+}
 export function allowedHost(host) {
   if (!host || !/^[a-z0-9.-]+$/i.test(host)) return false;
   const list = (process.env.ALLOWED_EDITOR_HOSTS || 'responsivesiteeditor.com,duda.co,dudamobile.com,multiscreensite.com,dudaone.com')
