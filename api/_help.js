@@ -183,20 +183,27 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'verify', group: 'Checks', title: 'Verify on live site', audience: 'all',
-    html: `<p>Scans read the editor's <b>preview</b>. After fixing, the changes only reach the real website when it's <b>published</b> in Duda. <b>🌐 Verify on live site</b> confirms that.</p>
-<ol>
-<li>When every item is Done or False alarm, the site page shows <b>🎉 All items are cleared</b>. (The button is also available while items are still open.)</li>
-<li><b>Publish</b> the site in Duda.</li>
-<li>Click <b>🌐 Verify on live site</b>. The app first asks Duda when the site was last published. If items were marked Done after that, it warns you the fixes probably aren't live yet.</li>
-<li>It scans the published domain on all 3 devices and compares it with the items:
+    html: `<p>Scans read the editor's <b>preview</b>. Fixes only reach the real website when it's <b>published</b> in Duda. The <b>Live site check</b> box on a website's page confirms that.</p>
+<h4>What it checks</h4>
 <ul>
-<li><b>✓ Fixed on live site</b>: really gone.</li>
-<li><b>⚠ Still on live site</b>: marked Done but still there. Publish again, or use <b>Reopen</b> to send them back to Open.</li>
-<li><b>Looks fixed on live site</b>: an open item that's already gone. One click marks them Done.</li>
-</ul></li>
-<li>False alarms, On hold and For clarification items are not checked.</li>
+<li>It scans the <b>published website</b> (the live domain) again, every page, on Desktop, Tablet and Mobile.</li>
+<li>It then looks only at the items marked <b>Done</b>: is each one also fixed on the live site?</li>
+<li><b>Open</b>, <b>On hold</b>, <b>For clarification</b> and <b>False alarm</b> items are <b>not</b> checked.</li>
+</ul>
+<h4>How to use it</h4>
+<ol>
+<li>Fix items in the Duda editor and mark them <b>Done</b>.</li>
+<li><b>Publish</b> the site in Duda. The box shows <b>Last published in Duda</b> with the date and time, and warns you (with the item numbers) if items were marked Done after the last publish.</li>
+<li>Click <b>🌐 Verify N Done items on live site</b>. The button is greyed out while nothing is marked Done.</li>
 </ol>
-<p>The result is saved on the site page and in the Activity log. Only one live check or scan per website runs at a time.</p>`,
+<h4>Reading the result</h4>
+<ul>
+<li><b>✓ Fixed on live site</b>: the item numbers that are really gone. Click a number to open the item.</li>
+<li><b>⚠ Marked Done but still on live site</b>: publish again, or click <b>Reopen these</b> to send them back to Open.</li>
+<li><b>? Couldn't check</b>: the AI was busy for an AI-flagged item. Try again later.</li>
+<li>If items were marked Done after the check, the box lists them so you can run it again.</li>
+</ul>
+<p>When every item is Done or False alarm, the box says <b>🎉 All items are cleared</b>. The result is saved on the page and in the Activity log. Only one live check or scan per website runs at a time.</p>`,
   },
   {
     id: 'live', group: 'Live DR Sites', title: 'Live DR Sites', audience: 'all',

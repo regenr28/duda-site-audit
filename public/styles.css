@@ -502,3 +502,8 @@ select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-c
 .am-credits:hover { background: var(--panel-2); text-decoration: none; }
 .am-meter { height: 8px; border-radius: 99px; background: var(--border); margin: 8px 0 6px; overflow: hidden; }
 .am-meter i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #d946ef, #ec4899); }
+.v-results { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); display: grid; gap: 6px; }
+.v-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
+.v-warn { color: #f59e0b; margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.vchip { display: inline-block; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--border); font-size: 12px; font-weight: 600; color: inherit; text-decoration: none; }
+.vchip:hover { background: var(--panel-2); text-decoration: none; }
