@@ -638,22 +638,31 @@
     fillPresencePanel(p); document.body.appendChild(p);
     setTimeout(() => document.addEventListener('mousedown', function h(e) { if (!p.contains(e.target) && !e.target.closest('#presence')) { p.remove(); document.removeEventListener('mousedown', h); } }), 0);
   }
+  async function slackTest() {
+    try { const r = await post('/api/users', { op: 'slackTest' }); toast(r.message); } catch (e) { toast(e.message); }
+  }
   function openMe() {
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.me.role === 'admin' ? ' · admin' : ''}</div></div></div>
       <label class="field">Display name<input type="text" id="meName" value="${esc(state.me.name)}"></label>
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <button class="btn sm ghost" id="meTest" type="button" style="justify-self:start">Show a test notification</button>
+      <button class="btn sm" id="meTest" type="button" style="justify-self:start">Show a test notification</button>
       <label class="field">Open the Duda editor and previews on
         <select id="meEnv"><option value="white" ${state.me.editorEnv !== 'duda' ? 'selected' : ''}>White-label (${esc(editorHost() || 'agency address')})</option><option value="duda" ${state.me.editorEnv === 'duda' ? 'selected' : ''}>Duda (${DUDA_HOST})</option></select>
         <span class="small muted">Only changes where the Editor and Preview links take you. Audits are the same either way.</span></label>
-      ${state.config && state.config.slackDM ? `<label class="check-row" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="meSlack" style="margin-top:3px" ${state.me.slackDM !== false ? 'checked' : ''}> Also message me on Slack (from <b>Site Auditor</b>) when someone mentions me, replies, or assigns me an item${state.me.role === 'admin' ? ', and when someone signs up' : ''}</label>
-      <div class="small muted" style="margin-top:-6px">Uses your Slack account with the same email as here: <b>${esc(state.me.email)}</b>. <button class="linkbtn" id="meSlackTest" type="button">Send a test message</button></div>` : ''}</div>
+      ${!(state.config && state.config.slackDM) && state.superAdmin ? `<div class="small muted">Slack messages are not switched on yet. Once the Slack connection is added, a Slack option appears here for everyone.</div>` : ''}
+      ${state.config && state.config.slackDM ? `<label class="check-row slack-row"><input type="checkbox" id="meSlack" ${state.me.slackDM !== false ? 'checked' : ''}><span>Also message me on Slack (from <b>Site Auditor</b>) when someone mentions me, replies, or assigns me an item${state.me.role === 'admin' ? ', and when someone signs up' : ''}.</span></label>
+        <div class="small muted" style="margin-top:-4px">Uses your Slack account with the same email as here: <b>${esc(state.me.email)}</b>.</div>
+        <button class="btn sm" id="meSlackTest" type="button" style="justify-self:start">Send a Slack test message</button>` : ''}</div>
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
-    $('#meTest').onclick = () => popNotify({ email: state.me.email, title: 'Test notification', body: 'This is how long pop-ups will stay on screen.', secs: Number($('#meSecs').value) });
-    if ($('#meSlackTest')) $('#meSlackTest').onclick = async () => { try { const r = await post('/api/users', { op: 'slackTest' }); toast(r.message); } catch (e) { toast(e.message); } };
+    // The test shows the pop-up and, when Slack messages are switched on here, also sends a Slack test message
+    $('#meTest').onclick = () => {
+      popNotify({ email: state.me.email, title: 'Test notification', body: 'This is how long pop-ups will stay on screen.' + ($('#meSlack') && $('#meSlack').checked ? ' A Slack test message is on its way too.' : ''), secs: Number($('#meSecs').value) });
+      if ($('#meSlack') && $('#meSlack').checked) slackTest();
+    };
+    if ($('#meSlackTest')) $('#meSlackTest').onclick = () => slackTest();
     $('#meSave').onclick = async () => { try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); } };
   }
 
@@ -830,6 +839,8 @@
       let meta = null;
       try { meta = await api('/api/site?editor=' + encodeURIComponent(site.editorUrl)); } catch (e) { log.push('Duda API call failed: ' + e.message); }
       const host = (meta && meta.host) || site.host;
+      // Websites added by ID before the agency's editor address was known were saved under Duda's address: tidy that up
+      const fixHost = site.host === DUDA_HOST && editorHost() ? editorHost() : '';
       if (meta) (meta.errors || []).forEach((x) => log.push(x));
       let truth = meta ? A.buildTruth({ site: meta.site, content: meta.content }) : null;
       if (truth && truth.source === 'none') truth = null;
@@ -868,7 +879,7 @@
       res.counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
       const profiles = await checkProfiles(res.truth);
       const sum = await store({ op: 'saveScan', id, result: {
-        host, businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages,
+        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages,
         scan: { state: 'complete', startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
       upsertSummary(sum);
@@ -929,11 +940,25 @@
     if (!state.ai || !state.ai.enabled || !(res.texts || []).length) return null;
     const skip = res.aiSkip || new Set();
     const todoTexts = res.texts.filter((b) => !skip.has('text|' + ((b.pages || [])[0] || '/')));
-    if (pausedAlready) return { blocks: 0, of: res.texts.length, truncated: false, cached: 0, flagged: 0, errors: 0, used: [], paused: pausedAlready, pending: (() => { let n = 0; return todoTexts.filter((b) => (n += Math.min(1500, b.text.length)) <= 240000); })() };
-    const MAX_CHARS = 240000, BATCH_CHARS = 9000, BATCH_ITEMS = 45;
+    if (pausedAlready) return { blocks: 0, of: res.texts.length, truncated: false, cached: 0, flagged: 0, errors: 0, used: [], paused: pausedAlready, pending: todoTexts.filter((b) => A.textRisk(b.text, res.truth)).slice(0, 300) };
+    const MAX_CHARS = 240000, BATCH_CHARS = 9000, BATCH_ITEMS = 45, MAX_PER_PAGE = 25, CUT = 900;
+    // Only text that could hide a problem is sent (another business's name, a wrong place, filler).
+    // Plain marketing prose is skipped, which keeps long blogs from eating the day's AI credits.
+    const perPage = {};
+    const worth = (b) => {
+      if (!A.textRisk(b.text, res.truth)) return false;
+      const pg = (b.pages || [])[0] || '/';
+      perPage[pg] = (perPage[pg] || 0) + 1;
+      return perPage[pg] <= MAX_PER_PAGE;
+    };
     const business = aiBusiness(res);
     const blocks = []; let total = 0;
-    res.texts.forEach((b, i) => { if (skip.has('text|' + ((b.pages || [])[0] || '/'))) return; if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, 1500), location: b.location, page: b.pages[0] }); total += Math.min(1500, b.text.length); } });
+    let skipped = 0;
+    res.texts.forEach((b, i) => {
+      if (skip.has('text|' + ((b.pages || [])[0] || '/'))) return;
+      if (!worth(b)) { skipped++; return; }
+      if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, CUT), location: b.location, page: b.pages[0] }); total += Math.min(CUT, b.text.length); }
+    });
     const batches = []; let cur = [], size = 0;
     blocks.forEach((b) => { if (cur.length && (size + b.text.length > BATCH_CHARS || cur.length >= BATCH_ITEMS)) { batches.push(cur); cur = []; size = 0; } cur.push(b); size += b.text.length; });
     if (cur.length) batches.push(cur);
@@ -958,7 +983,7 @@
     }
     const before = res.findings.length;
     res.findings = A.applyTextIssues(res.findings, res.texts, issues, res.truth);
-    return { blocks: sent, of: res.texts.length, truncated: blocks.length < res.texts.length, cached, flagged: res.findings.length - before, errors, used: [...used], paused, pending };
+    return { blocks: sent, of: res.texts.length, skipped, truncated: sent + skipped < res.texts.length, cached, flagged: res.findings.length - before, errors, used: [...used], paused, pending };
   }
   // ---------- AI models: status, countdowns, waiting ----------
   const srvNow = () => Date.now() + (state.aiSkew || 0);
@@ -1312,7 +1337,7 @@
     $('#view').innerHTML = `<div class="page-head"><h1>✨ AI Status</h1><div class="row-between">${own ? '<button class="btn" id="aiTest" title="Sends one tiny request to each model (uses 1 credit each)">Test all models</button>' : ''}<button class="btn" id="aiRefresh">Refresh</button></div></div>
       ${!state.ai || !state.ai.enabled ? `<div class="panel panel-pad"><p>AI checks aren't set up yet.${own ? ' Add the AI keys (see the README), then redeploy.' : ' Ask the app owner to turn them on.'}</p></div>` : `
       <div class="ai-stats">
-        <div class="panel panel-pad stat"><div class="k">${own ? 'Free credits per day' : 'Credits per day'}</div><div class="big">${total || '—'}</div><div class="small faint">${own ? 'requests, all free models' : 'AI requests'}</div></div>
+        <div class="panel panel-pad stat"><div class="k">${own ? 'Free credits per day' : 'Credits per day'}</div><div class="big">${total || '—'}</div><div class="small faint" title="A model can also stop earlier when it reaches its own daily word limit">${own ? 'requests, all free models (each model may stop earlier)' : 'AI requests'}</div></div>
         <div class="panel panel-pad stat"><div class="k">Used today</div><div class="big">${used}</div><div class="meter"><span style="width:${pct(used, total)}%"></span></div></div>
         <div class="panel panel-pad stat"><div class="k">Left today</div><div class="big ${left ? 'ok' : 'bad'}">${left}</div><div class="small faint">${pct(left, total)}% of today's credits</div></div>
         <div class="panel panel-pad stat"><div class="k">AI right now</div><div class="big ${at === 0 ? 'ok' : 'bad'}">${at === 0 ? 'Available' : broken ? 'Needs attention' : 'Paused'}</div><div class="small faint">${at === 0 ? (own ? 'At least one model can answer' : 'Ready to check your sites') : broken ? (own ? 'Every model has a setup problem (see below). Click <b>Test all models</b> to retry now.' : 'The AI is temporarily unavailable. It retries automatically.') : at ? `Back in ${countdown(at)} · ${esc(fmtWhen(at))}` : ''}</div></div>
@@ -2053,7 +2078,7 @@
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
-            ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> blocks read${sc.ai.text.truncated ? ` (of ${sc.ai.text.of}, the rest skipped to limit cost)` : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
+            ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> of ${sc.ai.text.of} blocks read${sc.ai.text.skipped ? ` (${sc.ai.text.skipped} plain ones skipped)` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
             ${sc.ai.aliases && state.ai && state.ai.owner ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI Status ↗</a></div>
             ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: the AI ran out of credits for today during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
               ${aiResumeAt(sc.ai.paused.retryAt) ? `They resume automatically after <b>${esc(fmtWhen(aiResumeAt(sc.ai.paused.retryAt)))}</b> (in ${countdown(aiResumeAt(sc.ai.paused.retryAt))}).` : 'AI credits are available again, so they resume automatically within a minute.'}

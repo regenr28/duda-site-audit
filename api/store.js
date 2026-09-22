@@ -184,7 +184,7 @@ export default async function handler(req, res) {
         const [raw, fnum, seqRaw] = await redis(['GET', P + 'site:' + b.id], ['HGETALL', P + 'fnum:' + b.id], ['GET', P + 'seq:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
         const r = b.result || {};
-        ['host', 'businessName', 'truth', 'profiles', 'pages', 'scan'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
+        ['host', 'editorUrl', 'businessName', 'truth', 'profiles', 'pages', 'scan'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
         if (site.scan && Array.isArray(site.scan.log)) site.scan.log = site.scan.log.slice(0, 40).map((l) => String(l).slice(0, 300));
         site.findings = (r.findings || []).map((f) => { const c = Object.assign({}, f); ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done'].forEach((k) => delete c[k]); return c; });
         // Stable ID numbers: the same issue keeps its # across rescans; new issues get the next number

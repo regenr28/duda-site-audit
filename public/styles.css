@@ -513,3 +513,5 @@ select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-c
 .allow-row input { margin-top: 3px; }
 .allow-list { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
 .allow-list li { margin: 4px 0; }
+.slack-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; font-size: 14px; line-height: 1.45; }
+.slack-row input { margin-top: 3px; }

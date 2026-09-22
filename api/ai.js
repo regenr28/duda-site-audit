@@ -63,7 +63,7 @@ const CATALOG = {
   openrouter: () => ({ label: 'OpenRouter (free)', kind: 'openai', keyVar: 'OPENROUTER_API_KEY', limitVar: 'OPENROUTER_DAILY_LIMIT', defLimit: 50, free: true, tz: 'UTC',
     base: env('OPENROUTER_API_BASE', 'https://openrouter.ai/api/v1'), model: env('OPENROUTER_MODEL', 'qwen/qwen3.8-27b:free') }),
   cerebras: () => ({ label: 'Cerebras', kind: 'openai', keyVar: 'CEREBRAS_API_KEY', limitVar: 'CEREBRAS_DAILY_LIMIT', defLimit: 600, free: true, tz: 'UTC',
-    base: env('CEREBRAS_API_BASE', 'https://api.cerebras.ai/v1'), model: env('CEREBRAS_MODEL', 'gpt-oss-120b'), maxOut: 4000 }),
+    base: env('CEREBRAS_API_BASE', 'https://api.cerebras.ai/v1'), model: env('CEREBRAS_MODEL', 'llama-3.3-70b'), maxOut: 4000 }),
   mistral: () => ({ label: 'Mistral', kind: 'openai', keyVar: 'MISTRAL_API_KEY', limitVar: 'MISTRAL_DAILY_LIMIT', defLimit: 1000, free: true, tz: 'UTC',
     base: env('MISTRAL_API_BASE', 'https://api.mistral.ai/v1'), model: env('MISTRAL_MODEL', 'mistral-medium-latest') }),
   cloudflare: () => ({ label: 'Cloudflare Workers AI', kind: 'openai', keyVar: 'CLOUDFLARE_API_TOKEN', needVar: 'CLOUDFLARE_ACCOUNT_ID', limitVar: 'CLOUDFLARE_DAILY_LIMIT', defLimit: 80, free: true, tz: 'UTC',
@@ -152,8 +152,11 @@ function classify(p, r, j) {
     if (/credit|insufficient|balance|quota exceeded for this month/.test(low)) return { reason: 'credits', until: now + 12 * 3600000, note: 'Out of credits. Checking again later.' };
     return { reason: 'cooling', until: now + Math.min(Math.max(retry || 60000, 5000), 3600000), note: 'Per-minute rate limit. Resting briefly.' };
   }
-  if (r.status === 402 || (r.status === 403 && /credit|fund|balance|billing|payment|free tier|not available on the free/.test(low)))
+  if (r.status === 402 || (r.status === 403 && /credit|fund|balance|billing|payment|free tier|not available on the free/.test(low))) {
+    // "Payment required" usually means THIS model isn't in the free plan: try another model from the same provider first
+    if (/model|resource|tier/.test(low)) return { reason: 'error', model: true, until: now + 30 * 60000, note: `Model "${p.model}" isn't included in the free plan; trying another one.` + (msg ? ' (' + msg + ')' : ''), raw: body };
     return { reason: 'credits', until: now + 12 * 3600000, note: 'No credits for this model. Checking again later.' + (msg ? ' (' + msg + ')' : '') };
+  }
   if (r.status === 401 || r.status === 403) return { reason: 'error', until: now + 3600000, note: 'The AI key was rejected. Check the key in the app settings.' + (msg ? ' (' + msg + ')' : '') };
   if (r.status === 404 || ((r.status === 400 || r.status === 403) && /model/.test(low) && /not found|does not exist|no longer available|not available|not supported|decommission|deprecat|invalid model|unknown model/.test(low)))
     return { reason: 'error', model: true, until: now + 15 * 60000, note: `Model "${p.model}" isn't available and no replacement was found.` + (msg ? ' (' + msg + ')' : ''), raw: body };
@@ -205,7 +208,7 @@ const PREFS = [/gpt-oss-120b/i, /llama-4-maverick/i, /llama.*70b/i, /qwen.*(235b
 function rankGemini(names) {
   const score = (n) => {
     const v = Number((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
-    const tier = /flash-lite/.test(n) ? 2 : /flash/.test(n) ? 3 : /pro/.test(n) ? 1 : 0;
+    const tier = /flash-lite/.test(n) ? 3 : /flash/.test(n) ? 2 : /pro/.test(n) ? 1 : 0; // lite first: the free daily allowance is much bigger
     const unstable = /preview|exp|experimental|\d{2}-\d{2}/.test(n) ? 0.5 : 0;
     const alias = /latest/.test(n) ? 0.2 : 0;
     return tier * 1000 + v * 10 - unstable - alias;
@@ -247,7 +250,8 @@ async function discoverModel(p, failed, errText) {
   // The error message sometimes names the replacement ("use models/gemini-3.6-flash")
   const hint = (String(errText || '').match(/models\/([a-z0-9][\w.-]+)/i) || [])[1];
   if (hint && all.includes(hint) && !tried.has(hint)) return hint;
-  const ranked = p.id === 'cloudflare' ? rankList(all, [/gpt-oss-120b/i, /llama-4-scout/i, /llama-3\.3-70b/i, /qwen.*(235b|32b|30b|27b)/i, /gpt-oss-20b/i, /mistral-small/i, /gemma.*(27b|12b)/i, /llama-3\.1-8b/i])
+  const ranked = p.id === 'cerebras' ? rankList(all, [/llama-3\.3-70b/i, /qwen-3-32b/i, /llama-4-scout/i, /gpt-oss-120b/i, /llama3\.1-8b/i])
+    : p.id === 'cloudflare' ? rankList(all, [/gpt-oss-120b/i, /llama-4-scout/i, /llama-3\.3-70b/i, /qwen.*(235b|32b|30b|27b)/i, /gpt-oss-20b/i, /mistral-small/i, /gemma.*(27b|12b)/i, /llama-3\.1-8b/i])
     : p.id === 'mistral' ? rankList(all, [/mistral-medium-latest/i, /mistral-medium/i, /mistral-large-latest/i, /mistral-large/i, /mistral-small-latest/i, /mistral-small/i, /magistral/i])
     : p.kind === 'gemini' ? rankGemini(all) : p.kind === 'anthropic' ? all.filter((n) => /haiku/.test(n)).sort().reverse() : rankGeneric(all);
   return ranked.find((m) => !tried.has(m)) || null;

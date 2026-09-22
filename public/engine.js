@@ -133,7 +133,7 @@
     if (/^https?:\/\//i.test(v) || /\.(com|be|me|gl|page)\//i.test(v)) {
       try {
         const u = new URL(/^https?:/i.test(v) ? v : 'https://' + v);
-        if (net === 'google_my_business') return placeNameFromUrl(u.href) || u.pathname + u.search;
+        if (net === 'google_my_business') return placeNameFromUrl(u.href) || placeIdFromUrl(u.href) || u.pathname + u.search;
         if (net === 'facebook' && /profile\.php/i.test(u.pathname)) return u.searchParams.get('id') || '';
         return handleFromSegs(net, u.pathname.split('/'));
       } catch (e) { return v; }
@@ -186,9 +186,16 @@
     return out;
   }
 
+  /** Google Maps links often carry only an ID (data=!4m2!3m1!1s0x…:0x…, cid=, place_id=, ftid=) and no business name. */
+  function placeIdFromUrl(href) {
+    const h = String(href || '');
+    const m = h.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i) || h.match(/[?&](?:ftid|cid|place_id)=([^&]+)/i) || h.match(/!1s([A-Za-z0-9_-]{10,})/);
+    return m ? m[1].toLowerCase() : '';
+  }
   function placeNameFromUrl(href) {
     const m = String(href).match(/\/maps\/place\/([^/@?]+)/i) || String(href).match(/!2s([^!]+)/);
-    if (m) return safeDecode(m[1].replace(/\+/g, ' ')).trim();
+    // "place/data=!4m2!…" and "place/@lat,lng" are IDs and coordinates, not names
+    if (m && !/^(data=|@|[-\d.,+]+$)/i.test(m[1])) return safeDecode(m[1].replace(/\+/g, ' ')).trim();
     try { const u = new URL(href); const q = u.searchParams.get('q') || u.searchParams.get('query'); if (q) return q; } catch (e) { /* ignore */ }
     return '';
   }
@@ -586,6 +593,18 @@
       if (isShareLink(u)) return; // share buttons on blog posts, not the business's profile
       const handle = socialHandle(net, u.href);
       const label = net === 'google_my_business' ? 'Google Business/Maps' : net[0].toUpperCase() + net.slice(1);
+      // A Google Maps link with only a place ID can't be judged by its address. Compare IDs with Business Info when we can;
+      // otherwise leave it as a note to open and check by hand — never call it another business.
+      if (net === 'google_my_business' && !placeNameFromUrl(u.href)) {
+        const id = placeIdFromUrl(u.href);
+        const known = (truth.socialLinks && truth.socialLinks.google_my_business) || [];
+        const ids = known.map(placeIdFromUrl).filter(Boolean);
+        if (id && ids.includes(id)) return;                      // same place as Business Info
+        if (id && ids.length) add(el, { code: 'GMB_ID_MISMATCH', severity: 'warning', category: 'Social', message: `${label} ${via.toLowerCase()} points to a different Google place than Business Info — open both to check`, found: u.href, expected: known[0] || '' });
+        else if (id) add(el, { code: 'GMB_ID_ONLY', severity: 'info', category: 'Social', message: `${label} ${via.toLowerCase()} uses a Google place ID, so it can't be checked automatically — open it to confirm it's this business`, found: u.href });
+        else add(el, { code: 'SOCIAL_GENERIC', severity: 'warning', category: 'Social', message: `${label} link doesn't point to a specific place`, found: u.href });
+        return;
+      }
       if (!handle || handle === '/' || /^(home|login|sharer|share|intent|watch|results)$/i.test(handle)) {
         if (!/sharer|share|intent/i.test(u.href)) add(el, { code: 'SOCIAL_GENERIC', severity: 'warning', category: 'Social', message: `${label} link doesn't point to a specific profile`, found: u.href });
         return;
@@ -704,7 +723,7 @@
   const ALLOW_CODES = {
     email: ['EMAIL_MISMATCH', 'MAILTO_MISMATCH', 'MAILTO_TEXT_MISMATCH', 'SCHEMA_EMAIL'],
     phone: ['PHONE_MISMATCH', 'TEL_MISMATCH', 'TEL_TEXT_MISMATCH', 'SMS_MISMATCH', 'SCHEMA_PHONE'],
-    social: ['SOCIAL_OTHER_BUSINESS', 'SOCIAL_MISMATCH'],
+    social: ['SOCIAL_OTHER_BUSINESS', 'SOCIAL_MISMATCH', 'GMB_ID_MISMATCH', 'GMB_ID_ONLY'],
     name: ['TEXT_OTHER_BUSINESS', 'COPYRIGHT_NAME', 'SCHEMA_NAME', 'MAP_OTHER_BUSINESS'],
   };
   /** Normalised key for an approved value, e.g. "email:sales@x.com", "phone:2625550147", "social:facebook:joesdetail", "name:joesdetailing". */
@@ -736,6 +755,33 @@
     const keys = new Set(allow.map((a) => a.key));
     return findings.filter((f) => { const a = allowValueOf(f); return !(a && keys.has(a.key)); });
   }
+  // ---------- Which page text is worth sending to the AI ----------
+  // Brands, platforms and suppliers that are fine to mention (never "another business")
+  const SAFE_BRANDS = /\b(ceramic pro|xpel|suntek|llumar|gtechniq|gyeon|igl|meguiar'?s?|chemical guys|koch[- ]?chemie|opti-?coat|modesta|cquartz|system ?x|stek|fuel off[- ]?road|kmc|black rhino|toyo|nitto|bfgoodrich|falken|rough country|3m|google|yelp|facebook|instagram|youtube|tiktok|urable|square|paypal|visa|mastercard|bmw|tesla|audi|mercedes|porsche|toyota|honda|ford|chevrolet|chevy|jeep|dodge|ram|nissan|subaru|lexus|mazda|kia|hyundai|volkswagen|volvo|cadillac|gmc|corvette|mustang|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|june|july|august|september|october|november|december)\b/i;
+  /** True when a block of page text could hide a problem (another business, a wrong place, filler). Plain marketing prose is skipped. */
+  function textRisk(text, truth) {
+    const t = String(text || '');
+    if (t.length < 25) return false;
+    if (/lorem ipsum|placeholder|your (business|company|shop) name|sample text|coming soon|insert (your )?text|dummy text|example\.com/i.test(t)) return true;
+    if (/©|\(c\)\s*(19|20)\d\d|all rights reserved/i.test(t)) return true;
+    if (/[\w.+-]+@[\w-]+\.[a-z]{2,}/i.test(t)) return true;                     // an email
+    if (/\b\d{3}[.\-\s)]\s?\d{3}[.\-\s]?\d{4}\b/.test(t)) return true;         // a phone number
+    if (/\b(www\.|https?:\/\/)[\w-]+\.[a-z]{2,}/i.test(t)) return true;          // a web address
+    if (/\b[A-Z][a-zA-Z.'-]+,\s*[A-Z]{2}\b/.test(t)) return true;                // "Brookfield, WI"
+    if (/\b\d{5}(-\d{4})?\b/.test(t)) return true;                              // a postcode
+    if (/\b(serving|located|based in|proudly serve[sd]?|visit us|stop by|come see us|our shop in|near you in)\b/i.test(t)) return true;
+    // A capitalised phrase of 2+ words that isn't this business and isn't a known brand looks like another business
+    const phrases = t.match(/\b[A-Z][A-Za-z&'’.-]*(?:\s+(?:[A-Z][A-Za-z&'’.-]*|of|and|the|for|at))+\b/g) || [];
+    for (const p of phrases) {
+      const words = p.trim().split(/\s+/).filter((w) => /^[A-Z]/.test(w));
+      if (words.length < 2) continue;
+      if (SAFE_BRANDS.test(p)) continue;
+      if (matchesBusiness(p, truth)) continue;
+      return true;
+    }
+    return false;
+  }
+
   function fingerprint(f) { return hash([f.code, f.path, f.selector, f.found || '', f.message].join('|')); }
 
   /** Merge per-device findings for the same page/element into one row with device visibility info. */
@@ -1040,6 +1086,6 @@
 
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, isShareLink, isThankYouPath, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

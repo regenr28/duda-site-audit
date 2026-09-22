@@ -32,7 +32,7 @@ export const HELP_SECTIONS = [
 <h4>Your settings (click your avatar, top right)</h4>
 <ul>
 <li><b>Display name</b>: how teammates see you.</li>
-<li><b>Pop-up notifications stay on screen for</b>: 4 seconds up to "until I close them". Use <b>Show a test notification</b> to preview.</li>
+<li><b>Pop-up notifications stay on screen for</b>: 4 seconds up to "until I close them". <b>Show a test notification</b> previews it, and also sends a Slack test message when your Slack option is ticked.</li>
 <li><b>Open the Duda editor and previews on</b>: <b>White-label</b> (the agency's editor address) or <b>Duda</b> (my.duda.co). This only changes where your Editor and Preview links take you. The audit is the same for everyone.</li>
 <li><b>Also message me on Slack</b> (when Slack is connected): you get a Slack message from <b>Site Auditor</b> when someone mentions you, replies to you or assigns you an item. It uses the Slack account with the same email as here. <b>Send a test message</b> checks it works.</li>
 <li><b>Sign out</b> is at the bottom of the same window.</li>
@@ -167,6 +167,7 @@ export const HELP_SECTIONS = [
     html: `<ul>
 <li>Some things need judgement, so the <b>Site Auditor AI</b> reviews image <b>alt text</b> and <b>page text</b> for another business's name, a wrong city or placeholder text. Brand and partner logos (XPEL, Ceramic Pro, wheel brands…) are treated as correct.</li>
 <li>Answers are saved, so rescans don't re-check text that hasn't changed.</li>
+<li>Only text that could hide a problem is sent: a name that looks like another business, a place, contact details or filler text. Plain marketing prose is skipped, so a long blog doesn't use up the day's credits. The scan summary says how many blocks were read and how many were skipped.</li>
 <li>The AI has a daily allowance. The <b>AI Status</b> page (light-bulb menu) shows credits left today and when they refill. The site page shows the credits too.</li>
 <li>If the allowance runs out during a scan, the unchecked parts become <b>AI check pending</b> items ("will resume after …"). They're checked <b>automatically</b> when credits are back, or click <b>Run now</b>.</li>
 <li>If you check a pending item yourself and mark it <b>Done</b>, the AI skips it.</li>
@@ -177,7 +178,7 @@ export const HELP_SECTIONS = [
     html: `<ul>
 <li><b>Contact info</b>: phone numbers and click-to-call links (including buttons that show one number but dial another), email links, addresses, Google Map embeds pointing to another business.</li>
 <li><b>Business name</b>: another shop's name left over from a template, name written differently.</li>
-<li><b>Social</b>: links to another business's profiles, generic links that don't point to a profile. "Share this page" buttons on blog posts are ignored.</li>
+<li><b>Social</b>: links to another business's profiles, generic links that don't point to a profile. A Google Maps link that carries only a place ID (<code>data=!4m2!…</code>) can't be read by name, so it's only a note asking you to open it, or a warning when it's a different place than Business Info — never "another business". "Share this page" buttons on blog posts are ignored.</li>
 <li><b>Links</b>: broken internal pages, broken external links, insecure http:// links, links with no readable text.</li>
 <li><b>Images / Alt</b>: missing or placeholder alt text, alt text naming another business, broken images. The site's own logo is checked; brand/partner logos are accepted.</li>
 <li><b>Meta / SEO</b>: missing or too long/short titles and descriptions, missing H1, social share image, canonical pointing elsewhere.</li>
