@@ -66,6 +66,12 @@ export const HELP_SECTIONS = [
 <li><b>Rescan</b> scans one website again. <b>Rescan all shown</b> rescans every website in the current filter.</li>
 <li><b>✕</b> deletes a website with its audit, comments and activity log (admins, or the person who added it).</li>
 </ul>
+<h4>A website's page</h4>
+<ul>
+<li>Under the name: the site ID and when it was <b>last published</b> in Duda.</li>
+<li><b>Open editor ↗</b>: the Duda editor. <b>Live site ↗</b>: the published website visitors see. <b>Draft preview ↗</b>: the editor's current version, including changes that aren't published yet (this is what scans read).</li>
+<li><b>Export CSV</b> downloads the audit items. <b>Rescan</b> scans the draft again.</li>
+</ul>
 <h4>Website statuses</h4>
 <ul>
 <li><b>Not started</b>: added, nobody has worked on it yet.</li>

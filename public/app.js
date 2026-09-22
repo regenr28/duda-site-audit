@@ -1837,14 +1837,15 @@
       <div class="page-head">
         <div><div class="small"><a href="#/">← All audits</a></div>
           <h1>${esc(s.businessName || s.siteId)}</h1>
-          <div class="muted mono small">${esc(s.siteId)} · ${esc(s.host)}</div>
+          <div class="muted small"><span class="mono">${esc(s.siteId)}</span> · <span id="sitePub">${sitePubHtml(s)}</span></div>
           <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtFull(s.createdAt)) : ''}</div>
           <div class="last-scan">${sc.finishedAt ? `🕑 Last scan: <b>${esc(fmtFull(sc.finishedAt))}</b>${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}` : '🕑 Not scanned yet'}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</div><div id="roomBar">${roomBarHtml()}</div></div>
         <div class="head-actions">
           <span class="member-select">${avatar(s.assignee)}<select id="sAssign">${userOptions(s.assignee)}</select></span>
           <select class="pill st-${slug(s.status)}" id="sStatus">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
           <a class="btn" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
-          <a class="btn" href="https://${esc(linkHost(s))}/preview/${esc(s.siteId)}" target="_blank" rel="noopener">Preview ↗</a>
+          <span id="liveBtn">${liveBtnHtml(s)}</span>
+          <a class="btn" href="https://${esc(linkHost(s))}/preview/${esc(s.siteId)}" target="_blank" rel="noopener" title="The editor's current version, including changes that aren't published yet">Draft preview ↗</a>
           <button class="btn" id="sCsv" ${findings.length ? '' : 'disabled'}>Export CSV</button>
           ${otherClaim(s.id) && !live ? `<button class="btn primary" id="sRescan" disabled title="Only one scan of a website runs at a time">${esc(claimText(otherClaim(s.id)))}</button>` : `<button class="btn primary" id="sRescan" ${live ? 'disabled' : ''}>${live ? (live.queued ? 'Queued…' : 'Scanning…') : 'Rescan'}</button>`}
         </div>
@@ -1858,6 +1859,7 @@
     $('#sAssign').onchange = async (e) => { upsertSummary(await store({ op: 'patchSite', id: s.id, changes: { assignee: e.target.value } })); await loadSite(s.id); renderSite(); };
     $('#sStatus').onchange = async (e) => { upsertSummary(await store({ op: 'patchSite', id: s.id, changes: { status: e.target.value } })); await loadSite(s.id); renderSite(); };
     $('#sRescan').onclick = () => requestScan([s.id]);
+    loadPubInfo(s);
     $('#sCsv').onclick = () => exportCsv(s);
     const body = $('#tabBody');
     state.renderedTab = r.tab;
@@ -1949,7 +1951,32 @@
       .catch((e) => { pubInfo[s.id] = { at: Date.now(), err: e.message }; })
       .finally(() => { if (state.current && state.current.id === s.id) refreshVerifyPanel(s); });
   }
-  function refreshVerifyPanel(s) { const el = $('#verifyPanel'); if (el) { el.outerHTML = verifyPanel(s); bindVerify($('#verifyPanel'), s); } }
+  /** "Last published …" for the site header: Duda's answer when loaded, else the Live DR Sites list. */
+  function sitePubHtml(s) {
+    const pd = (pubInfo[s.id] || {}).d;
+    const lx = liveOf(s.siteId);
+    const at = (pd && pd.publishedAt) || (lx && lx.published) || '';
+    if (pd && (!pd.domain || /NOT_PUBLISHED|UNPUBLISHED/i.test(pd.publishStatus || ''))) return '<span class="faint">Not published yet</span>';
+    if (lx === false && !pd) return '<span class="faint">Not in the published list</span>';
+    return at ? `Last published <b>${esc(fmtFull(at))}</b> <span class="faint">(${esc(relTime(at))})</span>` : '<span class="faint">Checking publish date…</span>';
+  }
+  function relTime(at) {
+    const m = Math.round((Date.now() - new Date(at).getTime()) / 60000);
+    if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+    const h = Math.round(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+    const d = Math.round(h / 24); if (d < 45) return d + (d === 1 ? ' day ago' : ' days ago');
+    const mo = Math.round(d / 30); return mo < 12 ? mo + ' months ago' : Math.round(d / 365) + ' year(s) ago';
+  }
+  function liveBtnHtml(s) {
+    const pd = (pubInfo[s.id] || {}).d;
+    const lx = liveOf(s.siteId);
+    const dom = (pd && pd.domain) || (lx && lx.domain) || '';
+    if (!dom || (pd && /NOT_PUBLISHED|UNPUBLISHED/i.test(pd.publishStatus || ''))) return '';
+    return `<a class="btn" href="https://${esc(dom)}/" target="_blank" rel="noopener" title="The published website visitors see">Live site ↗</a>`;
+  }
+  function refreshSiteHead(s) { const a = $('#sitePub'); if (a) a.innerHTML = sitePubHtml(s); const b = $('#liveBtn'); if (b) b.innerHTML = liveBtnHtml(s); }
+  function refreshVerifyPanel(s) {
+    refreshSiteHead(s); const el = $('#verifyPanel'); if (el) { el.outerHTML = verifyPanel(s); bindVerify($('#verifyPanel'), s); } }
   const itemChips = (list, s) => list.sort((a, b) => a.num - b.num).map((f) => `<a class="vchip" href="#/site/${esc(s.id)}/item/${f.num}" title="${esc(f.message)}">#${f.num}</a>`).join('');
   function verifyPanel(s) {
     const f = (s.findings || []).filter((x) => !/^AI_PENDING/.test(x.code));
@@ -1966,7 +1993,7 @@
     const pubLine = pi.loading && !pd ? '<span class="faint">Checking when it was last published…</span>'
       : pi.err ? `<span class="faint">Couldn't get the publish date from Duda.</span>`
       : notLive ? '<b>Not published yet</b> in Duda, so there is no live site to check.'
-      : pd ? `Last published in Duda: <b>${esc(fmtFull(pd.publishedAt))}</b> <span class="faint">(${esc(ago(pd.publishedAt))})</span> on <b>${esc(pd.domain)}</b>` : '';
+      : pd ? `Last published in Duda: <b>${esc(fmtFull(pd.publishedAt))}</b> <span class="faint">(${esc(relTime(pd.publishedAt))})</span> on <b>${esc(pd.domain)}</b>` : '';
     const head = !open.length
       ? `<b>🎉 All items are cleared.</b> Next: publish the site in Duda, then verify the fixes on the live site.`
       : `<b>🌐 Live site check</b>`;
