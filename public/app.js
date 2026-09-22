@@ -13,9 +13,11 @@
   const SUG = [{ v: 'new', label: 'New' }, { v: 'ongoing', label: 'On going' }, { v: 'done', label: 'Done' }, { v: 'nope', label: 'Nope' }];
   const SUGL = Object.fromEntries(SUG.map((x) => [x.v, x.label]));
 
+  // This tab's id: the server lets only one tab at a time queue or scan a website
+  const CID = 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   const state = {
     config: {}, me: null, users: [], sites: [], current: null,
-    scanning: {}, queue: [], running: 0, skipAI: {}, aiAbort: {},
+    scanning: {}, queue: [], running: 0, skipAI: {}, aiAbort: {}, claims: {},
     filters: { q: '', status: '', assignee: '' },
     ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' },
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
@@ -179,14 +181,37 @@
   /** Loads the website list. With onlyIfChanged, first asks whether anything changed (returns false if not). */
   async function loadSites(onlyIfChanged) {
     const r = await api('/api/store?op=list' + (onlyIfChanged && state.sitesVer ? '&since=' + encodeURIComponent(state.sitesVer) : ''));
-    if (r.unchanged) return false;
+    const claimsChanged = setClaims(r.claims);
+    if (r.unchanged) return claimsChanged;
     state.sites = r.sites || []; state.sitesVer = r.ver || ''; return true;
   }
   async function refreshSite(id) {
     const v = state.current && state.current.id === id ? state.current.ver : '';
     const r = await api('/api/store?op=site&id=' + encodeURIComponent(id) + (v ? '&since=' + encodeURIComponent(v) : ''));
-    if (r.unchanged) return false;
+    if (r.unchanged) {
+      const was = JSON.stringify(state.current && state.current.claim || null), now = JSON.stringify(r.claim || null);
+      if (state.current) state.current.claim = r.claim || null;
+      return was !== now;
+    }
     state.current = r; return true;
+  }
+  /** Who else has a website queued or scanning (from the server). Returns true when something changed. */
+  function setClaims(c) {
+    if (!c) return false;
+    const sig = (o) => Object.keys(o).sort().map((k) => k + ':' + o[k].cid + ':' + o[k].state).join('|');
+    const changed = sig(c) !== sig(state.claims || {});
+    state.claims = c; return changed;
+  }
+  /** The claim on a website held by ANOTHER tab or member (still fresh), or null. */
+  function otherClaim(id) {
+    let c = state.claims[id];
+    if (state.current && state.current.id === id && state.current.claim !== undefined) c = state.current.claim || c;
+    if (!c || c.cid === CID || !(c.until > srvNow())) return null;
+    return c;
+  }
+  function claimText(c) {
+    const who = c.by === (state.me && state.me.email) ? 'you in another tab' : c.byName || 'another member';
+    return c.state === 'queued' ? `Queued by ${who}` : `Being scanned by ${who}`;
   }
   async function loadNotifs() { try { state.notifs = await api('/api/store?op=notifs'); renderBell(); } catch (e) { /* ignore */ } }
   async function loadSite(id) { state.current = await api('/api/store?op=site&id=' + encodeURIComponent(id)); return state.current; }
@@ -627,19 +652,20 @@
       const lines = $('#addLinks').value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
       if (!lines.length) return toast('Paste at least one editor link');
       $('#addGo').disabled = true;
-      let added = 0, bad = 0; const dups = []; const seen = new Set();
+      let added = 0, bad = 0; const dups = []; const seen = new Set(); const newIds = [];
       for (const link of lines) {
         const p = parseLink(link);
         if (!p.siteId) { bad++; continue; }
         if (seen.has(p.siteId)) continue; seen.add(p.siteId);
         const ex = findExisting(p.siteId);
         if (ex) { dups.push(ex); continue; }
-        try { const sum = await store({ op: 'create', siteId: p.siteId, host: p.host, editorUrl: link, assignee: $('#addWho').value }); upsertSummary(sum); enqueue(sum.id); added++; }
+        try { const sum = await store({ op: 'create', siteId: p.siteId, host: p.host, editorUrl: link, assignee: $('#addWho').value }); upsertSummary(sum); newIds.push(sum.id); added++; }
         catch (e) {
           if (e.status === 409) { await loadSites().catch(() => {}); dups.push(findExisting(p.siteId) || { id: e.data && e.data.id, siteId: p.siteId }); }
           else { bad++; toast(e.message); }
         }
       }
+      if (newIds.length) requestScan(newIds);
       render();
       if (!dups.length) { closeModal(); toast(`${added} added${bad ? ` · ${bad} invalid` : ''}`); return; }
       // Keep the dialog open to show which ones already exist, with a way to open them
@@ -653,8 +679,36 @@
       $$('[data-open-existing]', $('.modal')).forEach((a) => (a.onclick = () => closeModal()));
     };
   }
+  /** Asks the server to reserve the websites for this tab, then queues the ones it got. Anything someone else has queued
+   *  or is scanning is skipped, so two browsers never scan the same website at the same time. */
+  async function requestScan(ids) {
+    ids = [...new Set(ids)].filter((id) => !state.scanning[id] && !state.queue.includes(id));
+    if (!ids.length) return;
+    ids.forEach((id) => { state.scanning[id] = { done: 0, total: 0, message: 'Queued', queued: true }; });
+    render();
+    let r;
+    try { r = await store({ op: 'scanClaim', ids, cid: CID, state: 'queued' }); }
+    catch (e) { ids.forEach((id) => delete state.scanning[id]); render(); toast("Couldn't start the scan: " + e.message); return; }
+    Object.assign(state.claims, r.claims || {});
+    (r.taken || []).forEach((t) => { delete state.scanning[t.id]; state.claims[t.id] = Object.assign({ until: srvNow() + 60000 }, t); });
+    (r.ok || []).forEach((id) => enqueue(id));
+    const tk = r.taken || [];
+    if (tk.length === 1 && ids.length === 1) toast(`${claimText(tk[0])}. It wasn't scanned again here.`);
+    else if (tk.length) toast(`${tk.length} website(s) skipped: another member already queued or is scanning them.`);
+    render();
+  }
+  function releaseScan(ids, beacon) {
+    ids = [].concat(ids).filter(Boolean); if (!ids.length) return;
+    ids.forEach((id) => { if (state.claims[id] && state.claims[id].cid === CID) delete state.claims[id]; });
+    const body = JSON.stringify({ op: 'scanRelease', ids, cid: CID });
+    if (beacon) { try { fetch('/api/store', { method: 'POST', body, keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }); } catch (e) { /* ignore */ } return; }
+    store({ op: 'scanRelease', ids, cid: CID }).catch(() => {});
+  }
+  // Queued websites keep their reservation while they wait; closing the tab gives them back right away
+  setInterval(() => { if (state.queue.length) store({ op: 'scanClaim', ids: state.queue.slice(), cid: CID, state: 'queued' }).catch(() => {}); }, 5 * 60000);
+  window.addEventListener('pagehide', () => { const ids = state.queue.concat(Object.keys(state.scanning).filter((id) => !state.queue.includes(id))); if (ids.length) releaseScan(ids, true); });
   function enqueue(id) {
-    if (!state.queue.includes(id) && !state.scanning[id]) state.queue.push(id);
+    if (!state.queue.includes(id) && !(state.scanning[id] && !state.scanning[id].queued)) state.queue.push(id);
     state.scanning[id] = state.scanning[id] || { done: 0, total: 0, message: 'Queued', queued: true };
     pump();
   }
@@ -668,6 +722,21 @@
   window.addEventListener('beforeunload', (e) => { if (state.running || state.queue.length) { e.preventDefault(); e.returnValue = ''; } });
 
   async function scanSite(id) {
+    // Take the website for this tab. If another member got to it first, skip it here.
+    let got;
+    try { got = await store({ op: 'scanClaim', ids: [id], cid: CID, state: 'scanning' }); } catch (e) { toast("Couldn't start the scan: " + e.message); return; }
+    if (!(got.ok || []).includes(id)) {
+      const t = (got.taken || [])[0] || {};
+      state.claims[id] = Object.assign({ until: srvNow() + 60000 }, t);
+      const nm = (state.sites.find((x) => x.id === id) || {}).businessName || 'This website';
+      toast(`${nm}: ${claimText(t)}. Skipped here so it isn't scanned twice.`);
+      return;
+    }
+    Object.assign(state.claims, got.claims || {});
+    const beat = setInterval(() => store({ op: 'scanClaim', ids: [id], cid: CID, state: 'scanning' }).catch(() => {}), 60000);
+    try { await scanSiteRun(id); } finally { clearInterval(beat); releaseScan([id]); }
+  }
+  async function scanSiteRun(id) {
     const site = await api('/api/store?op=site&id=' + encodeURIComponent(id));
     const t0 = Date.now();
     delete state.skipAI[id];
@@ -926,10 +995,15 @@
   let aiResumeBusy = false;
   async function aiResume(siteId, manual) {
     if (aiResumeBusy) { if (manual) toast('An AI check is already running'); return; }
+    if (otherClaim(siteId)) { if (manual) toast(claimText(otherClaim(siteId)) + '. Try again when it finishes.'); return; }
     aiResumeBusy = true;
+    let aiBeat = null;
     try {
       const lock = await store({ op: 'aiLock', id: siteId });
       if (!lock.ok) { if (manual) toast('Someone else is already resuming this AI check'); return; }
+      const sl = await store({ op: 'scanClaim', ids: [siteId], cid: CID, state: 'scanning' });
+      if (!(sl.ok || []).includes(siteId)) { await store({ op: 'aiUnlock', id: siteId }); if (manual) toast(claimText((sl.taken || [])[0] || {}) + '. Try again when it finishes.'); return; }
+      aiBeat = setInterval(() => store({ op: 'scanClaim', ids: [siteId], cid: CID, state: 'scanning' }).catch(() => {}), 60000);
       const s = await api('/api/store?op=site&id=' + encodeURIComponent(siteId));
       const open = (s.findings || []).filter((f) => /^AI_PENDING/.test(f.code) && f.status !== 'done' && f.status !== 'false');
       if (!open.length) { await store({ op: 'aiUnlock', id: siteId }); return; }
@@ -960,11 +1034,11 @@
     } catch (e) {
       console.error(e); try { await store({ op: 'aiUnlock', id: siteId }); } catch (x) { /* ignore */ }
       if (manual) toast('AI check failed: ' + e.message);
-    } finally { aiResumeBusy = false; delete state.scanning[siteId]; if (route().name === 'sites') renderSites(); if (route().name === 'ai') renderAiPage(); }
+    } finally { if (aiBeat) { clearInterval(aiBeat); releaseScan([siteId]); } aiResumeBusy = false; delete state.scanning[siteId]; if (route().name === 'sites') renderSites(); if (route().name === 'ai') renderAiPage(); }
   }
   async function aiResumeTick() {
     if (!state.me || !state.ai || !state.ai.enabled || aiResumeBusy || state.running || state.queue.length) return;
-    const waiting = (state.sites || []).filter((x) => x.counts && x.counts.aiPending > 0 && !state.scanning[x.id]);
+    const waiting = (state.sites || []).filter((x) => x.counts && x.counts.aiPending > 0 && !state.scanning[x.id] && !otherClaim(x.id));
     if (!waiting.length) return;
     // Only ask the server when a model should be back by now (or every 15 min), to keep database reads low
     const due = aiResumeAt();
@@ -1106,7 +1180,7 @@
       b.disabled = true; b.textContent = 'Adding…';
       try {
         const sum = await store({ op: 'create', siteId: id, host, editorUrl: `https://${host}/home/site/${id}/home`, assignee: state.me.email });
-        upsertSummary(sum); enqueue(sum.id); toast('Added to Audits. Scanning now.'); renderLive();
+        upsertSummary(sum); requestScan([sum.id]); toast('Added to Audits. Scanning now.'); renderLive();
       } catch (e) {
         if (e.status === 409) { await loadSites(); toast('Already in Audits'); renderLive(); } else { toast(e.message); b.disabled = false; b.textContent = 'Audit this website'; }
       }
@@ -1257,6 +1331,11 @@
       return renderSite();
     }
     lastSiteId = null; state.current = null; closeDrawer(true);
+    // Coming back to a list while teammates' scans were showing: check whether they finished (one tiny read)
+    if ((r.name === 'sites' || r.name === 'live') && Object.keys(state.claims).length && Date.now() - (state.claimsAt || 0) > 10000) {
+      state.claimsAt = Date.now();
+      loadSites(true).then((ch) => { if (ch && route().name === r.name) render(); }).catch(() => {});
+    }
     if (r.name === 'about') return renderAbout();
     if (r.name === 'activity') return renderGlobalActivity();
     if (r.name === 'live') return renderLive();
@@ -1277,6 +1356,8 @@
       if (live.message !== live._m) { live._m = live.message; live.since = Date.now(); }
       return `<span class="badge scan-scanning" id="pb-${esc(s.id)}">${live.ai && !live.total ? 'AI check' : `Scanning ${live.total ? `${live.done}/${live.total}` : '…'}`}</span><div class="progress"><i id="pg-${esc(s.id)}" style="width:${pct}%"></i></div><div class="small faint" id="pm-${esc(s.id)}">${esc(live.message || '')}</div><div class="live-line small" id="pl-${esc(s.id)}">${liveLine(s.id, live)}</div>`;
     }
+    const oc = otherClaim(s.id);
+    if (oc) return `<span class="badge ${oc.state === 'queued' ? 'scan-queued' : 'scan-scanning'}" title="Only one scan of a website runs at a time">${oc.state === 'queued' ? 'Queued' : 'Scanning'}</span><div class="small faint">${esc(claimText(oc).replace(/^Queued |^Being scanned /, ''))}</div>`;
     const sc = s.scan || {};
     if (sc.state === 'complete') return `<span class="badge scan-complete">✓ Scan complete</span><div class="small faint">${esc(fmtDate(sc.finishedAt))} · ${sc.pages || 0} pages</div>`;
     if (sc.state === 'failed') return `<span class="badge scan-failed" title="${esc(sc.error)}">Scan failed</span>`;
@@ -1370,7 +1451,7 @@
               <td>${scanBadge(s)}</td>
               <td>${issueChips(c, s.scan && s.scan.state === 'complete')}</td>
               <td style="min-width:110px"><div class="small">${c.closed || 0}/${c.total || 0}</div><div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div></td>
-              <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] ? 'disabled' : ''}>Rescan</button>
+              <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
                 ${state.me.role === 'admin' || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Delete">✕</button>` : ''}</td>
             </tr>`;
           }).join('')}</tbody></table></div>` : `<div class="empty">${state.sites.length ? 'No websites match these filters.' : 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.'}</div>`}
@@ -1380,11 +1461,15 @@
     $('#fstatus').onchange = (e) => { f.status = e.target.value; renderSites(); };
     $('#fwho').onchange = (e) => { f.assignee = e.target.value; renderSites(); };
     if ($('#flive')) $('#flive').onchange = (e) => { f.live = e.target.value; renderSites(); };
-    $('#rescanAll').onclick = () => { if (list.length && confirm(`Rescan ${list.length} website(s)?`)) { list.forEach((s) => enqueue(s.id)); renderSites(); } };
+    $('#rescanAll').onclick = () => {
+      const todo = list.filter((s) => !state.scanning[s.id] && !otherClaim(s.id)), busy = list.length - todo.length;
+      if (!todo.length) { toast('Every website shown is already queued or scanning.'); return; }
+      if (confirm(`Rescan ${todo.length} website(s)?${busy ? `\n\n${busy} already queued or scanning will be skipped.` : ''}`)) requestScan(todo.map((s) => s.id));
+    };
     $$('[data-open]', v).forEach((tr) => tr.addEventListener('click', (e) => { if (!e.target.closest('[data-stop]')) location.hash = '#/site/' + tr.dataset.open; }));
     $$('[data-assign]', v).forEach((sel) => (sel.onchange = async () => { upsertSummary(await store({ op: 'patchSite', id: sel.dataset.assign, changes: { assignee: sel.value } })); renderSites(); }));
     $$('[data-status]', v).forEach((sel) => (sel.onchange = async () => { upsertSummary(await store({ op: 'patchSite', id: sel.dataset.status, changes: { status: sel.value } })); renderSites(); }));
-    $$('[data-rescan]', v).forEach((b) => (b.onclick = () => { enqueue(b.dataset.rescan); renderSites(); }));
+    $$('[data-rescan]', v).forEach((b) => (b.onclick = () => requestScan([b.dataset.rescan])));
     $$('[data-delete]', v).forEach((b) => (b.onclick = async () => {
       if (!confirm('Delete this website with its audit, comments and activity log?')) return;
       try { await store({ op: 'deleteSite', id: b.dataset.delete }); state.sites = state.sites.filter((s) => s.id !== b.dataset.delete); renderSites(); } catch (e) { toast(e.message); }
@@ -1614,7 +1699,7 @@
           <a class="btn" href="${esc(s.editorUrl)}" target="_blank" rel="noopener">Open editor ↗</a>
           <a class="btn" href="https://${esc(s.host)}/preview/${esc(s.siteId)}" target="_blank" rel="noopener">Preview ↗</a>
           <button class="btn" id="sCsv" ${findings.length ? '' : 'disabled'}>Export CSV</button>
-          <button class="btn primary" id="sRescan" ${live ? 'disabled' : ''}>${live ? 'Scanning…' : 'Rescan'}</button>
+          ${otherClaim(s.id) && !live ? `<button class="btn primary" id="sRescan" disabled title="Only one scan of a website runs at a time">${esc(claimText(otherClaim(s.id)))}</button>` : `<button class="btn primary" id="sRescan" ${live ? 'disabled' : ''}>${live ? (live.queued ? 'Queued…' : 'Scanning…') : 'Rescan'}</button>`}
         </div>
       </div>
       <div class="tabs">
@@ -1625,7 +1710,7 @@
       <div id="tabBody"></div>`;
     $('#sAssign').onchange = async (e) => { upsertSummary(await store({ op: 'patchSite', id: s.id, changes: { assignee: e.target.value } })); await loadSite(s.id); renderSite(); };
     $('#sStatus').onchange = async (e) => { upsertSummary(await store({ op: 'patchSite', id: s.id, changes: { status: e.target.value } })); await loadSite(s.id); renderSite(); };
-    $('#sRescan').onclick = () => { enqueue(s.id); renderSite(); };
+    $('#sRescan').onclick = () => requestScan([s.id]);
     $('#sCsv').onclick = () => exportCsv(s);
     const body = $('#tabBody');
     state.renderedTab = r.tab;
@@ -2225,8 +2310,13 @@
     if (state.me.status !== 'active') { state.auth.mode = 'pending'; state.me = null; return renderAuth(); }
     await boot2();
     // Keep data fresh so teammates' changes show up
+    // Every 90 s normally; every 30 s while a teammate has a website queued or scanning, so its Rescan button frees up sooner
+    let lastPoll = Date.now();
     setInterval(async () => {
       if (!state.me || document.hidden || modalOpts) return;
+      const othersBusy = Object.keys(state.claims).some((id) => otherClaim(id)) || (state.current && state.current.claim && otherClaim(state.current.id));
+      if (Date.now() - lastPoll < (othersBusy ? 29000 : 89000)) return;
+      lastPoll = Date.now();
       try {
         const r = route();
         // Ask "anything new?" first (one tiny read); only reload when something changed
@@ -2237,7 +2327,7 @@
           if (!busy && await refreshSite(state.current.id)) renderSite();
         }
       } catch (e) { /* ignore */ }
-    }, 90000);
+    }, 30000);
     // Heartbeat: every 2 min while the tab is visible, every 5 min in the background
     setInterval(() => { if (Date.now() - lastPulse > beatMs() - 5000) pulse(); }, 30000);
   })();

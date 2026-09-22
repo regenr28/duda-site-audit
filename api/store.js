@@ -66,6 +66,16 @@ async function saveIndex(id) {
   if (l) await redis(['HSET', P + 'index', id, JSON.stringify(summary(l.site, l.comments))], ['INCR', P + 'ver:index'], ['INCR', P + 'ver:s:' + id]);
   return l ? summary(l.site, l.comments) : null;
 }
+// Scan claims: queued items hold for 15 min (refreshed every 5 min while the queue waits), a running scan for 3 min
+// (refreshed every minute). If a tab closes or crashes, its claim simply runs out and anyone can rescan.
+const QUEUE_TTL = 15 * 60000, SCAN_TTL = 3 * 60000;
+function liveClaim(raw) { const c = typeof raw === 'string' ? jparse(raw) : raw; return c && c.until > Date.now() ? c : null; }
+async function freshClaims(raw) {
+  const all = pairs(raw, true), out = {}, old = [];
+  Object.entries(all).forEach(([id, c]) => { if (liveClaim(c)) out[id] = c; else old.push(id); });
+  if (old.length) { try { await redis(['HDEL', P + 'scanclaims', ...old]); } catch (e) { /* tidy-up only */ } }
+  return out;
+}
 async function log(siteId, me, type, text, extra = {}) {
   const e = { id: newId(6), at: now(), by: me.email, byName: me.name, type, text, ...extra };
   await redis(['LPUSH', P + 'act:' + siteId, JSON.stringify(e)], ['LTRIM', P + 'act:' + siteId, 0, 299],
@@ -82,12 +92,13 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const op = req.query.op || 'list';
       if (op === 'list') {
-        if (req.query.since) { const [v] = await redis(['GET', P + 'ver:index']); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0) }); }
-        const [idx, v] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index']);
-        return res.status(200).json({ mode: 'kv', sites: Object.values(pairs(idx, true)), ver: String(v || 0) });
+        // Scan claims (who has a website queued or scanning) ride along with every poll; the list is tiny
+        if (req.query.since) { const [v, cl] = await redis(['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims']); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claims: await freshClaims(cl) }); }
+        const [idx, v, cl] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims']);
+        return res.status(200).json({ mode: 'kv', sites: Object.values(pairs(idx, true)), ver: String(v || 0), claims: await freshClaims(cl) });
       }
       if (op === 'site') {
-        if (req.query.since) { const [v] = await redis(['GET', P + 'ver:s:' + req.query.id]); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0) }); }
+        if (req.query.since) { const [v, cr] = await redis(['GET', P + 'ver:s:' + req.query.id], ['HGET', P + 'scanclaims', req.query.id]); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claim: liveClaim(cr) }); }
         const l = await loadSite(req.query.id);
         if (!l) return res.status(404).json({ error: 'Not found' });
         const [act] = await redis(['LRANGE', P + 'act:' + req.query.id, 0, 299]);
@@ -95,6 +106,8 @@ export default async function handler(req, res) {
         l.site.activity = (act || []).map((x) => jparse(x)).filter(Boolean);
         const [sv] = await redis(['GET', P + 'ver:s:' + req.query.id]);
         l.site.ver = String(sv || 0);
+        const [cr] = await redis(['HGET', P + 'scanclaims', req.query.id]);
+        l.site.claim = liveClaim(cr);
         return res.status(200).json(l.site);
       }
       if (op === 'gactivity') {
@@ -251,6 +264,44 @@ export default async function handler(req, res) {
         await redis(['HDEL', P + 'fa', String(b.key || '')]);
         return res.status(200).json({ ok: true });
       }
+      case 'scanClaim': {
+        // One browser at a time may queue or scan a website. The lock key is atomic (SET NX); the "scanclaims" hash is
+        // what other browsers read to show "Queued by …" / "Scanning by …" and to disable Rescan.
+        const cid = String(b.cid || '').slice(0, 40);
+        if (!cid) return res.status(400).json({ error: 'Missing tab id' });
+        const st = b.state === 'scanning' ? 'scanning' : 'queued';
+        const ttl = st === 'scanning' ? SCAN_TTL : QUEUE_TTL;
+        const ids = [...new Set([].concat(b.ids || (b.id ? [b.id] : [])).map(String))].slice(0, 1000);
+        if (!ids.length) return res.status(200).json({ ok: [], taken: [], claims: {} });
+        const got = await redis(...ids.map((id) => ['SET', P + 'scanlock:' + id, cid, 'NX', 'PX', ttl]));
+        const ok = ids.filter((id, i) => got[i] === 'OK'); const taken = [];
+        const busy = ids.filter((id, i) => got[i] !== 'OK');
+        if (busy.length) {
+          const info = await redis(...busy.map((id) => ['GET', P + 'scanlock:' + id]), ...busy.map((id) => ['HGET', P + 'scanclaims', id]));
+          const mine = [];
+          busy.forEach((id, i) => {
+            if (info[i] === cid) mine.push(id);
+            else { const c = jparse(info[busy.length + i]) || {}; taken.push({ id, byName: c.byName || 'Another member', by: c.by || '', state: c.state || 'scanning' }); }
+          });
+          if (mine.length) { await redis(...mine.map((id) => ['SET', P + 'scanlock:' + id, cid, 'XX', 'PX', ttl])); ok.push(...mine); }
+        }
+        const claims = {};
+        if (ok.length) {
+          const until = Date.now() + ttl;
+          ok.forEach((id) => { claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until }; });
+          await redis(['HSET', P + 'scanclaims', ...ok.flatMap((id) => [id, JSON.stringify(claims[id])])]);
+        }
+        return res.status(200).json({ ok, taken, claims });
+      }
+      case 'scanRelease': {
+        const cid = String(b.cid || '').slice(0, 40);
+        const ids = [...new Set([].concat(b.ids || (b.id ? [b.id] : [])).map(String))].slice(0, 1000);
+        if (!cid || !ids.length) return res.status(200).json({ ok: [] });
+        const holders = await redis(...ids.map((id) => ['GET', P + 'scanlock:' + id]));
+        const mine = ids.filter((id, i) => holders[i] === cid);
+        if (mine.length) await redis(['DEL', ...mine.map((id) => P + 'scanlock:' + id)], ['HDEL', P + 'scanclaims', ...mine]);
+        return res.status(200).json({ ok: mine });
+      }
       case 'aiLock': {
         // Only one browser resumes a site's AI check at a time
         const [ok] = await redis(['SET', P + 'ailock:' + b.id, me.email, 'NX', 'PX', 10 * 60000]);
@@ -372,7 +423,7 @@ export default async function handler(req, res) {
         if (me.role !== 'admin' && site.addedBy !== me.email) return res.status(403).json({ error: 'Only an admin or the person who added it can delete this website' });
         const [cm] = await redis(['HVALS', P + 'cmt:' + b.id]);
         const imgKeys = [].concat(...(cm || []).map((x) => (jparse(x) || {}).images || [])).map((u) => P + 'img:' + String(u).split('id=')[1]);
-        await redis(['DEL', P + 'site:' + b.id, P + 'fstate:' + b.id, P + 'fnum:' + b.id, P + 'seq:' + b.id, P + 'cmt:' + b.id, P + 'act:' + b.id, P + 'ailock:' + b.id, P + 'ver:s:' + b.id, ...imgKeys], ['HDEL', P + 'index', b.id], ['INCR', P + 'ver:index']);
+        await redis(['DEL', P + 'site:' + b.id, P + 'fstate:' + b.id, P + 'fnum:' + b.id, P + 'seq:' + b.id, P + 'cmt:' + b.id, P + 'act:' + b.id, P + 'ailock:' + b.id, P + 'scanlock:' + b.id, P + 'ver:s:' + b.id, ...imgKeys], ['HDEL', P + 'index', b.id], ['HDEL', P + 'scanclaims', b.id], ['INCR', P + 'ver:index']);
         await globalLog(me, 'site-delete', `deleted the website ${site.businessName ? site.businessName + ' (' + site.siteId + ')' : site.siteId}`, { siteRef: site.siteId, addedByName: site.addedByName || '', findings: (site.findings || []).length });
         return res.status(200).json({ ok: true });
       }

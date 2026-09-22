@@ -39,3 +39,4 @@ Add the variable, then go to **Deployments → ⋯ (on the top row) → Redeploy
 - **"Upstash Redis is not connected"**: Storage → your database → Connect to Project → Redeploy.
 - **No emails**: check spam. Your Resend domain must be Verified and `EMAIL_FROM` must use it.
 - **No Slack message**: check `SLACK_WEBHOOK_URL` is set and you redeployed. Test it by creating an account in a private window.
+- **Rescan greyed out with "Queued by …" / "Being scanned by …"**: someone else's browser has that website. Only one scan per website runs at a time. The button frees up when their scan ends, or within 3 minutes (running scan) to 15 minutes (queued) if their tab closed without warning.
