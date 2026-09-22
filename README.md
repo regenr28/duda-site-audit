@@ -30,9 +30,12 @@ Each finding shows **page path · where (Header / Footer / Side panel / Popup / 
 | `GEMINI_API_KEY` | free key from aistudio.google.com | optional, **free**, no card. ✨ AI checks. |
 | `GROQ_API_KEY` | free key from console.groq.com | optional, **free**, no card. Backup AI model. |
 | `OPENROUTER_API_KEY` | free key from openrouter.ai | optional, **free**, no card (about 50 requests a day). |
+| `CEREBRAS_API_KEY` | free key from cloud.cerebras.ai | optional, **free**, no card. gpt-oss-120b, about 1M tokens a day. |
+| `MISTRAL_API_KEY` | free key from console.mistral.ai (Experiment plan) | optional, **free**, no card (phone check). Mistral Medium. |
+| `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Workers AI token + account ID from dash.cloudflare.com | optional, **free**, no card. gpt-oss-120b, 10,000 neurons a day. |
 | `AI_GATEWAY_API_KEY` | key from Vercel → AI Gateway | optional, paid. Add it once you have budget. (Or `ANTHROPIC_API_KEY`.) |
 | `AI_ORDER` | `gateway,gemini,groq,openrouter,anthropic` (default) | optional. The order the models are tried in. |
-| `GEMINI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `AI_GATEWAY_MODEL` | model names | optional. Defaults: `gemini-2.5-flash`, `llama-3.3-70b-versatile`, `qwen/qwen3.8-27b:free`, `anthropic/claude-haiku-4.5`. |
+| `GEMINI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `AI_GATEWAY_MODEL` | model names | optional. Defaults: `gemini-2.5-flash`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b:free`, `anthropic/claude-haiku-4.5`. |
 | `GEMINI_DAILY_LIMIT`, `GROQ_DAILY_LIMIT`, `OPENROUTER_DAILY_LIMIT` | defaults 250 / 1000 / 50 | optional. This app's own daily request cap per model (0 = no cap). |
 | `AI_DAILY_LIMIT` | `5000` (default) | optional. Maximum items sent to AI per day across all models. |
 | `AGENCY_NAMES` | `Detailers Roadmap, 8bit Creative` (default) | optional. Names the AI should never flag as "another business" (e.g. "Website by …"). |
@@ -67,7 +70,10 @@ Every admin also gets an email (if Resend is set up) and a bell notification whe
 Add one or more free keys. None of them need a credit card:
 1. **Gemini:** https://aistudio.google.com → **Get API key → Create API key** → `GEMINI_API_KEY`.
 2. **Groq:** https://console.groq.com → **API Keys → Create API Key** → `GROQ_API_KEY`.
-3. **OpenRouter** (optional third backup): https://openrouter.ai → **Keys → Create key** → `OPENROUTER_API_KEY`.
+3. **Cerebras** (smart gpt-oss-120b, about 1M tokens a day): https://cloud.cerebras.ai → sign up → **API Keys** → `CEREBRAS_API_KEY`.
+4. **Mistral** (Mistral Medium): https://console.mistral.ai → choose the free **Experiment** plan (phone check, no card) → **API Keys → Create new key** → `MISTRAL_API_KEY`.
+5. **Cloudflare Workers AI** (gpt-oss-120b, 10,000 free "neurons" a day, roughly 50–100 checks): https://dash.cloudflare.com → sign up → **AI → Workers AI → Use REST API** → **Create a Workers AI API Token** → `CLOUDFLARE_API_TOKEN`, and copy the **Account ID** shown on the same page → `CLOUDFLARE_ACCOUNT_ID`.
+6. **OpenRouter** (optional extra backup): https://openrouter.ai → **Keys → Create key** → `OPENROUTER_API_KEY`.
 
 Tick **Sensitive** for each, then redeploy.
 

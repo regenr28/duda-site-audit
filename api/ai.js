@@ -8,18 +8,21 @@
 // or runs out of credits, it is parked until it resets (with a countdown in the app) and the next one takes over.
 //   AI_GATEWAY_API_KEY  Vercel AI Gateway (paid credits; free tier covers only a few niche models)  AI_GATEWAY_MODEL (default anthropic/claude-haiku-4.5)
 //   GEMINI_API_KEY      Google Gemini, free tier, no card. Daily quota resets at midnight Pacific.   GEMINI_MODEL (default gemini-2.5-flash)
-//   GROQ_API_KEY        Groq, free tier, no card.                                                    GROQ_MODEL (default llama-3.3-70b-versatile)
+//   GROQ_API_KEY        Groq, free tier, no card.                                                    GROQ_MODEL (default openai/gpt-oss-120b)
 //   OPENROUTER_API_KEY  OpenRouter ":free" models, no card (about 50 requests a day).                OPENROUTER_MODEL (default qwen/qwen3.8-27b:free)
+//   CEREBRAS_API_KEY    Cerebras, free tier, no card (about 1M tokens a day).                        CEREBRAS_MODEL (default gpt-oss-120b)
+//   MISTRAL_API_KEY     Mistral "Experiment" plan, free, no card (phone check).                      MISTRAL_MODEL (default mistral-medium-latest)
+//   CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID  Cloudflare Workers AI, 10,000 free "neurons" a day, no card. CLOUDFLARE_MODEL (default @cf/openai/gpt-oss-120b)
 //   ANTHROPIC_API_KEY   Anthropic API directly (paid).                                               ANTHROPIC_MODEL (default claude-haiku-4-5)
-// Order: AI_ORDER (default "gateway,gemini,groq,openrouter,anthropic"). Only providers with a key take part.
-// Our own daily request cap per provider: <GEMINI|GROQ|OPENROUTER|AI_GATEWAY|ANTHROPIC>_DAILY_LIMIT (0 = no cap).
+// Order: AI_ORDER (default "gateway,gemini,cerebras,mistral,groq,cloudflare,openrouter,anthropic"). Only providers with a key take part.
+// Our own daily request cap per provider: <GEMINI|GROQ|OPENROUTER|CEREBRAS|MISTRAL|CLOUDFLARE|AI_GATEWAY|ANTHROPIC>_DAILY_LIMIT (0 = no cap).
 // Results are cached for 60 days so rescans don't use any quota.
 import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL } from './_lib.js';
 
 // ---------- made-up names: the team never sees which AI company or model is used ----------
 // Only the app owner (SUGGESTIONS_OWNER) sees real provider and model names, for troubleshooting.
 // Rename with AI_ALIASES, e.g. "gemini=Nova,groq=Orion".
-const ALIASES = Object.assign({ gateway: 'Atlas', gemini: 'Nova', groq: 'Orion', openrouter: 'Vega', anthropic: 'Lyra' },
+const ALIASES = Object.assign({ gateway: 'Atlas', gemini: 'Nova', groq: 'Orion', openrouter: 'Vega', anthropic: 'Lyra', cerebras: 'Sirius', mistral: 'Altair', cloudflare: 'Polaris' },
   Object.fromEntries(String(process.env.AI_ALIASES || '').split(',').map((x) => x.split('=').map((y) => y.trim())).filter((x) => x[0] && x[1])));
 const aliasOf = (id) => ALIASES[id] || 'AI';
 const GENERIC_NOTE = { limit: 'Daily free limit reached.', cooling: 'Busy right now (per-minute limit). Resting briefly.', credits: 'Out of credits. Checking again later.', error: 'Setup problem. Retrying automatically; the app owner can see details.' };
@@ -53,16 +56,23 @@ const CATALOG = {
   gemini: () => ({ label: 'Google Gemini', kind: 'gemini', keyVar: 'GEMINI_API_KEY', limitVar: 'GEMINI_DAILY_LIMIT', defLimit: 250, free: true, tz: 'America/Los_Angeles',
     base: env('GEMINI_API_BASE', 'https://generativelanguage.googleapis.com/v1beta'), model: env('GEMINI_MODEL', 'gemini-2.5-flash') }),
   groq: () => ({ label: 'Groq', kind: 'openai', keyVar: 'GROQ_API_KEY', limitVar: 'GROQ_DAILY_LIMIT', defLimit: 1000, free: true, tz: 'UTC',
-    base: env('GROQ_API_BASE', 'https://api.groq.com/openai/v1'), model: env('GROQ_MODEL', 'llama-3.3-70b-versatile') }),
+    base: env('GROQ_API_BASE', 'https://api.groq.com/openai/v1'), model: env('GROQ_MODEL', 'openai/gpt-oss-120b'), maxOut: 4000 }),
   openrouter: () => ({ label: 'OpenRouter (free)', kind: 'openai', keyVar: 'OPENROUTER_API_KEY', limitVar: 'OPENROUTER_DAILY_LIMIT', defLimit: 50, free: true, tz: 'UTC',
     base: env('OPENROUTER_API_BASE', 'https://openrouter.ai/api/v1'), model: env('OPENROUTER_MODEL', 'qwen/qwen3.8-27b:free') }),
+  cerebras: () => ({ label: 'Cerebras', kind: 'openai', keyVar: 'CEREBRAS_API_KEY', limitVar: 'CEREBRAS_DAILY_LIMIT', defLimit: 600, free: true, tz: 'UTC',
+    base: env('CEREBRAS_API_BASE', 'https://api.cerebras.ai/v1'), model: env('CEREBRAS_MODEL', 'gpt-oss-120b'), maxOut: 4000 }),
+  mistral: () => ({ label: 'Mistral', kind: 'openai', keyVar: 'MISTRAL_API_KEY', limitVar: 'MISTRAL_DAILY_LIMIT', defLimit: 1000, free: true, tz: 'UTC',
+    base: env('MISTRAL_API_BASE', 'https://api.mistral.ai/v1'), model: env('MISTRAL_MODEL', 'mistral-medium-latest') }),
+  cloudflare: () => ({ label: 'Cloudflare Workers AI', kind: 'openai', keyVar: 'CLOUDFLARE_API_TOKEN', needVar: 'CLOUDFLARE_ACCOUNT_ID', limitVar: 'CLOUDFLARE_DAILY_LIMIT', defLimit: 80, free: true, tz: 'UTC',
+    api: env('CLOUDFLARE_API_BASE', 'https://api.cloudflare.com/client/v4') + '/accounts/' + env('CLOUDFLARE_ACCOUNT_ID', ''),
+    base: env('CLOUDFLARE_API_BASE', 'https://api.cloudflare.com/client/v4') + '/accounts/' + env('CLOUDFLARE_ACCOUNT_ID', '') + '/ai/v1', model: env('CLOUDFLARE_MODEL', '@cf/openai/gpt-oss-120b'), maxOut: 4000 }),
   anthropic: () => ({ label: 'Anthropic', kind: 'anthropic', keyVar: 'ANTHROPIC_API_KEY', limitVar: 'ANTHROPIC_DAILY_LIMIT', defLimit: 0, free: false, tz: 'UTC',
     base: env('ANTHROPIC_API_BASE', 'https://api.anthropic.com/v1'), model: env('ANTHROPIC_MODEL', 'claude-haiku-4-5') }),
 };
 function providers() {
-  const order = env('AI_ORDER', 'gateway,gemini,groq,openrouter,anthropic').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id]);
+  const order = env('AI_ORDER', 'gateway,gemini,cerebras,mistral,groq,cloudflare,openrouter,anthropic').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id]);
   Object.keys(CATALOG).forEach((id) => { if (!order.includes(id)) order.push(id); });
-  return [...new Set(order)].map((id) => Object.assign({ id }, CATALOG[id]())).filter((p) => process.env[p.keyVar])
+  return [...new Set(order)].map((id) => Object.assign({ id }, CATALOG[id]())).filter((p) => process.env[p.keyVar] && (!p.needVar || process.env[p.needVar]))
     .map((p) => Object.assign(p, { key: process.env[p.keyVar], limit: Math.max(0, Number(env(p.limitVar, p.defLimit)) || 0) }));
 }
 
@@ -169,7 +179,7 @@ async function callOnce(p, system, user) {
       if (p.id === 'openrouter') { if (process.env.APP_URL) headers['HTTP-Referer'] = process.env.APP_URL; headers['X-Title'] = 'Duda Site Auditor'; }
       r = await fetchWithTimeout(`${p.base}/chat/completions`, {
         method: 'POST', headers,
-        body: JSON.stringify(Object.assign({ model: p.model, temperature: 0, max_tokens: 8000, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }, p.id === 'groq' && /gpt-oss/.test(p.model) ? { reasoning_effort: 'low' } : {})),
+        body: JSON.stringify(Object.assign({ model: p.model, temperature: 0, max_tokens: p.maxOut || 8000, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }, (p.id === 'groq' || p.id === 'cerebras') && /gpt-oss/.test(p.model) ? { reasoning_effort: 'low' } : {})),
       }, 40000);
       j = await r.json().catch(() => ({}));
       if (r.ok) text = (((j.choices || [])[0] || {}).message || {}).content || '';
@@ -199,6 +209,10 @@ function rankGemini(names) {
   };
   return names.filter((n) => /^gemini-/.test(n) && !BAD.test(n)).sort((a, b) => score(b) - score(a));
 }
+function rankList(ids, prefs) {
+  const idx = (n) => { const k = prefs.findIndex((re) => re.test(n)); return k < 0 ? 99 : k; };
+  return ids.filter((n) => !BAD.test(n)).sort((a, b) => idx(a) - idx(b));
+}
 function rankGeneric(ids) {
   const ok = ids.filter((n) => !BAD.test(n));
   const idx = (n) => { const k = PREFS.findIndex((re) => re.test(n)); return k < 0 ? 99 : k; };
@@ -212,9 +226,13 @@ async function listModels(p) {
       return (j.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => String(m.name || '').replace(/^models\//, ''));
     }
     const headers = p.kind === 'anthropic' ? { 'x-api-key': p.key, 'anthropic-version': '2023-06-01' } : { Authorization: `Bearer ${p.key}` };
-    const r = await fetchWithTimeout(`${p.base}/models`, { headers }, 15000);
+    // Cloudflare lists its models with its own search address (result: [{ name: '@cf/…' }])
+    const listUrl = p.id === 'cloudflare' ? `${p.api}/ai/models/search?task=${encodeURIComponent('Text Generation')}&per_page=200` : `${p.base}/models`;
+    const r = await fetchWithTimeout(listUrl, { headers }, 15000);
     const j = await r.json().catch(() => ({}));
-    let ids = (j.data || j.models || []).filter((m) => m && m.active !== false).map((m) => m.id || m.name).filter(Boolean);
+    let ids = (Array.isArray(j) ? j : j.data || j.models || j.result || []).filter((m) => m && m.active !== false).map((m) => m.id || m.name).filter(Boolean);
+    if (p.id === 'cloudflare') ids = ids.filter((x) => /^@cf\//.test(x) && !/lora|awq|int8|guard|coder|math|sql|vision/i.test(x));
+    if (p.id === 'mistral') ids = ids.filter((x) => /^(mistral-(medium|large|small)|magistral-(medium|small))/i.test(x) && !/ocr|embed|moderation/i.test(x));
     if (p.id === 'openrouter') ids = ids.filter((x) => /:free$/.test(x));
     return ids;
   } catch (e) { return []; }
@@ -226,7 +244,9 @@ async function discoverModel(p, failed, errText) {
   // The error message sometimes names the replacement ("use models/gemini-3.6-flash")
   const hint = (String(errText || '').match(/models\/([a-z0-9][\w.-]+)/i) || [])[1];
   if (hint && all.includes(hint) && !tried.has(hint)) return hint;
-  const ranked = p.kind === 'gemini' ? rankGemini(all) : p.kind === 'anthropic' ? all.filter((n) => /haiku/.test(n)).sort().reverse() : rankGeneric(all);
+  const ranked = p.id === 'cloudflare' ? rankList(all, [/gpt-oss-120b/i, /llama-4-scout/i, /llama-3\.3-70b/i, /qwen.*(235b|32b|30b|27b)/i, /gpt-oss-20b/i, /mistral-small/i, /gemma.*(27b|12b)/i, /llama-3\.1-8b/i])
+    : p.id === 'mistral' ? rankList(all, [/mistral-medium-latest/i, /mistral-medium/i, /mistral-large-latest/i, /mistral-large/i, /mistral-small-latest/i, /mistral-small/i, /magistral/i])
+    : p.kind === 'gemini' ? rankGemini(all) : p.kind === 'anthropic' ? all.filter((n) => /haiku/.test(n)).sort().reverse() : rankGeneric(all);
   return ranked.find((m) => !tried.has(m)) || null;
 }
 async function applySavedModels(list) {
@@ -461,4 +481,4 @@ export default async function handler(req, res) {
     return res.status(e.status === 429 ? 429 : 500).json({ error: owner ? String(e.message || e) : 'The AI check failed. Please try again later.' });
   }
 }
-export const _test = { visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };
+export const _test = { discoverModel, visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };

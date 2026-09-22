@@ -14,7 +14,10 @@ Add these **before** uploading, so the new deployment picks them up:
 | `GROQ_API_KEY` | console.groq.com → API Keys (free, no card) | Backup model when Gemini hits its limit |
 | `SLACK_BOT_TOKEN` | Slack app → OAuth & Permissions → Bot User OAuth Token (xoxb-…) | Slack DMs from "Site Auditor" (see README) |
 | `ABLY_API_KEY` | ably.com → your app → API Keys → Root key (free, no card) | Instant "someone is on this website" pop-ups without using the database |
-| `OPENROUTER_API_KEY` | openrouter.ai → Keys (free, no card) | Optional third backup |
+| `CEREBRAS_API_KEY` | cloud.cerebras.ai → API Keys (free, no card) | Extra free AI (gpt-oss-120b, smart and fast) |
+| `MISTRAL_API_KEY` | console.mistral.ai → Experiment plan → API Keys (free, phone check, no card) | Extra free AI (Mistral Medium) |
+| `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | dash.cloudflare.com → AI → Workers AI → Use REST API (free, no card) | Extra free AI (gpt-oss-120b) |
+| `OPENROUTER_API_KEY` | openrouter.ai → Keys (free, no card) | Optional extra backup |
 | `AI_GATEWAY_API_KEY` | Vercel → AI Gateway → API Keys → Create key | Later, when you have budget. Takes priority over Gemini automatically |
 | `GOOGLE_CLIENT_ID` | see README → "Sign in with Google" | For the Google button |
 
