@@ -114,6 +114,19 @@
     };
   }
 
+  // Path prefixes that come before the real name (linkedin.com/in/<name>, youtube.com/c/<name>, facebook.com/pages/<name>/…)
+  const HANDLE_PREFIX = {
+    linkedin: /^(in|company|school|showcase|pub|profile)$/i,
+    youtube: /^(channel|c|user)$/i,
+    facebook: /^(pages|pg|people)$/i,
+    pinterest: /^(pin)$/i,
+  };
+  function handleFromSegs(net, segs) {
+    segs = segs.filter(Boolean);
+    const pre = HANDLE_PREFIX[net];
+    if (pre && segs[0] && pre.test(segs[0])) return (segs[1] || '').replace(/^@/, '');
+    return (segs[0] || '').replace(/^@/, '');
+  }
   function socialHandle(net, value) {
     if (!value) return '';
     let v = String(value).trim();
@@ -121,14 +134,19 @@
       try {
         const u = new URL(/^https?:/i.test(v) ? v : 'https://' + v);
         if (net === 'google_my_business') return placeNameFromUrl(u.href) || u.pathname + u.search;
-        const segs = u.pathname.split('/').filter(Boolean);
-        if (net === 'youtube' && segs[0] && /^(channel|c|user)$/i.test(segs[0])) return segs[1] || '';
-        if (net === 'facebook' && segs[0] === 'pages') return segs[1] || '';
         if (net === 'facebook' && /profile\.php/i.test(u.pathname)) return u.searchParams.get('id') || '';
-        return (segs[0] || '').replace(/^@/, '');
+        return handleFromSegs(net, u.pathname.split('/'));
       } catch (e) { return v; }
     }
-    return v.replace(/^@/, '').replace(/\/+$/, '');
+    v = v.replace(/^@/, '').replace(/\/+$/, '');
+    // Partial paths saved in Business Info, e.g. "in/nathan-acito-749a0b254" or "company/acme"
+    if (net !== 'google_my_business' && v.includes('/')) return handleFromSegs(net, v.split('/'));
+    return v;
+  }
+  /** "Share this page" buttons (LinkedIn shareArticle, Facebook sharer, X intent, Pinterest pin/create…) aren't profile links. */
+  function isShareLink(u) {
+    const p = (u.pathname + u.search).toLowerCase();
+    return /\/(sharer|share|shareArticle|sharing|share-offsite|intent|pin\/create|submit|send)(\b|\/|\.php|\?|$)/i.test(p) || /[?&](u|url|text|mini)=/i.test(u.search) && /share|intent|sharer/i.test(p);
   }
 
   // Duda's Business Info stores social accounts as handles or partial paths
@@ -562,6 +580,7 @@
       const net = socialNetOf(href);
       if (!net) return;
       let u; try { u = new URL(href); } catch (e) { return; }
+      if (isShareLink(u)) return; // share buttons on blog posts, not the business's profile
       const handle = socialHandle(net, u.href);
       const label = net === 'google_my_business' ? 'Google Business/Maps' : net[0].toUpperCase() + net.slice(1);
       if (!handle || handle === '/' || /^(home|login|sharer|share|intent|watch|results)$/i.test(handle)) {
@@ -977,7 +996,7 @@
 
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, isShareLink, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 

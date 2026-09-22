@@ -397,6 +397,28 @@
     try { client.channels.get(state.rtChannel).subscribe('notif', () => { wantNotifs = true; pulse(true); }); } catch (e) { /* ignore */ }
   }
 
+  // ---------- Click a teammate's name → Slack DM ----------
+  const slackCache = {};
+  async function openSlackDM(email) {
+    let r = slackCache[email];
+    if (!r) {
+      try { r = await post('/api/users', { op: 'slackLink', email }); } catch (e) { toast(e.message); return; }
+      if (r.ok) slackCache[email] = r;
+    }
+    if (!r.ok) { toast(r.message || "Couldn't open Slack"); return; }
+    // Try the Slack app first; if nothing takes over within ~1.5 s, open Slack in the browser instead
+    let left = false; const onBlur = () => { left = true; };
+    window.addEventListener('blur', onBlur, { once: true });
+    const a = document.createElement('a'); a.href = r.app; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => { window.removeEventListener('blur', onBlur); if (!left && !document.hidden) window.open(r.web, '_blank', 'noopener'); }, 1500);
+  }
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('[data-slack]');
+    if (!a) return;
+    e.preventDefault(); e.stopPropagation();
+    openSlackDM(a.dataset.slack);
+  }, true);
+
   // ---------- Pop-up notifications (top right, macOS style) ----------
   /** Shows a card that fades out after the member's chosen time (profile). Several stack with a small offset. */
   function popNotify({ email, emails, title, body, note, secs, at }) {
@@ -431,7 +453,13 @@
   // Without it, the regular heartbeat (every ~2 min, sent right away when you open a website) is used instead.
   const ROOM_NOTE = 'Make sure to communicate with them to avoid working on the same audit item.';
   const room = { siteKey: null, known: null, people: [], ch: null, joining: null };
-  const namesList = (arr) => { const n = arr.map((p) => `<b>${esc(p.name || nameOf(p.email))}</b>`); return n.length <= 1 ? n.join('') : n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1]; };
+  /** A teammate's name; once Slack is connected it's a link that opens a Slack DM with them. */
+  const personName = (email, name) => {
+    const n = esc(name || nameOf(email));
+    if (!state.config || !state.config.slackDM || !email || (state.me && email === state.me.email)) return `<b>${n}</b>`;
+    return `<a href="#" class="slack-name" data-slack="${esc(email)}" title="Message ${n} on Slack"><b>${n}</b></a>`;
+  };
+  const namesList = (arr) => { const n = arr.map((p) => personName(p.email, p.name)); return n.length <= 1 ? n.join('') : n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1]; };
   function roomBarHtml() {
     const others = room.people.filter((p) => p.email !== (state.me && state.me.email));
     if (!others.length || !state.current || room.siteKey !== state.current.id) return '';
@@ -1657,6 +1685,62 @@
     }).join('');
   }
   const previewUrl = (site, path, device) => `https://${site.host}/site/${site.siteId}${path === '/' ? '' : path}?preview=true&insitepreview=true&dm_device=${device || 'desktop'}`;
+  // ---------- Open an item in the Duda preview or editor ----------
+  /** The Duda editor page for a path: /home/site/<id>/<page>, same editor host as the saved editor link. */
+  function editorUrl(site, path) {
+    let origin = ''; try { origin = new URL(site.editorUrl).origin; } catch (e) { origin = 'https://' + site.host; }
+    const page = !path || path === '/' ? 'home' : String(path).replace(/^\/+/, '').replace(/\/+$/, '');
+    return `${origin}/home/site/${site.siteId}/${page}`;
+  }
+  /** Text the browser can jump to and highlight by itself (Chrome/Edge/Safari "text fragments"). */
+  function fragmentText(f) {
+    if (!f.snippet || /^<(img|meta|iframe)\b/i.test(f.snippet)) return '';
+    let t = f.snippet.replace(/^<a [^>]*>/i, '').replace(/<\/a>$/i, '').split('…')[0].replace(/\s+/g, ' ').trim();
+    if (t.length < 4) return '';
+    const words = t.split(' ');
+    if (words.length > 8) t = words.slice(0, 8).join(' ');
+    return t;
+  }
+  function previewAtItem(site, f) {
+    const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
+    const txt = fragmentText(f);
+    return previewUrl(site, f.path, dev) + '#dsa=' + encodeURIComponent(f.selector || '') + (txt ? ':~:text=' + encodeURIComponent(txt).replace(/-/g, '%2D') : '');
+  }
+  // One-time bookmark that outlines an element on the preview or in the editor (both are other websites, so the app can't reach in)
+  const HIGHLIGHT_BM = `javascript:(async()=>{let s=decodeURIComponent((location.hash.match(/dsa=([^&:]+)/)||[])[1]||'');if(!s){try{s=(await navigator.clipboard.readText()).trim()}catch(e){}}if(!s||s.length>400||/\\s{2}|\\n/.test(s))s=prompt('Paste the CSS selector to highlight:',s||'');if(!s)return;const D=[document];const walk=d=>d.querySelectorAll('iframe').forEach(f=>{try{const c=f.contentDocument;if(c){D.push(c);walk(c)}}catch(e){}});walk(document);let el=null;for(const d of D){try{el=d.querySelector(s)}catch(e){alert('That is not a valid CSS selector.');return}if(el)break}if(!el){alert('Not found on this view. Switch to the device this item is on (Desktop, Tablet or Mobile), or open the side panel, then click the bookmark again.');return}el.scrollIntoView({block:'center',behavior:'smooth'});const o=el.style.outline,oo=el.style.outlineOffset;el.style.outline='4px solid %23e11d48';el.style.outlineOffset='3px';let n=0;const t=setInterval(()=>{el.style.outline=(n++%252?'4px solid %23e11d48':'4px solid %23fbbf24');if(n>7){clearInterval(t);el.style.outline='4px solid %23e11d48'}},350);setTimeout(()=>{el.style.outline=o;el.style.outlineOffset=oo},15000);const r=el.getBoundingClientRect();if(!r.width&&!r.height)alert('Found it, but it is hidden on this view (e.g. inside the side panel or a closed section). Open it, then click the bookmark again.')})()`;
+  function openHighlighterHelp() {
+    modal(`<header><h2>One-click highlighter</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <p>The preview and the Duda editor are separate websites, so the app can open them at the right page but can't outline the element for you. This bookmark does that part.</p>
+        <p><b>1.</b> Show your bookmarks bar (<b>Cmd+Shift+B</b> on Mac, <b>Ctrl+Shift+B</b> on Windows).<br>
+        <b>2.</b> Drag this button onto the bookmarks bar: <a class="btn primary bm-drag" href="${esc(HIGHLIGHT_BM)}" onclick="return false" title="Drag me to your bookmarks bar">⌖ DSA Highlight</a></p>
+        <p><b>Show on preview:</b> the page opens and scrolls to the text when it can. Click <b>⌖ DSA Highlight</b> to outline the exact element (it reads the selector from the address).</p>
+        <p><b>Show in editor:</b> the selector is copied for you and the editor opens on that page. When the editor has loaded, click <b>⌖ DSA Highlight</b>. It reads the copied selector (allow clipboard access the first time), or you can paste it in.</p>
+        <p class="small muted">If it says "hidden on this view", switch the editor or preview to the item's device (Desktop, Tablet or Mobile) or open the side panel, then click it again.</p>
+      </div>
+      <footer><button class="btn" data-close>Done</button></footer>`);
+  }
+  function hlHintOnce(msg) {
+    let n = 0; try { n = Number(localStorage.getItem('dsaHlHint') || 0); localStorage.setItem('dsaHlHint', String(n + 1)); } catch (e) { /* ignore */ }
+    toast(n < 3 ? msg + ' (Set up ⌖ DSA Highlight once: click "?" next to the links.)' : msg);
+  }
+  function openItemPreview(site, f) {
+    window.open(previewAtItem(site, f), '_blank', 'noopener');
+    hlHintOnce('Preview opened. Click ⌖ DSA Highlight to outline the element.');
+  }
+  function openItemEditor(site, f) {
+    const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
+    try { navigator.clipboard.writeText(f.selector || ''); } catch (e) { /* ignore */ }
+    window.open(editorUrl(site, f.path), '_blank', 'noopener');
+    hlHintOnce(`Selector copied, editor opening on ${f.path}. Switch to ${A.DEVICE_LABEL[dev]} if needed, then click ⌖ DSA Highlight.`);
+  }
+  const selLinks = (f) => `<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Show on preview</button><button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Show in editor</button><button class="linkbtn faint" data-hlhelp title="How to outline the element on the preview or in the editor">?</button>`;
+  function bindSelLinks(root, site, list) {
+    const find = (id) => (list || site.findings || []).find((x) => x.id === id);
+    $$('[data-prevat]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const f = find(b.dataset.prevat); if (f) openItemPreview(site, f); }));
+    $$('[data-editat]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const f = find(b.dataset.editat); if (f) openItemEditor(site, f); }));
+    $$('[data-hlhelp]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openHighlighterHelp(); }));
+  }
   const statusSelect = (f, attr) => `<select class="pill fs-${f.status}" ${attr}="${esc(f.id)}">${FSTATUS.map((s) => `<option value="${s.v}" ${s.v === f.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select>`;
 
   function filteredFindings(s) {
@@ -1804,7 +1888,8 @@
                 ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more pages</div>` : ''}</td>
               <td><div class="loc">${esc(f.location)}</div>${devChips(f)}</td>
               <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
-                <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>` : '<span class="faint">(whole page)</span>'}</td>
+                <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
+                <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
               <td style="min-width:240px"><div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
                 ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}</td>
@@ -1823,6 +1908,7 @@
     [['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
     $$('[data-copy]', body).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
     $$('[data-inspect]', body).forEach((c) => (c.onclick = () => { const f = s.findings.find((x) => x.id === c.dataset.inspect); if (f) openInspector(s, f); }));
+    bindSelLinks(body, s);
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
@@ -1910,7 +1996,8 @@
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}</div>
           <div class="span2"><div class="k">Unique CSS selector</div>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" id="drInspect2" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
             <button class="btn sm primary" id="drInspect">👁 Show on page</button> <button class="btn sm ghost" data-copy="${esc(f.selector)}">Copy selector</button>
-            <button class="btn sm ghost" id="drSnip" title="Copy a console snippet that scrolls to and highlights this element">⌖ Console snippet</button>` : '<span class="faint">(whole page)</span>'}</div>
+            <button class="btn sm ghost" id="drSnip" title="Copy a console snippet that scrolls to and highlights this element">⌖ Console snippet</button>
+            <div class="sel-actions dr-open">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</div>
         </div>
         ${aiPendingList(f)}
         <div class="k" style="margin-top:14px">Status</div>
@@ -1929,6 +2016,7 @@
     $('#drLink').onclick = () => copy(`${location.origin}/#/site/${s.id}/item/${f.num}`, 'Link to #' + f.num + ' copied');
     $$('[data-copy]', d).forEach((c) => (c.onclick = () => copy(c.dataset.copy, c.closest('.ai-sugg') ? 'Suggestion copied' : 'Selector copied')));
     ['#drInspect', '#drInspect2'].forEach((sel) => { const b = $(sel, d); if (b) b.onclick = () => openInspector(s, f); });
+    bindSelLinks(d, s, [f]);
     $$('[data-pshow]', d).forEach((b) => (b.onclick = () => { const x = f.aiPending.items[Number(b.dataset.pshow)]; openInspector(s, Object.assign({}, f, { selector: x.selector, path: (x.pages || [f.path])[0], pages: x.pages || [f.path], devices: x.devices || f.devices, visibleOn: x.visibleOn || f.visibleOn, location: x.location })); }));
     if ($('#drAiNow')) $('#drAiNow').onclick = () => aiResume(s.id, true);
     if ($('#drSnip')) $('#drSnip').onclick = () => {

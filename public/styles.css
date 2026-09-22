@@ -446,3 +446,13 @@ select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-c
 .dom-detail { margin-top: 4px; line-height: 1.35; }
 .live-progress { padding: 8px 14px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
 .dom-banner { margin-bottom: 12px; font-size: 13px; padding: 10px 12px; }
+
+/* v25: Show on preview / Show in editor */
+.sel-actions .linkbtn { white-space: nowrap; }
+.sel-actions.dr-open { margin-top: 8px; }
+.bm-drag { cursor: grab; margin-left: 6px; }
+
+/* v26: click a name to message on Slack */
+.slack-name { color: inherit; text-decoration: none; border-bottom: 1px dashed currentColor; }
+.slack-name:hover { color: var(--accent, #4f8cff); }
+.slack-name:hover::after { content: " 💬"; font-size: .85em; }

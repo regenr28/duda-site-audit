@@ -220,6 +220,20 @@ async function slackUserId(email) {
   if (r.ok || r.error === 'users_not_found') await redis(['SET', key, id || '-', 'EX', id ? 30 * 86400 : 86400]);
   return id;
 }
+/** Slack workspace id + member id for a teammate, so the app can open a Slack DM with them. Cached (no Slack call on repeat). */
+export async function slackLink(email) {
+  if (!slackBotEnabled()) return { ok: false, reason: 'not_configured' };
+  const id = await slackUserId(email);
+  if (!id) return { ok: false, reason: 'not_in_slack' };
+  let [team] = await redis(['GET', P + 'slackteam']);
+  if (!team) {
+    const r = await slackApi('auth.test', {});
+    team = r.ok ? r.team_id : '';
+    if (team) await redis(['SET', P + 'slackteam', team, 'EX', 30 * 86400]);
+  }
+  if (!team) return { ok: false, reason: 'no_team' };
+  return { ok: true, team, id };
+}
 function notifLink(n) {
   const base = appUrl();
   if (!base) return '';

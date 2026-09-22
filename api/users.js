@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -26,6 +26,12 @@ export default async function handler(req, res) {
       if (b.slackDM !== undefined) me.slackDM = !!b.slackDM;
       await putUser(me);
       return res.status(200).json({ user: publicUser(me) });
+    }
+    if (b.op === 'slackLink') {
+      // Opens a Slack DM with a teammate (clicking their name in the app)
+      const r = await slackLink(String(b.email || ''));
+      const why = { not_configured: 'Slack is not set up yet.', not_in_slack: "This teammate's app email isn't used in Slack." };
+      return res.status(200).json(r.ok ? { ok: true, app: `slack://user?team=${r.team}&id=${r.id}`, web: `https://app.slack.com/client/${r.team}/${r.id}` } : { ok: false, message: why[r.reason] || "Couldn't reach Slack right now." });
     }
     if (b.op === 'slackTest') {
       const r = await slackDM(me.email, { kind: 'test', byName: 'Site Auditor', text: 'Slack messages are working. You will get updates here when someone mentions you, replies, or assigns you an audit item.' });
