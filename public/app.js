@@ -255,7 +255,9 @@
 
   // ---------- Presence (who has the app open) ----------
   // Green = app open and used within the last hour. Grey = app open but idle for 1 hour or more. Offline = app closed.
-  let lastActive = Date.now(), lastPulse = 0, serverSkew = 0;
+  let lastActive = Date.now(), lastPulse = 0, serverSkew = 0, pulseCount = 0, wantNotifs = true;
+  // With realtime nudges, the heartbeat can be much less frequent: fewer server calls and database reads
+  const beatMs = () => (state.config && state.config.realtime ? (document.hidden ? 480000 : 240000) : (document.hidden ? 290000 : 115000));
   ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'].forEach((ev) => window.addEventListener(ev, () => { lastActive = Date.now(); }, { passive: true }));
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastActive = Date.now(); if (Date.now() - lastPulse > 60000) pulse(); } });
   async function pulse(force) {
@@ -265,11 +267,15 @@
       const rt = route();
       const sum = rt.name === 'site' ? (state.current && state.current.id === rt.id ? state.current : state.sites.find((x) => x.id === rt.id)) : null;
       const where = rt.name === 'site' ? { siteKey: rt.id, name: (sum && (sum.businessName || sum.siteId)) || '', item: rt.item || null, tab: rt.tab } : null;
-      const r = await post('/api/pulse', { lastActive: new Date(lastActive).toISOString(), where });
+      pulseCount++;
+      const rt2 = !!(state.config && state.config.realtime);
+      const notifs = !rt2 || wantNotifs || pulseCount % 3 === 1 || !!$('.notif-panel');
+      wantNotifs = false;
+      const r = await post('/api/pulse', { lastActive: new Date(lastActive).toISOString(), where, notifs });
       serverSkew = Date.parse(r.serverTime) - Date.now();
       state.presence = r.presence || {};
       const hadUnread = state.notifs.unread;
-      state.notifs = r.notifs || state.notifs;
+      if (r.notifs) state.notifs = r.notifs;
       renderBell(); renderPresence(); roomFromPulse(); announceNotifs(state.notifs.items || []);
       if (state.notifs.unread > hadUnread && state.me.role === 'admin' && state.notifs.items.some((n) => n.kind === 'signup')) { loadUsers().then(renderTop).catch(() => {}); }
     } catch (e) { /* ignore */ }
@@ -279,7 +285,7 @@
     const p = (state.presence || {})[email];
     if (!p || !p.seen) return { st: 'offline' };
     const nowS = Date.now() + serverSkew;
-    if (nowS - Date.parse(p.seen) > 6.5 * 60000) return { st: 'offline', seen: p.seen }; // background tabs check in every 5 min
+    if (nowS - Date.parse(p.seen) > (state.config && state.config.realtime ? 10 : 6.5) * 60000) return { st: 'offline', seen: p.seen }; // allow for the background heartbeat
     if (nowS - Date.parse(p.active || p.seen) >= 3600000) return { st: 'idle', active: p.active };
     return { st: 'active', active: p.active };
   }
@@ -359,11 +365,11 @@
     card.querySelector('[data-desk-yes]').onclick = () => { card.querySelector('.pop-x').click(); askDesktop(); };
     card.querySelector('[data-desk-no]').onclick = () => card.querySelector('.pop-x').click();
   }
-  /** Instant nudges from the server on this person's own Ably channel (no database polling). */
+  /** Instant nudges from the server on this person's own realtime channel (no database polling). */
   async function listenPersonal() {
     if (!state.rtChannel || !state.config || !state.config.realtime) return;
-    const client = await ablyReady(); if (!client) return;
-    try { client.channels.get(state.rtChannel).subscribe('notif', () => pulse(true)); } catch (e) { /* ignore */ }
+    const client = await rtReady(); if (!client) return;
+    try { client.channels.get(state.rtChannel).subscribe('notif', () => { wantNotifs = true; pulse(true); }); } catch (e) { /* ignore */ }
   }
 
   // ---------- Pop-up notifications (top right, macOS style) ----------
@@ -396,7 +402,7 @@
   }
 
   // ---------- Who else is on this website ----------
-  // With ABLY_API_KEY set, browsers signal each other instantly through Ably presence (no database at all).
+  // When realtime is set up, browsers signal each other instantly (no database at all).
   // Without it, the regular heartbeat (every ~2 min, sent right away when you open a website) is used instead.
   const ROOM_NOTE = 'Make sure to communicate with them to avoid working on the same audit item.';
   const room = { siteKey: null, known: null, people: [], ch: null, joining: null };
@@ -426,24 +432,24 @@
     room.known = new Set(others.map((p) => p.email));
     const bar = $('#roomBar'); if (bar) bar.innerHTML = roomBarHtml();
   }
-  // --- Ably (instant) ---
-  let ablyClient = null, ablyLoading = null;
-  function ablyReady() {
+  // --- Realtime (instant) ---
+  let rtClient = null, rtLoading = null;
+  function rtReady() {
     if (!state.config || !state.config.realtime) return Promise.resolve(null);
-    if (ablyClient) return Promise.resolve(ablyClient);
-    if (!ablyLoading) ablyLoading = new Promise((ok) => {
+    if (rtClient) return Promise.resolve(rtClient);
+    if (!rtLoading) rtLoading = new Promise((ok) => {
       const sc = document.createElement('script'); sc.src = 'https://cdn.ably.com/lib/ably.min-2.js'; sc.async = true;
       sc.onload = () => {
         try {
-          ablyClient = new window.Ably.Realtime({ clientId: state.me.email, echoMessages: false,
+          rtClient = new window.Ably.Realtime({ clientId: state.me.email, echoMessages: false,
             authCallback: (params, cb) => { api('/api/realtime').then((t) => cb(null, t)).catch((e) => cb(e.message, null)); } });
-          ok(ablyClient);
+          ok(rtClient);
         } catch (e) { ok(null); }
       };
       sc.onerror = () => ok(null); // blocked or offline: fall back to the heartbeat
       document.head.appendChild(sc);
     });
-    return ablyLoading;
+    return rtLoading;
   }
   const memberOf = (m) => ({ email: m.clientId, name: (m.data && m.data.name) || nameOf(m.clientId), item: (m.data && m.data.item) || null, since: (m.data && m.data.since) || m.timestamp });
   async function roomSync(siteKey) {
@@ -451,7 +457,7 @@
     try { const members = await ch.presence.get(); roomSeen(siteKey, members.map(memberOf)); } catch (e) { /* ignore */ }
   }
   async function roomEnter(siteKey, item) {
-    const client = await ablyReady();
+    const client = await rtReady();
     if (!client || room.siteKey !== siteKey) return false;
     const ch = client.channels.get(`${state.config.realtimePrefix || 'dsa'}-site:${siteKey}`);
     room.ch = ch;
@@ -468,7 +474,7 @@
   }
   // --- Heartbeat fallback: people whose last heartbeat says they have this website open ---
   function roomFromPulse() {
-    if (!room.siteKey || room.ch || (state.config && state.config.realtime && ablyClient)) return;
+    if (!room.siteKey || room.ch || (state.config && state.config.realtime && rtClient)) return;
     // Everyone with a recent heartbeat (including people who joined after this page loaded)
     const emails = [...new Set([state.me.email, ...Object.keys(state.presence || {})])];
     const people = emails.filter((e) => { const w = whereOf(e); return presenceOf(e).st !== 'offline' && w && w.siteKey === room.siteKey; })
@@ -541,15 +547,18 @@
   }
   function openMe() {
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
-      <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.me.role === 'admin' ? ' · admin' : ''}</div></div></div>
+      <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.me.role === 'admin' ? ' · admin' : ''}</div></div></div>
       <label class="field">Display name<input type="text" id="meName" value="${esc(state.me.name)}"></label>
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <button class="btn sm ghost" id="meTest" type="button" style="justify-self:start">Show a test notification</button></div>
+      <button class="btn sm ghost" id="meTest" type="button" style="justify-self:start">Show a test notification</button>
+      ${state.config && state.config.slackDM ? `<label class="check-row" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="meSlack" style="margin-top:3px" ${state.me.slackDM !== false ? 'checked' : ''}> Also message me on Slack (from <b>Site Auditor</b>) when someone mentions me, replies, or assigns me an item${state.me.role === 'admin' ? ', and when someone signs up' : ''}</label>
+      <div class="small muted" style="margin-top:-6px">Uses your Slack account with the same email as here: <b>${esc(state.me.email)}</b>. <button class="linkbtn" id="meSlackTest" type="button">Send a test message</button></div>` : ''}</div>
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
     $('#meTest').onclick = () => popNotify({ email: state.me.email, title: 'Test notification', body: 'This is how long pop-ups will stay on screen.', secs: Number($('#meSecs').value) });
-    $('#meSave').onclick = async () => { try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value) }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); } };
+    if ($('#meSlackTest')) $('#meSlackTest').onclick = async () => { try { const r = await post('/api/users', { op: 'slackTest' }); toast(r.message); } catch (e) { toast(e.message); } };
+    $('#meSave').onclick = async () => { try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); } };
   }
 
   // =====================================================================
@@ -838,7 +847,7 @@
     if (left > 3 * 60000 || waits > 8) return { paused: { retryAt: e.data.retryAt, next: next ? next.label : '' } };
     const end = Date.now() + Math.max(1500, left + 1500);
     while (Date.now() < end) {
-      state.scanning[id] = Object.assign({}, state.scanning[id], { message: `✨ All AI models busy. ${next ? next.label + ' is' : 'One is'} free again in ${fmtLeft(end - Date.now())}` });
+      state.scanning[id] = Object.assign({}, state.scanning[id], { message: state.ai && state.ai.owner ? `✨ All AI models busy. ${next ? next.label + ' is' : 'One is'} free again in ${fmtLeft(end - Date.now())}` : `✨ The AI is busy. Continuing in ${fmtLeft(end - Date.now())}` });
       renderProgress(id);
       await new Promise((ok) => setTimeout(ok, 1000));
     }
@@ -853,8 +862,9 @@
     const list = (state.ai && state.ai.providers) || [];
     b.hidden = !(state.ai && state.ai.enabled);
     const ready = list.filter((p) => p.ready || !(p.until > srvNow())).length;
-    b.innerHTML = `<span class="ai-dot ${ready ? 'good' : 'unk'}"></span> ✨ <span class="hide-sm">AI ${ready}/${list.length}</span>`;
-    b.title = ready ? `${ready} of ${list.length} AI models ready` : 'All AI models are resting. Click to see when they come back.';
+    const own = !!(state.ai && state.ai.owner);
+    b.innerHTML = `<span class="ai-dot ${ready ? 'good' : 'unk'}"></span> ✨ <span class="hide-sm">AI${own ? ` ${ready}/${list.length}` : ''}</span>`;
+    b.title = ready ? (own ? `${ready} of ${list.length} AI models ready` : 'AI is ready') : 'AI is paused. Click to see when it comes back.';
   }
 
 
@@ -967,7 +977,49 @@
   setTimeout(aiResumeTick, 8000);
 
   // ---------- Live DR Sites: every published site in the Duda account ----------
-  const live = { data: null, loading: false, error: '', q: '', audit: '', sort: 'published', page: 0 };
+  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null };
+  const liveDR = live; // alias: some views use a local variable called `live` for scan progress
+  const DOM_OK = ['ok'];
+  const domProblem = (d) => d && !['ok', 'nodomain'].includes(d.status);
+  const DOM_CLS = { ok: 'scan-complete', nodomain: '', redirect: 'sev-critical', hijacked: 'sev-critical', notduda: 'sev-critical', dns: 'sev-critical', http: 'sev-critical', down: 'sev-critical', ssl: 'sev-warning', timeout: 'sev-warning', error: 'sev-warning' };
+  const DOM_ICON = { ok: '✓', redirect: '↪', hijacked: '⛔', notduda: '⚠', dns: '⛔', http: '⛔', down: '⛔', ssl: '🔓', timeout: '⏱', error: '⚠', nodomain: '–' };
+  function domBadge(d) {
+    if (!d) return '<span class="faint small">Not checked</span>';
+    return `<span class="badge ${DOM_CLS[d.status] || ''}" title="${esc((d.detail || '') + (d.checkedAt ? '\nChecked ' + fmtFull(new Date(d.checkedAt).toISOString()) : ''))}">${DOM_ICON[d.status] || ''} ${esc(d.label || d.status)}</span>${domProblem(d) ? `<div class="small faint dom-detail">${esc(d.detail || '')}</div>` : ''}`;
+  }
+  let liveDraw = null;
+  const liveRedraw = () => { if (liveDraw) return; liveDraw = setTimeout(() => { liveDraw = null; if (route().name === 'live' && document.activeElement !== $('#liveQ')) renderLive(); }, 600); };
+  /** Business names aren't in Duda's site list, so fetch them in the background (20 at a time) and remember them. */
+  async function fillNames() {
+    if (live.names || !live.data) return;
+    const todo = live.data.sites.filter((x) => !x.nameChecked).map((x) => x.id);
+    if (!todo.length) return;
+    live.names = { done: 0, total: todo.length };
+    for (let k = 0; k < todo.length; k += 20) {
+      try {
+        const r = await post('/api/dudasites', { op: 'names', ids: todo.slice(k, k + 20) });
+        Object.entries(r.names || {}).forEach(([id, n]) => { const x = live.data.sites.find((y) => y.id === id); if (x) { x.name = n === '-' ? '' : n; x.nameChecked = true; } });
+      } catch (e) { break; }
+      live.names.done = Math.min(todo.length, k + 20); liveRedraw();
+    }
+    live.names = null; liveRedraw();
+  }
+  /** Checks each live domain (10 at a time). all=true rechecks everything; otherwise only unchecked or older than 7 days. */
+  async function checkDomains(all) {
+    if (live.doms || !live.data) return;
+    const stale = Date.now() - 7 * 86400000;
+    const todo = live.data.sites.filter((x) => all || !x.dom || x.dom.checkedAt < stale).map((x) => x.id);
+    if (!todo.length) return;
+    live.doms = { done: 0, total: todo.length }; liveRedraw();
+    for (let k = 0; k < todo.length; k += 10) {
+      try {
+        const r = await post('/api/dudasites', { op: 'domains', ids: todo.slice(k, k + 10) });
+        Object.entries(r.domains || {}).forEach(([id, d]) => { const x = live.data.sites.find((y) => y.id === id); if (x) x.dom = d; });
+      } catch (e) { break; }
+      live.doms.done = Math.min(todo.length, k + 10); liveRedraw();
+    }
+    live.doms = null; liveRedraw();
+  }
   /** The editor host used to build editor links for new audits (the most common one among existing audits). */
   function editorHost() {
     if (state.config && state.config.editorHost) return state.config.editorHost;
@@ -979,6 +1031,7 @@
     try { const [d] = await Promise.all([api('/api/dudasites' + (refresh ? '?refresh=1' : '')), loadSites().catch(() => {})]); live.data = d; }
     catch (e) { live.error = e.message; }
     live.loading = false; if (route().name === 'live') renderLive();
+    if (live.data && route().name === 'live') { live.bgStarted = true; fillNames().then(() => checkDomains(false)); }
   }
   const sameId = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   /** The existing audit for a Duda site, however it was added (Live DR Sites or a pasted editor link). */
@@ -997,6 +1050,7 @@
   function renderLive() {
     const d = live.data;
     if (!d && !live.loading && !live.error) { loadLive(false); }
+    else if (d && !live.bgStarted) { live.bgStarted = true; fillNames().then(() => checkDomains(false)); }
     const all = (d && d.sites) || [];
     const q = live.q.trim().toLowerCase();
     const audited = new Set(state.sites.map((x) => String(x.siteId || '').toLowerCase()));
@@ -1005,24 +1059,30 @@
     if (live.audit === 'no') list = list.filter((x) => !isAudited(x.id));
     if (live.audit === 'yes') list = list.filter((x) => isAudited(x.id));
     if (live.audit === 'issues') list = list.filter((x) => { const a = auditFor(x.id); return a && a.counts && (a.counts.critical || a.counts.warning); });
-    list = list.slice().sort((a, b) => live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
+    if (live.dom === 'problem') list = list.filter((x) => domProblem(x.dom));
+    if (live.dom === 'ok') list = list.filter((x) => x.dom && x.dom.status === 'ok');
+    if (live.dom === 'none') list = list.filter((x) => !x.dom);
+    list = list.slice().sort((a, b) => live.sort === 'domain' ? (domProblem(b.dom) ? 1 : 0) - (domProblem(a.dom) ? 1 : 0) || String(b.published).localeCompare(String(a.published)) : live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
     const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
     const shown = list.slice(live.page * PER, live.page * PER + PER);
     const host = editorHost();
     $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
-        <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(new Date(d.at).toISOString()))}</b> <span class="faint">(${esc(ago(new Date(d.at).toISOString()))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div></div>
+        <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(new Date(d.at).toISOString()))}</b> <span class="faint">(${esc(ago(new Date(d.at).toISOString()))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div><button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div></div>
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
-      ${!host ? `<div class="note unk">Add one audit with a normal editor link first (or set <code>DUDA_EDITOR_HOST</code> in Vercel), so the app knows your editor address for new audits.</div>` : ''}
+      ${!host ? `<div class="note unk">Add one audit with a normal editor link first, so the app knows your editor address for new audits.</div>` : ''}
       <div class="panel"><div class="toolbar">
         <input type="search" id="liveQ" placeholder="Search by name, site ID, domain or label…" value="${esc(live.q)}" style="flex:1;min-width:220px">
         <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option></select>
-        <select id="liveSort"><option value="published">Recently published first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
+        <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
+        <select id="liveSort"><option value="published">Recently published first</option><option value="domain" ${live.sort === 'domain' ? 'selected' : ''}>Domain problems first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
       </div>
+      ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}
       ${!d ? `<div class="empty">${live.loading ? 'Loading published sites from Duda…' : 'No data yet.'}</div>` : !list.length ? '<div class="empty">No sites match.</div>' : `
-      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Last published</th><th>Audit</th><th></th></tr></thead><tbody>
+      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Audit</th><th></th></tr></thead><tbody>
       ${shown.map((x) => { const a = auditFor(x.id); const dom = x.domain || x.defaultDomain; return `<tr>
-        <td><b>${esc(x.name || '(no business name)')}</b>${dom ? `<div class="small"><a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a></div>` : ''}${(x.labels || []).length ? `<div class="small faint">${x.labels.map(esc).join(' · ')}</div>` : ''}</td>
+        <td><b>${x.name ? esc(x.name) : x.nameChecked ? `<span class="muted">${esc(dom || x.id)}</span>` : '<span class="faint">Loading name…</span>'}</b>${dom ? `<div class="small"><a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a></div>` : ''}${(x.labels || []).length ? `<div class="small faint">${x.labels.map(esc).join(' · ')}</div>` : ''}</td>
         <td class="mono small">${esc(x.id)} <button class="linkbtn" data-copy="${esc(x.id)}" title="Copy site ID">Copy</button></td>
+        <td class="dom-cell">${domBadge(x.dom)}</td>
         <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
         <td>${auditCell(x)}</td>
         <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : `<button class="btn sm primary" data-audit="${esc(x.id)}" ${host ? '' : 'disabled'}>Audit this website</button>`}
@@ -1033,12 +1093,17 @@
     const qi = $('#liveQ'); qi.oninput = (e) => { live.q = e.target.value; live.page = 0; const pos = e.target.selectionStart; renderLive(); const n = $('#liveQ'); n.focus(); n.setSelectionRange(pos, pos); };
     $('#liveAudit').onchange = (e) => { live.audit = e.target.value; live.page = 0; renderLive(); };
     $('#liveSort').onchange = (e) => { live.sort = e.target.value; renderLive(); };
+    $('#liveDom').onchange = (e) => { live.dom = e.target.value; live.page = 0; renderLive(); };
+    const cd = $('#liveCheck'); if (cd) cd.onclick = () => checkDomains(true);
     $('#liveRefresh').onclick = () => loadLive(true);
     if ($('#livePrev')) $('#livePrev').onclick = () => { live.page--; renderLive(); window.scrollTo(0, 0); };
     if ($('#liveNext')) $('#liveNext').onclick = () => { live.page++; renderLive(); window.scrollTo(0, 0); };
     $$('#view [data-copy]').forEach((b) => (b.onclick = () => copy(b.dataset.copy, 'Site ID copied')));
     $$('[data-audit]').forEach((b) => (b.onclick = async () => {
-      const id = b.dataset.audit; b.disabled = true; b.textContent = 'Adding…';
+      const id = b.dataset.audit;
+      const lx = live.data && live.data.sites.find((y) => y.id === id);
+      if (lx && domProblem(lx.dom) && !confirm(`${lx.domain}: ${lx.dom.label}.\n\n${lx.dom.detail}\n\nThe domain should be fixed first (this needs the customer). Audit the website anyway?`)) return;
+      b.disabled = true; b.textContent = 'Adding…';
       try {
         const sum = await store({ op: 'create', siteId: id, host, editorUrl: `https://${host}/home/site/${id}/home`, assignee: state.me.email });
         upsertSummary(sum); enqueue(sum.id); toast('Added to Audits. Scanning now.'); renderLive();
@@ -1049,11 +1114,11 @@
   }
 
   // ---------- AI Status page ----------
-  /** Today's AI credit totals (requests) across the free models. */
+  /** Today's AI credit totals (requests). */
   function aiTotals() {
     const list = (state.ai && state.ai.providers) || [];
     const now = srvNow();
-    const free = list.filter((p) => p.free);
+    const free = list.filter((p) => p.limit > 0);
     const leftOf = (p) => { const parked = !p.ready && p.until > now && (p.state === 'limit' || p.state === 'credits' || p.state === 'error'); return parked ? 0 : p.limit ? Math.max(0, p.limit - p.used) : 0; };
     return { total: free.reduce((a, p) => a + (p.limit || 0), 0), left: free.reduce((a, p) => a + leftOf(p), 0), ready: list.filter((p) => p.ready || !(p.until > now)).length, count: list.length };
   }
@@ -1061,16 +1126,17 @@
   function aiCreditsHtml() {
     if (!state.ai || !state.ai.enabled) return '';
     const t = aiTotals(); const at = aiResumeAt();
-    if (!t.total) return `<a href="#/ai" class="ai-credits" title="Open AI Status">✨ AI: ${at === 0 ? `${t.ready} of ${t.count} models ready · no daily cap` : at ? `paused, back in ${countdown(at)}` : 'not available'}</a>`;
+    const readyTxt = state.ai && state.ai.owner ? `${t.ready} of ${t.count} AI models ready` : 'AI ready';
+    if (!t.total) return `<a href="#/ai" class="ai-credits" title="Open AI Status">✨ AI: ${at === 0 ? readyTxt : at ? `paused, back in ${countdown(at)}` : 'not available'}</a>`;
     const pct = t.total ? Math.round((t.left / t.total) * 100) : 0;
     return `<a href="#/ai" class="ai-credits" title="Open AI Status">✨ AI credits left today: <b>${t.left.toLocaleString()}</b> of ${t.total.toLocaleString()}
       <span class="meter mini"><span style="width:${pct}%" class="${t.left ? '' : 'full'}"></span></span>
-      <span class="faint">${at === 0 ? `${t.ready} of ${t.count} AI models ready` : at ? `paused, back in ${countdown(at)}` : ''}</span></a>`;
+      <span class="faint">${at === 0 ? readyTxt : at ? `paused, back in ${countdown(at)}` : ''}</span></a>`;
   }
   function renderAiPage() {
     const list = (state.ai && state.ai.providers) || [];
     const now = srvNow();
-    const free = list.filter((p) => p.free);
+    const free = list.filter((p) => p.limit > 0);
     const leftOf = (p) => { const parked = !p.ready && p.until > now && (p.state === 'limit' || p.state === 'credits' || p.state === 'error'); return parked ? 0 : p.limit ? Math.max(0, p.limit - p.used) : null; };
     const broken = list.length && list.every((p) => !p.ready && p.until > now && p.state === 'error');
     const total = free.reduce((a, p) => a + (p.limit || 0), 0);
@@ -1079,24 +1145,25 @@
     const at = aiResumeAt();
     const waiting = (state.sites || []).filter((x) => x.counts && x.counts.aiPending > 0);
     const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
-    $('#view').innerHTML = `<div class="page-head"><h1>✨ AI Status</h1><div class="row-between"><button class="btn" id="aiTest" title="Sends one tiny request to each model (uses 1 credit each)">Test all models</button><button class="btn" id="aiRefresh">Refresh</button></div></div>
-      ${!state.ai || !state.ai.enabled ? `<div class="panel panel-pad"><p>AI checks aren't set up yet.${state.ai && state.ai.owner ? ' Add the AI keys in Vercel (see the README), then redeploy.' : ' Ask the app owner to turn them on.'}</p></div>` : `
+    const own = !!(state.ai && state.ai.owner); // super admin sees every model; everyone else sees one combined AI
+    $('#view').innerHTML = `<div class="page-head"><h1>✨ AI Status</h1><div class="row-between">${own ? '<button class="btn" id="aiTest" title="Sends one tiny request to each model (uses 1 credit each)">Test all models</button>' : ''}<button class="btn" id="aiRefresh">Refresh</button></div></div>
+      ${!state.ai || !state.ai.enabled ? `<div class="panel panel-pad"><p>AI checks aren't set up yet.${own ? ' Add the AI keys (see the README), then redeploy.' : ' Ask the app owner to turn them on.'}</p></div>` : `
       <div class="ai-stats">
-        <div class="panel panel-pad stat"><div class="k">Free credits per day</div><div class="big">${total || '—'}</div><div class="small faint">requests, all free models</div></div>
+        <div class="panel panel-pad stat"><div class="k">${own ? 'Free credits per day' : 'Credits per day'}</div><div class="big">${total || '—'}</div><div class="small faint">${own ? 'requests, all free models' : 'AI requests'}</div></div>
         <div class="panel panel-pad stat"><div class="k">Used today</div><div class="big">${used}</div><div class="meter"><span style="width:${pct(used, total)}%"></span></div></div>
-        <div class="panel panel-pad stat"><div class="k">Left today</div><div class="big ${left ? 'ok' : 'bad'}">${left}</div><div class="small faint">${pct(left, total)}% of today's free credits</div></div>
-        <div class="panel panel-pad stat"><div class="k">AI right now</div><div class="big ${at === 0 ? 'ok' : 'bad'}">${at === 0 ? 'Available' : broken ? 'Needs attention' : 'Paused'}</div><div class="small faint">${at === 0 ? 'At least one model can answer' : broken ? 'Every model has a setup problem (see below). Click <b>Test all models</b> to retry now.' : at ? `Back in ${countdown(at)} · ${esc(fmtWhen(at))}` : ''}</div></div>
+        <div class="panel panel-pad stat"><div class="k">Left today</div><div class="big ${left ? 'ok' : 'bad'}">${left}</div><div class="small faint">${pct(left, total)}% of today's credits</div></div>
+        <div class="panel panel-pad stat"><div class="k">AI right now</div><div class="big ${at === 0 ? 'ok' : 'bad'}">${at === 0 ? 'Available' : broken ? 'Needs attention' : 'Paused'}</div><div class="small faint">${at === 0 ? (own ? 'At least one model can answer' : 'Ready to check your sites') : broken ? (own ? 'Every model has a setup problem (see below). Click <b>Test all models</b> to retry now.' : 'The AI is temporarily unavailable. It retries automatically.') : at ? `Back in ${countdown(at)} · ${esc(fmtWhen(at))}` : ''}</div></div>
       </div>
       <div class="ai-cards">${list.map((p, k) => {
         const parked = !p.ready && p.until > now;
         const [lbl, cls] = parked ? (AI_STATE[p.state] || [p.state, 'unk']) : ['Ready', 'good'];
         const l = leftOf(p);
         return `<div class="panel panel-pad ai-card">
-          <div class="row-between"><div><span class="faint small">#${k + 1}</span> <b>${esc(p.label)}</b> ${p.free ? '<span class="badge scan-complete">Free</span>' : '<span class="badge">Paid</span>'}</div><span class="small"><span class="ai-dot ${cls}"></span> ${esc(lbl)}</span></div>
-          <div class="small faint" style="margin:2px 0 10px">${p.realLabel ? `<span class="mono" title="Only you (the app owner) can see this">${esc(p.realLabel)} · ${esc(p.model)}</span>${p.auto ? ` <span class="badge subtle" title="${esc(p.configured)} was retired, so the app picked the current model automatically">auto-selected</span>` : ''}` : 'AI model'}</div>
+          <div class="row-between"><div>${own ? `<span class="faint small">#${k + 1}</span> ` : ''}<b>${esc(p.label)}</b> ${own ? (p.free ? '<span class="badge scan-complete">Free</span>' : '<span class="badge">Paid</span>') : ''}</div><span class="small"><span class="ai-dot ${cls}"></span> ${esc(lbl)}</span></div>
+          <div class="small faint" style="margin:2px 0 10px">${p.realLabel ? `<span class="mono" title="Only you (the app owner) can see this">${esc(p.realLabel)} · ${esc(p.model)}</span>${p.auto ? ` <span class="badge subtle" title="${esc(p.configured)} was retired, so the app picked the current model automatically">auto-selected</span>` : ''}` : p.combined ? 'All AI checks in this app' : 'AI model'}</div>
           <div class="row-between small"><span>Used today <b>${p.used}</b>${p.limit ? ` of ${p.limit}` : ''}</span><span>${l === null ? 'No daily cap' : `<b>${l}</b> left`}</span></div>
           ${p.limit ? `<div class="meter"><span style="width:${pct(Math.min(p.used, p.limit), p.limit)}%" class="${l === 0 ? 'full' : ''}"></span></div>` : ''}
-          ${parked ? `<div class="note ${cls === 'bad' ? 'bad' : 'unk'}" style="margin-top:10px">${p.state === 'error' ? 'Retrying automatically' : 'Back'} in <b>${countdown(p.until)}</b> · ${esc(fmtWhen(p.until))}${p.note ? `<div class="small faint">${esc(p.note)}</div>` : ''}${p.state === 'error' ? `<div style="margin-top:6px"><button class="btn sm" data-aitest="${esc(p.id)}">Try again now</button></div>` : ''}</div>` : ''}
+          ${parked ? `<div class="note ${cls === 'bad' ? 'bad' : 'unk'}" style="margin-top:10px">${p.state === 'error' ? 'Retrying automatically' : 'Back'} in <b>${countdown(p.until)}</b> · ${esc(fmtWhen(p.until))}${p.note ? `<div class="small faint">${esc(p.note)}</div>` : ''}${p.state === 'error' && own ? `<div style="margin-top:6px"><button class="btn sm" data-aitest="${esc(p.id)}">Try again now</button></div>` : ''}</div>` : ''}
           <div class="small muted" style="margin-top:8px">Daily reset in ${countdown(p.resetsAt)} · ${esc(fmtWhen(p.resetsAt))}</div></div>`;
       }).join('')}</div>
       <div class="panel panel-pad" style="margin-top:16px"><h2>Waiting for AI credits (${waiting.length})</h2>
@@ -1105,9 +1172,9 @@
           <td>${x.counts.aiPending} item(s) · ${x.counts.aiPendingBlocks} text blocks / images</td>
           <td>${state.scanning[x.id] ? '<span class="badge sev-info">Resuming now…</span>' : at === 0 ? 'Automatically, within a minute' : at ? `after ${esc(fmtWhen(at))} <span class="faint">(${countdown(at)})</span>` : '—'}</td>
           <td>${at === 0 && !state.scanning[x.id] ? `<button class="btn sm" data-resume="${esc(x.id)}">Run now</button>` : ''}</td></tr>`).join('')}</tbody></table>`
-          : '<p class="muted small">Nothing is waiting. When every model runs out during a scan, the unchecked pages show up here and resume automatically.</p>'}
+          : '<p class="muted small">Nothing is waiting. When the AI runs out of credits during a scan, the unchecked pages show up here and resume automatically.</p>'}
       </div>
-      <p class="small muted" style="margin-top:12px">Credits are counted as requests. One request checks up to about 45 text blocks or 50 image alt texts. Models are tried top to bottom (<code>AI_ORDER</code> in Vercel); when one runs out, the next one answers. Results are cached for 60 days, so rescans don't use credits. Audit items marked <b>Done</b> by hand are never sent to the AI.</p>`}`;
+      <p class="small muted" style="margin-top:12px">Credits are counted as AI requests. One request checks up to about 45 text blocks or 50 image alt texts. Results are remembered for 60 days, so rescans don't use credits. Audit items marked <b>Done</b> by hand are never sent to the AI.${own ? ' <span class="faint">Models are tried top to bottom (see the README to change the order); when one runs out, the next one answers. Only you see the model details.</span>' : ''}</p>`}`;
     const rf = $('#aiRefresh'); if (rf) rf.onclick = async () => { try { const r = await api('/api/ai'); aiUpdate(r); renderAiPage(); } catch (e) { toast(e.message); } };
     $$('[data-resume]').forEach((b) => (b.onclick = () => aiResume(b.dataset.resume, true)));
     const runTest = async (btn, id) => {
@@ -1186,6 +1253,7 @@
         lastSiteId = r.id;
       }
       if (state.ai && state.ai.enabled) api('/api/ai').then((x) => { state.ai = Object.assign(state.ai, x); aiUpdate(x); }).catch(() => {});
+      if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if (route().name === 'site') renderSite(); });
       return renderSite();
     }
     lastSiteId = null; state.current = null; closeDrawer(true);
@@ -1256,10 +1324,17 @@
     if (!chips.length && done) chips.push('<span class="badge scan-complete">No open issues</span>');
     return `<span class="chips">${chips.join('')}</span>`;
   }
+  /** Is this audited site still published in Duda? (null = unknown, list not loaded yet) */
+  function liveOf(siteId) {
+    if (!liveDR.data) return null;
+    return liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(siteId).toLowerCase()) || false;
+  }
   function renderSites() {
+    if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if (route().name === 'sites') renderSites(); });
     const f = state.filters;
     const list = state.sites.filter((s) => (!f.status || s.status === f.status) && (!f.assignee || (f.assignee === '_none' ? !s.assignee : f.assignee === '_mine' ? s.assignee === state.me.email : s.assignee === f.assignee)) &&
-      (!f.q || (s.businessName + ' ' + s.siteId + ' ' + s.editorUrl + ' ' + (s.addedByName || '')).toLowerCase().includes(f.q.toLowerCase())))
+      (!f.q || (s.businessName + ' ' + s.siteId + ' ' + s.editorUrl + ' ' + (s.addedByName || '')).toLowerCase().includes(f.q.toLowerCase())) &&
+      (!f.live || (f.live === 'gone' ? liveOf(s.siteId) === false : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0 };
     state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; });
@@ -1277,6 +1352,7 @@
           <input type="search" id="fq" placeholder="Search business name, site ID or who added it…" value="${esc(f.q)}">
           <select id="fstatus"><option value="">All statuses</option>${SITE_STATUSES.map((s) => `<option ${s === f.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
           <select id="fwho"><option value="">Everyone</option><option value="_mine" ${f.assignee === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${f.assignee === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${u.email === f.assignee ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
+          ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>No longer live in Duda (${state.sites.filter((x) => liveOf(x.siteId) === false).length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${state.sites.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
           <span class="spacer"></span>
           <button class="btn sm" id="rescanAll">Rescan all shown</button>
         </div>
@@ -1287,6 +1363,7 @@
             const pct = c.total ? Math.round(((c.closed || 0) / c.total) * 100) : 0;
             return `<tr class="row-link" data-open="${esc(s.id)}">
               <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
+                ${liveOf(s.siteId) === false ? `<div><span class="badge sev-warning" title="This site is no longer in the published list from Duda (unpublished or deleted). The audit is kept.">No longer live in Duda</span></div>` : liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom) ? `<div><span class="badge sev-critical" title="${esc(liveOf(s.siteId).dom.detail || '')}">🌐 ${esc(liveOf(s.siteId).dom.label)}</span></div>` : ''}
                 <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtDate(s.createdAt)) : ''}</div></td>
               <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}">${userOptions(s.assignee)}</select></span></td>
               <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></td>
@@ -1302,6 +1379,7 @@
     $('#fq').oninput = (e) => { f.q = e.target.value; const p = e.target.selectionStart; renderSites(); const i = $('#fq'); i.focus(); i.setSelectionRange(p, p); };
     $('#fstatus').onchange = (e) => { f.status = e.target.value; renderSites(); };
     $('#fwho').onchange = (e) => { f.assignee = e.target.value; renderSites(); };
+    if ($('#flive')) $('#flive').onchange = (e) => { f.live = e.target.value; renderSites(); };
     $('#rescanAll').onclick = () => { if (list.length && confirm(`Rescan ${list.length} website(s)?`)) { list.forEach((s) => enqueue(s.id)); renderSites(); } };
     $$('[data-open]', v).forEach((tr) => tr.addEventListener('click', (e) => { if (!e.target.closest('[data-stop]')) location.hash = '#/site/' + tr.dataset.open; }));
     $$('[data-assign]', v).forEach((sel) => (sel.onchange = async () => { upsertSummary(await store({ op: 'patchSite', id: sel.dataset.assign, changes: { assignee: sel.value } })); renderSites(); }));
@@ -1573,15 +1651,17 @@
     const activeCount = findings.filter((f) => ['open', 'clarification'].includes(f.status));
     const sevCount = (sev) => activeCount.filter((f) => f.severity === sev).length;
     body.innerHTML = `
+      ${(() => { const lx = liveDR.data && liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(s.siteId).toLowerCase()); if (liveDR.data && !lx) return `<div class="note unk dom-banner"><b>This site is no longer live in Duda</b> (unpublished or deleted since the last pull). The audit is kept for reference.</div>`;
+        return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> blocks read${sc.ai.text.truncated ? ` (of ${sc.ai.text.of}, the rest skipped to limit cost)` : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
-            ${sc.ai.aliases ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI models ↗</a></div>
-            ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: every AI model ran out of free credits during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
+            ${sc.ai.aliases && state.ai && state.ai.owner ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI Status ↗</a></div>
+            ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: the AI ran out of credits for today during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
               ${aiResumeAt(sc.ai.paused.retryAt) ? `They resume automatically after <b>${esc(fmtWhen(aiResumeAt(sc.ai.paused.retryAt)))}</b> (in ${countdown(aiResumeAt(sc.ai.paused.retryAt))}).` : 'AI credits are available again, so they resume automatically within a minute.'}
               Check them by hand and mark them <b>Done</b> if you can't wait. <a href="#/ai">AI Status ↗</a></div>` : ''}`
-          : state.ai && !state.ai.enabled && state.me.role === 'admin' && sc.state === 'complete' ? '<div class="small faint" style="margin-top:6px">✨ AI checks are off. Add the AI keys in Vercel (see the README) to turn them on.</div>' : ''}
+          : state.ai && !state.ai.enabled && state.me.role === 'admin' && sc.state === 'complete' ? `<div class="small faint" style="margin-top:6px">✨ AI checks are off.${state.superAdmin ? ' Add the AI keys (see the README) to turn them on.' : ''}</div>` : ''}
         ${sc.error ? `<div class="note bad">${esc(sc.error)}</div>` : ''}
         ${(sc.log || []).length ? `<details style="margin-top:8px"><summary class="small">Scan notes (${sc.log.length})</summary>${sc.log.map((l) => `<div class="note unk">${esc(l)}</div>`).join('')}</details>` : ''}
       </div>
@@ -2118,7 +2198,7 @@
     document.body.classList.remove('auth-mode');
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
     await Promise.all([loadUsers(), loadSites(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
-    if (!state.rtChannel) { try { state.rtChannel = (await api('/api/auth?op=me')).rtChannel || ''; } catch (e) { /* ignore */ } }
+    if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; } catch (e) { /* ignore */ } }
     renderTop();
     pulse();
     render();
@@ -2139,7 +2219,7 @@
   });
   (async () => {
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
-    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; }
+    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; }
     catch (e) { $('#view').innerHTML = `<div class="empty">Could not start the app: ${esc(e.message)}</div>`; return; }
     if (!state.me) return renderAuth();
     if (state.me.status !== 'active') { state.auth.mode = 'pending'; state.me = null; return renderAuth(); }
@@ -2157,8 +2237,8 @@
           if (!busy && await refreshSite(state.current.id)) renderSite();
         }
       } catch (e) { /* ignore */ }
-    }, 60000);
+    }, 90000);
     // Heartbeat: every 2 min while the tab is visible, every 5 min in the background
-    setInterval(() => { if (Date.now() - lastPulse > (document.hidden ? 290000 : 115000)) pulse(); }, 30000);
+    setInterval(() => { if (Date.now() - lastPulse > beatMs() - 5000) pulse(); }, 30000);
   })();
 })();

@@ -440,3 +440,9 @@ select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-c
 .fa-add { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
 .fa-add textarea { flex: 1; }
 .fa-add textarea { font: inherit; }
+
+/* ---------- v21: domain health ---------- */
+.dom-cell { min-width: 150px; max-width: 260px; }
+.dom-detail { margin-top: 4px; line-height: 1.35; }
+.live-progress { padding: 8px 14px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
+.dom-banner { margin-bottom: 12px; font-size: 13px; padding: 10px 12px; }

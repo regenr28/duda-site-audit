@@ -7,7 +7,7 @@ const DUDA = 'https://api.duda.co/api';
 async function duda(path) {
   const user = process.env.DUDA_API_USERNAME;
   const pass = process.env.DUDA_API_PASSWORD;
-  if (!user || !pass) throw new Error('DUDA_API_USERNAME / DUDA_API_PASSWORD are not set in Vercel');
+  if (!user || !pass) throw new Error('Duda API access is not set up yet. Please contact the app owner.');
   const r = await fetchWithTimeout(DUDA + path, {
     headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'), Accept: 'application/json' },
   }, 15000);
@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   if (!(await requireUser(req, res))) return;
   const { host, siteId } = parseEditorLink(req.query.editor || req.query.site || '');
   if (!siteId) return res.status(400).json({ error: 'Could not find a site ID in that link. Paste the editor link, e.g. https://…/home/site/f981a954/home' });
-  if (!host || !allowedHost(host)) return res.status(400).json({ error: `Editor host "${host}" is not allowed. Add it to ALLOWED_EDITOR_HOSTS in Vercel.` });
+  if (!host || !allowedHost(host)) return res.status(400).json({ error: `Editor address "${host}" is not allowed yet. Ask the app owner to add it.` });
 
   const [site, content, pages] = await Promise.allSettled([
     duda(`/sites/multiscreen/${siteId}`),

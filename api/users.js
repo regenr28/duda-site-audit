@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -23,8 +23,14 @@ export default async function handler(req, res) {
       me.name = name;
       // How long pop-up notifications stay on screen (seconds; 0 = until closed)
       if (b.notifySecs !== undefined) { const n = Number(b.notifySecs); if (Number.isFinite(n) && n >= 0 && n <= 600) me.notifySecs = Math.round(n); }
+      if (b.slackDM !== undefined) me.slackDM = !!b.slackDM;
       await putUser(me);
       return res.status(200).json({ user: publicUser(me) });
+    }
+    if (b.op === 'slackTest') {
+      const r = await slackDM(me.email, { kind: 'test', byName: 'Site Auditor', text: 'Slack messages are working. You will get updates here when someone mentions you, replies, or assigns you an audit item.' });
+      const why = { not_configured: 'Slack messages are not set up yet. Please contact the app owner.', not_in_slack: `No Slack account uses ${me.email}. Register in the app with the same email you use in Slack.`, missing_scope: 'The Slack connection is missing a permission. Please contact the app owner.', invalid_auth: 'The Slack connection is not valid. Please contact the app owner.' };
+      return res.status(200).json({ sent: r.sent, message: r.sent ? 'Sent! Check your Slack.' : why[r.reason] || `Slack said: ${r.reason}` });
     }
     if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
     const target = await getUser(b.email);

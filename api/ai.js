@@ -24,9 +24,21 @@ const ALIASES = Object.assign({ gateway: 'Atlas', gemini: 'Nova', groq: 'Orion',
 const aliasOf = (id) => ALIASES[id] || 'AI';
 const GENERIC_NOTE = { limit: 'Daily free limit reached.', cooling: 'Busy right now (per-minute limit). Resting briefly.', credits: 'Out of credits. Checking again later.', error: 'Setup problem. Retrying automatically; the app owner can see details.' };
 function publicStatus(st, owner) {
-  return (st || []).map((x) => owner
-    ? Object.assign({}, x, { id: aliasOf(x.id).toLowerCase(), realLabel: x.label, label: aliasOf(x.id) })
-    : { id: aliasOf(x.id).toLowerCase(), label: aliasOf(x.id), free: x.free, state: x.state, ready: x.ready, until: x.until, note: x.note ? (GENERIC_NOTE[x.state] || '') : '', used: x.used, limit: x.limit, resetsAt: x.resetsAt, auto: false });
+  st = st || [];
+  if (owner) return st.map((x) => Object.assign({}, x, { id: aliasOf(x.id).toLowerCase(), realLabel: x.label, label: aliasOf(x.id) }));
+  // Everyone else sees ONE combined AI: total credits, earliest reset, and when it's back if everything is resting.
+  // Nothing reveals how many services are behind it, which ones, or whether they're free.
+  if (!st.length) return [];
+  const nowMs = Date.now();
+  const ready = st.some((x) => x.ready || !(x.until > nowMs));
+  const limit = st.reduce((a, x) => a + (x.limit || 0), 0);
+  const used = st.reduce((a, x) => a + (x.limit ? Math.min(x.used, x.limit) : x.used), 0);
+  const waits = st.filter((x) => !x.ready && x.until > nowMs);
+  const allError = !ready && waits.every((x) => x.state === 'error');
+  const allLimit = !ready && waits.every((x) => x.state === 'limit' || x.state === 'credits');
+  return [{ id: 'ai', label: 'Site Auditor AI', ready, state: ready ? 'ready' : allError ? 'error' : allLimit ? 'limit' : 'cooling',
+    until: ready ? 0 : Math.min(...waits.map((x) => x.until)), note: ready ? '' : allError ? GENERIC_NOTE.error : allLimit ? "Today's AI credits are used up." : GENERIC_NOTE.cooling,
+    used, limit, resetsAt: Math.min(...st.map((x) => x.resetsAt)), combined: true }];
 }
 
 const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 5000); // items (alt texts + text blocks) per day, all users
@@ -79,8 +91,17 @@ function parseDuration(v) {
 const stateKey = (id) => P + 'aiprov2:' + id;
 const modelKey = (id) => P + 'aimodel:' + id;
 const useKey = (p) => P + 'aiuse:' + p.id + ':' + dayKey(p.tz);
-async function loadStatus(list) {
+// Short in-memory memo: several calls within the same few seconds reuse one database read
+let statusMemo = { at: 0, key: '', val: null };
+async function loadStatus(list, fresh) {
   if (!list.length) return [];
+  const mk = list.map((p) => p.id + p.model).join('|');
+  if (!fresh && statusMemo.val && statusMemo.key === mk && Date.now() - statusMemo.at < 3000) return statusMemo.val;
+  const val = await loadStatusRaw(list);
+  statusMemo = { at: Date.now(), key: mk, val };
+  return val;
+}
+async function loadStatusRaw(list) {
   const rows = await redis(...list.flatMap((p) => [['GET', stateKey(p.id)], ['GET', useKey(p)]]));
   const now = Date.now();
   return list.map((p, k) => {
@@ -94,6 +115,7 @@ async function loadStatus(list) {
   });
 }
 async function park(p, reason, until, note) {
+  statusMemo.val = null;
   await redis(['SET', stateKey(p.id), JSON.stringify({ reason, until, note: String(note || '').slice(0, 300), at: Date.now() }), 'PX', Math.max(1000, until - Date.now() + 60000)]);
 }
 
@@ -119,7 +141,7 @@ function classify(p, r, j) {
   }
   if (r.status === 402 || (r.status === 403 && /credit|fund|balance|billing|payment|free tier|not available on the free/.test(low)))
     return { reason: 'credits', until: now + 12 * 3600000, note: 'No credits for this model. Checking again later.' + (msg ? ' (' + msg + ')' : '') };
-  if (r.status === 401 || r.status === 403) return { reason: 'error', until: now + 3600000, note: 'API key was rejected. Check the key in Vercel.' + (msg ? ' (' + msg + ')' : '') };
+  if (r.status === 401 || r.status === 403) return { reason: 'error', until: now + 3600000, note: 'The AI key was rejected. Check the key in the app settings.' + (msg ? ' (' + msg + ')' : '') };
   if (r.status === 404 || ((r.status === 400 || r.status === 403) && /model/.test(low) && /not found|does not exist|no longer available|not available|not supported|decommission|deprecat|invalid model|unknown model/.test(low)))
     return { reason: 'error', model: true, until: now + 15 * 60000, note: `Model "${p.model}" isn't available and no replacement was found.` + (msg ? ' (' + msg + ')' : ''), raw: body };
   return { reason: 'cooling', until: now + 60000, note: `Error ${r.status}. Retrying in a minute.` + (msg ? ' (' + msg + ')' : '') };
@@ -246,6 +268,7 @@ async function callChain(list, system, user) {
       tried.add(p.id);
       const out = await callWithModelFix(p, system, user);
       if (out.parsed) {
+        statusMemo.val = null;
         const [used] = await redis(['INCR', useKey(p)]);
         if (used === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]);
         return { parsed: out.parsed, p };
@@ -348,21 +371,22 @@ export default async function handler(req, res) {
   const list = await applySavedModels(providers()).catch(() => providers());
   const owner = me.email === OWNER_EMAIL;
   if (req.method === 'POST' && readBody(req).op === 'test') {
+    if (!owner) return res.status(403).json({ error: 'Only the super admin can run this.' });
     // Clear resting states and send a tiny request to each model (1 request each)
     const only = readBody(req).id;
     const out = [];
     for (const p of list.filter((x) => !only || aliasOf(x.id).toLowerCase() === String(only).toLowerCase())) {
       await redis(['DEL', stateKey(p.id)]);
       const r = await callWithModelFix(p, 'You are a health check. Reply with JSON only.', 'Reply exactly {"ok":true}');
-      if (r.parsed) { const [u] = await redis(['INCR', useKey(p)]); if (u === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]); out.push({ id: aliasOf(p.id).toLowerCase(), ok: true, alias: aliasOf(p.id), model: owner ? p.model : '' }); }
+      if (r.parsed) { const [u] = await redis(['INCR', useKey(p)]); if (u === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]); out.push({ id: aliasOf(p.id).toLowerCase(), ok: true, alias: owner ? aliasOf(p.id) : 'AI', model: owner ? p.model : '' }); }
       else { await park(p, r.fail.reason, r.fail.until, r.fail.note); out.push({ id: aliasOf(p.id).toLowerCase(), ok: false, alias: aliasOf(p.id), note: owner ? r.fail.note : GENERIC_NOTE[r.fail.reason] || '' }); }
     }
     return res.status(200).json({ tested: out, providers: publicStatus(await loadStatus(list), owner), now: Date.now(), enabled: list.length > 0 });
   }
   if (req.method === 'GET') {
-    const st = await loadStatus(list).catch(() => []);
+    const st = await loadStatus(list, true).catch(() => []);
     const first = st.find((x) => x.ready) || st[0];
-    return res.status(200).json({ enabled: list.length > 0, providers: publicStatus(st, owner), owner, alias: first ? aliasOf(first.id) : '', free: list.length > 0 && list.every((p) => p.free), now: Date.now() });
+    return res.status(200).json(Object.assign({ enabled: list.length > 0, providers: publicStatus(st, owner), owner, now: Date.now() }, owner ? { alias: first ? aliasOf(first.id) : '', free: list.length > 0 && list.every((p) => p.free) } : {}));
   }
   if (!list.length) return res.status(400).json({ error: 'AI is not set up yet.' });
   try {
@@ -395,7 +419,7 @@ export default async function handler(req, res) {
       const day = new Date().toISOString().slice(0, 10);
       const [used] = await redis(['INCRBY', P + 'ai:used:' + day, todo.length]);
       if (used === todo.length) await redis(['EXPIRE', P + 'ai:used:' + day, 172800]);
-      if (used > DAILY_LIMIT) return res.status(429).json({ error: `Daily AI limit reached (${DAILY_LIMIT} items). Raise AI_DAILY_LIMIT in Vercel if needed.`, results });
+      if (used > DAILY_LIMIT) return res.status(429).json({ error: 'Daily AI limit reached. The AI check continues tomorrow.', results });
       const { parsed, p: used_p } = await callChain(list, b.op === 'alt' ? ALT_SYSTEM : TEXT_SYSTEM, b.op === 'alt' ? altPrompt(business, todo) : textPrompt(business, todo));
       pvUsed = used_p;
       const clean = (parsed.results || []).filter((x) => x && Number.isFinite(Number(x.i)) && todo.some((t) => t.i === Number(x.i)));
@@ -431,7 +455,7 @@ export default async function handler(req, res) {
       if (cmds.length) await redis(['HSET', cacheKey, ...[].concat(...cmds)], ['EXPIRE', cacheKey, 45 * 86400]);
     }
     return res.status(200).json({ results: results.filter((r) => !r.cachedOnly), cachedCount: items.length - todo.length,
-      alias: pvUsed ? aliasOf(pvUsed.id) : '', ...(owner && pvUsed ? { realProvider: pvUsed.label, realModel: pvUsed.model } : {}), providers: publicStatus(await loadStatus(list).catch(() => []), owner), now: Date.now() });
+      alias: pvUsed && owner ? aliasOf(pvUsed.id) : '', ...(owner && pvUsed ? { realProvider: pvUsed.label, realModel: pvUsed.model } : {}), providers: publicStatus(await loadStatus(list).catch(() => []), owner), now: Date.now() });
   } catch (e) {
     if (e.allBusy) return res.status(429).json({ error: String(e.message), allBusy: true, retryAt: e.retryAt, providers: publicStatus(e.providers, owner), now: Date.now() });
     return res.status(e.status === 429 ? 429 : 500).json({ error: owner ? String(e.message || e) : 'The AI check failed. Please try again later.' });

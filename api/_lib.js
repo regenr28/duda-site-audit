@@ -17,7 +17,7 @@ const R_TOKEN = findEnv(['KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN']);
 export const hasRedis = () => !!(R_URL && R_TOKEN);
 
 export async function redis(...cmds) {
-  if (!hasRedis()) throw new Error('Upstash Redis is not connected to this Vercel project.');
+  if (!hasRedis()) throw new Error('The database is not connected. Please contact the app owner.');
   const r = await fetch(`${R_URL}/pipeline`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${R_TOKEN}`, 'Content-Type': 'application/json' },
@@ -66,10 +66,13 @@ export function parseEditorLink(input) {
   }
   return { host, siteId };
 }
+let lastBase = '';
 export function appUrl(req) {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, '');
+  if (!req) return lastBase;
   const host = req.headers['x-forwarded-host'] || req.headers.host;
-  return `https://${host}`;
+  lastBase = `https://${host}`;
+  return lastBase;
 }
 
 // ---------- passwords ----------
@@ -94,7 +97,7 @@ export async function putUser(u) {
   await redis(['SET', P + 'user:' + u.email, JSON.stringify(u)], ['SADD', P + 'users', u.email]);
   return u;
 }
-export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs });
+export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
@@ -148,8 +151,9 @@ export async function requireUser(req, res, { admin = false } = {}) {
   if (req.method !== 'GET' && req.headers.origin) {
     try { if (new URL(req.headers.origin).host !== (req.headers['x-forwarded-host'] || req.headers.host)) { res.status(403).json({ error: 'Bad origin' }); return null; } } catch (e) { /* ignore */ }
   }
-  if (!hasRedis()) { res.status(500).json({ error: 'Upstash Redis is not connected to this Vercel project.' }); return null; }
+  if (!hasRedis()) { res.status(500).json({ error: 'The database is not connected. Please contact the app owner.' }); return null; }
   const u = await currentUser(req);
+  appUrl(req); // remember the app address for links in Slack messages
   if (!u) { res.status(401).json({ error: 'Please sign in' }); return null; }
   if (u.status !== 'active') { res.status(403).json({ error: 'Your account is waiting for admin approval', pending: true }); return null; }
   if (admin && u.role !== 'admin') { res.status(403).json({ error: 'Admins only' }); return null; }
@@ -190,6 +194,56 @@ export async function notifyUser(email, n) {
   await redis(['LPUSH', P + 'notif:' + email, JSON.stringify(item)], ['LTRIM', P + 'notif:' + email, 0, 99]);
   // Nudge that person's open app right away (no database involved), so desktop notifications are instant
   await ablyPublish(userChannel(email), 'notif', { id: item.id });
+  // …and a direct message from the "Site Auditor" Slack bot, if their app email is also their Slack email
+  await slackDM(email, item);
+}
+
+// ---------- Slack direct messages ----------
+// Needs SLACK_BOT_TOKEN (xoxb-…) with the scopes chat:write, users:read, users:read.email.
+// The Slack user is found by email (the email they registered with); cached so Slack is asked only once a month.
+const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assign: 'assigned you an audit item', signup: 'created an account and needs approval',
+  suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', test: 'sent you a test message' };
+export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
+async function slackApi(method, body) {
+  const r = await fetchWithTimeout(`${process.env.SLACK_API_BASE || 'https://slack.com/api'}/${method}`, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + process.env.SLACK_BOT_TOKEN, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body),
+  }, 6000);
+  return r.json().catch(() => ({ ok: false, error: 'bad_response' }));
+}
+async function slackUserId(email) {
+  const key = P + 'slackid:' + normEmail(email);
+  const [cached] = await redis(['GET', key]);
+  if (cached) return cached === '-' ? '' : cached;
+  const r = await fetchWithTimeout(`${process.env.SLACK_API_BASE || 'https://slack.com/api'}/users.lookupByEmail?email=${encodeURIComponent(email)}`, { headers: { Authorization: 'Bearer ' + process.env.SLACK_BOT_TOKEN } }, 6000)
+    .then((x) => x.json()).catch(() => ({ ok: false }));
+  const id = r.ok && r.user && !r.user.deleted ? r.user.id : '';
+  if (r.ok || r.error === 'users_not_found') await redis(['SET', key, id || '-', 'EX', id ? 30 * 86400 : 86400]);
+  return id;
+}
+function notifLink(n) {
+  const base = appUrl();
+  if (!base) return '';
+  if (n.kind === 'signup') return base + '/#/?members=1';
+  if (n.kind === 'false-alarm') return base + '/#/suggestions/false-alarms';
+  if (/^suggestion/.test(n.kind || '')) return base + '/#/suggestions';
+  if (n.siteId) return `${base}/#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
+  return base;
+}
+/** Sends a Slack DM for an app notification. Returns { sent, reason }. Never throws. */
+export async function slackDM(email, n) {
+  if (!slackBotEnabled()) return { sent: false, reason: 'not_configured' };
+  try {
+    const user = await getUser(email);
+    if (user && user.slackDM === false && n.kind !== 'test') return { sent: false, reason: 'turned_off' };
+    const id = await slackUserId(email);
+    if (!id) return { sent: false, reason: 'not_in_slack' };
+    const head = `*${n.byName || 'Someone'}* ${KIND[n.kind] || 'sent you an update'}${n.siteName ? ` on *${n.siteName}*` : ''}${n.findingNum ? ` · item #${n.findingNum}` : ''}`;
+    const link = notifLink(n);
+    const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: head + (n.text ? `\n> ${String(n.text).replace(/\n+/g, ' ').slice(0, 400)}` : '') } }];
+    if (link) blocks.push({ type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Open in Site Auditor' }, url: link }] });
+    const r = await slackApi('chat.postMessage', { channel: id, text: head.replace(/\*/g, '') + (n.text ? ': ' + String(n.text).slice(0, 200) : ''), blocks, unfurl_links: false });
+    return { sent: !!r.ok, reason: r.ok ? '' : r.error };
+  } catch (e) { return { sent: false, reason: 'error' }; }
 }
 
 // ---------- realtime (Ably) ----------
