@@ -417,7 +417,10 @@
     if (!desc) add(descEl || titleEl, { code: 'META_DESC_MISSING', severity: 'warning', category: 'Meta / SEO', message: 'Page has no meta description' });
     else if (desc.length > 165) add(descEl, { code: 'META_DESC_LONG', severity: 'info', category: 'Meta / SEO', message: `Meta description is ${desc.length} chars (Google shows ~155)`, found: cut(desc, 200) });
     else if (desc.length < 50) add(descEl, { code: 'META_DESC_SHORT', severity: 'info', category: 'Meta / SEO', message: 'Meta description is very short', found: desc });
-    if (ctx.noIndex) add(titleEl, { code: 'META_NOINDEX', severity: 'critical', category: 'Meta / SEO', message: 'Page is set to "noindex" in Duda SEO settings — Google will not index it' });
+    // Thank-you / confirmation pages SHOULD be noindex (they only show after a form is sent). Every other page should not be.
+    const thankYou = isThankYouPath(ctx.path);
+    if (thankYou && ctx.noIndex === false) add(titleEl, { code: 'META_THANKYOU_INDEXED', severity: 'critical', category: 'Meta / SEO', message: 'Thank-you page is NOT set to "noindex" — turn on "Hide from search engines" in Duda SEO settings', found: ctx.path });
+    else if (!thankYou && ctx.noIndex) add(titleEl, { code: 'META_NOINDEX', severity: 'critical', category: 'Meta / SEO', message: 'Page is set to "noindex" in Duda SEO settings — Google will not index it' });
     if (!doc.querySelector('meta[property="og:image"]')) add(titleEl, { code: 'META_OG_IMAGE', severity: 'info', category: 'Meta / SEO', message: 'No social share image (og:image)' });
     const canon = doc.querySelector('link[rel="canonical"]');
     if (canon && truth.domain) {
@@ -692,6 +695,11 @@
   }
 
   // ---------- merging ----------
+  /** /thank-you, /thanks, /thankyou-quote, /quote-thank-you, /confirmation, /form-success … */
+  function isThankYouPath(path) {
+    const last = String(path || '').toLowerCase().split('/').filter(Boolean).pop() || '';
+    return /(^|-)(thank-?you|thanks|thx)(-|$)/.test(last) || /^(confirmation|form-(submitted|success|sent|confirmation)|submission-(received|success)|success)$/.test(last);
+  }
   function fingerprint(f) { return hash([f.code, f.path, f.selector, f.found || '', f.message].join('|')); }
 
   /** Merge per-device findings for the same page/element into one row with device visibility info. */
@@ -996,6 +1004,6 @@
 
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, isShareLink, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, isShareLink, isThankYouPath, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

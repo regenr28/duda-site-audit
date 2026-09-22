@@ -225,13 +225,18 @@
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
       <a href="#/live" data-nav="live">Live DR Sites</a>
       ${state.me.role === 'admin' ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
-      <a href="#/suggestions" data-nav="suggestions">${isOwner || state.me.role === 'admin' ? 'Suggestions' : 'My suggestions'}</a>
-      <a href="#/ai" data-nav="ai">AI Status</a>
-      <a href="#/about" data-nav="about">About</a>`;
+      <a href="#/suggestions" data-nav="suggestions">${isOwner || state.me.role === 'admin' ? 'Suggestions' : 'My suggestions'}</a>`;
+    // Light-bulb menu (left of the logo): About, AI Status, Help, Suggest a feature, AI credits
+    if (!$('#btnMenu')) {
+      const mb = document.createElement('button');
+      mb.id = 'btnMenu'; mb.type = 'button'; mb.className = 'btn ghost menu-btn'; mb.title = 'Menu'; mb.setAttribute('aria-label', 'Menu'); mb.setAttribute('aria-haspopup', 'menu');
+      mb.innerHTML = ICONS.bulb;
+      $('.topbar').prepend(mb);
+    }
+    $('#btnMenu').onclick = toggleMenu;
     $('#topRight').innerHTML = `
       <div class="presence" id="presence" title="Who's online"></div>
       <button class="btn ghost ai-chip" id="btnAi" type="button" hidden></button>
-      <button class="btn ghost" id="btnSuggest" type="button" title="Suggest a feature">💡 <span class="hide-sm">Suggest a feature</span></button>
       <button class="btn ghost bell" id="btnBell" title="Notifications" aria-label="Notifications">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
         <span class="bell-count" id="bellCount" hidden></span></button>
@@ -242,11 +247,46 @@
     $('#btnMembers').onclick = openMembers;
     $('#btnBell').onclick = toggleNotifs;
     $('#btnMe').onclick = openMe;
-    $('#btnSuggest').onclick = openSuggest;
     $('#btnAi').onclick = () => { location.hash = '#/ai'; }; renderAiChip();
     $('#presence').onclick = togglePresence;
     renderBell(); renderPresence(); markNav();
   }
+  const ICONS = {
+    bulb: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>',
+    info: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+    spark: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8z"/></svg>',
+    help: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>',
+    idea: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+  };
+  function closeMenu() { const m = $('#appMenu'); if (m) m.remove(); const b = $('#btnMenu'); if (b) { b.classList.remove('on'); b.setAttribute('aria-expanded', 'false'); } }
+  function toggleMenu() {
+    if ($('#appMenu')) return closeMenu();
+    const r = route().name;
+    const item = (href, icon, label, nav) => `<a class="am-item ${r === nav ? 'on' : ''}" href="${href}" role="menuitem">${icon}<span>${label}</span></a>`;
+    const t = state.ai && state.ai.enabled ? aiTotals() : null;
+    const at = state.ai && state.ai.enabled ? aiResumeAt() : null;
+    const credits = t ? (t.total
+      ? `<a class="am-credits" href="#/ai" role="menuitem"><div class="row-between"><b>AI credits</b><span><b>${t.left.toLocaleString()}</b> left</span></div><div class="am-meter"><i style="width:${Math.round((t.left / t.total) * 100)}%"></i></div><div class="row-between small faint"><span>${at === 0 ? 'Ready' : at ? 'Paused · back in ' + countdown(at) : 'Paused'}</span><span>refills daily</span></div></a>`
+      : `<a class="am-credits" href="#/ai" role="menuitem"><div class="row-between"><b>AI</b><span>${at === 0 ? 'Ready' : at ? 'back in ' + countdown(at) : 'Paused'}</span></div></a>`) : '';
+    const m = document.createElement('div');
+    m.id = 'appMenu'; m.className = 'app-menu panel'; m.setAttribute('role', 'menu');
+    m.innerHTML = `${item('#/about', ICONS.info, 'About', 'about')}${item('#/ai', ICONS.spark, 'AI Status', 'ai')}${item('#/help', ICONS.help, 'Help', 'help')}
+      <div class="am-sep"></div>
+      <button class="am-item" type="button" data-am-suggest role="menuitem">${ICONS.idea}<span>Suggest a feature</span></button>
+      ${credits ? `<div class="am-sep"></div>${credits}` : ''}`;
+    document.body.appendChild(m);
+    const b = $('#btnMenu'); b.classList.add('on'); b.setAttribute('aria-expanded', 'true');
+    const rect = b.getBoundingClientRect(); m.style.top = (rect.bottom + 8) + 'px'; m.style.left = Math.max(8, rect.left) + 'px';
+    $$('a', m).forEach((a) => a.addEventListener('click', closeMenu));
+    $('[data-am-suggest]', m).onclick = () => { closeMenu(); openSuggest(); };
+    setTimeout(() => {
+      const away = (e) => { if (!m.contains(e.target) && !e.target.closest('#btnMenu')) { closeMenu(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc1); } };
+      const esc1 = (e) => { if (e.key === 'Escape') { closeMenu(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc1); } };
+      document.addEventListener('mousedown', away); document.addEventListener('keydown', esc1);
+    }, 0);
+  }
+  window.addEventListener('hashchange', closeMenu);
   function markNav() {
     const r = route();
     $$('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (r.name === 'site' ? 'sites' : r.name)));
@@ -1351,6 +1391,7 @@
     const parts = h.split('/').filter(Boolean);
     if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
+    if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'activity') return { name: 'activity' };
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'live') return { name: 'live' };
@@ -1379,6 +1420,7 @@
       loadSites(true).then((ch) => { if (ch && route().name === r.name) render(); }).catch(() => {});
     }
     if (r.name === 'about') return renderAbout();
+    if (r.name === 'help') return renderHelp(r.section);
     if (r.name === 'activity') return renderGlobalActivity();
     if (r.name === 'live') return renderLive();
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
@@ -1826,6 +1868,99 @@
     if (r.item) openDrawer(r.item); else closeDrawer(true);
   }
 
+  // =====================================================================
+  // VERIFY ON LIVE SITE: are the items marked Done really fixed on the PUBLISHED website?
+  // =====================================================================
+  const vKey = (f) => [f.code, f.path, f.selector].join('|'); // looser than the item ID: live links differ slightly from preview links
+  const CLOSED = (f) => f.status === 'done' || f.status === 'false';
+  const lastDoneAt = (s) => (s.findings || []).filter((f) => f.status === 'done' && f.statusAt).map((f) => f.statusAt).sort().pop() || '';
+  async function verifyLive(s) {
+    if (state.verifying) return toast('A live check is already running');
+    let info;
+    try { info = await api('/api/site?light=1&editor=' + encodeURIComponent(s.editorUrl)); } catch (e) { return toast("Couldn't reach Duda: " + e.message); }
+    if (!info.domain || !/PUBLISHED/i.test(info.publishStatus || '') || /NOT_PUBLISHED|UNPUBLISHED/i.test(info.publishStatus || '')) return toast('This site is not published yet, so there is no live site to check.');
+    const done = lastDoneAt(s);
+    if (info.publishedAt && done && new Date(info.publishedAt) < new Date(done)) {
+      const n = (s.findings || []).filter((f) => f.status === 'done' && f.statusAt && new Date(f.statusAt) > new Date(info.publishedAt)).length;
+      if (!confirm(`Last published: ${fmtFull(info.publishedAt)}.\n\n${n} item(s) were marked Done after that, so those fixes are probably not live yet. Publish the site in Duda first.\n\nCheck the live site anyway?`)) return;
+    }
+    const got = await store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => ({ ok: [] }));
+    if (!(got.ok || []).includes(s.id)) return toast(claimText((got.taken || [])[0] || {}) + '. Try again when it finishes.');
+    const beat = setInterval(() => store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => {}), 60000);
+    state.verifying = s.id;
+    state.scanning[s.id] = { done: 0, total: 0, message: `Checking the live site ${info.domain}…` }; renderSite();
+    const log = [];
+    try {
+      // Page SEO settings (noindex etc.) come from Duda, like a normal scan
+      const pagesMeta = {};
+      try { const meta = await api('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); } catch (e) { log.push('Duda pages list unavailable: ' + e.message); }
+      const res = await A.runScan({
+        siteId: s.siteId, host: info.domain, truth: s.truth, pagesMeta, seedPaths: (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: Math.max(10, (s.pages || []).length + 5),
+        fetchPage: async (path, device) => {
+          const q = new URLSearchParams({ live: '1', domain: info.domain, site: s.siteId, path, device });
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try { const r = await api('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
+            await new Promise((ok) => setTimeout(ok, 800 * (attempt + 1)));
+          }
+        },
+        checkUrls: (urls) => post('/api/check', { urls }),
+        onProgress: (p) => { state.scanning[s.id] = Object.assign({}, p, { message: 'Live site · ' + p.message }); renderProgress(s.id); },
+      });
+      res.aiSkip = new Set();
+      // Same AI checks as a scan (answers are cached, so unchanged text costs nothing)
+      const aiAlt = await aiAltCheck(res, s.id, log);
+      const aiText = await aiTextCheck(res, s.id, log, aiAlt && aiAlt.paused);
+      const aiGap = !!((aiAlt && aiAlt.pending && aiAlt.pending.length) || (aiText && aiText.pending && aiText.pending.length));
+      const liveKeys = new Set(res.findings.map(vKey));
+      const results = {};
+      (s.findings || []).forEach((f) => {
+        // False alarms were never real problems, so they stay on the live site by design: skip them
+        if (/^AI_PENDING/.test(f.code) || f.status === 'false') return;
+        const isAI = !!f.ai;
+        const present = liveKeys.has(vKey(f));
+        if (CLOSED(f)) results[f.id] = present ? 'still' : (isAI && aiGap ? 'unknown' : 'ok');
+        else if (!present && !(isAI && aiGap)) results[f.id] = 'fixed-open';
+      });
+      const sum = await store({ op: 'saveVerify', id: s.id, verify: { domain: info.domain, publishedAt: info.publishedAt, pages: res.pages.length, results } });
+      upsertSummary(sum);
+      const v = Object.values(results);
+      toast(`Live check done: ${v.filter((x) => x === 'ok').length} confirmed fixed${v.includes('still') ? `, ${v.filter((x) => x === 'still').length} still on the live site` : ''}`);
+    } catch (e) { console.error(e); toast('Live check failed: ' + (e.message || e)); }
+    finally { clearInterval(beat); releaseScan([s.id]); state.verifying = null; delete state.scanning[s.id]; if (state.current && state.current.id === s.id) { await loadSite(s.id); renderSite(); } }
+  }
+  function verifyBadge(s, f) {
+    const v = s.verify && s.verify.results && s.verify.results[f.id];
+    if (f.status === 'false') return '';
+    if (v === 'ok') return `<span class="badge v-ok" title="Checked on ${esc(s.verify.domain)} ${esc(fmtFull(s.verify.at))}">✓ Fixed on live site</span>`;
+    if (v === 'still') return `<span class="badge v-still" title="Marked closed, but still found on ${esc(s.verify.domain)} (${esc(fmtFull(s.verify.at))}). Publish the site, or reopen the item.">⚠ Still on live site</span>`;
+    if (v === 'unknown') return `<span class="badge subtle" title="The AI was busy, so this couldn't be checked">? Not checked</span>`;
+    if (v === 'fixed-open') return `<span class="badge v-ok" title="Not found on the live site anymore. You can mark it Done.">Looks fixed on live site</span>`;
+    return '';
+  }
+  function verifyPanel(s) {
+    const f = s.findings || [];
+    if (!f.length) return '';
+    const openLeft = f.filter((x) => !CLOSED(x) && !/^AI_PENDING/.test(x.code)).length;
+    const v = s.verify;
+    const still = v ? f.filter((x) => x.status === 'done' && v.results[x.id] === 'still') : [];
+    const fixedOpen = v ? f.filter((x) => !CLOSED(x) && v.results[x.id] === 'fixed-open') : [];
+    const busy = !!state.scanning[s.id];
+    const btn = `<button class="btn ${openLeft ? '' : 'primary'} sm" data-verify ${busy || otherClaim(s.id) ? 'disabled' : ''}>🌐 Verify on live site</button>`;
+    const head = !openLeft
+      ? `<b>🎉 All items are cleared.</b> Next: <b>publish the site in Duda</b>, then check that the fixes are on the live site.`
+      : `<b>Check the live site</b> <span class="muted">to confirm fixes after publishing (${openLeft} item(s) still open).</span>`;
+    const res = v ? `<div class="small" style="margin-top:6px">Last live check: <b>${esc(fmtFull(v.at))}</b> by ${esc(v.byName || nameOf(v.by))} on <b>${esc(v.domain)}</b>${v.publishedAt ? ` (published ${esc(fmtFull(v.publishedAt))})` : ''}:
+        <span class="v-ok-t">✓ ${v.ok} fixed</span>${v.still ? ` · <span class="v-still-t">⚠ ${v.still} still on the live site</span>` : ''}${v.unknown ? ` · ${v.unknown} not checked` : ''}${v.fixedOpen ? ` · ${v.fixedOpen} open item(s) look fixed` : ''}</div>
+        ${still.length ? `<div style="margin-top:6px"><button class="btn sm" data-vreopen>Reopen the ${still.length} still on the live site</button> <span class="small faint">or publish in Duda and check again.</span></div>` : ''}
+        ${fixedOpen.length ? `<div style="margin-top:6px"><button class="btn sm" data-vdone>Mark the ${fixedOpen.length} fixed open item(s) as Done</button></div>` : ''}` : '';
+    return `<div class="note ${!openLeft ? 'good' : 'unk'} verify-panel"><div class="row-between" style="align-items:center;gap:12px"><div>${head}</div>${btn}</div>${res}</div>`;
+  }
+  function bindVerify(root, s) {
+    const b = $('[data-verify]', root); if (b) b.onclick = () => verifyLive(s);
+    const r = $('[data-vreopen]', root); if (r) r.onclick = () => { const ids = s.findings.filter((x) => x.status === 'done' && s.verify.results[x.id] === 'still').map((x) => x.id); if (confirm(`Reopen ${ids.length} item(s)?`)) setFinding(s, ids, { status: 'open' }); };
+    const d = $('[data-vdone]', root); if (d) d.onclick = () => { const ids = s.findings.filter((x) => !CLOSED(x) && s.verify.results[x.id] === 'fixed-open').map((x) => x.id); if (confirm(`Mark ${ids.length} item(s) as Done?`)) setFinding(s, ids, { status: 'done' }); };
+  }
+
   function renderFindingsTab(body, s, { cnt, sc, live }) {
     const t = s.truth || {};
     const ff = state.ff;
@@ -1843,6 +1978,7 @@
     body.innerHTML = `
       ${(() => { const lx = liveDR.data && liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(s.siteId).toLowerCase()); if (liveDR.data && !lx) return `<div class="note unk dom-banner"><b>This site is no longer live in Duda</b> (unpublished or deleted since the last pull). The audit is kept for reference.</div>`;
         return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
+      ${sc.state === 'complete' ? verifyPanel(s) : ''}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
@@ -1913,7 +2049,7 @@
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
               <td style="min-width:240px"><div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
-                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}</td>
+                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
               <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
             </tr>`;
@@ -1930,6 +2066,7 @@
     $$('[data-copy]', body).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
     $$('[data-inspect]', body).forEach((c) => (c.onclick = () => { const f = s.findings.find((x) => x.id === c.dataset.inspect); if (f) openInspector(s, f); }));
     bindSelLinks(body, s);
+    bindVerify(body, s);
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
@@ -1965,7 +2102,7 @@
     bindComments(body, s, siteComposer);
   }
 
-  const ACT_ICON = { maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
+  const ACT_ICON = { verify: '🌐', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
   function renderActivityTab(body, s) {
     const act = s.activity || [];
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {
@@ -2363,6 +2500,66 @@
   // =====================================================================
   // ABOUT
   // =====================================================================
+  // =====================================================================
+  // HELP: the full guide + an assistant that answers from it
+  // =====================================================================
+  const help = { sections: null, assistant: false, q: '', chat: [], busy: false, loading: false };
+  /** Tiny, safe markdown: escapes everything, then **bold**, `code`, lists and line breaks. */
+  function mdLite(t) {
+    const lines = esc(String(t || '')).split(/\n/);
+    let out = '', list = '';
+    const inline = (x) => x.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+    for (const raw of lines) {
+      const l = raw.trim(); const ol = l.match(/^\d+[.)]\s+(.*)/); const ul = l.match(/^[-*•]\s+(.*)/);
+      if (ol || ul) { const tag = ol ? 'ol' : 'ul'; if (list !== tag) { if (list) out += `</${list}>`; out += `<${tag}>`; list = tag; } out += `<li>${inline((ol || ul)[1])}</li>`; continue; }
+      if (list) { out += `</${list}>`; list = ''; }
+      if (l) out += `<p>${inline(l)}</p>`;
+    }
+    if (list) out += `</${list}>`;
+    return out;
+  }
+  async function renderHelp(section) {
+    if (!help.sections && !help.loading) {
+      help.loading = true; $('#view').innerHTML = '<div class="empty">Loading the guide…</div>';
+      try { const r = await api('/api/ai?op=help'); help.sections = r.sections; help.assistant = r.assistant; } catch (e) { help.sections = []; toast(e.message); }
+      help.loading = false;
+    }
+    if (route().name !== 'help') return;
+    const secs = help.sections || [];
+    const groups = [...new Set(secs.map((x) => x.group))];
+    const q = help.q.trim().toLowerCase();
+    const match = (x) => !q || (x.title + ' ' + x.html.replace(/<[^>]+>/g, ' ')).toLowerCase().includes(q);
+    const shown = secs.filter(match);
+    $('#view').innerHTML = `<div class="help-wrap">
+      <div class="page-head"><div><h1>Help</h1><div class="muted">Everything about the app: your account, audits, audit items and statuses, Live DR Sites, and more.</div></div></div>
+      ${help.assistant ? `<div class="panel panel-pad help-ask"><h2 style="margin:0 0 6px">💬 Ask the Help assistant</h2>
+        <div class="help-chat" id="helpChat">${help.chat.length ? help.chat.map((m) => `<div class="hc-msg ${m.role}">${m.role === 'user' ? esc(m.text) : mdLite(m.text) + (m.sections && m.sections.length ? `<div class="small hc-links">Read more: ${m.sections.map((id) => { const x = secs.find((y) => y.id === id); return x ? `<a href="#/help/${esc(id)}">${esc(x.title)}</a>` : ''; }).filter(Boolean).join(' · ')}</div>` : '')}</div>`).join('') : '<div class="small muted">For example: "What\'s the difference between For clarification and On hold?" or "How do I check that fixes are live?"</div>'}${help.busy ? '<div class="hc-msg assistant faint">Thinking…</div>' : ''}</div>
+        <form id="helpForm" class="help-form"><input type="text" id="helpQ" maxlength="600" placeholder="Ask how to do something in the app…" autocomplete="off" ${help.busy ? 'disabled' : ''}><button class="btn primary" ${help.busy ? 'disabled' : ''}>Ask</button>${help.chat.length ? '<button type="button" class="btn ghost" id="helpClear">Clear</button>' : ''}</form>
+        <div class="small faint" style="margin-top:6px">Answers come from this guide. The assistant can make mistakes; the sections below are the reference.</div></div>` : ''}
+      <div class="help-grid">
+        <nav class="help-toc panel">
+          <input type="search" id="helpSearch" placeholder="Search the guide…" value="${esc(help.q)}">
+          ${groups.map((g) => { const items = secs.filter((x) => x.group === g && match(x)); return items.length ? `<div class="k">${esc(g)}</div>${items.map((x) => `<a href="#/help/${esc(x.id)}" class="${section === x.id ? 'on' : ''}">${esc(x.title)}</a>`).join('')}` : ''; }).join('')}
+        </nav>
+        <div class="help-body">${shown.length ? shown.map((x) => `<section class="panel panel-pad help-sec" id="help-${esc(x.id)}"><div class="k">${esc(x.group)}</div><h2>${esc(x.title)}</h2>${x.html}</section>`).join('') : '<div class="empty">Nothing in the guide matches that. Try the assistant above.</div>'}</div>
+      </div></div>`;
+    const sIn = $('#helpSearch');
+    sIn.oninput = () => { help.q = sIn.value; const pos = sIn.selectionStart; renderHelp(section).then(() => { const i = $('#helpSearch'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }); };
+    if (section) { const el = document.getElementById('help-' + section); if (el) { el.scrollIntoView({ block: 'start' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); } }
+    const chat = $('#helpChat'); if (chat) chat.scrollTop = chat.scrollHeight;
+    if ($('#helpClear')) $('#helpClear').onclick = () => { help.chat = []; renderHelp(''); };
+    if ($('#helpForm')) $('#helpForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const text = $('#helpQ').value.trim(); if (!text || help.busy) return;
+      const history = help.chat.slice(-6).map((m) => ({ role: m.role, text: m.text }));
+      help.chat.push({ role: 'user', text }); help.busy = true; renderHelp('');
+      try { const r = await post('/api/ai', { op: 'help', question: text, history }); help.chat.push({ role: 'assistant', text: r.answer || "Sorry, I don't have an answer for that.", sections: r.sections || [] }); }
+      catch (err) { help.chat.push({ role: 'assistant', text: err.message || "The assistant couldn't answer right now." }); }
+      help.busy = false; if (route().name === 'help') { renderHelp(''); const i = $('#helpQ'); if (i) i.focus(); }
+    };
+    if (!section && $('#helpQ') && help.chat.length) $('#helpQ').focus();
+  }
+
   function renderAbout() {
     $('#view').innerHTML = `<div class="guide">
       <div class="page-head"><div><h1>About Duda Site Auditor</h1><div class="muted">A team tool for checking Duda websites before and after launch, so no client ends up with someone else's details.</div></div>
@@ -2381,7 +2578,17 @@
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
       </ol>
-      <p class="small faint" style="margin-top:14px">Still review by hand: business hours, prices, service areas, form recipients, and text inside images.</p></div>`;
+      <div class="panel panel-pad" style="margin-top:14px"><h2>Audit item statuses</h2>
+        <table class="help-table"><tbody>
+          <tr><td><b>Open</b></td><td>Needs fixing (default).</td></tr>
+          <tr><td><b>For clarification</b></td><td>"I have a question before I can fix this." Something is unclear; add a comment and @mention who can answer. Stays in the default list.</td></tr>
+          <tr><td><b>Done</b></td><td>Fixed in the Duda editor. Confirmed later with <b>Verify on live site</b>.</td></tr>
+          <tr><td><b>On hold</b></td><td>"We know what to do, but it can't be done yet." Waiting on something outside the team (client, domain, approval). Leaves the default list.</td></tr>
+          <tr><td><b>False alarm</b></td><td>Not actually a problem. Add a reason to help improve the checks. Skipped by the live check.</td></tr>
+        </tbody></table>
+        <p class="small muted" style="margin:8px 0 0">Rule of thumb: someone <i>inside</i> the team can answer → For clarification. Waiting on someone <i>outside</i> → On hold. Only Done and False alarm count as cleared.</p></div>
+      <p class="small faint" style="margin-top:14px">Still review by hand: business hours, prices, service areas, form recipients, and text inside images.</p>
+      <p style="margin-top:10px"><a class="btn" href="#/help">📘 Open the full Help guide</a></p></div>`;
     $('#abSuggest').onclick = openSuggest;
   }
 

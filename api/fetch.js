@@ -1,6 +1,6 @@
 // GET /api/fetch?host=<editor host>&site=<siteId>&path=/about-us&device=desktop|tablet|mobile
 // Proxies Duda's per-device preview HTML (the same thing the editor's Desktop/Tablet/Mobile preview shows).
-import { requireUser, allowedHost, fetchWithTimeout, UA_DESKTOP } from './_lib.js';
+import { requireUser, allowedHost, fetchWithTimeout, UA_DESKTOP, redis, P } from './_lib.js';
 
 const UAS = {
   desktop: UA_DESKTOP,
@@ -12,12 +12,20 @@ export default async function handler(req, res) {
   if (!(await requireUser(req, res))) return;
   const { host, site, device = 'desktop' } = req.query;
   let path = String(req.query.path || '/');
-  if (!allowedHost(host)) return res.status(400).json({ error: 'Host not allowed' });
+  // live=1: the PUBLISHED page on the site's own domain (only the domain Duda reported for this site)
+  const live = !!req.query.live;
+  if (!live && !allowedHost(host)) return res.status(400).json({ error: 'Host not allowed' });
   if (!/^[A-Za-z0-9_-]{4,}$/.test(site || '')) return res.status(400).json({ error: 'Bad site id' });
   if (!UAS[device]) return res.status(400).json({ error: 'Bad device' });
   if (path.includes('..') || !/^\/[\w\-/.%~]*$/.test(path)) return res.status(400).json({ error: 'Bad path' });
   path = path === '/' ? '' : path.replace(/\/+$/, '');
-  const url = `https://${host}/site/${site}${path}?showOriginal=true&preview=true&insitepreview=true&dm_device=${device}`;
+  let url = `https://${host}/site/${site}${path}?showOriginal=true&preview=true&insitepreview=true&dm_device=${device}`;
+  if (live) {
+    const [dom] = await redis(['GET', P + 'livedom:' + site]);
+    const want = String(req.query.domain || '').toLowerCase();
+    if (!dom || dom !== want) return res.status(400).json({ error: 'Live domain not confirmed for this site' });
+    url = `${process.env.LIVE_FETCH_PROTOCOL || 'https'}://${dom}${path || '/'}`;
+  }
   try {
     const r = await fetchWithTimeout(url, { headers: { 'User-Agent': UAS[device], Accept: 'text/html' }, redirect: 'follow' }, 25000);
     const html = await r.text();

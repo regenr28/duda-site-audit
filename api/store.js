@@ -48,6 +48,7 @@ function summary(site, comments) {
     id: site.id, siteId: site.siteId, host: site.host, editorUrl: site.editorUrl, businessName: site.businessName || '',
     assignee: site.assignee || '', status: site.status || 'Not started', scan: slimScan(site.scan), addedBy: site.addedBy || '', addedByName: site.addedByName || '',
     createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c,
+    ...(site.verify ? { verify: { at: site.verify.at, ok: site.verify.ok, still: site.verify.still } } : {}),
   };
 }
 // The website list loads every summary at once, so keep each one small (no scan log, no AI details)
@@ -263,6 +264,20 @@ export default async function handler(req, res) {
         if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
         await redis(['HDEL', P + 'fa', String(b.key || '')]);
         return res.status(200).json({ ok: true });
+      }
+      case 'saveVerify': {
+        // Result of "Verify on live site": which closed items are really gone from the published site
+        const [raw] = await redis(['GET', P + 'site:' + b.id]);
+        const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
+        const v = b.verify || {};
+        const results = {}; Object.entries(v.results || {}).slice(0, 2000).forEach(([k, x]) => { if (['ok', 'still', 'unknown', 'fixed-open'].includes(x)) results[String(k).slice(0, 40)] = x; });
+        const count = (t) => Object.values(results).filter((x) => x === t).length;
+        site.verify = { at: now(), by: me.email, byName: me.name, domain: String(v.domain || '').slice(0, 200), publishedAt: String(v.publishedAt || '').slice(0, 40), pages: Number(v.pages) || 0, results,
+          ok: count('ok'), still: count('still'), unknown: count('unknown'), fixedOpen: count('fixed-open') };
+        site.updatedAt = now();
+        await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+        await log(b.id, me, 'verify', `verified fixes on the live site: ${site.verify.ok} confirmed fixed${site.verify.still ? `, ${site.verify.still} still on the live site` : ''}${site.verify.unknown ? `, ${site.verify.unknown} couldn't be checked` : ''}`);
+        return res.status(200).json(await saveIndex(b.id));
       }
       case 'scanClaim': {
         // One browser at a time may queue or scan a website. The lock key is atomic (SET NX); the "scanclaims" hash is
