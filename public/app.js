@@ -9,6 +9,7 @@
   ];
   const FLABEL = Object.fromEntries(FSTATUS.map((s) => [s.v, s.label]));
   const SCAN_CONCURRENCY_SITES = 2;
+  const DUDA_HOST = 'my.duda.co';
   const SUG = [{ v: 'new', label: 'New' }, { v: 'ongoing', label: 'On going' }, { v: 'done', label: 'Done' }, { v: 'nope', label: 'Nope' }];
   const SUGL = Object.fromEntries(SUG.map((x) => [x.v, x.label]));
 
@@ -604,13 +605,16 @@
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <button class="btn sm ghost" id="meTest" type="button" style="justify-self:start">Show a test notification</button>
+      <label class="field">Open the Duda editor and previews on
+        <select id="meEnv"><option value="white" ${state.me.editorEnv !== 'duda' ? 'selected' : ''}>White-label (${esc(editorHost() || 'agency address')})</option><option value="duda" ${state.me.editorEnv === 'duda' ? 'selected' : ''}>Duda (${DUDA_HOST})</option></select>
+        <span class="small muted">Only changes where the Editor and Preview links take you. Audits are the same either way.</span></label>
       ${state.config && state.config.slackDM ? `<label class="check-row" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="meSlack" style="margin-top:3px" ${state.me.slackDM !== false ? 'checked' : ''}> Also message me on Slack (from <b>Site Auditor</b>) when someone mentions me, replies, or assigns me an item${state.me.role === 'admin' ? ', and when someone signs up' : ''}</label>
       <div class="small muted" style="margin-top:-6px">Uses your Slack account with the same email as here: <b>${esc(state.me.email)}</b>. <button class="linkbtn" id="meSlackTest" type="button">Send a test message</button></div>` : ''}</div>
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
     $('#meTest').onclick = () => popNotify({ email: state.me.email, title: 'Test notification', body: 'This is how long pop-ups will stay on screen.', secs: Number($('#meSecs').value) });
     if ($('#meSlackTest')) $('#meSlackTest').onclick = async () => { try { const r = await post('/api/users', { op: 'slackTest' }); toast(r.message); } catch (e) { toast(e.message); } };
-    $('#meSave').onclick = async () => { try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); } };
+    $('#meSave').onclick = async () => { try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); } };
   }
 
   // =====================================================================
@@ -648,18 +652,24 @@
   // =====================================================================
   // ADD WEBSITE + SCANNING
   // =====================================================================
+  /** An editor/preview link, or just the site ID (e.g. cb89784b). IDs use the agency's white-label editor address. */
   function parseLink(input) {
+    const raw = String(input || '').trim().replace(/^[,;]+|[,;]+$/g, '');
+    if (/^[A-Za-z0-9_-]{6,20}$/.test(raw) && !/^https?$/i.test(raw)) {
+      const host = editorHost() || DUDA_HOST;
+      return { host, siteId: raw, link: `https://${host}/home/site/${raw}/home` };
+    }
     try {
       const u = new URL(input.trim());
       const m = u.pathname.match(/\/(?:site|preview|editor\/direct|editor)\/([A-Za-z0-9_-]{4,})/);
-      return { host: u.hostname, siteId: m ? m[1] : '' };
+      return { host: u.hostname, siteId: m ? m[1] : '', link: raw };
     } catch (e) { return { host: '', siteId: '' }; }
   }
   function openAdd() {
     modal(`<header><h2>Add website(s)</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body">
-        <label class="field">Duda editor link(s), one per line
-          <textarea id="addLinks" rows="5" autofocus placeholder="https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home"></textarea></label>
+        <label class="field">Site IDs or Duda editor links, one per line
+          <textarea id="addLinks" rows="5" autofocus placeholder="cb89784b&#10;2a458f73&#10;https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home"></textarea></label>
         <label class="field">Assign to<select id="addWho">${userOptions(state.me.email, 'Unassigned')}</select></label>
         <p class="small muted" style="margin:0">Each site is scanned on Desktop, Tablet and Mobile and compared to its Duda Business Info. Keep this tab open while scans run (${SCAN_CONCURRENCY_SITES} at a time).</p>
       </div>
@@ -669,15 +679,20 @@
     const dupHint = document.createElement('div'); dupHint.id = 'addDup'; addBody.insertBefore(dupHint, addBody.children[1]);
     const findExisting = (siteId) => state.sites.find((x) => x.siteId === siteId);
     const showDups = () => {
-      const ids = [...new Set($('#addLinks').value.split(/\s+/).map((l) => parseLink(l).siteId).filter(Boolean))];
+      const ids = [...new Set($('#addLinks').value.split(/[\s,;]+/).map((l) => parseLink(l).siteId).filter(Boolean))];
       const d = ids.map(findExisting).filter(Boolean);
-      dupHint.innerHTML = d.length ? `<div class="note unk">${d.map((x) => `<div><b>Already exists:</b> ${esc(x.businessName || x.siteId)} <span class="faint mono">${esc(x.siteId)}</span> · <a href="#/site/${esc(x.id)}" data-open-existing>Open existing audit</a></div>`).join('')}<div class="small faint">These are skipped. Use <b>Rescan</b> on the existing audit instead.</div></div>` : '';
+      // Show which business each new ID is (from the Live DR Sites list), so typos stand out
+      const fresh = ids.filter((id) => !findExisting(id));
+      const names = fresh.length ? `<div class="small" style="margin-bottom:6px">${fresh.map((id) => { const lx = liveOf(id); return `<div><span class="mono">${esc(id)}</span> · ${lx ? `<b>${esc(lx.name || lx.domain || 'Published site')}</b>${lx.domain && lx.name ? ` <span class="faint">${esc(lx.domain)}</span>` : ''}` : lx === false ? '<span class="faint">not in the published list (unpublished, or check the ID)</span>' : '<span class="faint">new</span>'}</div>`; }).join('')}</div>` : '';
+      dupHint.innerHTML = names + (d.length ? `<div class="note unk">${d.map((x) => `<div><b>Already exists:</b> ${esc(x.businessName || x.siteId)} <span class="faint mono">${esc(x.siteId)}</span> · <a href="#/site/${esc(x.id)}" data-open-existing>Open existing audit</a></div>`).join('')}<div class="small faint">These are skipped. Use <b>Rescan</b> on the existing audit instead.</div></div>` : '');
       $$('[data-open-existing]', dupHint).forEach((a) => (a.onclick = () => closeModal()));
     };
     $('#addLinks').addEventListener('input', showDups);
+    // Load the published-sites list (cached on the server) so pasted IDs show their business names
+    if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if ($('#addLinks')) showDups(); }).catch(() => {});
     $('#addGo').onclick = async () => {
-      const lines = $('#addLinks').value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
-      if (!lines.length) return toast('Paste at least one editor link');
+      const lines = $('#addLinks').value.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
+      if (!lines.length) return toast('Paste at least one site ID or editor link');
       $('#addGo').disabled = true;
       let added = 0, bad = 0; const dups = []; const seen = new Set(); const newIds = [];
       for (const link of lines) {
@@ -686,7 +701,7 @@
         if (seen.has(p.siteId)) continue; seen.add(p.siteId);
         const ex = findExisting(p.siteId);
         if (ex) { dups.push(ex); continue; }
-        try { const sum = await store({ op: 'create', siteId: p.siteId, host: p.host, editorUrl: link, assignee: $('#addWho').value }); upsertSummary(sum); newIds.push(sum.id); added++; }
+        try { const sum = await store({ op: 'create', siteId: p.siteId, host: p.host, editorUrl: p.link || link, assignee: $('#addWho').value }); upsertSummary(sum); newIds.push(sum.id); added++; }
         catch (e) {
           if (e.status === 409) { await loadSites().catch(() => {}); dups.push(findExisting(p.siteId) || { id: e.data && e.data.id, siteId: p.siteId }); }
           else { bad++; toast(e.message); }
@@ -700,7 +715,7 @@
         <div class="body"><table class="grid"><thead><tr><th>Website</th><th>Status</th><th>Last scan</th><th></th></tr></thead><tbody>
         ${dups.map((x) => `<tr><td><b>${esc(x.businessName || x.siteId)}</b><div class="faint mono small">${esc(x.siteId)}</div></td><td>${esc(x.status || '')}</td><td class="small">${x.scan && x.scan.finishedAt ? esc(fmtDate(x.scan.finishedAt)) : '—'}</td>
           <td><a class="btn sm primary" href="#/site/${esc(x.id)}" data-open-existing>Open existing audit</a></td></tr>`).join('')}
-        </tbody></table>${bad ? `<p class="small muted">${bad} link(s) weren't valid Duda editor links.</p>` : ''}</div>
+        </tbody></table>${bad ? `<p class="small muted">${bad} line(s) weren't a site ID or a Duda editor link.</p>` : ''}</div>
         <footer><button class="btn" data-close>Close</button></footer>`;
       $$('[data-close]', $('.modal')).forEach((b) => (b.onclick = closeModal));
       $$('[data-open-existing]', $('.modal')).forEach((a) => (a.onclick = () => closeModal()));
@@ -1124,7 +1139,7 @@
   /** The editor host used to build editor links for new audits (the most common one among existing audits). */
   function editorHost() {
     if (state.config && state.config.editorHost) return state.config.editorHost;
-    const count = {}; state.sites.forEach((x) => { if (x.host) count[x.host] = (count[x.host] || 0) + 1; });
+    const count = {}; state.sites.forEach((x) => { if (x.host && x.host !== DUDA_HOST) count[x.host] = (count[x.host] || 0) + 1; });
     return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || '';
   }
   async function loadLive(refresh) {
@@ -1187,7 +1202,7 @@
         <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
         <td>${auditCell(x)}</td>
         <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : `<button class="btn sm primary" data-audit="${esc(x.id)}" ${host ? '' : 'disabled'}>Audit this website</button>`}
-          ${host ? `<a class="btn sm ghost" href="https://${esc(host)}/home/site/${esc(x.id)}/home" target="_blank" rel="noopener" title="Open in the Duda editor">Editor ↗</a>` : ''}</td></tr>`; }).join('')}
+          ${host ? `<a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(x.id)}/home" target="_blank" rel="noopener" title="Open in the Duda editor">Editor ↗</a>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div>
       ${pages > 1 ? `<div class="row-between" style="padding:10px 14px"><span class="small muted">${live.page * PER + 1}–${Math.min(list.length, live.page * PER + PER)} of ${list.length}</span><span><button class="btn sm" id="livePrev" ${live.page ? '' : 'disabled'}>← Prev</button> <button class="btn sm" id="liveNext" ${live.page < pages - 1 ? '' : 'disabled'}>Next →</button></span></div>` : ''}`}
       </div>`;
@@ -1683,11 +1698,18 @@
       return `<span class="dev ${on ? 'on' : 'hidden'}" title="${on ? 'Visible on ' + A.DEVICE_LABEL[d] : 'In the HTML but hidden on ' + A.DEVICE_LABEL[d]}">${A.DEVICE_LABEL[d]}${on ? '' : ' (hidden)'}</span>`;
     }).join('');
   }
-  const previewUrl = (site, path, device) => `https://${site.host}/site/${site.siteId}${path === '/' ? '' : path}?preview=true&insitepreview=true&dm_device=${device || 'desktop'}`;
+  // Each member picks where editor/preview links open (Your account): the white-label address or my.duda.co.
+  // The audit itself is the same either way; only the links change.
+  function linkHost(site) {
+    if (state.me && state.me.editorEnv === 'duda') return DUDA_HOST;
+    if (site && site.host && site.host !== DUDA_HOST) return site.host;
+    return editorHost() || (site && site.host) || DUDA_HOST;
+  }
+  const previewUrl = (site, path, device) => `https://${linkHost(site)}/site/${site.siteId}${path === '/' ? '' : path}?preview=true&insitepreview=true&dm_device=${device || 'desktop'}`;
   // ---------- Open an item in the Duda preview or editor ----------
   /** The Duda editor page for a path: /home/site/<id>/<page>, same editor host as the saved editor link. */
   function editorUrl(site, path) {
-    let origin = ''; try { origin = new URL(site.editorUrl).origin; } catch (e) { origin = 'https://' + site.host; }
+    const origin = 'https://' + linkHost(site);
     const page = !path || path === '/' ? 'home' : String(path).replace(/^\/+/, '').replace(/\/+$/, '');
     return `${origin}/home/site/${site.siteId}/${page}`;
   }
@@ -1779,8 +1801,8 @@
         <div class="head-actions">
           <span class="member-select">${avatar(s.assignee)}<select id="sAssign">${userOptions(s.assignee)}</select></span>
           <select class="pill st-${slug(s.status)}" id="sStatus">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
-          <a class="btn" href="${esc(s.editorUrl)}" target="_blank" rel="noopener">Open editor ↗</a>
-          <a class="btn" href="https://${esc(s.host)}/preview/${esc(s.siteId)}" target="_blank" rel="noopener">Preview ↗</a>
+          <a class="btn" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
+          <a class="btn" href="https://${esc(linkHost(s))}/preview/${esc(s.siteId)}" target="_blank" rel="noopener">Preview ↗</a>
           <button class="btn" id="sCsv" ${findings.length ? '' : 'disabled'}>Export CSV</button>
           ${otherClaim(s.id) && !live ? `<button class="btn primary" id="sRescan" disabled title="Only one scan of a website runs at a time">${esc(claimText(otherClaim(s.id)))}</button>` : `<button class="btn primary" id="sRescan" ${live ? 'disabled' : ''}>${live ? (live.queued ? 'Queued…' : 'Scanning…') : 'Rescan'}</button>`}
         </div>

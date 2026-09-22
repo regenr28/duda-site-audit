@@ -24,6 +24,8 @@ export default async function handler(req, res) {
       // How long pop-up notifications stay on screen (seconds; 0 = until closed)
       if (b.notifySecs !== undefined) { const n = Number(b.notifySecs); if (Number.isFinite(n) && n >= 0 && n <= 600) me.notifySecs = Math.round(n); }
       if (b.slackDM !== undefined) me.slackDM = !!b.slackDM;
+      // Which editor address this member opens: the white-label one or my.duda.co
+      if (b.editorEnv !== undefined) me.editorEnv = b.editorEnv === 'duda' ? 'duda' : 'white';
       await putUser(me);
       return res.status(200).json({ user: publicUser(me) });
     }
