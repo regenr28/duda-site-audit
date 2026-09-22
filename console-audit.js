@@ -700,6 +700,42 @@
     const last = String(path || '').toLowerCase().split('/').filter(Boolean).pop() || '';
     return /(^|-)(thank-?you|thanks|thx)(-|$)/.test(last) || /^(confirmation|form-(submitted|success|sent|confirmation)|submission-(received|success)|success)$/.test(last);
   }
+  // ---------- "Correct for this website" exceptions ----------
+  const ALLOW_CODES = {
+    email: ['EMAIL_MISMATCH', 'MAILTO_MISMATCH', 'MAILTO_TEXT_MISMATCH', 'SCHEMA_EMAIL'],
+    phone: ['PHONE_MISMATCH', 'TEL_MISMATCH', 'TEL_TEXT_MISMATCH', 'SMS_MISMATCH', 'SCHEMA_PHONE'],
+    social: ['SOCIAL_OTHER_BUSINESS', 'SOCIAL_MISMATCH'],
+    name: ['TEXT_OTHER_BUSINESS', 'COPYRIGHT_NAME', 'SCHEMA_NAME', 'MAP_OTHER_BUSINESS'],
+  };
+  /** Normalised key for an approved value, e.g. "email:sales@x.com", "phone:2625550147", "social:facebook:joesdetail", "name:joesdetailing". */
+  function allowKey(type, value) {
+    const v = String(value || '').trim();
+    if (!v) return '';
+    if (type === 'email') { const m = v.toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/); return m ? 'email:' + m[0] : ''; }
+    if (type === 'phone') { const d = normPhone(v); return d.length >= 10 ? 'phone:' + d.slice(-10) : ''; }
+    if (type === 'social') { const net = socialNetOf(/^https?:/i.test(v) ? v : 'https://' + v.replace(/^\/+/, '')); const h = net ? compact(socialHandle(net, v)) : compact(v); return h ? 'social:' + (net || 'any') + ':' + h : ''; }
+    if (type === 'name') { const c = compact(v); return c.length >= 3 ? 'name:' + c : ''; }
+    return '';
+  }
+  /** Which value of a finding could be approved as correct for the website: { type, value, key } or null. */
+  function allowValueOf(f) {
+    if (!f) return null;
+    for (const [type, codes] of Object.entries(ALLOW_CODES)) {
+      if (!codes.includes(f.code)) continue;
+      const value = type === 'name' ? (f.foreignName || f.found) : f.found;
+      const key = allowKey(type, value);
+      if (key) return { type, value: String(value), key };
+    }
+    // AI findings that name another business (alt text or page text)
+    if (f.foreignName && /^AI_|TEXT_OTHER/.test(f.code)) { const key = allowKey('name', f.foreignName); if (key) return { type: 'name', value: f.foreignName, key }; }
+    return null;
+  }
+  /** Drop findings whose value was approved for this website. */
+  function filterAllowed(findings, allow) {
+    if (!allow || !allow.length) return findings;
+    const keys = new Set(allow.map((a) => a.key));
+    return findings.filter((f) => { const a = allowValueOf(f); return !(a && keys.has(a.key)); });
+  }
   function fingerprint(f) { return hash([f.code, f.path, f.selector, f.found || '', f.message].join('|')); }
 
   /** Merge per-device findings for the same page/element into one row with device visibility info. */
@@ -1004,7 +1040,7 @@
 
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, isShareLink, isThankYouPath, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, socialHandle, isShareLink, isThankYouPath, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 

@@ -212,6 +212,24 @@ export const HELP_SECTIONS = [
 <p>When every item is Done or False alarm, the box says <b>🎉 All items are cleared</b>. The result is saved on the page and in the Activity log. Only one live check or scan per website runs at a time.</p>`,
   },
   {
+    id: 'approved', group: 'Checks', title: 'Approved values and Duda comments', audience: 'all',
+    html: `<h4>"Correct for this website" (approved values)</h4>
+<p>Sometimes a value that isn't in Business Info is intentional, for example the client asked for forms to go to a different email.</p>
+<ol>
+<li>Mark the item <b>False alarm</b> and add the reason.</li>
+<li>Keep <b>"… is the correct email address for this website"</b> ticked. It works for emails, phone numbers, social links and business names.</li>
+<li>Other open items with the same value are closed too, and future scans never flag it again on any page.</li>
+</ol>
+<p>Approved values are listed under <b>Reference data → Also correct for this website</b>, with who approved them and why. Click <b>Remove</b> to have the value checked again on the next scan.</p>
+<h4>Duda comments</h4>
+<ul>
+<li>The <b>Duda comments</b> tab shows comments written on the site in the Duda editor (Site Comments): who wrote them, when, the page and device, and whether the thread is resolved.</li>
+<li>Only comments written after the connection was set up appear. Duda doesn't let apps read older comments.</li>
+<li>When a comment mentions an audit item's value (an email, phone number, link or name), the item shows <b>💬 Duda comment #144</b>, and the item panel shows the conversation. If it explains the item, mark it False alarm and approve the value.</li>
+<li>Admins see the connection status at the bottom of the tab, with the request to send to Duda.</li>
+</ul>`,
+  },
+  {
     id: 'live', group: 'Live DR Sites', title: 'Live DR Sites', audience: 'all',
     html: `<p><b>Live DR Sites</b> lists every <b>published</b> website in the Duda account, so you can pick what to audit.</p>
 <ul>

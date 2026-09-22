@@ -48,6 +48,7 @@ export default async function handler(req, res) {
   const arr = Array.isArray(pagesJson) ? pagesJson : (pagesJson && (pagesJson.results || pagesJson.pages)) || [];
   pageList = arr.map((p) => ({
     path: '/' + String(p.path || p.page_path || p.url || '').replace(/^\/+/, ''),
+    uuid: String(p.uuid || p.page_uuid || p.id || '').slice(0, 64),
     title: p.title || p.page_title || '',
     noIndex: !!((p.seo && (p.seo.no_index || p.seo.noIndex)) || p.no_index),
     seoTitle: (p.seo && p.seo.title) || '',
