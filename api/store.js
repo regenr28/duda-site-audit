@@ -99,21 +99,14 @@ export default async function handler(req, res) {
         return res.status(200).json({ mode: 'kv', sites: Object.values(pairs(idx, true)), ver: String(v || 0), claims: await freshClaims(cl) });
       }
       if (op === 'site') {
-        // Version = website version + Duda-comments version (comments arrive from Duda at any time)
-        if (req.query.since) {
-          const [v, cr, ds] = await redis(['GET', P + 'ver:s:' + req.query.id], ['HGET', P + 'scanclaims', req.query.id], ['GET', P + 'dsid:' + req.query.id]);
-          const [dv] = ds ? await redis(['GET', P + 'ver:dcm:' + ds]) : [0];
-          const ver = `${v || 0}.${dv || 0}`;
-          if (ver === String(req.query.since)) return res.status(200).json({ unchanged: true, ver, claim: liveClaim(cr) });
-        }
+        if (req.query.since) { const [v, cr] = await redis(['GET', P + 'ver:s:' + req.query.id], ['HGET', P + 'scanclaims', req.query.id]); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claim: liveClaim(cr) }); }
         const l = await loadSite(req.query.id);
         if (!l) return res.status(404).json({ error: 'Not found' });
         const [act] = await redis(['LRANGE', P + 'act:' + req.query.id, 0, 299]);
         l.site.comments = l.comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         l.site.activity = (act || []).map((x) => jparse(x)).filter(Boolean);
-        const [sv, dv, dcm] = await redis(['GET', P + 'ver:s:' + req.query.id], ['GET', P + 'ver:dcm:' + l.site.siteId], ['HGETALL', P + 'dcm:' + l.site.siteId], ['SET', P + 'dsid:' + req.query.id, l.site.siteId]);
-        l.site.ver = `${sv || 0}.${dv || 0}`;
-        l.site.dudaComments = Object.values(pairs(dcm, true)).filter((c) => c && c.uuid).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 300);
+        const [sv] = await redis(['GET', P + 'ver:s:' + req.query.id]);
+        l.site.ver = String(sv || 0);
         const [cr] = await redis(['HGET', P + 'scanclaims', req.query.id]);
         l.site.claim = liveClaim(cr);
         return res.status(200).json(l.site);
@@ -466,7 +459,7 @@ export default async function handler(req, res) {
         if (me.role !== 'admin' && site.addedBy !== me.email) return res.status(403).json({ error: 'Only an admin or the person who added it can delete this website' });
         const [cm] = await redis(['HVALS', P + 'cmt:' + b.id]);
         const imgKeys = [].concat(...(cm || []).map((x) => (jparse(x) || {}).images || [])).map((u) => P + 'img:' + String(u).split('id=')[1]);
-        await redis(['DEL', P + 'site:' + b.id, P + 'fstate:' + b.id, P + 'fnum:' + b.id, P + 'seq:' + b.id, P + 'cmt:' + b.id, P + 'act:' + b.id, P + 'ailock:' + b.id, P + 'scanlock:' + b.id, P + 'dsid:' + b.id, P + 'ver:s:' + b.id, ...imgKeys], ['HDEL', P + 'index', b.id], ['HDEL', P + 'scanclaims', b.id], ['INCR', P + 'ver:index']);
+        await redis(['DEL', P + 'site:' + b.id, P + 'fstate:' + b.id, P + 'fnum:' + b.id, P + 'seq:' + b.id, P + 'cmt:' + b.id, P + 'act:' + b.id, P + 'ailock:' + b.id, P + 'scanlock:' + b.id, P + 'ver:s:' + b.id, ...imgKeys], ['HDEL', P + 'index', b.id], ['HDEL', P + 'scanclaims', b.id], ['INCR', P + 'ver:index']);
         await globalLog(me, 'site-delete', `deleted the website ${site.businessName ? site.businessName + ' (' + site.siteId + ')' : site.siteId}`, { siteRef: site.siteId, addedByName: site.addedByName || '', findings: (site.findings || []).length });
         return res.status(200).json({ ok: true });
       }

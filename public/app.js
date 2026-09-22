@@ -452,7 +452,6 @@
     const a = document.createElement('a'); a.href = r.app; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => { window.removeEventListener('blur', onBlur); if (!left && !document.hidden) window.open(r.web, '_blank', 'noopener'); }, 1500);
   }
-  document.addEventListener('click', (e) => { const d = e.target.closest && e.target.closest('[data-dconv]'); if (d) state.dFocus = d.dataset.dconv; }, true);
   document.addEventListener('click', (e) => {
     const a = e.target.closest && e.target.closest('[data-slack]');
     if (!a) return;
@@ -870,7 +869,7 @@
       const profiles = await checkProfiles(res.truth);
       const sum = await store({ op: 'saveScan', id, result: {
         host, businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages,
-        scan: { state: 'complete', startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pageMap: pageMapOf(meta), pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
+        scan: { state: 'complete', startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
       upsertSummary(sum);
       toast(`Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
@@ -881,8 +880,6 @@
     }
     if (state.current && state.current.id === id) await loadSite(id);
   }
-  /** Duda page id → path, so Duda comments can show which page they're on. */
-  function pageMapOf(meta) { const m = {}; ((meta && meta.pages) || []).forEach((p) => { if (p.uuid) m[p.uuid] = p.path; }); return m; }
   // ---------- AI alt-text judgement ----------
   const AI_LABEL = { describes_image: 'Describes the photo (OK)', this_business: 'Refers to this business (OK)', other_business: 'Names another business', wrong_location: "Location doesn't match", placeholder: 'Placeholder / stock text', unclear: 'Unclear', partner_logo: 'Brand / partner logo (OK)', name_variant: 'Business name written differently' };
   async function aiAltCheck(res, id, log) {
@@ -1396,7 +1393,7 @@
   function route() {
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
-    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'duda' ? 'duda' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
+    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'activity') return { name: 'activity' };
@@ -1860,7 +1857,6 @@
       <div class="tabs">
         <a href="#/site/${esc(s.id)}" class="${r.tab === 'findings' ? 'on' : ''}">Audit items <span class="tcount">${findings.length}</span></a>
         <a href="#/site/${esc(s.id)}/comments" class="${r.tab === 'comments' ? 'on' : ''}">Comments <span class="tcount">${generalComments}</span></a>
-        <a href="#/site/${esc(s.id)}/duda" class="${r.tab === 'duda' ? 'on' : ''}" title="Comments left on this site in the Duda editor">Duda comments <span class="tcount">${(s.dudaComments || []).length}</span></a>
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
       </div>
       <div id="tabBody"></div>`;
@@ -1873,7 +1869,6 @@
     state.renderedTab = r.tab;
     if (r.tab === 'comments') renderCommentsTab(body, s);
     else if (r.tab === 'activity') renderActivityTab(body, s);
-    else if (r.tab === 'duda') renderDudaTab(body, s);
     else renderFindingsTab(body, s, { cnt, sc, live });
     window.scrollTo(0, scrollY);
     if (r.item) openDrawer(r.item); else closeDrawer(true);
@@ -2124,7 +2119,7 @@
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
               <td style="min-width:240px"><div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
-                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${dudaChip(s, f) ? `<div style="margin-top:4px">${dudaChip(s, f)}</div>` : ''}</td>
+                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
               <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
             </tr>`;
@@ -2155,10 +2150,9 @@
       const one = av.length && av.every((a) => a.key === av[0].key) ? av[0] : null;
       const same = one ? (s.findings || []).filter((x) => !ids.includes(x.id) && !CLOSED(x) && (A.allowValueOf(x) || {}).key === one.key) : [];
       const TYPE = { email: 'email address', phone: 'phone number', social: 'social link', name: 'business name' };
-      const cm = one ? dudaMatches(s, picked[0]) : [];
       modal(`<header><h2>Mark as False alarm</h2><button class="btn ghost" data-close>✕</button></header>
         <div class="body"><label class="field">What's wrong with this finding? <span class="faint">(optional, helps improve the checks)</span>
-          <textarea id="faReason" rows="3" placeholder="e.g. This is a partner logo, the alt text is correct">${cm.length ? esc(`Intentional, confirmed in Duda comment #${cm[0].num}`) : ''}</textarea></label>
+          <textarea id="faReason" rows="3" placeholder="e.g. This is a partner logo, the alt text is correct"></textarea></label>
           ${one ? `<label class="check-row allow-row"><input type="checkbox" id="faAllow" checked> <span><b>${esc(one.value)}</b> is the correct ${TYPE[one.type]} for this website. Don't flag it again (every page, future scans)${same.length ? `, and also close the <b>${same.length}</b> other open item(s) with it: ${same.map((x) => '#' + x.num).join(', ')}` : ''}.</span></label>` : ''}</div>
         <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn" id="faSkip">Skip</button><button class="btn primary" id="faSave">Mark False alarm</button></footer>`);
       const go = async (note) => {
@@ -2178,61 +2172,6 @@
     }
     try { upsertSummary(await store({ op: 'patchFinding', siteId: s.id, findingIds: ids, changes })); await loadSite(s.id); renderSite(); if (changes.status) toast(`Marked ${FLABEL[changes.status]}`); }
     catch (e) { toast('Save failed: ' + e.message); }
-  }
-
-  // =====================================================================
-  // DUDA COMMENTS (arrive from Duda as they're written; old ones can't be fetched)
-  // =====================================================================
-  const dNorm = (t) => String(t || '').toLowerCase().replace(/\s+/g, ' ');
-  /** Duda conversations that mention this item's value (email, phone, link or name). */
-  function dudaMatches(s, f) {
-    const convs = s.dudaComments || [];
-    if (!convs.length || !f) return [];
-    const av = A.allowValueOf(f);
-    const raw = av ? av.value : f.found;
-    if (!raw || String(raw).length < 4) return [];
-    let test;
-    if (av && av.type === 'phone') { const d = av.key.split(':')[1]; test = (t) => String(t).replace(/\D/g, '').includes(d); }
-    else if (av && av.type === 'social') { const h = av.key.split(':').pop(); test = (t) => dNorm(t).replace(/[^a-z0-9]/g, '').includes(h); }
-    else { const n = dNorm(raw).replace(/^mailto:|^https?:\/\/(www\.)?/, '').replace(/\/$/, ''); if (n.length < 4) return []; test = (t) => dNorm(t).includes(n); }
-    return convs.filter((c) => (c.comments || []).some((m) => test(m.text)));
-  }
-  function dudaChip(s, f) {
-    const m = dudaMatches(s, f);
-    return m.length ? `<a class="badge duda-chip" href="#/site/${esc(s.id)}/duda" data-dconv="${esc(m[0].uuid)}" title="${esc((m[0].comments[0] || {}).text || '')}">💬 Duda comment${m[0].num !== undefined ? ' #' + esc(m[0].num) : ''}${m[0].status === 'resolved' ? ' · resolved' : ''}${m.length > 1 ? ` +${m.length - 1}` : ''}</a>` : '';
-  }
-  function dudaConvHtml(s, c, open) {
-    const map = (s.scan && s.scan.pageMap) || {};
-    const page = c.page && map[c.page];
-    return `<div class="dconv ${c.status === 'resolved' ? 'resolved' : ''}" id="dconv-${esc(c.uuid)}">
-      <div class="row-between small"><span><b>${c.num !== undefined ? '#' + esc(c.num) : 'Conversation'}</b>${page ? ` · <span class="mono">${esc(page)}</span>` : ''}${c.device ? ' · ' + esc(c.device) : ''}</span>
-        <span class="badge ${c.status === 'resolved' ? 'scan-complete' : 'sev-warning'}">${c.status === 'resolved' ? '✓ Resolved' : 'Open'}</span></div>
-      ${(c.comments || []).slice(open ? 0 : -3).map((m) => `<div class="dcm"><div class="small faint">${esc(m.by || 'Someone')} · ${esc(fmtFull(new Date(m.at).toISOString()))}${m.edited ? ' · edited' : ''}</div><div>${esc(m.text)}</div></div>`).join('') || '<div class="small faint">No messages.</div>'}
-    </div>`;
-  }
-  let dudaHook = null;
-  async function renderDudaTab(body, s) {
-    const convs = s.dudaComments || [];
-    const q = (state.dq || '').toLowerCase();
-    const shown = convs.filter((c) => !q || (c.comments || []).some((m) => dNorm(m.text).includes(q) || dNorm(m.by).includes(q)));
-    const linked = (s.findings || []).filter((f) => dudaMatches(s, f).length);
-    body.innerHTML = `<div class="panel panel-pad">
-      <div class="row-between" style="margin-bottom:8px;gap:12px"><h2 style="margin:0">Duda comments</h2>${convs.length ? `<input type="search" id="dq" placeholder="Search comments…" value="${esc(state.dq || '')}" style="max-width:260px">` : ''}</div>
-      <p class="small muted" style="margin-top:0">Comments written on this site in the Duda editor (Site Comments), as they happen. Duda doesn't let apps read older comments, so only new activity appears here.</p>
-      ${linked.length ? `<div class="note unk small">Audit items mentioned in these comments: ${linked.map((f) => `<a class="vchip" href="#/site/${esc(s.id)}/item/${f.num}" title="${esc(f.message)}">#${f.num}</a>`).join(' ')}. Check whether the comment explains them (for example, a client asked for that email).</div>` : ''}
-      ${shown.length ? shown.map((c) => dudaConvHtml(s, c, true)).join('') : `<div class="empty small">${convs.length ? 'No comments match.' : 'No Duda comments received for this site yet.'}</div>`}
-      <div id="dudaSetup"></div></div>`;
-    const dq = $('#dq', body); if (dq) dq.oninput = () => { state.dq = dq.value; const p = dq.selectionStart; renderDudaTab(body, s); const i = $('#dq', body); if (i) { i.focus(); i.setSelectionRange(p, p); } };
-    if (state.me.role === 'admin') {
-      try { dudaHook = dudaHook || await api('/api/dudasites?op=hookinfo'); } catch (e) { return; }
-      const h = dudaHook; const el = $('#dudaSetup', body); if (!el) return;
-      el.innerHTML = `<details class="duda-setup" ${h.stat ? '' : 'open'}><summary class="small"><b>Connection</b> (admins): ${h.stat ? `receiving comments · last event ${esc(relTime(new Date(h.stat.at).toISOString()))} · ${h.count} stored` : '<span class="v-still-t">not receiving comments yet</span>'}</summary>
-        <div class="small" style="margin-top:8px">Duda sets this up on their side (it isn't self-service). Send this to Duda support or your Duda partner manager:</div>
-        <div class="note small" style="margin-top:6px">Please enable webhooks for our account and send these events: <b>${h.events.join(', ')}</b><br>to this HTTPS address:<br><code class="mono" style="word-break:break-all">${esc(h.url)}</code></div>
-        <button class="btn sm" id="dudaCopy">Copy the request</button> <span class="small faint">Keep the address private: it's the key that lets Duda send comments to the app.</span></details>`;
-      $('#dudaCopy', el).onclick = () => copy(`Hi Duda team,\n\nPlease enable webhooks for our account and send these Site Comments events: ${h.events.join(', ')}\n\nWebhook address (HTTPS): ${h.url}\n\nThank you!`, 'Request copied');
-    }
-    const hash = state.dFocus; if (hash) { const e = document.getElementById('dconv-' + hash); if (e) { e.scrollIntoView({ block: 'center' }); e.classList.add('flash'); } state.dFocus = null; }
   }
 
   function renderCommentsTab(body, s) {
@@ -2295,7 +2234,6 @@
         ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
         ${aiNote(f, true)}${aiPendingHtml(f, true)}
-        ${dudaMatches(s, f).length ? `<div class="dr-duda"><div class="k">💬 Mentioned in Duda comments</div>${dudaMatches(s, f).slice(0, 3).map((c) => dudaConvHtml(s, c, false)).join('')}<div class="small muted">If the comment explains it (for example, the client asked for this), mark it <b>False alarm</b> and approve the value for this website.</div></div>` : ''}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}</div>

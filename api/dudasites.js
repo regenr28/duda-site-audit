@@ -4,7 +4,7 @@
 // POST /api/dudasites { op: 'names', ids }    → fills in business names (the list endpoint doesn't include them)
 // POST /api/dudasites { op: 'domains', ids }  → checks each site's live domain (working, redirecting elsewhere, 404, DNS…)
 // Uses Duda's List Sites endpoint (100 per page), so 800 sites = 8 API calls. Stored compressed in one small key.
-import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, newId, appUrl } from './_lib.js';
+import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const KEY = P + 'dudasites';
@@ -107,75 +107,10 @@ async function checkDomain(domain) {
 
 export const _test = { checkDomain };
 
-// ---------- Duda site comments (webhook receiver) ----------
-// Duda sends site-comment events (new conversation, new comment, resolved/unresolved, edited, deleted) to
-// POST /api/dudasites?hook=<secret token>. Duda's API can't list old comments, so only new activity is captured.
-// Stored per Duda site: hash dcm:<siteId> (conversation uuid → conversation JSON) + version counter for live refresh.
-const HOOK = P + 'dcmhook';      // the secret token in the webhook address
-const HOOKSTAT = P + 'dcmstat';  // { at, count, last } of received events
-async function hookToken(create) {
-  const [t] = await redis(['GET', HOOK]);
-  if (t || !create) return t || '';
-  const nt = newId(32);
-  await redis(['SET', HOOK, nt]);
-  return nt;
-}
-const ms = (t) => { const n = Number(t) || Date.now(); return n < 1e12 ? n * 1000 : n; };
-async function receiveHook(req, res) {
-  const token = await hookToken(false);
-  if (!token || String(req.query.hook || '') !== token) return res.status(401).json({ error: 'Unknown webhook' });
-  let body = req.body;
-  if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = {}; } }
-  const events = Array.isArray(body) ? body : [body || {}];
-  let n = 0;
-  for (const ev of events.slice(0, 50)) {
-    const type = String(ev.event_type || ev.eventType || '').toUpperCase();
-    const site = String((ev.resource_data && (ev.resource_data.site_name || ev.resource_data.siteName)) || ev.site_name || '').trim();
-    const d = ev.data || {};
-    const cu = String(d.conversation_uuid || (d.conversation && d.conversation.uuid) || '').slice(0, 64);
-    if (!site || !/^[A-Za-z0-9_-]{4,40}$/.test(site) || !cu || !/CONVERSATION|COMMENT/.test(type)) continue;
-    const key = P + 'dcm:' + site;
-    const [raw] = await redis(['HGET', key, cu]);
-    const c = jparse(raw) || { uuid: cu, status: 'unresolved', comments: [], createdAt: ms(ev.event_timestamp) };
-    const ctx = d.conversation_context || {};
-    if (ctx.conversation_number !== undefined) c.num = ctx.conversation_number;
-    if (ctx.page_uuid) c.page = String(ctx.page_uuid).slice(0, 64);
-    if (ctx.device) c.device = String(ctx.device).toLowerCase().slice(0, 10);
-    const props = d.conversation_properties || {};
-    if (props.status) c.status = String(props.status).toLowerCase() === 'resolved' ? 'resolved' : 'unresolved';
-    const cm = d.comment || {};
-    const by = String((ev.source && ev.source.account_name) || cm.author || '').slice(0, 80);
-    if (cm.uuid || cm.text) {
-      const i = c.comments.findIndex((x) => x.uuid && x.uuid === cm.uuid);
-      if (type === 'COMMENT_DELETED') { if (i >= 0) c.comments.splice(i, 1); }
-      else if (i >= 0) { if (cm.text !== undefined) c.comments[i].text = String(cm.text).slice(0, 3000); c.comments[i].edited = true; }
-      else c.comments.push({ uuid: String(cm.uuid || newId(8)).slice(0, 64), text: String(cm.text || '').slice(0, 3000), by, at: ms(ev.event_timestamp) });
-      c.comments = c.comments.slice(-100);
-    }
-    if (type === 'CONVERSATION_UPDATED' && props.status) (c.history = c.history || []).push({ status: c.status, by, at: ms(ev.event_timestamp) });
-    if (c.history) c.history = c.history.slice(-20);
-    c.updatedAt = ms(ev.event_timestamp);
-    await redis(['HSET', key, cu, JSON.stringify(c)], ['INCR', P + 'ver:dcm:' + site]);
-    n++;
-  }
-  await redis(['SET', HOOKSTAT, JSON.stringify({ at: Date.now(), last: n ? 'ok' : 'ignored' })], ['INCRBY', HOOKSTAT + ':n', n]);
-  return res.status(200).json({ ok: true, stored: n });
-}
-
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
-  if (req.method === 'POST' && req.query.hook !== undefined) return receiveHook(req, res);
   const me = await requireUser(req, res);
   if (!me) return;
-  // Admins: the webhook address to give Duda, and whether events are arriving
-  if (req.method === 'GET' && req.query.op === 'hookinfo') {
-    if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
-    const token = await hookToken(true);
-    const [st, n] = await redis(['GET', HOOKSTAT], ['GET', HOOKSTAT + ':n']);
-    const base = appUrl(req) || '';
-    return res.status(200).json({ url: `${base}/api/dudasites?hook=${token}`, stat: jparse(st), count: Number(n) || 0,
-      events: ['NEW_CONVERSATION', 'NEW_COMMENT', 'CONVERSATION_UPDATED', 'COMMENT_EDITED', 'COMMENT_DELETED'] });
-  }
   if (req.method === 'POST') {
     try {
       const b = readBody(req);

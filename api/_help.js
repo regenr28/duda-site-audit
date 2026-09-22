@@ -212,22 +212,15 @@ export const HELP_SECTIONS = [
 <p>When every item is Done or False alarm, the box says <b>🎉 All items are cleared</b>. The result is saved on the page and in the Activity log. Only one live check or scan per website runs at a time.</p>`,
   },
   {
-    id: 'approved', group: 'Checks', title: 'Approved values and Duda comments', audience: 'all',
-    html: `<h4>"Correct for this website" (approved values)</h4>
-<p>Sometimes a value that isn't in Business Info is intentional, for example the client asked for forms to go to a different email.</p>
+    id: 'approved', group: 'Checks', title: 'Approved values (correct for this website)', audience: 'all',
+    html: `<p>Sometimes a value that isn't in Business Info is intentional. For example, the client asked for forms to go to a different email, or a second phone number is correct.</p>
 <ol>
-<li>Mark the item <b>False alarm</b> and add the reason.</li>
-<li>Keep <b>"… is the correct email address for this website"</b> ticked. It works for emails, phone numbers, social links and business names.</li>
-<li>Other open items with the same value are closed too, and future scans never flag it again on any page.</li>
+<li>Mark the item <b>False alarm</b> and write why (for example "Client asked for this email, see Duda comment #144").</li>
+<li>For emails, phone numbers, social links and business names, the window shows a ticked box: <b>"… is the correct … for this website. Don't flag it again"</b>. The value is taken from the item's <b>Found</b>, so it works for any website.</li>
+<li>If other open items on the same website have the same value, the box lists their numbers and closes them as False alarm too, with the same reason.</li>
+<li>Future scans of <b>this website only</b> never flag that value again, on any page. Other websites are not affected.</li>
 </ol>
-<p>Approved values are listed under <b>Reference data → Also correct for this website</b>, with who approved them and why. Click <b>Remove</b> to have the value checked again on the next scan.</p>
-<h4>Duda comments</h4>
-<ul>
-<li>The <b>Duda comments</b> tab shows comments written on the site in the Duda editor (Site Comments): who wrote them, when, the page and device, and whether the thread is resolved.</li>
-<li>Only comments written after the connection was set up appear. Duda doesn't let apps read older comments.</li>
-<li>When a comment mentions an audit item's value (an email, phone number, link or name), the item shows <b>💬 Duda comment #144</b>, and the item panel shows the conversation. If it explains the item, mark it False alarm and approve the value.</li>
-<li>Admins see the connection status at the bottom of the tab, with the request to send to Duda.</li>
-</ul>`,
+<p>Approved values are listed under <b>Reference data → Also correct for this website</b>, with who approved them, when, from which item and why. Click <b>Remove</b> to have the value checked again on the next scan. Untick the box if you only want to close this one item.</p>`,
   },
   {
     id: 'live', group: 'Live DR Sites', title: 'Live DR Sites', audience: 'all',
