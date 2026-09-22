@@ -45,7 +45,9 @@ function publicStatus(st, owner) {
     used, limit, resetsAt: Math.min(...st.map((x) => x.resetsAt)), combined: true }];
 }
 
-const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 5000); // items (alt texts + text blocks) per day, all users
+// Optional extra safety cap on items (alt texts + text blocks) per day for the whole team. Off by default:
+// each AI model's own daily cap already limits usage, and the chain moves on to the next model when one is used up.
+const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 0);
 const AGENCIES = (process.env.AGENCY_NAMES || 'Detailers Roadmap, 8bit Creative').split(',').map((s) => s.trim()).filter(Boolean);
 const ALT_VERDICTS = ['describes_image', 'this_business', 'partner_logo', 'other_business', 'wrong_location', 'placeholder', 'unclear'];
 const TEXT_TYPES = ['other_business', 'wrong_location', 'name_variant'];
@@ -482,10 +484,16 @@ export default async function handler(req, res) {
     });
 
     if (todo.length) {
-      const day = new Date().toISOString().slice(0, 10);
-      const [used] = await redis(['INCRBY', P + 'ai:used:' + day, todo.length]);
-      if (used === todo.length) await redis(['EXPIRE', P + 'ai:used:' + day, 172800]);
-      if (used > DAILY_LIMIT) return res.status(429).json({ error: 'Daily AI limit reached. The AI check continues tomorrow.', results });
+      if (DAILY_LIMIT > 0) {
+        const day = new Date().toISOString().slice(0, 10);
+        const [used] = await redis(['INCRBY', P + 'ai:used:' + day, todo.length]);
+        if (used === todo.length) await redis(['EXPIRE', P + 'ai:used:' + day, 172800]);
+        if (used > DAILY_LIMIT) {
+          await redis(['DECRBY', P + 'ai:used:' + day, todo.length]);
+          const tomorrow = new Date(); tomorrow.setUTCHours(24, 0, 0, 0);
+          return res.status(429).json({ error: "Today's AI allowance for the team is used up. The rest is checked automatically tomorrow.", allBusy: true, retryAt: tomorrow.getTime(), results });
+        }
+      }
       const { parsed, p: used_p } = await callChain(list, b.op === 'alt' ? ALT_SYSTEM : TEXT_SYSTEM, b.op === 'alt' ? altPrompt(business, todo) : textPrompt(business, todo));
       pvUsed = used_p;
       const clean = (parsed.results || []).filter((x) => x && Number.isFinite(Number(x.i)) && todo.some((t) => t.i === Number(x.i)));

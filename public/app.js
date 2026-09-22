@@ -904,7 +904,7 @@
         const w = await aiWait(e, id, waits++);
         if (w === 'retry') { k -= 50; continue; }
         if (w && w.paused) { paused = w.paused; pending = pending.concat(items.slice(k).map((x) => res.alts[x.i])); break; }
-        errors++; log.push('AI alt-text check: ' + e.message); if (e.status === 429 || e.status === 400) break;
+        errors++; log.push('AI alt-text check: ' + e.message); if (e.status === 429 || e.status === 400) { pending = pending.concat(items.slice(k).map((x) => res.alts[x.i])); if (!paused) paused = { retryAt: aiResumeAt() || srvNow() + 3600000, next: '' }; break; }
       }
     }
     res.findings = A.applyAltVerdicts(res.findings, res.alts, verdicts, t);
@@ -927,8 +927,8 @@
     if (!state.ai || !state.ai.enabled || !(res.texts || []).length) return null;
     const skip = res.aiSkip || new Set();
     const todoTexts = res.texts.filter((b) => !skip.has('text|' + ((b.pages || [])[0] || '/')));
-    if (pausedAlready) return { blocks: 0, of: res.texts.length, truncated: false, cached: 0, flagged: 0, errors: 0, used: [], paused: pausedAlready, pending: (() => { let n = 0; return todoTexts.filter((b) => (n += Math.min(1500, b.text.length)) <= 120000); })() };
-    const MAX_CHARS = 120000, BATCH_CHARS = 9000, BATCH_ITEMS = 45;
+    if (pausedAlready) return { blocks: 0, of: res.texts.length, truncated: false, cached: 0, flagged: 0, errors: 0, used: [], paused: pausedAlready, pending: (() => { let n = 0; return todoTexts.filter((b) => (n += Math.min(1500, b.text.length)) <= 240000); })() };
+    const MAX_CHARS = 240000, BATCH_CHARS = 9000, BATCH_ITEMS = 45;
     const business = aiBusiness(res);
     const blocks = []; let total = 0;
     res.texts.forEach((b, i) => { if (skip.has('text|' + ((b.pages || [])[0] || '/'))) return; if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, 1500), location: b.location, page: b.pages[0] }); total += Math.min(1500, b.text.length); } });
@@ -950,7 +950,8 @@
         if (w === 'retry') { k--; continue; }
         if (w && w.paused) { paused = w.paused; pending = pending.concat([].concat(...batches.slice(k)).map((x) => res.texts[x.i])); break; }
         errors++; log.push('AI page-text check: ' + e.message);
-        if (e.status === 429 || e.status === 400) break;
+        // Don't lose the rest: keep it as "AI check pending" so it's picked up automatically later
+        if (e.status === 429 || e.status === 400) { pending = pending.concat([].concat(...batches.slice(k)).map((x) => res.texts[x.i])); if (!paused) paused = { retryAt: aiResumeAt() || srvNow() + 3600000, next: '' }; break; }
       }
     }
     const before = res.findings.length;
