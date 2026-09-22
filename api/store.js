@@ -128,6 +128,12 @@ export default async function handler(req, res) {
         const lastItem = items.find((e) => e.findingNum && !e.global && /^item-|comment|reply/.test(e.type) && e.type !== 'comment-delete') || null;
         return res.status(200).json({ items: items.slice(0, 150), recent, counts, lastItem });
       }
+      if (op === 'falseAlarms') {
+        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        const [all] = await redis(['HGETALL', P + 'fa']);
+        const items = Object.values(pairs(all, true)).sort((a, c) => String(c.markedAt || c.createdAt).localeCompare(String(a.markedAt || a.createdAt)));
+        return res.status(200).json({ items });
+      }
       if (op === 'notifs') {
         const [list, seen] = await redis(['LRANGE', P + 'notif:' + me.email, 0, 49], ['GET', P + 'notifseen:' + me.email]);
         const items = (list || []).map((x) => jparse(x)).filter(Boolean);
@@ -223,6 +229,28 @@ export default async function handler(req, res) {
         await globalLog(me, 'maintenance', `optimized the database: ${out.sitesCompressed} website records compressed, ${out.oldKeysRemoved} old cache entries removed`);
         return res.status(200).json(out);
       }
+      case 'faUpdate': case 'faComment': {
+        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        const [raw] = await redis(['HGET', P + 'fa', String(b.key || '')]);
+        const rec = jparse(raw); if (!rec) return res.status(404).json({ error: 'Not found' });
+        if (b.op === 'faUpdate') {
+          if (!['new', 'ongoing', 'done', 'skip'].includes(b.status)) return res.status(400).json({ error: 'Bad status' });
+          if (rec.status !== b.status) (rec.history = rec.history || []).push({ by: me.name, at: now(), from: rec.status, to: b.status });
+          rec.status = b.status; rec.updatedAt = now(); rec.updatedBy = me.name;
+        } else {
+          const text = String(b.text || '').trim().slice(0, 3000);
+          if (!text) return res.status(400).json({ error: 'Write something' });
+          rec.comments = (rec.comments || []).concat([{ id: newId(6), by: me.email, byName: me.name, text, at: now() }]).slice(-60);
+        }
+        if (rec.history) rec.history = rec.history.slice(-30);
+        await redis(['HSET', P + 'fa', rec.key, JSON.stringify(rec)]);
+        return res.status(200).json(rec);
+      }
+      case 'faDelete': {
+        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        await redis(['HDEL', P + 'fa', String(b.key || '')]);
+        return res.status(200).json({ ok: true });
+      }
       case 'aiLock': {
         // Only one browser resumes a site's AI check at a time
         const [ok] = await redis(['SET', P + 'ailock:' + b.id, me.email, 'NX', 'PX', 10 * 60000]);
@@ -255,8 +283,34 @@ export default async function handler(req, res) {
           cmds.push(['HSET', P + 'fstate:' + b.siteId, f.id, JSON.stringify(next)]);
         });
         if (cmds.length) await redis(...cmds);
+        // False alarms feed the admins' review list, so the checks can be improved
+        const faCmds = [];
+        const faKeys = touched.filter((t) => t.kind === 'status' && (t.to === 'false' || t.from === 'false')).map((t) => b.siteId + ':' + t.f.id);
+        const faOld = faKeys.length ? (await redis(['HMGET', P + 'fa', ...faKeys]))[0] || [] : [];
+        const note = String(ch.note || '').trim().slice(0, 1000);
+        touched.filter((t) => t.kind === 'status' && (t.to === 'false' || t.from === 'false')).forEach((t, k) => {
+          const key = b.siteId + ':' + t.f.id;
+          const old = jparse(faOld[k]);
+          const f = t.f;
+          const rec = old || { key, siteId: b.siteId, siteRef: l.site.siteId, findingId: f.id, status: 'new', comments: [], createdAt: now() };
+          Object.assign(rec, {
+            siteName: l.site.businessName || l.site.siteId, num: f.num, code: f.code, category: f.category, severity: f.severity, message: f.message,
+            found: String(f.found || '').slice(0, 300), expected: String(f.expected || '').slice(0, 300), selector: f.selector, path: f.path, location: f.location,
+            ai: f.ai ? { verdict: f.ai.verdict, reason: String(f.ai.reason || '').slice(0, 200) } : undefined,
+          });
+          if (t.to === 'false') { Object.assign(rec, { active: true, markedBy: me.email, markedByName: me.name, markedAt: now() }); if (note) rec.reason = note; if (old && old.status === 'done') rec.status = 'new'; }
+          else { rec.active = false; rec.unmarkedBy = me.name; rec.unmarkedAt = now(); }
+          faCmds.push(['HSET', P + 'fa', key, JSON.stringify(rec)]);
+        });
+        if (faCmds.length) await redis(...faCmds);
+        const marked = touched.filter((t) => t.kind === 'status' && t.to === 'false');
+        if (marked.length) {
+          for (const a of users.filter((u) => u.role === 'admin' && u.status === 'active' && u.email !== me.email)) {
+            await notify(a.email, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: marked[0].f.num, kind: 'false-alarm', text: (note ? note + ' · ' : '') + marked[0].f.message });
+          }
+        }
         for (const t of touched.slice(0, 20)) {
-          if (t.kind === 'status') await log(b.siteId, me, 'item-status', `changed #${t.f.num} from "${FLABEL[t.from]}" to "${FLABEL[t.to]}"`, { findingId: t.f.id, findingNum: t.f.num });
+          if (t.kind === 'status') await log(b.siteId, me, 'item-status', `changed #${t.f.num} from "${FLABEL[t.from]}" to "${FLABEL[t.to]}"${t.to === 'false' && note ? ` (reason: ${note.slice(0, 120)})` : ''}`, { findingId: t.f.id, findingNum: t.f.num });
           else {
             await log(b.siteId, me, 'item-assign', `assigned #${t.f.num} to ${nameOf(t.to)}`, { findingId: t.f.id, findingNum: t.f.num });
             if (t.to && t.to !== me.email) await notify(t.to, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: t.f.num, kind: 'assign', text: t.f.message });

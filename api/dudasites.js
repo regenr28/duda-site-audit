@@ -1,7 +1,7 @@
 // "Live DR Sites": every PUBLISHED site in the Duda account, for picking what to audit.
 // GET /api/dudasites            → cached list (refreshed automatically every 6 hours)
 // GET /api/dudasites?refresh=1  → fetch again from Duda now
-// Uses Duda's List Sites endpoint (200 per page), so 800 sites = 4 API calls. Stored compressed in one small key.
+// Uses Duda's List Sites endpoint (100 per page), so 800 sites = 8 API calls. Stored compressed in one small key.
 import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
@@ -27,14 +27,18 @@ const slim = (x) => ({
 });
 
 async function fetchAll() {
-  const out = []; let offset = 0;
-  for (let page = 0; page < 40; page++) { // up to 8,000 sites
-    const j = await duda(`/sites/multiscreen?publish_status=PUBLISHED&limit=200&offset=${offset}&sort=LAST_PUBLISHED_DATE&direction=DESC`);
+  // Duda may return fewer rows per page than requested (e.g. 100 even when asking for 200), so keep paging
+  // until a page comes back empty or adds nothing new, instead of assuming a short page means the end.
+  const out = []; const seen = new Set(); let offset = 0;
+  const PAGE = 100;
+  for (let page = 0; page < 150; page++) { // up to 15,000 sites
+    const j = await duda(`/sites/multiscreen?publish_status=PUBLISHED&limit=${PAGE}&offset=${offset}&sort=CREATION_DATE&direction=DESC`);
     const rows = Array.isArray(j) ? j : j.results || j.sites || j.data || [];
-    rows.forEach((x) => { if (x && x.site_name && (!x.publish_status || x.publish_status === 'PUBLISHED')) out.push(slim(x)); });
-    const total = Number(j.total_responses || j.total || j.totalCount || 0);
+    let added = 0;
+    rows.forEach((x) => { if (x && x.site_name && !seen.has(x.site_name) && (!x.publish_status || x.publish_status === 'PUBLISHED')) { seen.add(x.site_name); out.push(slim(x)); added++; } });
+    const total = Number(j.total_responses || j.total || j.totalCount || j.total_count || 0);
     offset += rows.length;
-    if (rows.length < 200 || (total && offset >= total)) break;
+    if (!rows.length || !added || (total && offset >= total)) break;
   }
   return out;
 }

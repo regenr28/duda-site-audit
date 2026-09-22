@@ -430,3 +430,13 @@ body.drawer-open { overflow: hidden; }
 .live-audit:hover .small { text-decoration: underline; }
 .live-pull { text-align: right; line-height: 1.5; }
 @media (max-width: 640px) { .live-pull { text-align: left; } }
+
+/* ---------- v17: False alarms (admin) ---------- */
+select.pill.fa-new { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+select.pill.fa-ongoing { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+select.pill.fa-done { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-color: transparent; }
+.fa-reason { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--warn); background: var(--panel-2); border-radius: 0 6px 6px 0; font-size: 13px; font-style: italic; }
+.fa-add { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
+.fa-add textarea { flex: 1; }
+.fa-add textarea { font: inherit; }

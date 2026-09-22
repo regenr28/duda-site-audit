@@ -200,7 +200,7 @@
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
       <a href="#/live" data-nav="live">Live DR Sites</a>
       ${state.me.role === 'admin' ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
-      <a href="#/suggestions" data-nav="suggestions">${isOwner ? 'Suggestions' : 'My suggestions'}</a>
+      <a href="#/suggestions" data-nav="suggestions">${isOwner || state.me.role === 'admin' ? 'Suggestions' : 'My suggestions'}</a>
       <a href="#/ai" data-nav="ai">AI Status</a>
       <a href="#/about" data-nav="about">About</a>`;
     $('#topRight').innerHTML = `
@@ -230,10 +230,11 @@
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
   }
-  const NOTIF_TEXT = { mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
+  const NOTIF_TEXT = { 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
+    if (n.kind === 'false-alarm') return '#/suggestions/false-alarms';
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   }
   function toggleNotifs() {
@@ -1170,7 +1171,7 @@
     if (parts[0] === 'activity') return { name: 'activity' };
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'live') return { name: 'live' };
-    if (parts[0] === 'suggestions') return { name: 'suggestions' };
+    if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas' };
     return { name: 'sites' };
   }
   let lastSiteId = null;
@@ -1662,6 +1663,19 @@
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
   }
   async function setFinding(s, ids, changes) {
+    if (changes.status === 'false' && changes.note === undefined) {
+      // Ask why (optional): this goes to the admins' False alarms list and helps fix the checks
+      modal(`<header><h2>Mark as False alarm</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body"><label class="field">What's wrong with this finding? <span class="faint">(optional, helps improve the checks)</span>
+          <textarea id="faReason" rows="3" placeholder="e.g. This is a partner logo, the alt text is correct"></textarea></label></div>
+        <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn" id="faSkip">Skip</button><button class="btn primary" id="faSave">Mark False alarm</button></footer>`);
+      const go = (note) => { closeModal(); setFinding(s, ids, Object.assign({}, changes, { note })); };
+      $('#faSave').onclick = () => go($('#faReason').value.trim());
+      $('#faSkip').onclick = () => go('');
+      $$('[data-close]', $('.modal')).forEach((b) => b.addEventListener('click', () => renderSite()));
+      setTimeout(() => $('#faReason') && $('#faReason').focus(), 50);
+      return;
+    }
     try { upsertSummary(await store({ op: 'patchFinding', siteId: s.id, findingIds: ids, changes })); await loadSite(s.id); renderSite(); if (changes.status) toast(`Marked ${FLABEL[changes.status]}`); }
     catch (e) { toast('Save failed: ' + e.message); }
   }
@@ -1962,7 +1976,77 @@
       },
       onPosted: async () => { closeModal(); toast('Thanks! Your suggestion was sent.'); if (route().name === 'suggestions') renderSuggestions(); } });
   }
+  // ---------- False alarms (admin only): audit items the team marked as wrong, to improve the checks ----------
+  const FA = [{ v: 'new', label: 'New' }, { v: 'ongoing', label: 'Ongoing' }, { v: 'done', label: 'Done' }, { v: 'skip', label: 'Skip' }];
+  const FAL = Object.fromEntries(FA.map((x) => [x.v, x.label]));
+  const fa = { filter: 'open', code: '', q: '' };
+  async function renderFalseAlarms() {
+    $('#view').innerHTML = sugTabs('fa', state.faNew) + '<div class="empty">Loading…</div>';
+    let items = [];
+    try { items = (await api('/api/store?op=falseAlarms')).items || []; } catch (e) { $('#view').innerHTML = sugTabs('fa') + `<div class="empty">${esc(e.message)}</div>`; return; }
+    state.faNew = items.filter((i) => i.status === 'new' && i.active !== false).length;
+    const draw = () => {
+      const count = (v) => items.filter((i) => i.status === v).length;
+      const openItems = items.filter((i) => ['new', 'ongoing'].includes(i.status));
+      const byCode = {}; openItems.forEach((i) => { byCode[i.code] = (byCode[i.code] || 0) + 1; });
+      const codes = Object.keys(byCode).sort((a, b) => byCode[b] - byCode[a]);
+      const q = fa.q.trim().toLowerCase();
+      const list = items.filter((i) => (fa.filter === 'all' || (fa.filter === 'open' ? ['new', 'ongoing'].includes(i.status) : i.status === fa.filter))
+        && (!fa.code || i.code === fa.code) && (!q || [i.siteName, i.siteRef, i.message, i.found, i.reason, i.code].some((v) => String(v || '').toLowerCase().includes(q))));
+      $('#view').innerHTML = sugTabs('fa', state.faNew) + `<div class="page-head"><div><h1>False alarms</h1>
+          <div class="muted">Audit items the team marked <b>False alarm</b>. Only admins see this. Use them to fine-tune the checks, then mark them Done.</div></div>
+          <button class="btn" id="faCopy" title="Copies the open false alarms as plain text, ready to paste to whoever updates the app">📋 Copy open items as text</button></div>
+        ${codes.length ? `<div class="panel panel-pad" style="margin-bottom:12px"><div class="k">Most reported checks (open)</div><div class="chips" style="margin-top:6px">${codes.slice(0, 12).map((c) => `<button class="chipbtn ${fa.code === c ? 'active' : ''}" data-facode="${esc(c)}"><span class="mono">${esc(c)}</span> <span class="faint">${byCode[c]}</span></button>`).join('')}${fa.code ? '<button class="chipbtn" data-facode="">Clear</button>' : ''}</div></div>` : ''}
+        <div class="panel"><div class="toolbar"><span class="chips">
+          <button class="chipbtn ${fa.filter === 'open' ? 'active' : ''}" data-faf="open">New + Ongoing ${count('new') + count('ongoing')}</button>
+          ${FA.map((x) => `<button class="chipbtn ${fa.filter === x.v ? 'active' : ''}" data-faf="${x.v}">${x.label} ${count(x.v)}</button>`).join('')}
+          <button class="chipbtn ${fa.filter === 'all' ? 'active' : ''}" data-faf="all">All ${items.length}</button></span>
+          <input type="search" id="faQ" placeholder="Search website, finding or reason…" value="${esc(fa.q)}" style="flex:1;min-width:200px"></div>
+        <div class="sg-list">${list.length ? list.map((i) => `<div class="sg-card fa-card" id="fa-${esc(i.key)}">
+          <div class="row-between" style="align-items:flex-start"><div class="grow">
+            <div class="small"><span class="badge sev-${esc(i.severity || 'info')}">${esc(i.severity || '')}</span> <span class="mono faint">${esc(i.code || '')}</span> · ${esc(i.category || '')}</div>
+            <div class="sg-title" style="margin-top:4px">${esc(i.message || '')}</div>
+            <div class="small muted"><b>${esc(i.siteName || i.siteRef)}</b> · #${esc(String(i.num || ''))} · <span class="mono">${esc(i.path || '')}</span>${i.location ? ' · ' + esc(i.location) : ''}</div></div>
+            <select class="pill fa-${esc(i.status)}" data-fast="${esc(i.key)}">${FA.map((x) => `<option value="${x.v}" ${x.v === i.status ? 'selected' : ''}>${x.label}</option>`).join('')}</select></div>
+          ${i.found ? `<div class="kv" style="margin-top:8px"><b>Found:</b> ${esc(i.found)}</div>` : ''}${i.expected ? `<div class="kv"><b>Expected:</b> ${esc(i.expected)}</div>` : ''}
+          ${i.ai ? `<div class="small muted">✨ AI said: ${esc(AI_LABEL[i.ai.verdict] || i.ai.verdict)}${i.ai.reason ? ' · ' + esc(i.ai.reason) : ''}</div>` : ''}
+          ${i.reason ? `<div class="fa-reason">“${esc(i.reason)}”</div>` : ''}
+          <div class="small faint" style="margin-top:6px">Marked False alarm by ${esc(i.markedByName || '')} · ${esc(fmtFull(i.markedAt))}${i.active === false ? ` · <span class="badge">Changed back by ${esc(i.unmarkedBy || '')}</span>` : ''}${(i.history || []).length ? ` · last update: ${esc(i.history[i.history.length - 1].by)} → ${esc(FAL[i.history[i.history.length - 1].to])}` : ''}</div>
+          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><a class="btn sm primary" href="#/site/${encodeURIComponent(i.siteId)}/item/${esc(String(i.num || ''))}">Open audit item ↗</a><button class="btn sm ghost" data-fadel="${esc(i.key)}" title="Remove from this list">Remove</button></div>
+          <details class="sg-disc" ${(i.comments || []).length ? 'open' : ''}><summary class="small">Notes (${(i.comments || []).length})</summary>
+            <div class="c-list">${(i.comments || []).map((c) => `<div class="comment"><div class="c-head">${avatar(c.by, 22)} <b>${esc(c.byName)}</b> <span class="small faint">${esc(fmtFull(c.at))}</span></div><div class="c-body">${esc(c.text)}</div></div>`).join('')}</div>
+            <div class="fa-add"><textarea rows="2" placeholder="e.g. Fixed: brand logos in a logo row are no longer flagged" data-fatext="${esc(i.key)}"></textarea><button class="btn sm" data-facmt="${esc(i.key)}">Add note</button></div></details>
+        </div>`).join('') : `<div class="empty">${items.length ? 'Nothing with this filter.' : 'No false alarms yet. When someone marks an audit item as False alarm, it shows up here.'}</div>`}</div></div>`;
+      $$('[data-faf]').forEach((b) => (b.onclick = () => { fa.filter = b.dataset.faf; draw(); }));
+      $('#faCopy').onclick = () => {
+        const open = items.filter((i) => ['new', 'ongoing'].includes(i.status));
+        if (!open.length) return toast('No open false alarms');
+        const txt = `False alarms to fix (${open.length}), exported ${new Date().toLocaleString()}\n\n` + open.map((i, k) => [
+          `${k + 1}. [${i.code}] ${i.message}`, `   Website: ${i.siteName} (${i.siteRef}) · item #${i.num} · page ${i.path} · ${i.location || ''}`,
+          i.found ? `   Found: ${i.found}` : '', i.expected ? `   Expected: ${i.expected}` : '', i.selector ? `   Selector: ${i.selector}` : '',
+          i.ai ? `   AI verdict: ${i.ai.verdict}${i.ai.reason ? ' (' + i.ai.reason + ')' : ''}` : '', i.reason ? `   Why it's wrong: ${i.reason}` : '',
+          ...(i.comments || []).map((c) => `   Note (${c.byName}): ${c.text}`)].filter(Boolean).join('\n')).join('\n\n');
+        copy(txt, `Copied ${open.length} false alarm(s)`);
+      };
+      $$('[data-facode]').forEach((b) => (b.onclick = () => { fa.code = b.dataset.facode; draw(); }));
+      const qi = $('#faQ'); qi.oninput = (e) => { fa.q = e.target.value; const pos = e.target.selectionStart; draw(); const n = $('#faQ'); n.focus(); n.setSelectionRange(pos, pos); };
+      $$('[data-fast]').forEach((sel) => (sel.onchange = async () => {
+        try { const rec = await store({ op: 'faUpdate', key: sel.dataset.fast, status: sel.value }); Object.assign(items.find((x) => x.key === rec.key), rec); state.faNew = items.filter((x) => x.status === 'new' && x.active !== false).length; toast('Marked ' + FAL[sel.value]); draw(); } catch (e) { toast(e.message); }
+      }));
+      $$('[data-facmt]').forEach((b) => (b.onclick = async () => {
+        const ta = $(`[data-fatext="${CSS.escape(b.dataset.facmt)}"]`); const text = ta.value.trim(); if (!text) return;
+        try { const rec = await store({ op: 'faComment', key: b.dataset.facmt, text }); Object.assign(items.find((x) => x.key === rec.key), rec); draw(); } catch (e) { toast(e.message); }
+      }));
+      $$('[data-fadel]').forEach((b) => (b.onclick = async () => {
+        if (!confirm('Remove this from the False alarms list? (The audit item itself is not changed.)')) return;
+        try { await store({ op: 'faDelete', key: b.dataset.fadel }); items = items.filter((x) => x.key !== b.dataset.fadel); draw(); } catch (e) { toast(e.message); }
+      }));
+    };
+    draw();
+  }
+  const sugTabs = (active, faNew) => state.me.role === 'admin' ? `<div class="tabs" style="margin-bottom:14px"><a href="#/suggestions" class="${active === 'ideas' ? 'on' : ''}">Feature suggestions</a><a href="#/suggestions/false-alarms" class="${active === 'fa' ? 'on' : ''}">False alarms${faNew ? ` <span class="badge sev-warning">${faNew} new</span>` : ''}</a></div>` : '';
   async function renderSuggestions() {
+    if (route().tab === 'fa' && state.me.role === 'admin') return renderFalseAlarms();
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
     let data;
     try { data = await api('/api/suggest'); } catch (e) { $('#view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
@@ -1970,7 +2054,7 @@
     const counts = Object.fromEntries(SUG.map((x) => [x.v, data.items.filter((i) => i.status === x.v).length]));
     const f = state.sfilter;
     const list = data.items.filter((i) => f === 'all' || (f === 'open' ? ['new', 'ongoing'].includes(i.status) : i.status === f));
-    $('#view').innerHTML = `<div class="page-head"><div><h1>${owner ? 'Feature suggestions' : 'My suggestions'}</h1>
+    $('#view').innerHTML = sugTabs('ideas', state.faNew) + `<div class="page-head"><div><h1>${owner ? 'Feature suggestions' : 'My suggestions'}</h1>
         <div class="muted">${owner ? 'Only you can see this page. Everyone else sees only the suggestions they sent.' : 'Ideas you sent to the app owner, with their status and replies.'}</div></div>
         <button class="btn primary" id="sgNew">💡 Suggest a feature</button></div>
       <div class="panel"><div class="toolbar"><span class="chips">
