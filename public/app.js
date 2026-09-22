@@ -9,7 +9,6 @@
   ];
   const FLABEL = Object.fromEntries(FSTATUS.map((s) => [s.v, s.label]));
   const SCAN_CONCURRENCY_SITES = 2;
-  const OWNER = 'regencia.reymark28@gmail.com'; // sees all feature suggestions (keep in sync with SUGGESTIONS_OWNER)
   const SUG = [{ v: 'new', label: 'New' }, { v: 'ongoing', label: 'On going' }, { v: 'done', label: 'Done' }, { v: 'nope', label: 'Nope' }];
   const SUGL = Object.fromEntries(SUG.map((x) => [x.v, x.label]));
 
@@ -221,7 +220,7 @@
   // TOP BAR
   // =====================================================================
   function renderTop() {
-    const isOwner = state.me.email === OWNER;
+    const isOwner = !!state.superAdmin;
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
       <a href="#/live" data-nav="live">Live DR Sites</a>
       ${state.me.role === 'admin' ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
@@ -625,9 +624,9 @@
       $('#memList').innerHTML = (isAdmin && pending.length ? `<h3>Admin for Approval (${pending.length})</h3>` + pending.map((u) => `
         <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span><div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
         <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : '') +
-        active.map((u) => `<div class="member-row"><span class="pav">${avatar(u.email, 30)}${pdot(u.email)}</span><div class="grow"><b>${esc(u.name)}</b>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${isAdmin ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.role === 'admin' ? 'Admin' : 'Member'}</span>` : ''}
+        active.map((u) => `<div class="member-row"><span class="pav">${avatar(u.email, 30)}${pdot(u.email)}</span><div class="grow"><b>${esc(u.name)}</b>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${isAdmin ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : u.role === 'admin' ? 'Admin' : 'Member'}</span>` : ''}
           <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(presenceText(presenceOf(u.email)))}</div></div>
-          ${isAdmin ? `<select data-role="${esc(u.email)}" class="sm-select"><option value="member" ${u.role === 'member' ? 'selected' : ''}>Member</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select>
+          ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>Admin</option></select>` : isAdmin ? `<select data-role="${esc(u.email)}" class="sm-select"><option value="member" ${u.role === 'member' ? 'selected' : ''}>Member</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select>
           ${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Remove">✕</button>` : ''}` : ''}</div>`).join('');
       const act = (sel, fn) => $$(sel, $('#memList')).forEach((b) => (b.onclick = b.onchange = null, b.tagName === 'SELECT' ? (b.onchange = () => fn(b)) : (b.onclick = () => fn(b))));
       act('[data-approve]', async (b) => { await post('/api/users', { op: 'approve', email: b.dataset.approve }); await loadUsers(); draw(); renderTop(); toast('Approved'); });

@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), slackDM: /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || ''), editorHost: (process.env.DUDA_EDITOR_HOST || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') });
       const u = await currentUser(req);
-      return res.status(200).json({ user: publicUser(u), rtChannel: u ? userChannel(u.email) : '', superAdmin: !!(u && u.email === OWNER_EMAIL) });
+      return res.status(200).json({ user: publicUser(u), rtChannel: u ? userChannel(u.email) : '', ...(u && u.email === OWNER_EMAIL ? { superAdmin: true } : {}) });
     }
     if (req.headers.origin) {
       try { if (new URL(req.headers.origin).host !== (req.headers['x-forwarded-host'] || req.headers.host)) return res.status(403).json({ error: 'Bad origin' }); } catch (e) { /* ignore */ }

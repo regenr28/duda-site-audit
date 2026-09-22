@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, OWNER_EMAIL, forgetUser } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -13,7 +13,7 @@ export default async function handler(req, res) {
       const all = await listUsers();
       const visible = me.role === 'admin' ? all : all.filter((u) => u.status === 'active');
       // Members don't see who is an admin (avoids "why are they admin?" friction); admins see roles to manage them
-      const shape = (u) => { const x = publicUser(u); if (me.role !== 'admin' && u.email !== me.email) delete x.role; return x; };
+      const shape = (u) => { const x = publicUser(u); if (me.role !== 'admin' && u.email !== me.email) delete x.role; else if (u.email === OWNER_EMAIL) { if (me.email === OWNER_EMAIL) x.superAdmin = true; else x.locked = true; } return x; };
       return res.status(200).json({ me: publicUser(me), users: visible.map(shape).sort((a, b) => a.name.localeCompare(b.name)) });
     }
     const b = readBody(req);
@@ -38,10 +38,18 @@ export default async function handler(req, res) {
       const why = { not_configured: 'Slack messages are not set up yet. Please contact the app owner.', not_in_slack: `No Slack account uses ${me.email}. Register in the app with the same email you use in Slack.`, missing_scope: 'The Slack connection is missing a permission. Please contact the app owner.', invalid_auth: 'The Slack connection is not valid. Please contact the app owner.' };
       return res.status(200).json({ sent: r.sent, message: r.sent ? 'Sent! Check your Slack.' : why[r.reason] || `Slack said: ${r.reason}` });
     }
-    if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+    // Admin actions always check the latest role (not the short session cache), so a just-demoted admin can't act
+    const fresh = me.role === 'admin' ? await getUser(me.email) : null;
+    if (!fresh || fresh.role !== 'admin' || fresh.status !== 'active') return res.status(403).json({ error: 'Admins only' });
     const target = await getUser(b.email);
     if (!target) return res.status(404).json({ error: 'User not found' });
     const email = normEmail(b.email);
+    // The owner's account can only be managed by the owner (others just see a normal admin they can't change)
+    if (email === OWNER_EMAIL && ['remove', 'role', 'resetPassword'].includes(b.op)) {
+      if (me.email !== OWNER_EMAIL) return res.status(403).json({ error: "You don't have permission to change this account." });
+      if (b.op === 'remove') return res.status(400).json({ error: "You can't remove yourself" });
+      if (b.op === 'role' && b.role !== 'admin') return res.status(400).json({ error: 'The Super Admin always stays an admin.' });
+    }
     switch (b.op) {
       case 'approve':
         target.status = 'active'; target.approvedBy = me.email; target.approvedAt = new Date().toISOString(); await putUser(target);
@@ -70,6 +78,7 @@ export default async function handler(req, res) {
       default:
         return res.status(400).json({ error: 'Unknown op' });
     }
+    forgetUser(email);
     return res.status(200).json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });

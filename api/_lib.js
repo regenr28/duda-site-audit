@@ -91,7 +91,12 @@ export function checkPassword(pw, salt, hash) {
 export const COLORS = ['#2563eb', '#16a34a', '#db2777', '#ea580c', '#7c3aed', '#0891b2', '#ca8a04', '#dc2626', '#4f46e5', '#059669'];
 export async function getUser(email) {
   const [raw] = await redis(['GET', P + 'user:' + normEmail(email)]);
-  return jparse(raw);
+  return ownerFix(jparse(raw));
+}
+/** The Super Admin is always an active admin, whatever the stored record says. */
+function ownerFix(u) {
+  if (u && u.email === OWNER_EMAIL) { u.role = 'admin'; u.status = 'active'; }
+  return u;
 }
 export async function putUser(u) {
   await redis(['SET', P + 'user:' + u.email, JSON.stringify(u)], ['SADD', P + 'users', u.email]);
@@ -102,7 +107,7 @@ export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
   const raws = await redis(...emails.map((e) => ['GET', P + 'user:' + e]));
-  return raws.map((r) => jparse(r)).filter(Boolean);
+  return raws.map((r) => ownerFix(jparse(r))).filter(Boolean);
 }
 /** Decide role/status for a brand-new account. */
 export async function initialAccess(email) {
@@ -146,6 +151,8 @@ export async function currentUser(req) {
   if (user) cache.set(t, { user, exp: Date.now() + 180000 });
   return user;
 }
+/** Drop cached sessions for someone whose role or account just changed (this server instance). */
+export function forgetUser(email) { for (const [k, v] of cache) if (v.user && v.user.email === email) cache.delete(k); }
 /** Require a signed-in, approved user. Sends 401/403 and returns null otherwise. */
 export async function requireUser(req, res, { admin = false } = {}) {
   if (req.method !== 'GET' && req.headers.origin) {
