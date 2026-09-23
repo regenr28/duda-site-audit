@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-23-removed', date: '2026-09-23', audience: 'all', tag: 'Audits',
+    title: 'Removing an audit now leaves a record, not a hole',
+    what: 'The <b>✕</b> on a row takes an audit off the list — it never touches the website itself in Duda. It now asks <b>why</b> (a short reason is required, which is also a moment to stop if you clicked by mistake), tells the assignee and the person who added it, and keeps a card on the new <b>Removed from Audits</b> page: business name, <b>site ID</b>, how far the audit had got, who removed it, when, and the reason. So "what was that website, and why is it gone?" has an answer months later — and if the site comes back, <b>Audit again</b> puts its ID straight into the Add dialog for a fresh scan.',
+    where: ['Open <b>Audits</b> → <b>Removed from Audits</b> in the line under the heading.', 'Removing: the <b>✕</b> at the end of a row, as before — it now asks for a reason.', 'Search the page by business name, site ID, reason or person.', 'Older activity that used to say "(deleted website)" now shows the real name with a <b>removed from Audits</b> tag.'],
+    link: '#/removed', linkText: 'Open Removed from Audits',
+  },
+  {
     id: '2026-09-23-ownership', date: '2026-09-23', audience: 'all', tag: 'Audits',
     title: 'Nobody can quietly take your audit',
     what: 'Your work is now yours. Finish a website and it shows <b>✓ Marked Complete by you</b> with the date. If anyone <b>rescans</b> it, <b>reopens</b> it, or <b>reassigns</b> it to someone else, you\'re told <b>what happened and who did it</b> — in the bell, on the desktop and on Slack if you\'ve switched that on. And before a teammate can take a website off you, the app warns them how much you\'ve already closed, tells them you\'ll be notified, and asks for a short reason. That reason goes in your notification and in the website\'s Activity log.',

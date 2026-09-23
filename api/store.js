@@ -85,6 +85,16 @@ async function log(siteId, me, type, text, extra = {}) {
     ['LPUSH', P + 'uact:' + me.email, JSON.stringify(Object.assign({ siteKey: siteId, siteName: extra.siteName || '' }, e))], ['LTRIM', P + 'uact:' + me.email, 0, 299]);
 }
 const notify = (email, n) => notifyUser(email, n);
+/** The record of removed audits is a keepsake, not a backup: keep the newest 400 and let the rest go. */
+async function trimRemoved() {
+  try {
+    const [all] = await redis(['HGETALL', P + 'removed']);
+    const rows = Object.entries(pairs(all, true));
+    if (rows.length <= 400) return;
+    const drop = rows.sort((a, c) => String(c[1].removedAt || '').localeCompare(String(a[1].removedAt || ''))).slice(400).map((x) => x[0]);
+    if (drop.length) await redis(['HDEL', P + 'removed', ...drop]);
+  } catch (e) { /* tidy-up only */ }
+}
 /** Small per-person counters, so admins can see who closed what (and spot odd patterns). */
 async function bump(email, field, by = 1) {
   if (!email || !field) return;
@@ -133,6 +143,14 @@ export default async function handler(req, res) {
             itemsHold: Number(c.itemsHold) || 0, itemsClarify: Number(c.itemsClarify) || 0, itemsReopen: Number(c.itemsReopen) || 0 };
         }) });
       }
+      if (op === 'removed') {
+        // Audits that were taken off the list: what it was, who removed it, when and why.
+        const [all] = await redis(['HGETALL', P + 'removed']);
+        let rows = Object.values(pairs(all, true));
+        if (me.role !== 'admin') rows = rows.filter((x) => x.removedBy === me.email || x.addedBy === me.email || x.assignee === me.email);
+        rows.sort((a, c) => String(c.removedAt || '').localeCompare(String(a.removedAt || '')));
+        return res.status(200).json({ rows: rows.slice(0, 400) });
+      }
       if (op === 'gactivity') {
         if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
         const [list] = await redis(['LRANGE', P + 'gact', 0, 999]);
@@ -142,11 +160,18 @@ export default async function handler(req, res) {
         // Everything one member did (newest first), plus the websites they touched most recently
         const email = String(req.query.email || '').toLowerCase().trim();
         if (!email) return res.status(400).json({ error: 'email required' });
-        const [idx, g, own] = await redis(['HGETALL', P + 'index'], ['LRANGE', P + 'gact', 0, 999], ['LRANGE', P + 'uact:' + email, 0, 299]);
+        const [idx, g, own, rem] = await redis(['HGETALL', P + 'index'], ['LRANGE', P + 'gact', 0, 999], ['LRANGE', P + 'uact:' + email, 0, 299], ['HGETALL', P + 'removed']);
         const sites = Object.values(pairs(idx, true));
         const byId = new Map(sites.map((x) => [x.id, x]));
+        // A website that is no longer on the Audits list still has a name: take it from the removed record.
+        const gone = new Map(Object.entries(pairs(rem, true)).map(([id, x]) => [id, x]));
         const items = []; const seenIds = new Set();
-        (own || []).forEach((raw) => { const e = jparse(raw); if (!e) return; seenIds.add(e.id); const x = byId.get(e.siteKey); items.push(Object.assign(e, { siteName: x ? x.businessName || x.siteId : e.siteName || '(deleted website)', siteStatus: x ? x.status : '' })); });
+        (own || []).forEach((raw) => {
+          const e = jparse(raw); if (!e) return; seenIds.add(e.id);
+          const x = byId.get(e.siteKey); const r = x ? null : gone.get(e.siteKey);
+          items.push(Object.assign(e, { siteName: x ? x.businessName || x.siteId : (r ? r.businessName || r.siteId : e.siteName || 'No longer on the Audits list'),
+            siteStatus: x ? x.status : '', removedSite: x ? false : true, removedInfo: r || null }));
+        });
         if ((own || []).length < 300) {
           // Older history (from before per-member lists existed): look through the 40 most recently updated websites only
           const recentSites = sites.sort((a, c) => String(c.updatedAt || '').localeCompare(String(a.updatedAt || ''))).slice(0, 40);
@@ -159,7 +184,7 @@ export default async function handler(req, res) {
         (g || []).forEach((raw) => { const e = jparse(raw); if (e && e.by === email && e.type === 'site-delete') items.push(Object.assign(e, { global: true, siteKey: '', siteName: e.siteRef || e.name || '' })); });
         items.sort((a, c) => String(c.at).localeCompare(String(a.at)));
         const recent = []; const seenSites = new Set();
-        items.forEach((e) => { if (e.siteKey && !e.global && !seenSites.has(e.siteKey) && recent.length < 5) { seenSites.add(e.siteKey); recent.push({ siteKey: e.siteKey, siteName: e.siteName, siteStatus: e.siteStatus, at: e.at, text: e.text, findingNum: e.findingNum || null, type: e.type }); } });
+        items.forEach((e) => { if (e.siteKey && !e.global && !seenSites.has(e.siteKey) && recent.length < 5) { seenSites.add(e.siteKey); recent.push({ siteKey: e.siteKey, siteName: e.siteName, siteStatus: e.siteStatus, at: e.at, text: e.text, findingNum: e.findingNum || null, type: e.type, removedSite: !!e.removedSite, removedInfo: e.removedInfo || null }); } });
         const counts = { items: items.filter((e) => e.type === 'item-status').length, comments: items.filter((e) => /comment|reply/.test(e.type) && e.type !== 'comment-delete').length, scans: items.filter((e) => e.type === 'scan-start').length, sites: seenSites.size };
         const lastItem = items.find((e) => e.findingNum && !e.global && /^item-|comment|reply/.test(e.type) && e.type !== 'comment-delete') || null;
         return res.status(200).json({ items: items.slice(0, 150), recent, counts, lastItem });
@@ -515,11 +540,30 @@ export default async function handler(req, res) {
       case 'deleteSite': {
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
-        if (me.role !== 'admin' && site.addedBy !== me.email) return res.status(403).json({ error: 'Only an admin or the person who added it can delete this website' });
-        const [cm] = await redis(['HVALS', P + 'cmt:' + b.id]);
+        if (me.role !== 'admin' && site.addedBy !== me.email) return res.status(403).json({ error: 'Only an admin or the person who added it can remove this audit' });
+        const reason = String(b.reason || '').trim().slice(0, 400);
+        const whoList = await listUsers();
+        const whoName = (e) => (whoList.find((u) => u.email === e) || {}).name || '';
+        const [cm, fst] = await redis(['HVALS', P + 'cmt:' + b.id], ['HGETALL', P + 'fstate:' + b.id]);
+        const stateOf = pairs(fst, true);
         const imgKeys = [].concat(...(cm || []).map((x) => (jparse(x) || {}).images || [])).map((u) => P + 'img:' + String(u).split('id=')[1]);
-        await redis(['DEL', P + 'site:' + b.id, P + 'fstate:' + b.id, P + 'fnum:' + b.id, P + 'seq:' + b.id, P + 'cmt:' + b.id, P + 'act:' + b.id, P + 'ailock:' + b.id, P + 'scanlock:' + b.id, P + 'ver:s:' + b.id, ...imgKeys], ['HDEL', P + 'index', b.id], ['HDEL', P + 'scanclaims', b.id], ['INCR', P + 'ver:index']);
-        await globalLog(me, 'site-delete', `deleted the website ${site.businessName ? site.businessName + ' (' + site.siteId + ')' : site.siteId}`, { siteRef: site.siteId, addedByName: site.addedByName || '', findings: (site.findings || []).length });
+        // Keep a small record of what was removed, so months later anyone can see what it was and why.
+        const f = site.findings || [];
+        const cleared = (x) => { const st = (stateOf[x.id] || {}).status || x.status || 'open'; return st === 'done' || st === 'false'; };
+        const card = { id: b.id, siteId: site.siteId, businessName: site.businessName || '', url: site.url || '', domain: site.domain || '',
+          status: site.status || '', assignee: site.assignee || '', assigneeName: whoName(site.assignee), addedBy: site.addedBy || '', addedByName: site.addedByName || whoName(site.addedBy),
+          completedBy: site.completedBy || '', completedByName: site.completedByName || '', completedAt: site.completedAt || '', addedAt: site.createdAt || site.addedAt || '',
+          findings: f.length, cleared: f.filter(cleared).length, comments: (cm || []).length,
+          removedBy: me.email, removedByName: me.name, removedAt: now(), reason };
+        await redis(['DEL', P + 'site:' + b.id, P + 'fstate:' + b.id, P + 'fnum:' + b.id, P + 'seq:' + b.id, P + 'cmt:' + b.id, P + 'act:' + b.id, P + 'ailock:' + b.id, P + 'scanlock:' + b.id, P + 'ver:s:' + b.id, ...imgKeys],
+          ['HDEL', P + 'index', b.id], ['HDEL', P + 'scanclaims', b.id], ['HSET', P + 'removed', b.id, JSON.stringify(card)], ['INCR', P + 'ver:index']);
+        await trimRemoved();
+        await globalLog(me, 'site-delete', `removed the audit for ${site.businessName ? site.businessName + ' (' + site.siteId + ')' : site.siteId} from the Audits list${reason ? ` · ${reason}` : ''}`,
+          { siteRef: site.siteId, siteName: site.businessName || '', addedByName: site.addedByName || '', findings: f.length, reason });
+        // Whoever had a stake in it should hear about it rather than find it gone.
+        const tell = [...new Set([site.assignee, site.addedBy, site.completedBy].filter((e) => e && e !== me.email))];
+        await Promise.all(tell.map((email) => notify(email, { kind: 'site-removed', by: me.email, byName: me.name, siteId: '', siteName: site.businessName || site.siteId,
+          text: `${me.name} removed this audit from the Audits list${reason ? ` · ${reason}` : ''}. The website itself is untouched in Duda.` })));
         return res.status(200).json({ ok: true });
       }
       case 'readNotifs':

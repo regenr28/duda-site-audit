@@ -242,6 +242,28 @@
     catch (e) { toast(e.message); return null; }
     finally { if (after) after(); }
   }
+  /**
+   * Taking an audit off the Audits list. It asks what for, because in six months
+   * "why is this one gone?" is a real question — and it gives you a moment to stop.
+   * The website itself is never touched in Duda.
+   */
+  async function removeAudit(site, after) {
+    if (!site) return false;
+    const c = site.counts || {};
+    const bits = [`${c.total || 0} audit item(s)`];
+    if (c.closed) bits.push(`${c.closed} already closed`);
+    if (site.status === 'Complete') bits.push(`marked Complete${site.completedByName ? ' by ' + site.completedByName : ''}`);
+    const r = prompt(`Remove "${site.businessName || site.siteId}" (${site.siteId}) from the Audits list?\n\nThis throws away ${bits.join(', ')}, the comments and the activity log. The website itself stays exactly as it is in Duda.\n\nIt will be listed under Removed from Audits with your reason, so it can be found and audited again later.\n\nWhy are you removing it?`, '');
+    if (r === null) { if (after) after(); return false; }
+    const reason = r.trim();
+    if (!reason) { toast('Please give a short reason — it is what makes this findable later.'); if (after) after(); return false; }
+    try {
+      await store({ op: 'deleteSite', id: site.id, reason });
+      state.sites = state.sites.filter((s) => s.id !== site.id);
+      toast('Removed from Audits. You can find it under Removed from Audits.');
+      return true;
+    } catch (e) { toast(e.message); return false; } finally { if (after) after(); }
+  }
   function upsertSummary(sum) { if (!sum) return; const i = state.sites.findIndex((s) => s.id === sum.id); if (i >= 0) state.sites[i] = sum; else state.sites.push(sum); }
 
   // =====================================================================
@@ -355,11 +377,12 @@
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
   }
-  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
+  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
     if (n.kind === 'false-alarm') return '#/suggestions/false-alarms';
+    if (n.kind === 'site-removed') return '#/removed';
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   }
@@ -665,7 +688,10 @@
     let data = null, filter = 'all';
     const draw = () => {
       const pr = presenceOf(email); const w = pr.st !== 'offline' ? whereOf(email) : null;
-      const link = (e) => e.siteKey && !e.global ? `#/site/${encodeURIComponent(e.siteKey)}${e.findingNum ? '/item/' + e.findingNum : /comment|reply/.test(e.type) && !e.findingNum ? '/comments' : ''}` : '';
+      const link = (e) => e.siteKey && !e.global && !e.removedSite ? `#/site/${encodeURIComponent(e.siteKey)}${e.findingNum ? '/item/' + e.findingNum : /comment|reply/.test(e.type) && !e.findingNum ? '/comments' : ''}` : '';
+      // A website that is no longer on the Audits list: say so, and say who took it off and why.
+      const goneTip = (r) => (r ? `Removed from Audits by ${r.removedByName || 'someone'} on ${fmtFull(r.removedAt)}${r.reason ? ' · ' + r.reason : ''}` : 'This audit is no longer on the Audits list.');
+      const goneTag = (e) => (e.removedSite ? ` <a href="#/removed" data-close-nav class="badge sev-info" title="${esc(goneTip(e.removedInfo))}">removed from Audits</a>` : '');
       const body = !data ? '<div class="empty small">Loading…</div>' : (() => {
         const list = data.items.filter(MA_FILTERS[filter][1]);
         const recentOthers = data.recent.filter((r, k) => (w ? r.siteKey !== w.siteKey : k > 0));
@@ -673,10 +699,10 @@
         return `
         <div class="ma-now panel panel-pad">
           ${w ? `<div class="k">Working on now</div><a class="ma-site" href="#/site/${encodeURIComponent(w.siteKey)}${w.item ? '/item/' + w.item : ''}" data-close-nav><b>${esc(w.name)}</b>${w.item ? ` · audit item #${w.item}` : ''} ›</a>`
-            : data.recent[0] ? `<div class="k">Last worked on</div><a class="ma-site" href="${link(data.recent[0])}" data-close-nav><b>${esc(data.recent[0].siteName)}</b> ›</a><div class="small muted">${esc(data.recent[0].text)} · ${esc(ago(data.recent[0].at))}</div>`
+            : data.recent[0] ? `<div class="k">Last worked on</div>${link(data.recent[0]) ? `<a class="ma-site" href="${link(data.recent[0])}" data-close-nav><b>${esc(data.recent[0].siteName)}</b> ›</a>` : `<div class="ma-site"><b>${esc(data.recent[0].siteName)}</b>${goneTag(data.recent[0])}</div>`}<div class="small muted">${esc(data.recent[0].text)} · ${esc(ago(data.recent[0].at))}</div>`
             : '<div class="small muted">No activity yet.</div>'}
-          ${data.lastItem ? `<div class="k" style="margin-top:12px">Latest audit item</div><a class="ma-item" href="${link(data.lastItem)}" data-close-nav><span class="item-id">#${data.lastItem.findingNum}</span> ${esc(data.lastItem.type === 'item-status' ? data.lastItem.text.replace(/^changed #\d+ /, 'status changed ') : data.lastItem.type === 'item-assign' ? data.lastItem.text.replace(/#\d+ /, '') : data.lastItem.type === 'reply' ? 'replied to a comment' : 'commented')} <span class="muted">on</span> <b>${esc(data.lastItem.siteName)}</b> <span class="faint">· ${esc(ago(data.lastItem.at))}</span></a>` : ''}
-          ${recentOthers.length ? `<div class="k" style="margin-top:12px">Recent websites</div><div class="ma-recent">${recentOthers.map((r) => `<a href="${link(r)}" data-close-nav class="chipbtn"><b>${esc(r.siteName)}</b> <span class="faint">${esc(ago(r.at))}</span></a>`).join('')}</div>` : ''}
+          ${data.lastItem ? `<div class="k" style="margin-top:12px">Latest audit item</div><a class="ma-item" href="${link(data.lastItem) || '#/removed'}" data-close-nav><span class="item-id">#${data.lastItem.findingNum}</span> ${esc(data.lastItem.type === 'item-status' ? data.lastItem.text.replace(/^changed #\d+ /, 'status changed ') : data.lastItem.type === 'item-assign' ? data.lastItem.text.replace(/#\d+ /, '') : data.lastItem.type === 'reply' ? 'replied to a comment' : 'commented')} <span class="muted">on</span> <b>${esc(data.lastItem.siteName)}</b>${goneTag(data.lastItem)} <span class="faint">· ${esc(ago(data.lastItem.at))}</span></a>` : ''}
+          ${recentOthers.length ? `<div class="k" style="margin-top:12px">Recent websites</div><div class="ma-recent">${recentOthers.map((r) => (link(r) ? `<a href="${link(r)}" data-close-nav class="chipbtn"><b>${esc(r.siteName)}</b> <span class="faint">${esc(ago(r.at))}</span></a>` : `<a href="#/removed" data-close-nav class="chipbtn" title="${esc(goneTip(r.removedInfo))}"><b>${esc(r.siteName)}</b> <span class="faint">${esc(ago(r.at))} · removed</span></a>`)).join('')}</div>` : ''}
         </div>
         <div class="ma-stats"><div><b>${data.counts.sites}</b><span>websites</span></div><div><b>${data.counts.items}</b><span>item status changes</span></div><div><b>${data.counts.comments}</b><span>comments</span></div><div><b>${data.counts.scans}</b><span>scans started</span></div></div>
         <div class="chips" style="margin:12px 0 6px">${Object.entries(MA_FILTERS).map(([k, [lbl, fn]]) => `<button class="chipbtn ${filter === k ? 'active' : ''}" data-maf="${k}">${lbl} <span class="faint">${data.items.filter(fn).length}</span></button>`).join('')}</div>
@@ -684,7 +710,7 @@
           const day = new Date(e.at).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
           const head = day !== lastDay ? `<li class="ma-day">${esc(day)}</li>` : ''; lastDay = day;
           const text = esc(e.text).replace(/#(\d+)/g, (m, n) => e.siteKey && !e.global ? `<a class="item-ref" href="#/site/${encodeURIComponent(e.siteKey)}/item/${n}" data-close-nav>#${n}</a>` : m);
-          return `${head}<li><span class="a-ic">${ACT_ICON[e.type] || '•'}</span><div class="grow">${text}${e.siteName ? ` <span class="muted">on</span> ${link(e) ? `<a href="${link(e)}" data-close-nav><b>${esc(e.siteName)}</b></a>` : `<b>${esc(e.siteName)}</b>`}` : ''}</div><div class="a-time"><div>${esc(new Date(e.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</div><div class="faint">${esc(ago(e.at))}</div></div></li>`;
+          return `${head}<li><span class="a-ic">${ACT_ICON[e.type] || '•'}</span><div class="grow">${text}${e.siteName ? ` <span class="muted">on</span> ${link(e) ? `<a href="${link(e)}" data-close-nav><b>${esc(e.siteName)}</b></a>` : `<b>${esc(e.siteName)}</b>${goneTag(e)}`}` : ''}</div><div class="a-time"><div>${esc(new Date(e.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</div><div class="faint">${esc(ago(e.at))}</div></div></li>`;
         }).join('')}</ul>` : '<div class="empty small">Nothing here yet.</div>'}`;
       })();
       $('.modal').innerHTML = `<header><div style="display:flex;gap:12px;align-items:center"><span class="pav">${avatar(email, 36)}<span class="pdot ${pr.st}"></span></span><div><h2 style="margin:0">${esc(u.name)}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}</h2>
@@ -825,11 +851,11 @@
       return { host: u.hostname, siteId: m ? m[1] : '', link: raw };
     } catch (e) { return { host: '', siteId: '' }; }
   }
-  function openAdd() {
+  function openAdd(prefill) {
     modal(`<header><h2>Add website(s)</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body">
         <label class="field">Site IDs or Duda editor links, one per line
-          <textarea id="addLinks" rows="5" autofocus placeholder="cb89784b&#10;2a458f73&#10;https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home"></textarea></label>
+          <textarea id="addLinks" rows="5" autofocus placeholder="cb89784b&#10;2a458f73&#10;https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home">${esc(prefill || '')}</textarea></label>
         <label class="field">Assign to<select id="addWho">${userOptions(state.me.email, 'Unassigned')}</select></label>
         <p class="small muted" style="margin:0">Each site is scanned on Desktop, Tablet and Mobile and compared to its Duda Business Info. Keep this tab open while scans run (${SCAN_CONCURRENCY_SITES} at a time).<br><b>${doneNote()}</b> The person you assign it to is told as well.</p>
       </div>
@@ -848,6 +874,7 @@
       $$('[data-open-existing]', dupHint).forEach((a) => (a.onclick = () => closeModal()));
     };
     $('#addLinks').addEventListener('input', showDups);
+    if (prefill) showDups();
     // Load the published-sites list (cached on the server) so pasted IDs show their business names
     if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if ($('#addLinks')) showDups(); }).catch(() => {});
     $('#addGo').onclick = async () => {
@@ -1536,6 +1563,7 @@
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'activity') return { name: 'activity' };
+    if (parts[0] === 'removed') return { name: 'removed' };
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'live') return { name: 'live' };
     if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas' };
@@ -1565,6 +1593,7 @@
     if (r.name === 'about') return renderAbout();
     if (r.name === 'help') return renderHelp(r.section);
     if (r.name === 'activity') return renderGlobalActivity();
+    if (r.name === 'removed') return renderRemoved();
     if (r.name === 'live') return renderLive();
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
@@ -1647,7 +1676,7 @@
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0 };
     state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; });
     $('#view').innerHTML = `
-      <div class="page-head"><div><h1>Audits</h1><div class="muted">Audit Duda sites against their Business Info on every device. <a href="#/live">Browse Live DR Sites</a> to add more.</div></div></div>
+      <div class="page-head"><div><h1>Audits</h1><div class="muted">Audit Duda sites against their Business Info on every device. <a href="#/live">Browse Live DR Sites</a> to add more, or see what was <a href="#/removed">removed from Audits</a>.</div></div></div>
       <div class="stats">
         <div class="panel stat"><div class="n">${state.sites.length}</div><div class="l">Audits</div></div>
         <div class="panel stat"><div class="n">${tot.scanned}</div><div class="l">Scan complete</div></div>
@@ -1680,7 +1709,7 @@
               <td>${issueChips(c, s.scan && s.scan.state === 'complete')}</td>
               <td style="min-width:110px"><div class="small">${c.closed || 0}/${c.total || 0}</div><div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div></td>
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
-                ${state.me.role === 'admin' || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Delete">✕</button>` : ''}</td>
+                ${state.me.role === 'admin' || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Remove this audit from the list (the website itself is untouched)">✕</button>` : ''}</td>
             </tr>`;
           }).join('')}</tbody></table></div>` : `<div class="empty">${state.sites.length ? 'No websites match these filters.' : 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.'}</div>`}
       </div>`;
@@ -1698,10 +1727,7 @@
     $$('[data-assign]', v).forEach((sel) => (sel.onchange = async () => { const site = state.sites.find((x) => x.id === sel.dataset.assign); await changeSite(site, { assignee: sel.value }, () => renderSites()); }));
     $$('[data-status]', v).forEach((sel) => (sel.onchange = async () => { const site = state.sites.find((x) => x.id === sel.dataset.status); await changeSite(site, { status: sel.value }, () => renderSites()); }));
     $$('[data-rescan]', v).forEach((b) => (b.onclick = () => requestScan([b.dataset.rescan])));
-    $$('[data-delete]', v).forEach((b) => (b.onclick = async () => {
-      if (!confirm('Delete this website with its audit, comments and activity log?')) return;
-      try { await store({ op: 'deleteSite', id: b.dataset.delete }); state.sites = state.sites.filter((s) => s.id !== b.dataset.delete); renderSites(); } catch (e) { toast(e.message); }
-    }));
+    $$('[data-delete]', v).forEach((b) => (b.onclick = () => removeAudit(state.sites.find((s) => s.id === b.dataset.delete), () => renderSites())));
   }
 
   // =====================================================================
@@ -2574,6 +2600,50 @@
   // ADMIN: GLOBAL ACTIVITY LOG
   // =====================================================================
   const GFILTERS = [{ v: '', label: 'Everything' }, { v: 'site-add', label: 'Websites added' }, { v: 'site-delete', label: 'Websites deleted' }, { v: 'accounts', label: 'Accounts & approvals' }];
+
+  // ---------- Removed from Audits: what was taken off the list, by whom and why ----------
+  /**
+   * Deleting an audit used to leave a hole: months later nobody could say what the
+   * website was or why it went. This keeps the card — site ID, name, counts, reason —
+   * so it can be looked up, and audited again in one click if the site comes back.
+   */
+  async function renderRemoved() {
+    $('#view').innerHTML = '<div class="empty">Loading…</div>';
+    let rows = [];
+    try { rows = (await api('/api/store?op=removed')).rows || []; } catch (e) { $('#view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    let q = '';
+    const draw = () => {
+      const term = q.trim().toLowerCase();
+      const list = !term ? rows : rows.filter((r) => [r.businessName, r.siteId, r.domain, r.reason, r.removedByName, r.addedByName].some((x) => String(x || '').toLowerCase().includes(term)));
+      $('#view').innerHTML = `<div class="page-head"><div><h1>Removed from Audits</h1>
+          <div class="muted">Audits taken off the <a href="#/">Audits</a> list, with the reason. The websites themselves are untouched in Duda — see them on <a href="#/live">Live DR Sites</a>.</div></div></div>
+        <div class="panel"><div class="toolbar"><input id="rmQ" type="search" placeholder="Search name, site ID, reason or person…" value="${esc(q)}" style="flex:1;min-width:220px">
+          <span class="spacer"></span><span class="small muted">${list.length} of ${rows.length}</span></div>
+        ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Website</th><th>Audit at the time</th><th>Removed</th><th>Reason</th><th></th></tr></thead><tbody>${list.map((r) => `
+          <tr>
+            <td><div><b>${esc(r.businessName || r.siteId)}</b></div>
+              <div class="small mono faint">${esc(r.siteId)}</div>
+              ${r.domain ? `<div class="small faint">${esc(r.domain)}</div>` : ''}</td>
+            <td class="small"><div>${r.cleared || 0}/${r.findings || 0} item(s) closed${r.comments ? ` · ${r.comments} comment(s)` : ''}</div>
+              <div class="faint">${esc(r.status || 'Not started')}${r.assigneeName ? ` · ${esc(r.assigneeName)}` : ''}</div>
+              ${r.addedByName ? `<div class="faint">added by ${esc(r.addedByName)}</div>` : ''}</td>
+            <td style="white-space:nowrap"><div class="small">${esc(fmtFull(r.removedAt))}</div>
+              <div class="small faint">${esc(ago(r.removedAt))}</div>
+              <span class="member-select">${avatar(r.removedBy, 22)}<span class="small">${esc(r.removedByName || nameOf(r.removedBy))}</span></span></td>
+            <td class="small">${r.reason ? esc(r.reason) : '<span class="faint">No reason given</span>'}</td>
+            <td data-stop style="white-space:nowrap"><button class="btn sm" data-again="${esc(r.siteId)}" title="Add this site ID back to the Audits list and scan it again">Audit again</button></td>
+          </tr>`).join('')}</tbody></table></div>` : `<div class="empty">${rows.length ? 'Nothing matches that search.' : 'Nothing has been removed from the Audits list.'}</div>`}</div>
+        <p class="small faint" style="margin-top:10px">The audit itself (items, comments and activity log) is not kept — “Audit again” starts a fresh scan.</p>`;
+      const qi = $('#rmQ'); if (qi) qi.oninput = () => { q = qi.value; const at = qi.selectionStart; draw(); const n = $('#rmQ'); if (n) { n.focus(); n.setSelectionRange(at, at); } };
+      $$('[data-again]').forEach((b) => (b.onclick = () => {
+        const has = state.sites.find((x) => x.siteId === b.dataset.again);
+        if (has) { location.hash = '#/site/' + has.id; return; }
+        openAdd(b.dataset.again);
+      }));
+    };
+    draw();
+  }
+
   async function renderGlobalActivity() {
     if (state.me.role !== 'admin') { $('#view').innerHTML = '<div class="empty">Only admins can see the activity log.</div>'; return; }
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
@@ -2582,7 +2652,7 @@
     const draw = () => {
       const f = state.gfilter;
       const list = items.filter((e) => !f || (f === 'accounts' ? ['signup', 'approve', 'reject', 'remove', 'role', 'reset'].includes(e.type) : e.type === f));
-      $('#view').innerHTML = `<div class="page-head"><div><h1>Activity log</h1><div class="muted">Admin only. Who added or deleted websites, and account changes, with date and time.</div></div><button class="btn" id="dbOpt" title="Compresses older website records, trims long logs and removes the old AI cache format. Safe to run any time.">🧹 Optimize database</button></div>
+      $('#view').innerHTML = `<div class="page-head"><div><h1>Activity log</h1><div class="muted">Admin only. Who added or removed audits, and account changes, with date and time. <a href="#/removed">Removed from Audits</a> shows the reasons.</div></div><button class="btn" id="dbOpt" title="Compresses older website records, trims long logs and removes the old AI cache format. Safe to run any time.">🧹 Optimize database</button></div>
         <div class="panel"><div class="toolbar"><span class="chips">${GFILTERS.map((x) => `<button class="chipbtn ${f === x.v ? 'active' : ''}" data-gf="${x.v}">${x.label}</button>`).join('')}</span><span class="spacer"></span><span class="small muted">${list.length} entries</span></div>
         ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Date &amp; time</th><th>Who</th><th>What happened</th></tr></thead><tbody>${list.map((e) => {
           const site = e.siteId && state.sites.find((x) => x.id === e.siteId);
@@ -2810,7 +2880,7 @@
         <li class="panel"><h3>Work through audit items</h3><p>Each item has an ID like <b>#12</b>. Click it to set the status (Open, For clarification, Done, On hold, False alarm), reassign it, comment and paste screenshots.</p></li>
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
-        <li class="panel"><h3>Your work stays yours</h3><p>Finish a website and it shows <b>✓ Marked Complete by you</b>. If anyone rescans, reopens or reassigns it, you're told what happened and who did it — and they're asked for a reason first. <b>Members → 📊 Team stats</b> shows what each person has closed.</p></li>
+        <li class="panel"><h3>Your work stays yours</h3><p>Finish a website and it shows <b>✓ Marked Complete by you</b>. If anyone rescans, reopens or reassigns it, you're told what happened and who did it — and they're asked for a reason first. <b>Members → 📊 Team stats</b> shows what each person has closed. Taking an audit off the list also asks for a reason and keeps a card under <b>Removed from Audits</b> — the website itself is never touched in Duda.</p></li>
       </ol>
       <div class="panel panel-pad" style="margin-top:14px"><h2>Audit item statuses</h2>
         <table class="help-table"><tbody>

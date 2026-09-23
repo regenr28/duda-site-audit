@@ -71,7 +71,7 @@ export const HELP_SECTIONS = [
 <li><b>Search</b> by business name, site ID or who added it. Filter by website status, assignee, and (once Live DR Sites has loaded) <b>Live or not</b>: sites no longer live in Duda, or with domain problems.</li>
 <li>Each row shows the assignee, the website status, the scan status, open issues by severity, and progress (closed / total items).</li>
 <li><b>Rescan</b> scans one website again. <b>Rescan all shown</b> rescans every website in the current filter.</li>
-<li><b>✕</b> deletes a website with its audit, comments and activity log (admins, or the person who added it).</li>
+<li><b>✕</b> takes that audit off the list, with its items, comments and activity log (admins, or the person who added it). The website itself is untouched in Duda, and the removal is listed under <b>Removed from Audits</b> with the reason. See <b>Removing an audit</b>.</li>
 </ul>
 <h4>A website's page</h4>
 <ul>
@@ -109,6 +109,18 @@ export const HELP_SECTIONS = [
 <li>During the AI steps, a <b>Skip AI</b> button lets you finish the scan without the AI checks. Skipped parts become "AI check pending" items.</li>
 <li><b>Rescanning keeps your work.</b> The same issue keeps its number (#12), status, assignee and comments. New issues get new numbers.</li>
 </ul>`,
+  },
+  {
+    id: 'removed', group: 'Audits', title: 'Removing an audit (and finding it again)', audience: 'all',
+    html: `<p>The <b>✕</b> on a row takes that audit <b>off the Audits list</b>. It does <b>not</b> touch the website: the Duda site stays exactly as it is, still published, still listed under <b>Live DR Sites</b>. Only the audit here — its items, comments and activity log — is thrown away.</p>
+<ul>
+<li>You're asked <b>why</b>, and a reason is required. It takes a second now and saves the "why is this one gone?" argument in six months.</li>
+<li>The assignee, the person who added it and whoever marked it Complete are told that you removed it, and why.</li>
+<li>It's then listed on <b>Removed from Audits</b> with the business name, the <b>site ID</b>, how far the audit had got, who removed it, when, and the reason.</li>
+<li><b>Audit again</b> on that page puts the site ID back in the Add dialog, so a site that comes back after a few months is one click away from a fresh scan.</li>
+<li>Admins see everything removed; everyone else sees what they removed, added or was assigned to.</li>
+</ul>
+<p class="small muted">The audit itself isn't a backup and can't be restored — "Audit again" starts a new scan. The newest 400 removals are kept.</p>`,
   },
   {
     id: 'items', group: 'Audit items', title: 'Reading an audit item', audience: 'all',

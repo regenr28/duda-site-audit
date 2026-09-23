@@ -78,7 +78,7 @@ const CATALOG = {
 function providers() {
   const order = env('AI_ORDER', 'gateway,cerebras,cloudflare,groq,mistral,anthropic').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id]);
   // Sat out by default: free tiers that train on what we send or log it. Naming one in AI_ORDER brings it back.
-  const off = new Set(env('AI_OFF', 'gemini,openrouter').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id] && !order.includes(id)));
+  const off = new Set(String(process.env.AI_OFF == null ? 'gemini,openrouter' : process.env.AI_OFF).split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id] && !order.includes(id)));
   Object.keys(CATALOG).forEach((id) => { if (!order.includes(id) && !off.has(id)) order.push(id); });
   return [...new Set(order)].map((id) => Object.assign({ id }, CATALOG[id]())).filter((p) => process.env[p.keyVar] && (!p.needVar || process.env[p.needVar]))
     .map((p) => Object.assign(p, { key: process.env[p.keyVar], limit: Math.max(0, Number(env(p.limitVar, p.defLimit)) || 0) }));
