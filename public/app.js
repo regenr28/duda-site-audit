@@ -222,6 +222,26 @@
   }
   async function loadNotifs() { try { state.notifs = await api('/api/store?op=notifs'); renderBell(); } catch (e) { /* ignore */ } }
   async function loadSite(id) { state.current = await api('/api/store?op=site&id=' + encodeURIComponent(id)); return state.current; }
+  /** Changing who owns a website (or reopening a finished audit) always tells the people involved. */
+  async function changeSite(site, changes, after) {
+    const who = (e) => nameOf(e, 'nobody');
+    let reason = '';
+    if ('assignee' in changes && site.assignee && changes.assignee !== site.assignee && site.assignee !== state.me.email) {
+      const taking = changes.assignee === state.me.email;
+      const closed = (site.counts && site.counts.closed) || 0;
+      const msg = `${who(site.assignee)} is working on this website${closed ? ` and has already closed ${closed} item(s)` : ''}.\n\n${taking ? 'Take it over?' : `Reassign it to ${who(changes.assignee)}?`} ${who(site.assignee)} will be told who did it.\n\nAdd a short reason (optional):`;
+      const r = prompt(msg, '');
+      if (r === null) { if (after) after(); return null; }
+      reason = r.trim();
+    } else if ('status' in changes && site.status === 'Complete' && changes.status !== 'Complete') {
+      const r = prompt(`This audit was marked Complete${site.completedByName ? ` by ${site.completedByName}` : ''}. Reopening it will tell them.\n\nWhy are you reopening it? (optional)`, '');
+      if (r === null) { if (after) after(); return null; }
+      reason = r.trim();
+    }
+    try { const sum = await store({ op: 'patchSite', id: site.id, changes, reason }); upsertSummary(sum); return sum; }
+    catch (e) { toast(e.message); return null; }
+    finally { if (after) after(); }
+  }
   function upsertSummary(sum) { if (!sum) return; const i = state.sites.findIndex((s) => s.id === sum.id); if (i >= 0) state.sites[i] = sum; else state.sites.push(sum); }
 
   // =====================================================================
@@ -335,12 +355,12 @@
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
   }
-  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
+  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
     if (n.kind === 'false-alarm') return '#/suggestions/false-alarms';
-    if (n.kind === 'scan-done') return `#/site/${n.siteId}`;
+    if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   }
   function toggleNotifs() {
@@ -720,6 +740,21 @@
   // MEMBERS (user accounts)
   // =====================================================================
   let slackWho = null;
+  /** Who closed what: assigned / completed websites and how each person closed audit items. */
+  async function openStats() {
+    modal(`<header><h2>Team stats</h2><button class="btn ghost" data-close>✕</button></header><div class="body"><div id="statsBody" class="empty small">Loading…</div></div><footer><button class="btn" data-close>Done</button></footer>`, { wide: true });
+    let d; try { d = await api('/api/store?op=stats'); } catch (e) { const el = $('#statsBody'); if (el) el.textContent = e.message; return; }
+    const el = $('#statsBody'); if (!el) return;
+    const rows = (d.rows || []).sort((a, b) => (b.itemsDone + b.sitesComplete * 10) - (a.itemsDone + a.sitesComplete * 10));
+    el.className = '';
+    el.innerHTML = `<div class="table-wrap"><table class="grid stats-table">
+      <thead><tr><th>Member</th><th title="Websites currently assigned to them">Assigned</th><th title="Of those, marked Complete">Complete now</th><th title="Times they set a website to Complete">Marked Complete</th><th>Items Done</th><th>False alarm</th><th>On hold</th><th>For clarification</th><th title="Items they reopened">Reopened</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr><td><button type="button" class="whobtn" data-who="${esc(r.email)}"><b>${esc(r.name)}</b></button>${r.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}<div class="small faint">${esc(r.email)}</div></td>
+        <td>${r.assigned}</td><td>${r.complete}</td><td>${r.sitesComplete}</td><td>${r.itemsDone}</td>
+        <td class="${r.itemsFalse >= 30 ? 'v-still-t' : ''}">${r.itemsFalse}</td><td>${r.itemsHold}</td><td>${r.itemsClarify}</td><td>${r.itemsReopen}</td></tr>`).join('')}</tbody></table></div>
+      <p class="small muted">Counted from the moment this was switched on, so older work isn't included. A high <b>False alarm</b> or <b>On hold</b> count is worth a look: open <b>Suggestions → False alarms</b> to read the reasons.</p>`;
+    $$('[data-who]', el).forEach((b) => (b.onclick = () => openMemberActivity(b.dataset.who)));
+  }
   const memFilter = { q: '', view: 'all' };
   function openMembers() {
     const isAdmin = state.me.role === 'admin';
@@ -763,10 +798,11 @@
         prompt('Temporary password — send it to them privately. They can change it later with "Forgot password".', r.tempPassword);
       });
     };
-    modal(`<header><h2>Team members</h2><button class="btn ghost" data-close>✕</button></header>
+    modal(`<header><h2>Team members</h2><span class="spacer"></span><button class="btn sm" id="memStats" type="button">📊 Team stats</button><button class="btn ghost" data-close>✕</button></header>
       <div class="body"><p class="small muted" style="margin:0">${isAdmin ? 'Everyone who registers is listed here automatically. New accounts show as <b>Admin for Approval</b> until you approve them. <b>Switch off</b> an account when someone leaves: they can\'t sign in, but their name stays on everything they did.' : 'Everyone on the team. Click a name to see what they have been working on.'}</p><div id="memList"></div></div>
       <footer><button class="btn" data-close>Done</button></footer>`);
     draw();
+    $('#memStats').onclick = () => openStats();
     loadUsers().then(draw).catch(() => {});
     if (isAdmin && state.config && state.config.slackDM && !slackWho) {
       post('/api/users', { op: 'slackWho' }).then((r) => { slackWho = r.who || {}; if ($('#memList')) draw(); }).catch(() => {});
@@ -1638,7 +1674,8 @@
                 ${liveOf(s.siteId) === false ? `<div><span class="badge sev-warning" title="This site is no longer in the published list from Duda (unpublished or deleted). The audit is kept.">No longer live in Duda</span></div>` : liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom) ? `<div><span class="badge sev-critical" title="${esc(liveOf(s.siteId).dom.detail || '')}">🌐 ${esc(liveOf(s.siteId).dom.label)}</span></div>` : ''}
                 <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtDate(s.createdAt)) : ''}</div></td>
               <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}">${userOptions(s.assignee)}</select></span></td>
-              <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></td>
+              <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+                ${s.completedAt ? `<div class="small faint" title="Marked Complete ${esc(fmtFull(s.completedAt))}">by ${esc(nameOf(s.completedBy, s.completedByName))}${s.scan && s.scan.finishedAt && new Date(s.scan.finishedAt) > new Date(s.completedAt) ? ' · rescanned since' : ''}</div>` : ''}</td>
               <td>${scanBadge(s)}</td>
               <td>${issueChips(c, s.scan && s.scan.state === 'complete')}</td>
               <td style="min-width:110px"><div class="small">${c.closed || 0}/${c.total || 0}</div><div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div></td>
@@ -1658,8 +1695,8 @@
       if (confirm(`Rescan ${todo.length} website(s)?${busy ? `\n\n${busy} already queued or scanning will be skipped.` : ''}`)) requestScan(todo.map((s) => s.id));
     };
     $$('[data-open]', v).forEach((tr) => tr.addEventListener('click', (e) => { if (!e.target.closest('[data-stop]')) location.hash = '#/site/' + tr.dataset.open; }));
-    $$('[data-assign]', v).forEach((sel) => (sel.onchange = async () => { upsertSummary(await store({ op: 'patchSite', id: sel.dataset.assign, changes: { assignee: sel.value } })); renderSites(); }));
-    $$('[data-status]', v).forEach((sel) => (sel.onchange = async () => { upsertSummary(await store({ op: 'patchSite', id: sel.dataset.status, changes: { status: sel.value } })); renderSites(); }));
+    $$('[data-assign]', v).forEach((sel) => (sel.onchange = async () => { const site = state.sites.find((x) => x.id === sel.dataset.assign); await changeSite(site, { assignee: sel.value }, () => renderSites()); }));
+    $$('[data-status]', v).forEach((sel) => (sel.onchange = async () => { const site = state.sites.find((x) => x.id === sel.dataset.status); await changeSite(site, { status: sel.value }, () => renderSites()); }));
     $$('[data-rescan]', v).forEach((b) => (b.onclick = () => requestScan([b.dataset.rescan])));
     $$('[data-delete]', v).forEach((b) => (b.onclick = async () => {
       if (!confirm('Delete this website with its audit, comments and activity log?')) return;
@@ -1953,6 +1990,7 @@
           <h1>${esc(s.businessName || s.siteId)}</h1>
           <div class="muted small"><span class="mono">${esc(s.siteId)}</span> · <span id="sitePub">${sitePubHtml(s)}</span></div>
           <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtFull(s.createdAt)) : ''}</div>
+          ${s.completedAt ? `<div class="small"><span class="badge scan-complete">✓ Marked Complete</span> by <button type="button" class="whobtn" data-who="${esc(s.completedBy || '')}"><b>${esc(nameOf(s.completedBy, s.completedByName))}</b></button> · ${esc(fmtFull(s.completedAt))}${sc.finishedAt && new Date(sc.finishedAt) > new Date(s.completedAt) ? ` <span class="v-still-t">· rescanned since (${esc(fmtFull(sc.finishedAt))})</span>` : ''}</div>` : ''}
           <div class="last-scan">${sc.finishedAt ? `🕑 Last scan: <b>${esc(fmtFull(sc.finishedAt))}</b>${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}` : '🕑 Not scanned yet'}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</div><div id="roomBar">${roomBarHtml()}</div></div>
         <div class="head-actions">
           <span class="member-select">${avatar(s.assignee)}<select id="sAssign">${userOptions(s.assignee)}</select></span>
@@ -1970,8 +2008,8 @@
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
       </div>
       <div id="tabBody"></div>`;
-    $('#sAssign').onchange = async (e) => { upsertSummary(await store({ op: 'patchSite', id: s.id, changes: { assignee: e.target.value } })); await loadSite(s.id); renderSite(); };
-    $('#sStatus').onchange = async (e) => { upsertSummary(await store({ op: 'patchSite', id: s.id, changes: { status: e.target.value } })); await loadSite(s.id); renderSite(); };
+    $('#sAssign').onchange = async (e) => { await changeSite(s, { assignee: e.target.value }); await loadSite(s.id); renderSite(); };
+    $('#sStatus').onchange = async (e) => { await changeSite(s, { status: e.target.value }); await loadSite(s.id); renderSite(); };
     $('#sRescan').onclick = () => requestScan([s.id]);
     loadPubInfo(s);
     $('#sCsv').onclick = () => exportCsv(s);
@@ -2772,6 +2810,7 @@
         <li class="panel"><h3>Work through audit items</h3><p>Each item has an ID like <b>#12</b>. Click it to set the status (Open, For clarification, Done, On hold, False alarm), reassign it, comment and paste screenshots.</p></li>
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
+        <li class="panel"><h3>Your work stays yours</h3><p>Finish a website and it shows <b>✓ Marked Complete by you</b>. If anyone rescans, reopens or reassigns it, you're told what happened and who did it — and they're asked for a reason first. <b>Members → 📊 Team stats</b> shows what each person has closed.</p></li>
       </ol>
       <div class="panel panel-pad" style="margin-top:14px"><h2>Audit item statuses</h2>
         <table class="help-table"><tbody>

@@ -163,11 +163,33 @@ export const HELP_SECTIONS = [
   {
     id: 'notifications', group: 'Collaboration', title: 'Notifications and "someone is on this website"', audience: 'all',
     html: `<ul>
-<li>The <b>bell</b> collects mentions, replies, assignments and <b>finished scans</b>. Click one to jump to the item.</li>
+<li>The <b>bell</b> collects mentions, replies, assignments, <b>finished scans</b> and any change to a website you own (see <b>Who owns an audit</b> below). Click one to jump to the item.</li>
 <li>New notifications also pop up at the top right (macOS style). Hover to pause the timer, ✕ to close. Set how long they stay in your account settings.</li>
 <li><b>Desktop notifications</b>: allow them when asked, and you'll get alerts even when the tab is in the background.</li>
 <li><b>Slack</b> (when connected): the same updates as a Slack message from <b>Site Auditor</b>. Turn it on or off in your account settings.</li>
 <li><b>Someone is on this website</b>: when you open a website a teammate is working on (or they open yours), a pop-up tells you, and the bar under the title shows "… is also here" and which item they're on. Talk to them so you don't fix the same item twice.</li>
+</ul>`,
+  },
+  {
+    id: 'ownership', group: 'Collaboration', title: 'Who owns an audit (and how your work is protected)', audience: 'all',
+    html: `<p>Nobody can quietly take a website off you, reopen your finished work or rescan it without you hearing about it. Every one of these tells the person affected <b>what happened and who did it</b>, in the bell, on the desktop and on Slack if you've switched that on.</p>
+<ul>
+<li><b>You're credited when you finish.</b> Set a website to <b>Complete</b> and the page and the Audits row show <b>✓ Marked Complete by you</b> with the date. That stays there even if someone rescans it later.</li>
+<li><b>Rescanned after you completed it?</b> You're told who rescanned it and when, so "wait, I already finished this" never happens again.</li>
+<li><b>Reopened?</b> If someone moves your Complete website back to In progress, you and the assignee are told who did it and why.</li>
+<li><b>Reassigned?</b> If a website is taken off you, you're told who has it now and who moved it. If they gave it to themselves you'll see "<i>… took this website over from you</i>".</li>
+<li><b>Taking one over asks first.</b> Before you can take a website off someone who is working on it — or reopen a completed audit — the app warns you how much they've already closed, tells you they'll be notified, and lets you add a short reason. The reason goes in the notification and in the website's <b>Activity log</b>.</li>
+<li><b>Everything is logged.</b> The website's <b>Activity log</b> keeps every reassignment, reopen and rescan with the date, the time and the person.</li>
+</ul>
+<p class="small muted">If something still looks wrong, open the website's <b>Activity log</b> first — it usually answers the question — then talk to the person named there.</p>`,
+  },
+  {
+    id: 'stats', group: 'Collaboration', title: 'Team stats', audience: 'all',
+    html: `<ul>
+<li><b>Team stats</b> shows, per person: websites assigned to them now, how many of those are Complete, how many websites they marked Complete, audit items they closed as <b>Done</b>, and how many they tagged <b>False alarm</b>, <b>On hold</b>, <b>For clarification</b> or reopened.</li>
+<li>Open it from <b>Members</b> (top right) → <b>📊 Team stats</b>.</li>
+<li>Members see their own row. Admins see everyone, so patterns stand out — for example someone tagging a lot of items as False alarm, which is worth a conversation rather than an assumption.</li>
+<li>Counting starts from the day this was switched on, so older work isn't in the numbers.</li>
 </ul>`,
   },
   {

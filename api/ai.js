@@ -14,7 +14,9 @@
 //   MISTRAL_API_KEY     Mistral "Experiment" plan, free, no card (phone check).                      MISTRAL_MODEL (default mistral-medium-latest)
 //   CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID  Cloudflare Workers AI, 10,000 free "neurons" a day, no card. CLOUDFLARE_MODEL (default @cf/openai/gpt-oss-120b)
 //   ANTHROPIC_API_KEY   Anthropic API directly (paid).                                               ANTHROPIC_MODEL (default claude-haiku-4-5)
-// Order: AI_ORDER (default "gateway,gemini,cerebras,mistral,groq,cloudflare,openrouter,anthropic"). Only providers with a key take part.
+// Order: AI_ORDER (default "gateway,cerebras,cloudflare,groq,mistral,anthropic"). Only providers with a key take part.
+// AI_OFF (default "gemini,openrouter") sits out providers whose free terms don't suit client work, even if a key is set.
+// Naming one in AI_ORDER switches it back on; AI_OFF="" switches them all on.
 // Our own daily request cap per provider: <GEMINI|GROQ|OPENROUTER|CEREBRAS|MISTRAL|CLOUDFLARE|AI_GATEWAY|ANTHROPIC>_DAILY_LIMIT (0 = no cap).
 // Results are cached for 60 days so rescans don't use any quota.
 import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL } from './_lib.js';
@@ -74,8 +76,10 @@ const CATALOG = {
     base: env('ANTHROPIC_API_BASE', 'https://api.anthropic.com/v1'), model: env('ANTHROPIC_MODEL', 'claude-haiku-4-5') }),
 };
 function providers() {
-  const order = env('AI_ORDER', 'gateway,gemini,cerebras,mistral,groq,cloudflare,openrouter,anthropic').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id]);
-  Object.keys(CATALOG).forEach((id) => { if (!order.includes(id)) order.push(id); });
+  const order = env('AI_ORDER', 'gateway,cerebras,cloudflare,groq,mistral,anthropic').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id]);
+  // Sat out by default: free tiers that train on what we send or log it. Naming one in AI_ORDER brings it back.
+  const off = new Set(env('AI_OFF', 'gemini,openrouter').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id] && !order.includes(id)));
+  Object.keys(CATALOG).forEach((id) => { if (!order.includes(id) && !off.has(id)) order.push(id); });
   return [...new Set(order)].map((id) => Object.assign({ id }, CATALOG[id]())).filter((p) => process.env[p.keyVar] && (!p.needVar || process.env[p.needVar]))
     .map((p) => Object.assign(p, { key: process.env[p.keyVar], limit: Math.max(0, Number(env(p.limitVar, p.defLimit)) || 0) }));
 }

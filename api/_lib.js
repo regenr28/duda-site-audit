@@ -232,7 +232,9 @@ export async function notifyUser(email, n) {
 // Needs SLACK_BOT_TOKEN (xoxb-…) with the scopes chat:write, users:read, users:read.email.
 // The Slack user is found by email (the email they registered with); cached so Slack is asked only once a month.
 const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assign: 'assigned you an audit item', signup: 'created an account and needs approval',
-  suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', 'scan-done': 'finished the scan', test: 'sent you a test message' };
+  suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed',
+  'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened a website you completed',
+  test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
 async function slackApi(method, body) {
   const r = await fetchWithTimeout(`${process.env.SLACK_API_BASE || 'https://slack.com/api'}/${method}`, {

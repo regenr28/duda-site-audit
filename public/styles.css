@@ -535,3 +535,5 @@ select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-c
 .whobtn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
 .whobtn:hover { text-decoration: underline; }
 .member-row.off { opacity: .72; }
+.stats-table th, .stats-table td { text-align: center; }
+.stats-table th:first-child, .stats-table td:first-child { text-align: left; }

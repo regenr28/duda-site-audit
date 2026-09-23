@@ -48,6 +48,7 @@ function summary(site, comments) {
     id: site.id, siteId: site.siteId, host: site.host, editorUrl: site.editorUrl, businessName: site.businessName || '',
     assignee: site.assignee || '', status: site.status || 'Not started', scan: slimScan(site.scan), addedBy: site.addedBy || '', addedByName: site.addedByName || '',
     createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c,
+    ...(site.completedAt ? { completedBy: site.completedBy, completedByName: site.completedByName, completedAt: site.completedAt } : {}),
     ...(site.verify ? { verify: { at: site.verify.at, ok: site.verify.ok, still: site.verify.still } } : {}),
   };
 }
@@ -84,6 +85,11 @@ async function log(siteId, me, type, text, extra = {}) {
     ['LPUSH', P + 'uact:' + me.email, JSON.stringify(Object.assign({ siteKey: siteId, siteName: extra.siteName || '' }, e))], ['LTRIM', P + 'uact:' + me.email, 0, 299]);
 }
 const notify = (email, n) => notifyUser(email, n);
+/** Small per-person counters, so admins can see who closed what (and spot odd patterns). */
+async function bump(email, field, by = 1) {
+  if (!email || !field) return;
+  try { await redis(['HINCRBY', P + 'stat:' + email, field, by]); } catch (e) { /* counters are best-effort */ }
+}
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -110,6 +116,22 @@ export default async function handler(req, res) {
         const [cr] = await redis(['HGET', P + 'scanclaims', req.query.id]);
         l.site.claim = liveClaim(cr);
         return res.status(200).json(l.site);
+      }
+      if (op === 'stats') {
+        // Who closed what: counters per person (admins see everyone, members see their own)
+        const all = await listUsers();
+        const who = me.role === 'admin' ? all.filter((u) => u.status !== 'rejected') : all.filter((u) => u.email === me.email);
+        const rows = await redis(...who.map((u) => ['HGETALL', P + 'stat:' + u.email]));
+        const [idx] = await redis(['HGETALL', P + 'index']);
+        const sites = Object.values(pairs(idx, true));
+        return res.status(200).json({ rows: who.map((u, k) => {
+          const c = pairs(rows[k]);
+          const mine = sites.filter((s) => s.assignee === u.email);
+          return { email: u.email, name: u.name, status: u.status,
+            assigned: mine.length, complete: mine.filter((s) => s.status === 'Complete').length,
+            sitesComplete: Number(c.sitesComplete) || 0, itemsDone: Number(c.itemsDone) || 0, itemsFalse: Number(c.itemsFalse) || 0,
+            itemsHold: Number(c.itemsHold) || 0, itemsClarify: Number(c.itemsClarify) || 0, itemsReopen: Number(c.itemsReopen) || 0 };
+        }) });
       }
       if (op === 'gactivity') {
         if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
@@ -205,11 +227,12 @@ export default async function handler(req, res) {
         }
         await log(b.id, me, 'scan', `completed a scan: ${site.findings.length} findings (${c.critical || 0} critical)${add.length && Number(seqRaw || 0) ? `, ${add.length / 2} new` : ''}`);
         // Tell the person who added the website and whoever it's assigned to (bell, desktop and Slack) that it's ready
-        const tell = [...new Set([site.addedBy, site.assignee].filter((e) => e && e !== me.email))];
+        const wasComplete = site.status === 'Complete' || !!site.completedAt;
+        const tell = [...new Set([site.addedBy, site.assignee, wasComplete ? site.completedBy : null].filter((e) => e && e !== me.email))];
         const name = site.businessName || site.siteId;
         for (const email of tell) {
-          await notify(email, { by: me.email, byName: me.name, siteId: b.id, siteName: name, kind: 'scan-done',
-            text: `${site.findings.length} audit item${site.findings.length === 1 ? '' : 's'}, ${c.critical || 0} critical · ${(r.pages || []).length} page${(r.pages || []).length === 1 ? '' : 's'}` });
+          await notify(email, { by: me.email, byName: me.name, siteId: b.id, siteName: name, kind: wasComplete ? 'rescan-done' : 'scan-done',
+            text: `${wasComplete ? `This audit was completed${site.completedAt ? ' on ' + new Date(site.completedAt).toDateString() : ''} and has been scanned again. ` : ''}${site.findings.length} audit item${site.findings.length === 1 ? '' : 's'}, ${c.critical || 0} critical · ${(r.pages || []).length} page${(r.pages || []).length === 1 ? '' : 's'}` });
         }
         return res.status(200).json(await saveIndex(b.id));
       }
@@ -357,8 +380,34 @@ export default async function handler(req, res) {
         const ch = b.changes || {};
         const users = await listUsers();
         const nameOf = (e) => (users.find((u) => u.email === e) || {}).name || 'Unassigned';
-        if ('status' in ch && SITE_STATUSES.includes(ch.status) && ch.status !== site.status) { await log(b.id, me, 'status', `changed website status from "${site.status}" to "${ch.status}"`); site.status = ch.status; }
-        if ('assignee' in ch && ch.assignee !== site.assignee) { await log(b.id, me, 'assign', `assigned the website to ${nameOf(ch.assignee)}`); site.assignee = ch.assignee; }
+        const siteName = site.businessName || site.siteId;
+        const reason = String(b.reason || '').trim().slice(0, 300);
+        if ('status' in ch && SITE_STATUSES.includes(ch.status) && ch.status !== site.status) {
+          const was = site.status;
+          await log(b.id, me, 'status', `changed website status from "${was}" to "${ch.status}"${reason ? ` · ${reason}` : ''}`);
+          if (ch.status === 'Complete') { site.completedBy = me.email; site.completedByName = me.name; site.completedAt = now(); await bump(me.email, 'sitesComplete'); }
+          if (was === 'Complete' && ch.status !== 'Complete') {
+            // Someone reopened a finished audit: tell whoever completed it (and the assignee)
+            for (const email of [...new Set([site.completedBy, site.assignee].filter((e) => e && e !== me.email))]) {
+              await notify(email, { by: me.email, byName: me.name, siteId: b.id, siteName, kind: 'site-reopen', text: `Status changed from Complete to "${ch.status}"${reason ? ` · ${reason}` : ''}` });
+            }
+          }
+          site.status = ch.status;
+        }
+        if ('assignee' in ch && ch.assignee !== site.assignee) {
+          const from = site.assignee, to = ch.assignee;
+          const took = to === me.email && from && from !== me.email;
+          await log(b.id, me, 'assign', to ? `${took ? 'took over this website from ' + nameOf(from) : 'assigned the website to ' + nameOf(to) + (from ? ' (was ' + nameOf(from) + ')' : '')}${reason ? ` · ${reason}` : ''}` : `removed the assignee (was ${nameOf(from)})`);
+          if (from && from !== me.email) {
+            await notify(from, { by: me.email, byName: me.name, siteId: b.id, siteName, kind: 'site-unassign',
+              text: took ? `${me.name} took this website over from you${reason ? ` · ${reason}` : ''}` : `Reassigned to ${nameOf(to) || 'nobody'} by ${me.name}${reason ? ` · ${reason}` : ''}` });
+          }
+          if (to && to !== me.email) {
+            await notify(to, { by: me.email, byName: me.name, siteId: b.id, siteName, kind: 'site-assign',
+              text: `${me.name} assigned this website to you${from ? ` (was ${nameOf(from)})` : ''}${reason ? ` · ${reason}` : ''}` });
+          }
+          site.assignee = to;
+        }
         site.updatedAt = now();
         await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
         return res.status(200).json(await saveIndex(b.id));
@@ -403,6 +452,9 @@ export default async function handler(req, res) {
             await notify(a.email, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: marked[0].f.num, kind: 'false-alarm', text: (note ? note + ' · ' : '') + marked[0].f.message });
           }
         }
+        // Per-person counters (Done / False alarm / On hold / For clarification), for the team stats
+        const FIELD = { done: 'itemsDone', false: 'itemsFalse', hold: 'itemsHold', clarification: 'itemsClarify', open: 'itemsReopen' };
+        for (const t of touched.filter((x) => x.kind === 'status')) await bump(me.email, FIELD[t.to] || '');
         for (const t of touched.slice(0, 20)) {
           if (t.kind === 'status') await log(b.siteId, me, 'item-status', `changed #${t.f.num} from "${FLABEL[t.from]}" to "${FLABEL[t.to]}"${t.to === 'false' && note ? ` (reason: ${note.slice(0, 120)})` : ''}`, { findingId: t.f.id, findingNum: t.f.num });
           else {

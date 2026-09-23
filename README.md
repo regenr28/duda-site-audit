@@ -42,7 +42,8 @@ The light bulb glows for anyone whose latest seen note is older than the newest 
 | `MISTRAL_API_KEY` | free key from console.mistral.ai (Experiment plan) | optional, **free**, no card (phone check). Mistral Medium. |
 | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Workers AI token + account ID from dash.cloudflare.com | optional, **free**, no card. gpt-oss-120b, 10,000 neurons a day. |
 | `AI_GATEWAY_API_KEY` | key from Vercel → AI Gateway | optional, paid. Add it once you have budget. (Or `ANTHROPIC_API_KEY`.) |
-| `AI_ORDER` | `gateway,gemini,groq,openrouter,anthropic` (default) | optional. The order the models are tried in. |
+| `AI_ORDER` | `gateway,cerebras,cloudflare,groq,mistral,anthropic` (default) | optional. The order the models are tried in. |
+| `AI_OFF` | `gemini,openrouter` (default) | optional. Models that sit out even when a key is set, because their free terms train on or log what we send. Name one in `AI_ORDER` to bring it back, or set `AI_OFF=` (empty) for all of them. |
 | `GEMINI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `AI_GATEWAY_MODEL` | model names | optional. Defaults: `gemini-2.5-flash`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b:free`, `anthropic/claude-haiku-4.5`. |
 | `GEMINI_DAILY_LIMIT`, `GROQ_DAILY_LIMIT`, `OPENROUTER_DAILY_LIMIT` | defaults 250 / 1000 / 50 | optional. This app's own daily request cap per model (0 = no cap). |
 | `AI_DAILY_LIMIT` | `5000` (default) | optional. Maximum items sent to AI per day across all models. |
@@ -85,7 +86,7 @@ Add one or more free keys. None of them need a credit card:
 
 Tick **Sensitive** for each, then redeploy.
 
-**How the fallback works:** models are tried in `AI_ORDER`. When one hits its per-minute limit, its daily limit, this app's daily cap, or runs out of credits, it rests until it resets and the next one answers. If every model is resting for up to 3 minutes, the scan waits with a countdown; for longer, it finishes and the rest becomes **AI check pending** items (below).
+**How the fallback works:** models are tried in `AI_ORDER`, skipping anything in `AI_OFF`. When one hits its per-minute limit, its daily limit, this app's daily cap, or runs out of credits, it rests until it resets and the next one answers. If every model is resting for up to 3 minutes, the scan waits with a countdown; for longer, it finishes and the rest becomes **AI check pending** items (below).
 
 **What the team sees about AI:** everyone except the super admin (`SUGGESTIONS_OWNER`) sees one combined **Site Auditor AI** on the AI Status tab: total credits per day, used, left, the earliest daily reset, and when it's back if paused. They don't see how many AI services there are, which ones, or that they are free tiers, and the app never shows setup names or hosting details to them. The super admin sees the full per-model view.
 

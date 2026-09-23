@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-09-23-ownership', date: '2026-09-23', audience: 'all', tag: 'Audits',
+    title: 'Nobody can quietly take your audit',
+    what: 'Your work is now yours. Finish a website and it shows <b>✓ Marked Complete by you</b> with the date. If anyone <b>rescans</b> it, <b>reopens</b> it, or <b>reassigns</b> it to someone else, you\'re told <b>what happened and who did it</b> — in the bell, on the desktop and on Slack if you\'ve switched that on. And before a teammate can take a website off you, the app warns them how much you\'ve already closed, tells them you\'ll be notified, and asks for a short reason. That reason goes in your notification and in the website\'s Activity log.',
+    where: ['Open any website: the completer\'s name is under the business name, and in the <b>Audits</b> list under the status pill.', 'Changed your mind? Change the <b>Assigned to</b> box or the status on the website page — you\'ll see the warning before it goes through.', 'Want it on Slack too? Avatar → <b>Your account</b> → tick <b>Also message me on Slack</b>.', 'The full record is on the website\'s <b>Activity log</b> tab.'],
+    link: '#/help/ownership', linkText: 'How this works',
+  },
+  {
+    id: '2026-09-23-stats', date: '2026-09-23', audience: 'all', tag: 'Team',
+    title: 'Team stats: see what everyone has closed',
+    what: 'A simple table of who did what: websites assigned to each person, how many are Complete, websites they marked Complete, audit items they closed as <b>Done</b>, and how many they tagged <b>False alarm</b>, <b>On hold</b> or <b>For clarification</b>. You can always see your own row; admins see everyone. Counting starts today, so older work isn\'t in the numbers.',
+    where: ['Click <b>Members</b> (top right) → <b>📊 Team stats</b>.'],
+    link: '#/help/stats', linkText: 'What the columns mean',
+  },
+  {
     id: '2026-09-23-who-is-who', date: '2026-09-23', audience: 'all', tag: 'Team',
     title: 'Always know who is who',
     what: 'Display names are now unique, so no two people can share one. <b>Click any name</b> (in a comment, a mention or the member list) to see their email, whether they\'re online and what they\'ve been working on. Mentions remember the person, so if someone renames themselves, older mentions show their new name; hover to see the name used at the time.',
