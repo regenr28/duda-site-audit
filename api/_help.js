@@ -43,7 +43,10 @@ export const HELP_SECTIONS = [
     html: `<ul>
 <li>Click <b>Members</b> (top right) to see everyone on the team, how many websites each person is assigned, and whether they're online.</li>
 <li>The coloured dots at the top right show who's online: <b>green</b> = active now, <b>grey</b> = idle (no activity for a while), no dot = offline. Click them to see what each person is working on.</li>
-<li>Click a teammate to see their recent activity: websites, item changes, comments and scans.</li>
+<li>Click a teammate's <b>name</b> anywhere (a comment, a mention, the member list) to see who they are: their email, whether they're online, any previous names, and what they've been working on.</li>
+<li><b>Display names are unique.</b> If someone tries to use a name that's taken, they're asked to add a surname or initial, so a mention always points to one person.</li>
+<li>Mentions remember the person, not the text: if they change their display name later, older mentions show the new name (hover to see the name used at the time).</li>
+<li>In <b>Members</b> you can search and filter by <b>Everyone</b>, <b>Online now</b>, <b>Offline</b> and <b>Switched off</b>.</li>
 <li>When Slack is connected, click a teammate's <b>name</b> in a pop-up or in the "is also here" bar to open a Slack chat with them.</li>
 </ul>`,
   },
@@ -54,7 +57,10 @@ export const HELP_SECTIONS = [
 <li>Change someone's role with the <b>Member / Admin</b> menu. Admins can approve accounts, manage roles, reset passwords, see the app-wide <b>Activity</b> page and the <b>False alarms</b> list.</li>
 <li>When Slack is connected, each member shows <b>Slack ✓</b> or <b>No Slack match</b>. "No Slack match" means no Slack account uses that email, so Slack messages can't reach them: they should register here with the same email they use in Slack. Nobody needs to install anything in Slack.</li>
 <li><b>Reset password</b> creates a temporary password. Send it to the person privately; they can change it later with "Forgot password".</li>
-<li><b>✕</b> removes an account. Some accounts are protected and can't be changed.</li>
+<li><b>Switch off</b> an account when someone leaves. They can't sign in any more, but their name stays on every audit item, comment and scan they touched, so nothing loses its history. Switched-off people are hidden from the assignee lists (an item already assigned to them still shows their name), and you can <b>Switch back on</b> any time.</li>
+<li><b>Delete</b> (on a switched-off account) removes it for good: their name disappears from old items. Prefer <b>Switch off</b>.</li>
+<li>Name changes are recorded: the member's card lists previous names, and the app-wide <b>Activity</b> page shows who renamed themselves and when.</li>
+<li>Some accounts are protected and can't be changed.</li>
 <li>Members don't see who is an admin.</li>
 </ul>`,
   },
@@ -89,6 +95,7 @@ export const HELP_SECTIONS = [
 <li>As you type, each new ID shows its business name or domain from Live DR Sites. "Not in the published list" means the ID may have a typo, or the site isn't published.</li>
 <li>Websites already in Audits are skipped and shown with <b>Open existing audit</b>.</li>
 <li>Pick who to <b>Assign</b> it to, then <b>Add &amp; start audit</b>. The scan starts right away.</li>
+<li>When the scan finishes, the person who <b>added</b> the website and the person it's <b>assigned</b> to are notified (bell, desktop, and Slack if they've switched it on). If you ran the scan yourself you just see it on screen.</li>
 <li>You can also add a website from <b>Live DR Sites</b> with <b>Audit this website</b>.</li>
 </ul>`,
   },
@@ -156,7 +163,7 @@ export const HELP_SECTIONS = [
   {
     id: 'notifications', group: 'Collaboration', title: 'Notifications and "someone is on this website"', audience: 'all',
     html: `<ul>
-<li>The <b>bell</b> collects mentions, replies and assignments. Click one to jump to the item.</li>
+<li>The <b>bell</b> collects mentions, replies, assignments and <b>finished scans</b>. Click one to jump to the item.</li>
 <li>New notifications also pop up at the top right (macOS style). Hover to pause the timer, ✕ to close. Set how long they stay in your account settings.</li>
 <li><b>Desktop notifications</b>: allow them when asked, and you'll get alerts even when the tab is in the background.</li>
 <li><b>Slack</b> (when connected): the same updates as a Slack message from <b>Site Auditor</b>. Turn it on or off in your account settings.</li>

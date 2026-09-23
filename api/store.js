@@ -204,6 +204,13 @@ export default async function handler(req, res) {
           return res.status(200).json(await saveIndex(b.id));
         }
         await log(b.id, me, 'scan', `completed a scan: ${site.findings.length} findings (${c.critical || 0} critical)${add.length && Number(seqRaw || 0) ? `, ${add.length / 2} new` : ''}`);
+        // Tell the person who added the website and whoever it's assigned to (bell, desktop and Slack) that it's ready
+        const tell = [...new Set([site.addedBy, site.assignee].filter((e) => e && e !== me.email))];
+        const name = site.businessName || site.siteId;
+        for (const email of tell) {
+          await notify(email, { by: me.email, byName: me.name, siteId: b.id, siteName: name, kind: 'scan-done',
+            text: `${site.findings.length} audit item${site.findings.length === 1 ? '' : 's'}, ${c.critical || 0} critical · ${(r.pages || []).length} page${(r.pages || []).length === 1 ? '' : 's'}` });
+        }
         return res.status(200).json(await saveIndex(b.id));
       }
       case 'maintenance': {

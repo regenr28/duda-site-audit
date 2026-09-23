@@ -117,7 +117,14 @@ export async function putUser(u) {
   await redis(['SET', P + 'user:' + u.email, JSON.stringify(u)], ['SADD', P + 'users', u.email]);
   return u;
 }
-export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white' });
+/** Display names must be unique so @mentions and "who did this" are never ambiguous. */
+export async function nameTaken(name, exceptEmail) {
+  const want = String(name || '').trim().toLowerCase();
+  if (!want) return false;
+  const all = await listUsers();
+  return all.some((u) => u.email !== exceptEmail && String(u.name || '').trim().toLowerCase() === want && u.status !== 'rejected');
+}
+export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white' });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
@@ -177,6 +184,7 @@ export async function requireUser(req, res, { admin = false } = {}) {
   const u = await currentUser(req);
   appUrl(req); // remember the app address for links in Slack messages
   if (!u) { res.status(401).json({ error: 'Please sign in' }); return null; }
+  if (u.status === 'disabled') { res.status(403).json({ error: 'This account has been switched off by an admin.', disabled: true }); return null; }
   if (u.status !== 'active') { res.status(403).json({ error: 'Your account is waiting for admin approval', pending: true }); return null; }
   if (admin && u.role !== 'admin') { res.status(403).json({ error: 'Admins only' }); return null; }
   return u;
@@ -224,7 +232,7 @@ export async function notifyUser(email, n) {
 // Needs SLACK_BOT_TOKEN (xoxb-…) with the scopes chat:write, users:read, users:read.email.
 // The Slack user is found by email (the email they registered with); cached so Slack is asked only once a month.
 const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assign: 'assigned you an audit item', signup: 'created an account and needs approval',
-  suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', test: 'sent you a test message' };
+  suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', 'scan-done': 'finished the scan', test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
 async function slackApi(method, body) {
   const r = await fetchWithTimeout(`${process.env.SLACK_API_BASE || 'https://slack.com/api'}/${method}`, {

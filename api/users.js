@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const all = await listUsers();
-      const visible = me.role === 'admin' ? all : all.filter((u) => u.status === 'active');
+      const visible = me.role === 'admin' ? all : all.filter((u) => u.status === 'active' || u.status === 'disabled');
       // Members don't see who is an admin (avoids "why are they admin?" friction); admins see roles to manage them
       const shape = (u) => { const x = publicUser(u); if (me.role !== 'admin' && u.email !== me.email) delete x.role; else if (u.email === OWNER_EMAIL) { if (me.email === OWNER_EMAIL) x.superAdmin = true; else x.locked = true; } return x; };
       return res.status(200).json({ me: publicUser(me), users: visible.map(shape).sort((a, b) => a.name.localeCompare(b.name)) });
@@ -20,6 +20,14 @@ export default async function handler(req, res) {
     if (b.op === 'profile') {
       const name = String(b.name || '').trim().slice(0, 60);
       if (!name) return res.status(400).json({ error: 'Name required' });
+      if (name.toLowerCase() !== String(me.name || '').toLowerCase() && await nameTaken(name, me.email)) {
+        return res.status(409).json({ error: `Someone on the team already uses the name "${name}". Please add a surname or an initial so mentions point to the right person.` });
+      }
+      if (name !== me.name) {
+        // Renames are recorded so older mentions and activity can still be traced
+        me.nameHistory = (me.nameHistory || []).concat([{ from: me.name, to: name, at: now() }]).slice(-20);
+        await globalLog({ email: me.email, name }, 'rename', `changed their display name from "${me.name}" to "${name}"`);
+      }
       me.name = name;
       // How long pop-up notifications stay on screen (seconds; 0 = until closed)
       if (b.notifySecs !== undefined) { const n = Number(b.notifySecs); if (Number.isFinite(n) && n >= 0 && n <= 600) me.notifySecs = Math.round(n); }
@@ -54,9 +62,9 @@ export default async function handler(req, res) {
     if (!target) return res.status(404).json({ error: 'User not found' });
     const email = normEmail(b.email);
     // The owner's account can only be managed by the owner (others just see a normal admin they can't change)
-    if (email === OWNER_EMAIL && ['remove', 'role', 'resetPassword'].includes(b.op)) {
+    if (email === OWNER_EMAIL && ['remove', 'role', 'resetPassword', 'disable'].includes(b.op)) {
       if (me.email !== OWNER_EMAIL) return res.status(403).json({ error: "You don't have permission to change this account." });
-      if (b.op === 'remove') return res.status(400).json({ error: "You can't remove yourself" });
+      if (b.op === 'remove' || b.op === 'disable') return res.status(400).json({ error: "You can't remove or switch off yourself" });
       if (b.op === 'role' && b.role !== 'admin') return res.status(400).json({ error: 'The Super Admin always stays an admin.' });
     }
     switch (b.op) {
@@ -78,6 +86,16 @@ export default async function handler(req, res) {
         target.role = b.role === 'admin' ? 'admin' : 'member'; await putUser(target);
         await globalLog(me, 'role', `made ${target.name} ${target.role === 'admin' ? 'an admin' : 'a member'}`);
         break;
+      case 'disable': case 'enable': {
+        // Switching an account off keeps its history (who did what) instead of deleting it
+        if (email === me.email) return res.status(400).json({ error: "You can't switch off your own account" });
+        if (target.status === 'pending') return res.status(400).json({ error: 'Approve or reject this account first' });
+        target.status = b.op === 'disable' ? 'disabled' : 'active';
+        if (b.op === 'disable') { target.disabledAt = now(); target.disabledBy = me.email; } else { delete target.disabledAt; delete target.disabledBy; }
+        await putUser(target);
+        await globalLog(me, b.op, `${b.op === 'disable' ? 'switched off' : 'switched on'} the account of ${target.name} (${email})`);
+        break;
+      }
       case 'resetPassword': {
         const temp = crypto.randomBytes(6).toString('base64url');
         Object.assign(target, hashPassword(temp)); await putUser(target);

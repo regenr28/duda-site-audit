@@ -4,7 +4,7 @@
 import crypto from 'node:crypto';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
-  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, OWNER_EMAIL , savedEditorHost } from './_lib.js';
+  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, OWNER_EMAIL , savedEditorHost, nameTaken } from './_lib.js';
 
 const CODE_TTL = 15 * 60;
 const code6 = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -62,6 +62,7 @@ export default async function handler(req, res) {
         if (!isEmail(email)) return res.status(400).json({ error: 'Please enter a valid email' });
         if (String(b.password || '').length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
         if (await getUser(email)) return res.status(409).json({ error: 'An account with this email already exists. Sign in instead, or use "Forgot password".' });
+        if (await nameTaken(name)) return res.status(409).json({ error: `The name "${name}" is already used by someone on the team. Please add your surname or an initial, so mentions point to the right person.` });
         if (await limited('signup:' + email, 5, 3600)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
         const { salt, hash } = hashPassword(b.password);
         if (!emailEnabled()) {

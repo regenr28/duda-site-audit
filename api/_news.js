@@ -4,6 +4,24 @@
 
 export const NEWS = [
   {
+    id: '2026-09-23-who-is-who', date: '2026-09-23', audience: 'all', tag: 'Team',
+    title: 'Always know who is who',
+    what: 'Display names are now unique, so no two people can share one. <b>Click any name</b> (in a comment, a mention or the member list) to see their email, whether they\'re online and what they\'ve been working on. Mentions remember the person, so if someone renames themselves, older mentions show their new name; hover to see the name used at the time.',
+    where: ['Click a name in a comment or an <b>@mention</b>.', 'Click <b>Members</b> (top right) to search and filter by <b>Everyone</b>, <b>Online now</b>, <b>Offline</b> and <b>Switched off</b>.', 'Changing your own name: avatar → <b>Your account</b>. If the name is taken you\'ll be asked to add a surname or initial.'],
+  },
+  {
+    id: '2026-09-23-switch-off', date: '2026-09-23', audience: 'admin', tag: 'Admin',
+    title: 'Switch an account off instead of deleting it',
+    what: 'When somebody leaves, switch their account off. They can no longer sign in, but their name stays on every audit item, comment and scan, so you can still see who did what. You can switch it back on at any time.',
+    where: ['Click <b>Members</b> → <b>Switch off</b> on that person.', 'Use the <b>Switched off</b> filter to see them.', 'Deleting for good is still there, but it removes their name from old items.'],
+  },
+  {
+    id: '2026-09-23-scan-done', date: '2026-09-23', audience: 'all', tag: 'Audits',
+    title: "You're told when a scan finishes",
+    what: 'Submit a website for audit and get on with something else. When the scan finishes, the person who <b>added</b> the website and the person it is <b>assigned</b> to both get a notification with the number of audit items found: in the bell, on the desktop, and on Slack if they\'ve switched that on.',
+    where: ['Click <b>+ Add website</b>, choose who to <b>Assign</b> it to, then <b>Add &amp; start audit</b>.', 'The dialog and the website page tell you that you\'ll be notified when it finishes.', 'Want it on Slack? Avatar → <b>Your account</b> → tick <b>Also message me on Slack</b>.'],
+  },
+  {
     id: '2026-09-23-ai-credits', date: '2026-09-23', audience: 'all', tag: 'AI',
     title: 'More AI capacity, and it lasts much longer',
     what: 'The ✨ AI can now check far more websites in a day. It also works smarter: only text that could hide a problem is sent (a name that looks like another business, a place, contact details or filler text), so plain marketing copy and long blog posts no longer use up the day\'s credits. When one AI runs out, the next one carries on by itself.',

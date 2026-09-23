@@ -55,6 +55,7 @@
     const ct = r.headers.get('content-type') || '';
     const data = ct.includes('json') ? await r.json() : await r.text();
     if (r.status === 401 && !path.startsWith('/api/auth')) { state.me = null; renderAuth(); throw new Error('Please sign in'); }
+    if (r.status === 403 && data && data.disabled) { state.auth.mode = 'disabled'; state.me = null; renderAuth(); throw new Error(data.error); }
     if (r.status === 403 && data && data.pending) { state.auth.mode = 'pending'; state.me = null; renderAuth(); throw new Error(data.error); }
     if (!r.ok) throw Object.assign(new Error((data && data.error) || `HTTP ${r.status}`), { status: r.status, data });
     return data;
@@ -88,7 +89,11 @@
     return `<span class="av" style="background:${esc(u ? u.color : '#6b7280')};${size ? `width:${size}px;height:${size}px;font-size:${Math.round(size / 2.3)}px` : ''}" title="${esc(name)}">${esc(initials(name))}</span>`;
   }
   function userOptions(selected, emptyLabel) {
-    return `<option value="">${esc(emptyLabel || 'Unassigned')}</option>` + activeUsers().map((u) => `<option value="${esc(u.email)}" ${u.email === selected ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+    const list = activeUsers();
+    const cur = selected && !list.some((u) => u.email === selected) ? user(selected) : null;
+    return `<option value="">${esc(emptyLabel || 'Unassigned')}</option>`
+      + (cur ? `<option value="${esc(cur.email)}" selected>${esc(cur.name)} (switched off)</option>` : '')
+      + list.map((u) => `<option value="${esc(u.email)}" ${u.email === selected ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
   }
 
   // =====================================================================
@@ -127,6 +132,8 @@
         <label class="field">Email<input type="email" id="auEmail" autocomplete="email" required value="${esc(a.email)}" autofocus></label>
         <button class="btn primary block" type="submit">Send code</button>
       </form><p class="switch"><a href="#" data-mode="login">Back to sign in</a></p>`;
+    else if (a.mode === 'disabled') body = `<h1>Account switched off</h1><p class="muted">An admin has switched this account off, so it can't sign in. Everything you worked on is still there. Ask an admin to switch it back on.</p>
+      <button class="btn block" data-mode="login">Back to sign in</button>`;
     else if (a.mode === 'pending') body = `<h1>Account created</h1><div><span class="badge fs-clarification" style="font-size:13px;padding:4px 12px">Status: Admin for Approval</span></div><p class="muted">The admins have been notified. You can sign in as soon as one of them approves your account.</p>
       <button class="btn block" data-mode="login">Back to sign in</button>`;
     $('#view').innerHTML = `<div class="auth-wrap"><div class="panel auth-card">
@@ -328,11 +335,12 @@
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
   }
-  const NOTIF_TEXT = { 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
+  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
     if (n.kind === 'false-alarm') return '#/suggestions/false-alarms';
+    if (n.kind === 'scan-done') return `#/site/${n.siteId}`;
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   }
   function toggleNotifs() {
@@ -485,6 +493,10 @@
     const a = document.createElement('a'); a.href = r.app; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => { window.removeEventListener('blur', onBlur); if (!left && !document.hidden) window.open(r.web, '_blank', 'noopener'); }, 1500);
   }
+  document.addEventListener('click', (e) => {
+    const w = e.target.closest && e.target.closest('[data-who]');
+    if (w) { e.preventDefault(); e.stopPropagation(); openMemberActivity(w.dataset.who); }
+  }, true);
   document.addEventListener('click', (e) => {
     const a = e.target.closest && e.target.closest('[data-slack]');
     if (!a) return;
@@ -655,7 +667,10 @@
           return `${head}<li><span class="a-ic">${ACT_ICON[e.type] || '•'}</span><div class="grow">${text}${e.siteName ? ` <span class="muted">on</span> ${link(e) ? `<a href="${link(e)}" data-close-nav><b>${esc(e.siteName)}</b></a>` : `<b>${esc(e.siteName)}</b>`}` : ''}</div><div class="a-time"><div>${esc(new Date(e.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</div><div class="faint">${esc(ago(e.at))}</div></div></li>`;
         }).join('')}</ul>` : '<div class="empty small">Nothing here yet.</div>'}`;
       })();
-      $('.modal').innerHTML = `<header><div style="display:flex;gap:12px;align-items:center"><span class="pav">${avatar(email, 36)}<span class="pdot ${pr.st}"></span></span><div><h2 style="margin:0">${esc(u.name)}</h2><div class="small ${pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(presenceText(pr))}${u.role && state.me.role === 'admin' ? ' · ' + esc(u.role) : ''}</div></div></div><button class="btn ghost" data-close>✕</button></header>
+      $('.modal').innerHTML = `<header><div style="display:flex;gap:12px;align-items:center"><span class="pav">${avatar(email, 36)}<span class="pdot ${pr.st}"></span></span><div><h2 style="margin:0">${esc(u.name)}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}</h2>
+        <div class="small mono muted">${esc(u.email)}</div>
+        <div class="small ${pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(u.status === 'disabled' ? 'This account can no longer sign in. Its past work is kept.' : presenceText(pr))}${u.role && state.me.role === 'admin' ? ' · ' + esc(u.role) : ''}</div>
+        ${(u.nameHistory || []).length ? `<div class="small faint">Previously: ${esc([...new Set(u.nameHistory.map((h) => h.from).filter(Boolean))].join(', '))}</div>` : ''}</div></div><button class="btn ghost" data-close>✕</button></header>
         <div class="body ma-body">${body}</div>`;
       $$('[data-close]', $('.modal')).forEach((b) => (b.onclick = closeModal));
       $$('[data-close-nav]', $('.modal')).forEach((a) => a.addEventListener('click', () => closeModal()));
@@ -671,6 +686,8 @@
     fillPresencePanel(p); document.body.appendChild(p);
     setTimeout(() => document.addEventListener('mousedown', function h(e) { if (!p.contains(e.target) && !e.target.closest('#presence')) { p.remove(); document.removeEventListener('mousedown', h); } }), 0);
   }
+  /** "…you'll be told when it's done" — mentions Slack only when Slack is connected for this person. */
+  const doneNote = () => `You'll get a notification${state.config && state.config.slackDM && state.me && state.me.slackDM !== false ? ' and a Slack message' : ''} when the scan finishes.`;
   async function slackTest() {
     try { const r = await post('/api/users', { op: 'slackTest' }); toast(r.message); } catch (e) { toast(e.message); }
   }
@@ -703,21 +720,42 @@
   // MEMBERS (user accounts)
   // =====================================================================
   let slackWho = null;
+  const memFilter = { q: '', view: 'all' };
   function openMembers() {
     const isAdmin = state.me.role === 'admin';
     const draw = () => {
       const pending = state.users.filter((u) => u.status === 'pending');
-      const active = activeUsers();
-      $('#memList').innerHTML = (isAdmin && pending.length ? `<h3>Admin for Approval (${pending.length})</h3>` + pending.map((u) => `
-        <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span><div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
-        <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : '') +
-        active.map((u) => `<div class="member-row"><span class="pav">${avatar(u.email, 30)}${pdot(u.email)}</span><div class="grow"><b>${esc(u.name)}</b>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${isAdmin ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : u.role === 'admin' ? 'Admin' : 'Member'}</span>` : ''}
-          <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(presenceText(presenceOf(u.email)))}${isAdmin && slackWho ? (slackWho[u.email] ? ' · <span class="v-ok-t">Slack ✓</span>' : ' · <span class="v-still-t" title="No Slack account uses this email, so Slack messages can\'t reach them. They should register here with their Slack email.">No Slack match</span>') : ''}</div></div>
-          ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>Admin</option></select>` : isAdmin ? `<select data-role="${esc(u.email)}" class="sm-select"><option value="member" ${u.role === 'member' ? 'selected' : ''}>Member</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select>
-          ${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Remove">✕</button>` : ''}` : ''}</div>`).join('');
+      const all = state.users.filter((u) => u.status === 'active' || u.status === 'disabled');
+      const q = memFilter.q.trim().toLowerCase();
+      const VIEWS = {
+        all: ['Everyone', () => true],
+        online: ['Online now', (u) => u.status === 'active' && presenceOf(u.email).st === 'active'],
+        offline: ['Offline', (u) => u.status === 'active' && presenceOf(u.email).st === 'offline'],
+        off: ['Switched off', (u) => u.status === 'disabled'],
+      };
+      const match = (u) => (!q || (u.name + ' ' + u.email).toLowerCase().includes(q)) && VIEWS[memFilter.view][1](u);
+      const list = all.filter(match).sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === 'disabled' ? 1 : -1));
+      $('#memList').innerHTML = `
+        <div class="toolbar" style="margin:8px 0 10px"><input type="search" id="memQ" placeholder="Search name or email…" value="${esc(memFilter.q)}" style="flex:1;min-width:180px">
+          <span class="chips">${Object.entries(VIEWS).filter(([k]) => k !== 'off' || isAdmin || all.some((u) => u.status === 'disabled')).map(([k, [label, fn]]) => `<button class="chipbtn ${memFilter.view === k ? 'active' : ''}" data-memv="${k}">${esc(label)} <span class="faint">${all.filter(fn).length}</span></button>`).join('')}</span></div>
+        ${isAdmin && pending.length ? `<h3>Admin for Approval (${pending.length})</h3>` + pending.map((u) => `
+          <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span><div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
+          <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : ''}
+        ${list.length ? list.map((u) => `<div class="member-row ${u.status === 'disabled' ? 'off' : ''}"><span class="pav">${avatar(u.email, 30)}${u.status === 'disabled' ? '' : pdot(u.email)}</span>
+          <div class="grow"><button type="button" class="whobtn" data-who="${esc(u.email)}"><b>${esc(u.name)}</b></button>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}${isAdmin && u.status !== 'disabled' ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : u.role === 'admin' ? 'Admin' : 'Member'}</span>` : ''}
+            <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(u.status === 'disabled' ? 'Can no longer sign in · past work kept' : presenceText(presenceOf(u.email)))}${isAdmin && slackWho && u.status !== 'disabled' ? (slackWho[u.email] ? ' · <span class="v-ok-t">Slack ✓</span>' : ' · <span class="v-still-t" title="No Slack account uses this email, so Slack messages can\'t reach them. They should register here with their Slack email.">No Slack match</span>') : ''}</div>
+            ${(u.nameHistory || []).length ? `<div class="small faint">Renamed ${u.nameHistory.length}× · was ${esc([...new Set(u.nameHistory.map((h) => h.from).filter(Boolean))].slice(-3).join(', '))}</div>` : ''}</div>
+          ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>Admin</option></select>` : isAdmin && u.status !== 'disabled' ? `<select data-role="${esc(u.email)}" class="sm-select"><option value="member" ${u.role === 'member' ? 'selected' : ''}>Member</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select>
+            ${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost" data-disable="${esc(u.email)}" title="Switch the account off: they can't sign in, but everything they did is kept">Switch off</button>` : ''}`
+            : isAdmin && u.status === 'disabled' ? `<button class="btn sm" data-enable="${esc(u.email)}">Switch back on</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Delete for good — their name disappears from old items">Delete</button>` : ''}</div>`).join('')
+          : '<div class="empty small">Nobody matches.</div>'}`;
+      const mq = $('#memQ'); mq.oninput = () => { memFilter.q = mq.value; const p = mq.selectionStart; draw(); const i2 = $('#memQ'); if (i2) { i2.focus(); i2.setSelectionRange(p, p); } };
+      $$('[data-memv]', $('#memList')).forEach((b) => (b.onclick = () => { memFilter.view = b.dataset.memv; draw(); }));
       const act = (sel, fn) => $$(sel, $('#memList')).forEach((b) => (b.onclick = b.onchange = null, b.tagName === 'SELECT' ? (b.onchange = () => fn(b)) : (b.onclick = () => fn(b))));
       act('[data-approve]', async (b) => { await post('/api/users', { op: 'approve', email: b.dataset.approve }); await loadUsers(); draw(); renderTop(); toast('Approved'); });
-      act('[data-remove]', async (b) => { if (!confirm('Remove this account?')) return; await post('/api/users', { op: 'remove', email: b.dataset.remove }); await loadUsers(); draw(); renderTop(); });
+      act('[data-remove]', async (b) => { if (!confirm('Delete this account for good? Their name will disappear from old audit items and comments. "Switch off" keeps the history.')) return; try { await post('/api/users', { op: 'remove', email: b.dataset.remove }); } catch (e) { toast(e.message); } await loadUsers(); draw(); renderTop(); });
+      act('[data-disable]', async (b) => { if (!confirm('Switch this account off? They can no longer sign in, but everything they did stays on record and their name keeps showing.')) return; try { await post('/api/users', { op: 'disable', email: b.dataset.disable }); toast('Account switched off'); } catch (e) { toast(e.message); } await loadUsers(); draw(); });
+      act('[data-enable]', async (b) => { try { await post('/api/users', { op: 'enable', email: b.dataset.enable }); toast('Account switched back on'); } catch (e) { toast(e.message); } await loadUsers(); draw(); });
       act('[data-role]', async (b) => { try { await post('/api/users', { op: 'role', email: b.dataset.role, role: b.value }); await loadUsers(); toast('Role updated'); } catch (e) { toast(e.message); await loadUsers(); } draw(); });
       act('[data-reset]', async (b) => {
         if (!confirm('Create a temporary password for this member? Their current password stops working.')) return;
@@ -726,11 +764,10 @@
       });
     };
     modal(`<header><h2>Team members</h2><button class="btn ghost" data-close>✕</button></header>
-      <div class="body"><p class="small muted" style="margin:0">${isAdmin ? 'Everyone who registers is listed here automatically. New accounts show as <b>Admin for Approval</b> until you approve them.' : 'Everyone on the team. Click the dots at the top right to see who is online and what they are working on.'}</p><div id="memList"></div></div>
+      <div class="body"><p class="small muted" style="margin:0">${isAdmin ? 'Everyone who registers is listed here automatically. New accounts show as <b>Admin for Approval</b> until you approve them. <b>Switch off</b> an account when someone leaves: they can\'t sign in, but their name stays on everything they did.' : 'Everyone on the team. Click a name to see what they have been working on.'}</p><div id="memList"></div></div>
       <footer><button class="btn" data-close>Done</button></footer>`);
     draw();
     loadUsers().then(draw).catch(() => {});
-    // Admins also see who can be reached on Slack (matched by email)
     if (isAdmin && state.config && state.config.slackDM && !slackWho) {
       post('/api/users', { op: 'slackWho' }).then((r) => { slackWho = r.who || {}; if ($('#memList')) draw(); }).catch(() => {});
     }
@@ -758,7 +795,7 @@
         <label class="field">Site IDs or Duda editor links, one per line
           <textarea id="addLinks" rows="5" autofocus placeholder="cb89784b&#10;2a458f73&#10;https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home"></textarea></label>
         <label class="field">Assign to<select id="addWho">${userOptions(state.me.email, 'Unassigned')}</select></label>
-        <p class="small muted" style="margin:0">Each site is scanned on Desktop, Tablet and Mobile and compared to its Duda Business Info. Keep this tab open while scans run (${SCAN_CONCURRENCY_SITES} at a time).</p>
+        <p class="small muted" style="margin:0">Each site is scanned on Desktop, Tablet and Mobile and compared to its Duda Business Info. Keep this tab open while scans run (${SCAN_CONCURRENCY_SITES} at a time).<br><b>${doneNote()}</b> The person you assign it to is told as well.</p>
       </div>
       <footer><button class="btn" data-close>Cancel</button><button class="btn primary" id="addGo">Add &amp; start audit</button></footer>`);
     const addBody = $('.modal .body');
@@ -796,7 +833,7 @@
       }
       if (newIds.length) requestScan(newIds);
       render();
-      if (!dups.length) { closeModal(); toast(`${added} added${bad ? ` · ${bad} invalid` : ''}`); return; }
+      if (!dups.length) { closeModal(); toast(`${added} website(s) submitted for audit. ${doneNote()}`); return; }
       // Keep the dialog open to show which ones already exist, with a way to open them
       $('.modal').innerHTML = `<header><h2>${added ? `${added} added · ` : ''}${dups.length} already exist${dups.length > 1 ? '' : 's'}</h2><button class="btn ghost" data-close>✕</button></header>
         <div class="body"><table class="grid"><thead><tr><th>Website</th><th>Status</th><th>Last scan</th><th></th></tr></thead><tbody>
@@ -1332,7 +1369,7 @@
       b.disabled = true; b.textContent = 'Adding…';
       try {
         const sum = await store({ op: 'create', siteId: id, host, editorUrl: `https://${host}/home/site/${id}/home`, assignee: state.me.email });
-        upsertSummary(sum); requestScan([sum.id]); toast('Added to Audits. Scanning now.'); renderLive();
+        upsertSummary(sum); requestScan([sum.id]); toast(`Submitted for audit. ${doneNote()}`); renderLive();
       } catch (e) {
         if (e.status === 409) { await loadSites(); toast('Already in Audits'); renderLive(); } else { toast(e.message); b.disabled = false; b.textContent = 'Audit this website'; }
       }
@@ -1636,7 +1673,14 @@
   function formatText(text, site) {
     let h = esc(text || '');
     h = h.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]])/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-    h = h.replace(/@\[([^\]\n]{1,60})\]/g, (m, n) => `<span class="mention">@${n}</span>`);
+    // @[Name|email] (new) or @[Name] (older comments). The email makes it clear who was meant, even after a rename.
+    h = h.replace(/@\[([^\]\n|]{1,60})(?:\|([^\]\n]{3,80}))?\]/g, (m, n, mail) => {
+      const email = (mail || '').toLowerCase();
+      const u = email ? user(email) : null;
+      const shown = u ? u.name : n;
+      const who = u ? `${u.name} · ${u.email}${u.status === 'disabled' ? ' · account switched off' : ''}${u.name !== n ? ` (was "${n}" when written)` : ''}` : email ? `${n} · ${email}` : `${n} — written before names were linked, hover the member list to check`;
+      return `<button type="button" class="mention${email ? ' known' : ''}" ${email ? `data-who="${esc(email)}"` : ''} title="${esc(who)}">@${esc(shown)}</button>`;
+    });
     h = h.replace(/(^|[\s(])#(\d{1,5})\b/g, (m, pre, n) => {
       const f = site && (site.findings || []).find((x) => x.num === Number(n));
       return f ? `${pre}<a class="item-ref" href="#/site/${esc(site.id)}/item/${n}" title="${esc(f.message)}">#${n}</a>` : m;
@@ -1653,7 +1697,7 @@
     return `<div class="comment ${c.mentions && c.mentions.includes(state.me.email) ? 'mentions-me' : ''}" id="c-${esc(c.id)}">
       ${avatar(c.by, 30)}
       <div class="c-main">
-        <div class="c-head"><b>${esc(c.byName || nameOf(c.by))}</b><span class="faint small" title="${esc(fmtFull(c.createdAt))}">${esc(fmtFull(c.createdAt))}</span>
+        <div class="c-head"><button type="button" class="whobtn" data-who="${esc(c.by)}" title="${esc(c.by)}${c.byName && c.byName !== nameOf(c.by) ? ` · signed "${c.byName}" at the time` : ''}"><b>${esc(nameOf(c.by, c.byName))}</b></button><span class="faint small" title="${esc(fmtFull(c.createdAt))}">${esc(fmtFull(c.createdAt))}</span>
           ${opts.showTarget && f ? `<a class="item-ref small" href="#/site/${esc(site.id)}/item/${f.num}">on #${f.num}</a>` : ''}</div>
         ${c.replyTo ? `<a class="quote" href="#" data-jump="${esc(c.replyTo.id)}"><span class="q-by">↩ ${esc(c.replyTo.byName)}</span>${esc(String(c.replyTo.excerpt || '').replace(/@\[([^\]]+)\]/g, '@$1'))}</a>` : ''}
         ${c.text ? `<div class="c-body">${formatText(c.text, site)}</div>` : ''}
@@ -1719,7 +1763,7 @@
       if (m) {
         trig = { start: pos - m[2].length - 1 }; const q = m[2].toLowerCase(); sel = 0;
         items = activeUsers().filter((u) => !q || u.name.toLowerCase().includes(q) || u.email.includes(q)).slice(0, 6)
-          .map((u) => ({ insert: `@[${u.name}]`, html: `${avatar(u.email, 22)}<span>${esc(u.name)}</span><span class="faint small">${esc(u.email)}</span>` }));
+          .map((u) => ({ insert: `@[${u.name}|${u.email}]`, html: `${avatar(u.email, 22)}<span>${esc(u.name)}</span><span class="faint small">${esc(u.email)}</span>` }));
         return showSug();
       }
       m = before.match(/(^|\s)#(\d{0,5})$/);
@@ -1747,7 +1791,7 @@
       const imgs = images.filter((i) => i.url).map((i) => i.url);
       if (!text && !imgs.length && !allowEmpty) return;
       const mentions = [];
-      (text.match(/@\[([^\]\n]{1,60})\]/g) || []).forEach((tok) => { const n = tok.slice(2, -1).toLowerCase(); activeUsers().filter((u) => u.name.toLowerCase() === n).forEach((u) => { if (!mentions.includes(u.email)) mentions.push(u.email); }); });
+      (text.match(/@\[([^\]\n]{1,140})\]/g) || []).forEach((tok) => { const body = tok.slice(2, -1); const bar = body.indexOf('|'); const n = (bar < 0 ? body : body.slice(0, bar)).toLowerCase(); const mail = bar < 0 ? '' : body.slice(bar + 1).toLowerCase(); (mail ? activeUsers().filter((u) => u.email === mail) : activeUsers().filter((u) => u.name.toLowerCase() === n)).forEach((u) => { if (!mentions.includes(u.email)) mentions.push(u.email); }); });
       btn.disabled = true;
       try {
         if (onSubmit) await onSubmit({ text, images: imgs, mentions, replyTo: replyTo ? replyTo.id : null });
@@ -2113,7 +2157,7 @@
       ${(() => { const lx = liveDR.data && liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(s.siteId).toLowerCase()); if (liveDR.data && !lx) return `<div class="note unk dom-banner"><b>This site is no longer live in Duda</b> (unpublished or deleted since the last pull). The audit is kept for reference.</div>`;
         return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
-      <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
+      <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}${state.scanning[s.id] || otherClaim(s.id) ? `<div class="small muted" style="margin-top:6px">${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to.</div>` : ''}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> of ${sc.ai.text.of} blocks read${sc.ai.text.skipped ? ` (${sc.ai.text.skipped} plain ones skipped)` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
@@ -2253,7 +2297,7 @@
     bindComments(body, s, siteComposer);
   }
 
-  const ACT_ICON = { verify: '🌐', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
+  const ACT_ICON = { verify: '🌐', rename: '✏️', disable: '🚫', enable: '✅', allow: '👍', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
   function renderActivityTab(body, s) {
     const act = s.activity || [];
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {
@@ -2777,7 +2821,7 @@
     try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; }
     catch (e) { $('#view').innerHTML = `<div class="empty">Could not start the app: ${esc(e.message)}</div>`; return; }
     if (!state.me) return renderAuth();
-    if (state.me.status !== 'active') { state.auth.mode = 'pending'; state.me = null; return renderAuth(); }
+    if (state.me.status !== 'active') { state.auth.mode = state.me.status === 'disabled' ? 'disabled' : 'pending'; state.me = null; return renderAuth(); }
     await boot2();
     // Keep data fresh so teammates' changes show up
     // Every 90 s normally; every 30 s while a teammate has a website queued or scanning, so its Rescan button frees up sooner
