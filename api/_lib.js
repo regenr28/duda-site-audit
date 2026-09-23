@@ -234,6 +234,7 @@ export async function notifyUser(email, n) {
 const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assign: 'assigned you an audit item', signup: 'created an account and needs approval',
   suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed',
   'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened a website you completed', 'site-removed': 'removed an audit from the Audits list',
+  'comment-waiting': 'has a client comment nobody has answered',
   test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
 async function slackApi(method, body) {

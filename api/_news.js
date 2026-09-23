@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-09-24-duda-comments', date: '2026-09-24', audience: 'all', tag: 'Comments',
+    what: 'Comments left in the <b>Duda editor</b> — by the client on their draft, or by us internally — now appear in the app on their own. There is a new <b>Duda comments</b> page in the top menu listing every website in the Duda account that has them: <b>published or not, on the Audits list or not</b>. Nothing has to be switched on per website, and you do not have to add a site to Audits just to read its comments. Each conversation shows the page, the device, who wrote it, when, and whether it is resolved, and each comment is marked <b>client</b> or <b>internal</b>.',
+    title: 'Client comments come to you now',
+    where: ['<b>Admins first:</b> <b>Duda comments</b> → <b>⚙ Duda connection</b> → <b>Connect to Duda</b>. One click, for the whole account.', 'Then click <b>Duda comments</b> in the top menu.', 'Filter by <b>New to you</b>, <b>Waiting on us</b>, <b>Unresolved</b> or <b>All</b>, or search by website name or site ID.', 'Pick a website on the left to read its conversations; opening it clears your own <b>new</b> count.', 'Turns out it needs work? <b>Add to Audits</b> is on the same screen.'],
+    link: '#/comments', linkText: 'Open Comments',
+  },
+  {
+    id: '2026-09-24-comment-waiting', date: '2026-09-24', audience: 'all', tag: 'Comments',
+    title: 'One alert: a client left waiting',
+    what: 'New comments deliberately do <b>not</b> notify anyone — with hundreds of websites that would be constant noise. There is exactly one exception: when a <b>client</b> comment has gone <b>24 hours with nobody on the team replying</b> and is still unresolved, the admins are told once. Replying in Duda or resolving the conversation both count as answering, and weekends do not count — a Friday-evening comment is flagged on Monday, not Saturday.',
+    where: ['Nothing to set up. A red dot on <b>Duda comments</b> in the top menu means somebody is waiting.', 'The <b>Waiting on us</b> filter lists them.', 'Inside a website, a waiting conversation is outlined in red and sits at the top.'],
+    link: '#/help/comments-duda', linkText: 'How it works',
+  },
+  {
     id: '2026-09-23-removed', date: '2026-09-23', audience: 'all', tag: 'Audits',
     title: 'Removing an audit now leaves a record, not a hole',
     what: 'The <b>✕</b> on a row takes an audit off the list — it never touches the website itself in Duda. It now asks <b>why</b> (a short reason is required, which is also a moment to stop if you clicked by mistake), tells the assignee and the person who added it, and keeps a card on the new <b>Removed from Audits</b> page: business name, <b>site ID</b>, how far the audit had got, who removed it, when, and the reason. So "what was that website, and why is it gone?" has an answer months later — and if the site comes back, <b>Audit again</b> puts its ID straight into the Add dialog for a fresh scan.',

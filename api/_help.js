@@ -183,6 +183,30 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'comments-duda', group: 'Collaboration', title: 'Duda comments (from clients and the editor)', audience: 'all',
+    html: `<p>Anyone who opens a website in the Duda editor — a teammate, or the client looking at their draft — can leave a comment pinned to the page. Those comments now appear here, on the <b>Duda comments</b> page in the top menu. They are separate from this app's own comments on an audit item.</p>
+<h4>What you get</h4>
+<ul>
+<li><b>Every website in the Duda account</b>, not only the ones on the Audits list. A site does not have to be added to Audits to read its comments — and it does not have to be published either, which matters because most client comments land on a draft.</li>
+<li>Each conversation shows the <b>page</b>, the <b>device</b> it was left on, who wrote it, when, and whether it is resolved.</li>
+<li>Comments are marked <b>client</b> or <b>internal</b>. Anyone with an account here, or an address at the agency's domain, is internal; anyone else is the client. An admin can correct that on any name.</li>
+<li><b>New to you</b> is per person: reading a website's comments clears your own count, not everyone's.</li>
+<li>If it turns out to need work, <b>Add to Audits</b> is on the same screen.</li>
+</ul>
+<h4>The one notification</h4>
+<p>New comments do <b>not</b> notify anyone — there would be too many. The single exception: when a <b>client</b> comment has gone <b>24 hours with no reply from anyone on the team and is still unresolved</b>, the admins are told, once. Replying in Duda or resolving the conversation both count as answering. Weekends do not count, so a Friday-evening comment is flagged on Monday, not Saturday.</p>
+<h4>Switching it on (admins)</h4>
+<ul>
+<li>Open <b>Duda comments</b> → <b>⚙ Duda connection</b> → <b>Connect to Duda</b>. That is the whole setup: it subscribes for the entire account in one click, using the app's existing Duda access. Nothing has to be requested from Duda and nothing is installed per website.</li>
+<li>The panel shows what it subscribed to, whether deliveries are arriving, and lets you pause or disconnect at any time. Subscriptions on the Duda account that this app did not make are left alone.</li>
+</ul>
+<h4>Two things it cannot do</h4>
+<ul>
+<li><b>Reading only.</b> Replying and resolving still happen in the Duda editor — there is no way to write a comment from here. When someone resolves one there, it turns green here within a second.</li>
+<li><b>No history.</b> Only comments made from the day this was switched on can appear. Anything said before that cannot be fetched.</li>
+</ul>`,
+  },
+  {
     id: 'ownership', group: 'Collaboration', title: 'Who owns an audit (and how your work is protected)', audience: 'all',
     html: `<p>Nobody can quietly take a website off you, reopen your finished work or rescan it without you hearing about it. Every one of these tells the person affected <b>what happened and who did it</b>, in the bell, on the desktop and on Slack if you've switched that on.</p>
 <ul>

@@ -274,6 +274,7 @@
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
       <a href="#/live" data-nav="live">Live DR Sites</a>
       ${state.me.role === 'admin' ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
+      <a href="#/comments" data-nav="comments">Duda comments${cmtWaiting() ? ` <span class="nav-dot bad" title="A client is waiting for an answer"></span>` : cmtUnread() ? ' <span class="nav-dot"></span>' : ''}</a>
       <a href="#/suggestions" data-nav="suggestions">${isOwner || state.me.role === 'admin' ? 'Suggestions' : 'My suggestions'}</a>`;
     // Light-bulb menu (left of the logo): About, AI Status, Help, Suggest a feature, AI credits
     if (!$('#btnMenu')) {
@@ -377,12 +378,13 @@
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
   }
-  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
+  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has a client comment nobody has answered', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
     if (n.kind === 'false-alarm') return '#/suggestions/false-alarms';
     if (n.kind === 'site-removed') return '#/removed';
+    if (n.kind === 'comment-waiting') return '#/comments';
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   }
@@ -1564,6 +1566,7 @@
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'activity') return { name: 'activity' };
     if (parts[0] === 'removed') return { name: 'removed' };
+    if (parts[0] === 'comments') return { name: 'comments' };
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'live') return { name: 'live' };
     if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas' };
@@ -1594,6 +1597,7 @@
     if (r.name === 'help') return renderHelp(r.section);
     if (r.name === 'activity') return renderGlobalActivity();
     if (r.name === 'removed') return renderRemoved();
+    if (r.name === 'comments') return renderComments();
     if (r.name === 'live') return renderLive();
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
@@ -2601,6 +2605,194 @@
   // =====================================================================
   const GFILTERS = [{ v: '', label: 'Everything' }, { v: 'site-add', label: 'Websites added' }, { v: 'site-delete', label: 'Websites deleted' }, { v: 'accounts', label: 'Accounts & approvals' }];
 
+
+  // ---------- Comments left in the Duda editor, across the whole account ----------
+  /**
+   * These arrive on their own from Duda — every website in the account, published or not, whether
+   * or not it is on the Audits list. Most client comments land on a draft before a site is ever
+   * published, which is why this is its own page rather than a tab on an audit.
+   */
+  const cmt = { sites: null, loading: false, error: '', q: '', filter: 'unread', site: null, threads: null, tloading: false };
+  async function loadCommentSites(quiet) {
+    if (cmt.loading) return;
+    cmt.loading = true; cmt.error = '';
+    if (!quiet) renderComments();
+    try { const r = await api('/api/comments?op=sites'); cmt.sites = r.sites || []; state.cmtVer = r.ver || '0'; }
+    catch (e) { cmt.error = e.message; }
+    finally { cmt.loading = false; if (route().name === 'comments') renderComments(); renderTop(); }
+  }
+  async function openCommentSite(id) {
+    cmt.site = id; cmt.threads = null; cmt.tloading = true; renderComments();
+    try { const r = await api('/api/comments?op=threads&site=' + encodeURIComponent(id)); cmt.threads = r.threads || []; }
+    catch (e) { cmt.threads = []; toast(e.message); }
+    finally {
+      cmt.tloading = false; renderComments();
+      store2('/api/comments', { op: 'seen', site: id }).then(() => {
+        const s = (cmt.sites || []).find((x) => x.id === id); if (s) s.unread = 0; renderComments(); renderTop();
+      }).catch(() => {});
+    }
+  }
+  const store2 = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const cmtUnread = () => (cmt.sites || []).reduce((a, s) => a + (s.unread || 0), 0);
+  const cmtWaiting = () => (cmt.sites || []).reduce((a, s) => a + (s.waiting || 0), 0);
+
+
+  /**
+   * Switching the Duda connection on. Duda lets us subscribe through its own API with the
+   * credentials the app already has, so this is a button rather than a support ticket.
+   */
+  async function openDudaConn() {
+    modal(`<header><h2>Duda connection</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body" id="dcBody"><div class="empty small">Checking…</div></div>
+      <footer><button class="btn" data-close>Close</button></footer>`);
+    const draw = async () => {
+      let s;
+      try { s = await api('/api/dudahook?op=status'); }
+      catch (e) { $('#dcBody').innerHTML = `<div class="note bad">${esc(e.message)}</div>`; return; }
+      const evList = (arr) => arr.map((e) => `<code>${esc(e)}</code>`).join(' ');
+      $('#dcBody').innerHTML = `
+        ${s.apiError ? `<div class="note bad">Could not ask Duda: ${esc(s.apiError)}</div>` : ''}
+        <div class="panel panel-pad" style="margin-bottom:12px">
+          <h3>${s.connected ? '✅ Connected' : '○ Not connected yet'}</h3>
+          <p class="small muted" style="margin:4px 0 0">${s.connected
+            ? 'Duda is sending events for every website in the account. Comments appear on this page by themselves.'
+            : 'Once connected, Duda sends comments and publish events for every website in the account — nothing is switched on per website.'}</p>
+          ${s.deliveries ? `<p class="small" style="margin:8px 0 0">Last delivery: <b>${esc(fmtFull(s.lastDelivery))}</b> <span class="faint">(${esc(ago(s.lastDelivery))})</span></p>` : '<p class="small faint" style="margin:8px 0 0">Nothing has arrived yet.</p>'}
+          ${s.checked ? '<p class="small" style="margin:6px 0 0">Deliveries are signature-checked.</p>' : '<p class="small muted" style="margin:6px 0 0">Deliveries are accepted on the secret in the address. Signature checking is a Duda managed-account feature; it is optional.</p>'}
+        </div>
+
+        ${s.hooks.length ? `<div class="panel panel-pad" style="margin-bottom:12px"><h3>Our subscription${s.hooks.length > 1 ? 's' : ''}</h3>
+          ${s.hooks.map((h) => `<div class="row-between" style="gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--border)">
+            <div class="grow"><div><b>${h.scope === 'ACCOUNT' ? 'Whole account' : 'One website'}</b> · ${h.active ? '<span class="badge sev-ok">on</span>' : '<span class="badge sev-hold">paused</span>'}</div>
+              <div class="small faint mono">${esc(h.endpoint)}</div>
+              <div class="small muted" style="margin-top:4px">${evList(h.events)}</div></div>
+            <div style="white-space:nowrap"><button class="btn sm" data-dcact="${esc(h.id)}" data-on="${h.active ? '0' : '1'}">${h.active ? 'Pause' : 'Resume'}</button>
+              <button class="btn sm ghost danger" data-dcdel="${esc(h.id)}">Remove</button></div>
+          </div>`).join('')}
+          ${s.others ? `<p class="small faint" style="margin:8px 0 0">${s.others} other subscription(s) exist on this Duda account that were not made by this app. They are left alone.</p>` : ''}
+        </div>` : ''}
+
+        ${!s.connected ? `<div class="panel panel-pad" style="margin-bottom:12px"><h3>What it will subscribe to</h3>
+          <p class="small muted" style="margin:4px 0 8px">For the whole account:</p>
+          <div class="small">${evList(s.supported)}</div>
+          ${s.unsupported.length ? `<p class="small faint" style="margin:8px 0 0">Not offered by this account, so left out: ${evList(s.unsupported)}</p>` : ''}
+          <p style="margin:12px 0 0"><button class="btn primary" id="dcGo">Connect to Duda</button></p>
+          <p class="small faint" style="margin:6px 0 0">Nothing to set up first — the app makes its own secret for the listening address.</p>
+        </div>` : ''}
+
+        ${s.secretShown && s.endpoint ? `<div class="panel panel-pad"><h3>The address Duda posts to</h3>
+          <p class="small muted" style="margin:4px 0 6px">Only you can see this in full — it contains the secret that keeps everyone else out. Don't paste it anywhere public.</p>
+          <div class="mono small" style="word-break:break-all;background:var(--panel-2);padding:8px 10px;border-radius:8px">${esc(s.endpoint)}</div>
+          <p style="margin:8px 0 0"><button class="btn sm" id="dcCopy">Copy address</button></p></div>` : ''}
+
+        <p class="small faint" style="margin-top:12px">Only comments made after connecting can appear. There is no way to fetch older ones.</p>`;
+
+      const go = $('#dcGo'); if (go) go.onclick = async () => {
+        go.disabled = true; go.textContent = 'Connecting…';
+        try { const r = await store2('/api/dudahook', { op: 'connect' }); toast(`Connected — Duda will send ${r.events.length} kinds of event.`); draw(); }
+        catch (e) { toast(e.message); go.disabled = false; go.textContent = 'Connect to Duda'; }
+      };
+      const cp = $('#dcCopy'); if (cp) cp.onclick = () => { navigator.clipboard.writeText(s.endpoint).then(() => toast('Address copied.')).catch(() => toast('Could not copy.')); };
+      $$('[data-dcact]').forEach((btn) => (btn.onclick = async () => {
+        btn.disabled = true;
+        try { await store2('/api/dudahook', { op: 'active', id: btn.dataset.dcact, on: btn.dataset.on === '1' }); draw(); }
+        catch (e) { toast(e.message); btn.disabled = false; }
+      }));
+      $$('[data-dcdel]').forEach((btn) => (btn.onclick = async () => {
+        if (!confirm('Stop Duda sending events to this app? Comments already here are kept, but nothing new will arrive.')) return;
+        btn.disabled = true;
+        try { await store2('/api/dudahook', { op: 'remove', id: btn.dataset.dcdel }); toast('Disconnected.'); draw(); }
+        catch (e) { toast(e.message); btn.disabled = false; }
+      }));
+    };
+    draw();
+  }
+
+  function renderComments() {
+    if (!cmt.sites && !cmt.loading && !cmt.error) { loadCommentSites(true); }
+    const q = cmt.q.trim().toLowerCase();
+    let list = (cmt.sites || []).filter((s) => !q || [s.name, s.id, s.domain].some((v) => String(v || '').toLowerCase().includes(q)));
+    if (cmt.filter === 'unread') list = list.filter((s) => s.unread);
+    if (cmt.filter === 'waiting') list = list.filter((s) => s.waiting);
+    if (cmt.filter === 'open') list = list.filter((s) => s.open);
+    const audited = new Map(state.sites.map((x) => [String(x.siteId || '').toLowerCase(), x]));
+    const auditOf = (id) => audited.get(String(id || '').toLowerCase());
+    const all = cmt.sites || [];
+    const cur = cmt.site ? all.find((s) => s.id === cmt.site) : null;
+
+    $('#view').innerHTML = `<div class="page-head"><div><h1>Duda comments</h1>
+        <div class="muted">Comments left in the <b>Duda editor</b> — by clients on their draft, or by us. Every website in the account, published or not, on the Audits list or not. <a href="#/help/comments-duda">How this works</a></div></div>
+        <div style="display:flex;gap:8px">${state.me.role === 'admin' ? '<button class="btn" id="cmtConn">⚙ Duda connection</button>' : ''}
+        <button class="btn" id="cmtRefresh" ${cmt.loading ? 'disabled' : ''}>${cmt.loading ? 'Loading…' : '↻ Refresh'}</button></div></div>
+      ${cmt.error ? `<div class="note bad">${esc(cmt.error)}</div>` : ''}
+      ${!all.length && !cmt.loading ? `<div class="panel panel-pad"><h2>Nothing has arrived yet</h2>
+        <p class="muted">Comments appear here by themselves once Duda is sending them. Nothing needs to be switched on for each website.</p>
+        <p class="small faint">Only comments made from the day this was switched on can appear — there is no way to fetch older ones.</p>
+        ${state.me.role === 'admin' ? '<p style="margin:10px 0 0"><button class="btn primary" id="cmtConn2">⚙ Set up the Duda connection</button></p>' : ''}</div>` : `
+      <div class="cmt-wrap">
+        <div class="panel cmt-sites">
+          <div class="toolbar">
+            <input type="search" id="cmtQ" placeholder="Search website or site ID…" value="${esc(cmt.q)}" style="flex:1;min-width:150px">
+          </div>
+          <div class="chips" style="padding:0 12px 10px">
+            ${[['unread', 'New to you', all.filter((s) => s.unread).length], ['waiting', 'Waiting on us', all.filter((s) => s.waiting).length], ['open', 'Unresolved', all.filter((s) => s.open).length], ['all', 'All', all.length]]
+              .map(([k, lbl, n]) => `<button class="chipbtn ${cmt.filter === k ? 'active' : ''}" data-cf="${k}">${lbl} <span class="faint">${n}</span></button>`).join('')}
+          </div>
+          ${list.length ? `<ul class="cmt-list">${list.map((s) => { const a = auditOf(s.id); return `
+            <li><button class="cmt-site ${cmt.site === s.id ? 'active' : ''}" data-cs="${esc(s.id)}">
+              <span class="grow">
+                <b>${esc(s.name || s.id)}</b>
+                <span class="small muted mono">${esc(s.id)}</span>
+                <span class="small faint">${a ? 'In Audits' : s.published ? 'Published · not in Audits' : 'Draft · not in Audits'}${s.last ? ' · ' + esc(ago(s.last)) : ''}</span>
+              </span>
+              <span class="cmt-counts">
+                ${s.waiting ? `<span class="badge sev-critical" title="A client is waiting for an answer">${s.waiting} waiting</span>` : ''}
+                ${s.unread ? `<span class="badge sev-warning">${s.unread} new</span>` : s.open ? `<span class="small muted">${s.open} open</span>` : '<span class="small faint">none</span>'}
+              </span>
+            </button></li>`; }).join('')}</ul>` : `<div class="empty small">${cmt.loading ? 'Loading…' : 'Nothing matches.'}</div>`}
+          <div class="small faint" style="padding:10px 12px;border-top:1px solid var(--border)">Counted from the day this was switched on.</div>
+        </div>
+
+        <div class="panel cmt-thread">
+          ${!cur ? '<div class="empty small">Pick a website on the left.</div>' : `
+            <div class="toolbar">
+              <div class="grow"><b>${esc(cur.name || cur.id)}</b>
+                <div class="small muted">${auditOf(cur.id) ? 'On the Audits list' : cur.published ? 'Published, not on the Audits list' : 'Draft, not published yet'} · ${cur.total || 0} conversation(s)</div></div>
+              <a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(cur.id)}/home" target="_blank" rel="noopener">Open in Duda editor ↗</a>
+              ${auditOf(cur.id) ? `<a class="btn sm" href="#/site/${esc(auditOf(cur.id).id)}">Open audit</a>` : `<button class="btn sm primary" data-cadd="${esc(cur.id)}">Add to Audits</button>`}
+            </div>
+            ${cmt.tloading ? '<div class="empty small">Loading…</div>' : !(cmt.threads || []).length ? '<div class="empty small">No comments on this website.</div>' : `
+            <ul class="cmt-threads">${cmt.threads.map((t) => `
+              <li class="cmt-card ${t.waiting ? 'waiting' : ''} ${t.status === 'resolved' ? 'done' : ''}">
+                <div class="cmt-head">
+                  <span class="small muted">${t.page ? esc(t.page) : 'Page unknown'}${t.device ? ' · ' + esc(String(t.device).toLowerCase().replace(/^./, (c) => c.toUpperCase())) : ''}</span>
+                  <span class="spacer"></span>
+                  ${t.waiting ? '<span class="badge sev-critical">waiting on us</span>' : ''}
+                  <span class="badge ${t.status === 'resolved' ? 'sev-ok' : 'sev-warning'}">${t.status === 'resolved' ? 'resolved' : 'unresolved'}</span>
+                </div>
+                ${t.comments.map((c) => `<div class="cmt-msg">
+                  <div class="cmt-by"><b>${esc(c.by || 'Someone')}</b> <span class="badge ${c.side === 'client' ? 'sev-info' : 'sev-hold'}">${c.side}</span> <span class="small faint">${esc(fmtFull(c.at))}</span>${state.me.role === 'admin' && c.by ? ` <button class="linkbtn" data-cwho="${esc(c.by)}" data-cas="${c.side === 'client' ? 'team' : 'client'}" title="Correct who this person is">not ${esc(c.side)}?</button>` : ''}</div>
+                  <div class="cmt-text">${c.deleted ? '<span class="faint">(deleted)</span>' : esc(c.text)}</div>
+                </div>`).join('')}
+              </li>`).join('')}</ul>
+            <div class="note" style="margin:12px">Reading only — replying and resolving still happen in the Duda editor. When someone resolves one there, it turns green here.</div>`}
+          `}
+        </div>
+      </div>`}`;
+
+    const r = $('#cmtRefresh'); if (r) r.onclick = () => loadCommentSites(false);
+    const cc = $('#cmtConn'); if (cc) cc.onclick = openDudaConn;
+    const cc2 = $('#cmtConn2'); if (cc2) cc2.onclick = openDudaConn;
+    const qi = $('#cmtQ'); if (qi) qi.oninput = () => { const at = qi.selectionStart; cmt.q = qi.value; renderComments(); const n = $('#cmtQ'); if (n) { n.focus(); n.setSelectionRange(at, at); } };
+    $$('[data-cf]').forEach((b) => (b.onclick = () => { cmt.filter = b.dataset.cf; renderComments(); }));
+    $$('[data-cs]').forEach((b) => (b.onclick = () => openCommentSite(b.dataset.cs)));
+    $$('[data-cadd]').forEach((b) => (b.onclick = () => openAdd(b.dataset.cadd)));
+    $$('[data-cwho]').forEach((b) => (b.onclick = async () => {
+      try { await store2('/api/comments', { op: 'who', email: b.dataset.cwho, as: b.dataset.cas }); toast(`${b.dataset.cwho} is now treated as ${b.dataset.cas}.`); openCommentSite(cmt.site); }
+      catch (e) { toast(e.message); }
+    }));
+  }
+
   // ---------- Removed from Audits: what was taken off the list, by whom and why ----------
   /**
    * Deleting an audit used to leave a hole: months later nobody could say what the
@@ -2879,6 +3071,7 @@
         <li class="panel"><h3>Add websites</h3><p>Click <b>+ Add website</b>, paste editor links (one per line) and assign someone. Keep the tab open while it scans.</p></li>
         <li class="panel"><h3>Work through audit items</h3><p>Each item has an ID like <b>#12</b>. Click it to set the status (Open, For clarification, Done, On hold, False alarm), reassign it, comment and paste screenshots.</p></li>
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
+        <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the top menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
         <li class="panel"><h3>Your work stays yours</h3><p>Finish a website and it shows <b>✓ Marked Complete by you</b>. If anyone rescans, reopens or reassigns it, you're told what happened and who did it — and they're asked for a reason first. <b>Members → 📊 Team stats</b> shows what each person has closed. Taking an audit off the list also asks for a reason and keeps a card under <b>Removed from Audits</b> — the website itself is never touched in Duda.</p></li>
       </ol>
@@ -2908,6 +3101,7 @@
     if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; } catch (e) { /* ignore */ } }
     renderTop();
     loadNews();
+    loadCommentSites(true).catch(() => {});
     pulse();
     render();
     setTimeout(roomTick, 1500);

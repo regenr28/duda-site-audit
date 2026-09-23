@@ -537,3 +537,29 @@ select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-c
 .member-row.off { opacity: .72; }
 .stats-table th, .stats-table td { text-align: center; }
 .stats-table th:first-child, .stats-table td:first-child { text-align: left; }
+
+/* Comments from the Duda editor (every site in the account) */
+.nav-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); vertical-align: middle; }
+.nav-dot.bad { background: var(--crit); }
+.sev-ok { background: var(--ok-soft); color: var(--ok); }
+.sev-hold { background: var(--hold-soft); color: var(--hold); }
+.cmt-wrap { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 14px; align-items: start; }
+.cmt-sites { display: flex; flex-direction: column; max-height: calc(100vh - 190px); }
+.cmt-list { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
+.cmt-list li + li { border-top: 1px solid var(--border); }
+.cmt-site { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0; padding: 10px 12px; cursor: pointer; color: inherit; font: inherit; }
+.cmt-site:hover { background: var(--panel-2); }
+.cmt-site.active { background: var(--accent-soft); }
+.cmt-site .grow { display: flex; flex-direction: column; gap: 1px; }
+.cmt-site .mono { font-family: var(--mono); }
+.cmt-counts { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.cmt-thread { min-height: 240px; }
+.cmt-threads { list-style: none; margin: 0; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.cmt-card { border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; }
+.cmt-card.waiting { border-color: var(--crit); }
+.cmt-card.done { opacity: .72; }
+.cmt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.cmt-msg + .cmt-msg { margin-top: 9px; border-top: 1px dashed var(--border); padding-top: 9px; }
+.cmt-by { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 3px; }
+.cmt-text { font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .cmt-wrap { grid-template-columns: 1fr; } .cmt-sites { max-height: 360px; } }

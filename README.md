@@ -44,6 +44,10 @@ The light bulb glows for anyone whose latest seen note is older than the newest 
 | `AI_GATEWAY_API_KEY` | key from Vercel → AI Gateway | optional, paid. Add it once you have budget. (Or `ANTHROPIC_API_KEY`.) |
 | `AI_ORDER` | `gateway,cerebras,cloudflare,groq,mistral,anthropic` (default) | optional. The order the models are tried in. |
 | `AI_OFF` | `gemini,openrouter` (default) | optional. Models that sit out even when a key is set, because their free terms train on or log what we send. Name one in `AI_ORDER` to bring it back, or set `AI_OFF=` (empty) for all of them. |
+| `DUDA_HOOK_KEY` | (none) | optional. The secret in the listening address. **Leave it unset** — the app makes one for itself when an admin clicks Connect. Set it only if you want to choose the value yourself; it then wins, and you must reconnect for Duda to learn the new address. |
+| `DUDA_HOOK_SECRET` | (none) | optional. Duda's base64 signing secret (managed accounts / Custom plan). When set, every delivery is checked with HMAC-SHA256 and a bad signature is rejected. |
+| `COMMENT_WAIT_HOURS` | `24` | optional. How long a client comment may sit unanswered before the admins are told. Weekends are skipped. |
+| `AGENCY_EMAIL_DOMAINS` | (none) | optional. Extra domains counted as "one of us" when deciding whether a Duda comment came from the client. `ALLOWED_EMAIL_DOMAINS` already counts. |
 | `GEMINI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `AI_GATEWAY_MODEL` | model names | optional. Defaults: `gemini-2.5-flash`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b:free`, `anthropic/claude-haiku-4.5`. |
 | `GEMINI_DAILY_LIMIT`, `GROQ_DAILY_LIMIT`, `OPENROUTER_DAILY_LIMIT` | defaults 250 / 1000 / 50 | optional. This app's own daily request cap per model (0 = no cap). |
 | `AI_DAILY_LIMIT` | `5000` (default) | optional. Maximum items sent to AI per day across all models. |

@@ -22,6 +22,7 @@ http.createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     req.query = Object.fromEntries(url.searchParams);
+    req.rawBody = body;
     try { req.body = body ? JSON.parse(body) : {}; } catch (e) { req.body = body; }
     res.status = (c) => { res.statusCode = c; return res; };
     res.json = (o) => { if (!res.getHeader('Content-Type')) res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(o)); return res; };
