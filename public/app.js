@@ -257,8 +257,39 @@
     spark: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8z"/></svg>',
     help: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>',
     idea: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+    gift: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v9H4v-9"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>',
     chev: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
   };
+  // ---------- "What's New" ----------
+  const news = { items: null, latest: '', loading: false };
+  function newsUnread() { return !!(news.latest && news.latest !== (state.me && state.me.newsSeen)); }
+  async function loadNews(force) {
+    if (news.loading || (news.items && !force)) return;
+    news.loading = true;
+    try { const r = await api('/api/ai?op=news'); news.items = r.items || []; news.latest = r.latest || ''; markBulb(); } catch (e) { /* ignore */ }
+    news.loading = false;
+  }
+  function markBulb() { const b = $('#btnMenu'); if (b) b.classList.toggle('glow', newsUnread()); }
+  async function markNewsSeen() {
+    if (!newsUnread()) return;
+    try { const r = await post('/api/users', { op: 'profile', name: state.me.name, newsSeen: news.latest }); state.me = r.user; } catch (e) { state.me.newsSeen = news.latest; }
+    markBulb();
+  }
+  function openNews() {
+    const items = news.items || [];
+    const seen = (state.me && state.me.newsSeen) || '';
+    const isNew = (n) => !seen || items.findIndex((x) => x.id === n.id) < items.findIndex((x) => x.id === seen);
+    modal(`<header><h2>✨ What's New</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body news-body">${items.length ? items.map((n) => `<div class="news-item ${isNew(n) ? 'fresh' : ''}">
+        <div class="news-top"><b>${esc(n.title)}</b>${isNew(n) ? '<span class="badge fs-clarification">New</span>' : ''}<span class="spacer"></span><span class="small faint">${esc(n.tag || '')} · ${esc(fmtDate(n.date))}</span></div>
+        <div class="small">${n.what}</div>
+        ${(n.where || []).length ? `<div class="news-where"><div class="k">Where to find it</div><ol class="small">${n.where.map((w) => `<li>${w}</li>`).join('')}</ol></div>` : ''}
+        ${n.link ? `<a class="btn sm" href="${esc(n.link)}" data-news-go>${esc(n.linkText || 'Take me there')}</a>` : ''}
+      </div>`).join('') : '<div class="empty small">Nothing new yet.</div>'}</div>
+      <footer><span class="small faint">Ideas for the next update? Use <b>Suggest a feature</b>.</span><span class="spacer"></span><button class="btn primary" data-close>Got it</button></footer>`, { wide: true });
+    $$('[data-news-go]', $('.modal')).forEach((a) => (a.onclick = () => closeModal()));
+    markNewsSeen();
+  }
   function closeMenu() { const m = $('#appMenu'); if (m) m.remove(); const b = $('#btnMenu'); if (b) { b.classList.remove('on'); b.setAttribute('aria-expanded', 'false'); } }
   function toggleMenu() {
     if ($('#appMenu')) return closeMenu();
@@ -271,7 +302,8 @@
       : `<a class="am-credits" href="#/ai" role="menuitem"><div class="row-between"><b>AI</b><span>${at === 0 ? 'Ready' : at ? 'back in ' + countdown(at) : 'Paused'}</span></div></a>`) : '';
     const m = document.createElement('div');
     m.id = 'appMenu'; m.className = 'app-menu panel'; m.setAttribute('role', 'menu');
-    m.innerHTML = `${item('#/about', ICONS.info, 'About', 'about')}${item('#/ai', ICONS.spark, 'AI Status', 'ai')}${item('#/help', ICONS.help, 'Help', 'help')}
+    m.innerHTML = `<button class="am-item" type="button" data-am-news role="menuitem">${ICONS.gift}<span>What's New</span>${newsUnread() ? '<span class="badge fs-clarification">New</span>' : ''}</button>
+      ${item('#/about', ICONS.info, 'About', 'about')}${item('#/ai', ICONS.spark, 'AI Status', 'ai')}${item('#/help', ICONS.help, 'Help', 'help')}
       <div class="am-sep"></div>
       <button class="am-item" type="button" data-am-suggest role="menuitem">${ICONS.idea}<span>Suggest a feature</span></button>
       ${credits ? `<div class="am-sep"></div>${credits}` : ''}`;
@@ -280,6 +312,7 @@
     const rect = b.getBoundingClientRect(); m.style.top = (rect.bottom + 8) + 'px'; m.style.left = Math.max(8, rect.left) + 'px';
     $$('a', m).forEach((a) => a.addEventListener('click', closeMenu));
     $('[data-am-suggest]', m).onclick = () => { closeMenu(); openSuggest(); };
+    $('[data-am-news]', m).onclick = () => { closeMenu(); openNews(); };
     setTimeout(() => {
       const away = (e) => { if (!m.contains(e.target) && !e.target.closest('#btnMenu')) { closeMenu(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc1); } };
       const esc1 = (e) => { if (e.key === 'Escape') { closeMenu(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc1); } };
@@ -669,6 +702,7 @@
   // =====================================================================
   // MEMBERS (user accounts)
   // =====================================================================
+  let slackWho = null;
   function openMembers() {
     const isAdmin = state.me.role === 'admin';
     const draw = () => {
@@ -678,7 +712,7 @@
         <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span><div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
         <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : '') +
         active.map((u) => `<div class="member-row"><span class="pav">${avatar(u.email, 30)}${pdot(u.email)}</span><div class="grow"><b>${esc(u.name)}</b>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${isAdmin ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : u.role === 'admin' ? 'Admin' : 'Member'}</span>` : ''}
-          <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(presenceText(presenceOf(u.email)))}</div></div>
+          <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(presenceText(presenceOf(u.email)))}${isAdmin && slackWho ? (slackWho[u.email] ? ' · <span class="v-ok-t">Slack ✓</span>' : ' · <span class="v-still-t" title="No Slack account uses this email, so Slack messages can\'t reach them. They should register here with their Slack email.">No Slack match</span>') : ''}</div></div>
           ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>Admin</option></select>` : isAdmin ? `<select data-role="${esc(u.email)}" class="sm-select"><option value="member" ${u.role === 'member' ? 'selected' : ''}>Member</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select>
           ${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Remove">✕</button>` : ''}` : ''}</div>`).join('');
       const act = (sel, fn) => $$(sel, $('#memList')).forEach((b) => (b.onclick = b.onchange = null, b.tagName === 'SELECT' ? (b.onchange = () => fn(b)) : (b.onclick = () => fn(b))));
@@ -696,6 +730,10 @@
       <footer><button class="btn" data-close>Done</button></footer>`);
     draw();
     loadUsers().then(draw).catch(() => {});
+    // Admins also see who can be reached on Slack (matched by email)
+    if (isAdmin && state.config && state.config.slackDM && !slackWho) {
+      post('/api/users', { op: 'slackWho' }).then((r) => { slackWho = r.who || {}; if ($('#memList')) draw(); }).catch(() => {});
+    }
   }
 
   // =====================================================================
@@ -2701,8 +2739,10 @@
         </tbody></table>
         <p class="small muted" style="margin:8px 0 0">Rule of thumb: someone <i>inside</i> the team can answer → For clarification. Waiting on someone <i>outside</i> → On hold. Only Done and False alarm count as cleared.</p></div>
       <p class="small faint" style="margin-top:14px">Still review by hand: business hours, prices, service areas, form recipients, and text inside images.</p>
-      <p style="margin-top:10px"><a class="btn" href="#/help">📘 Open the full Help guide</a></p></div>`;
+      <p style="margin-top:10px"><a class="btn" href="#/help">📘 Open the full Help guide</a> <button class="btn" id="abNews" type="button">✨ What's New</button></p>
+      <p class="small faint">The light bulb (top left) glows when there's an update you haven't read: it opens About, AI Status, Help, What's New and today's AI credits.</p></div>`;
     $('#abSuggest').onclick = openSuggest;
+    $('#abNews').onclick = () => openNews();
   }
 
   // =====================================================================
@@ -2714,6 +2754,7 @@
     await Promise.all([loadUsers(), loadSites(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
     if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; } catch (e) { /* ignore */ } }
     renderTop();
+    loadNews();
     pulse();
     render();
     setTimeout(roomTick, 1500);

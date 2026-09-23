@@ -117,7 +117,7 @@ export async function putUser(u) {
   await redis(['SET', P + 'user:' + u.email, JSON.stringify(u)], ['SADD', P + 'users', u.email]);
   return u;
 }
-export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white' });
+export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white' });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
@@ -255,6 +255,13 @@ export async function slackLink(email) {
   }
   if (!team) return { ok: false, reason: 'no_team' };
   return { ok: true, team, id };
+}
+/** Which teammates can be reached on Slack (admin view): matches each app email to a Slack account. */
+export async function slackWho(emails) {
+  if (!slackBotEnabled()) return null;
+  const out = {};
+  for (const e of emails.slice(0, 60)) { try { out[e] = !!(await slackUserId(e)); } catch (x) { out[e] = null; } }
+  return out;
 }
 function notifLink(n) {
   const base = appUrl();

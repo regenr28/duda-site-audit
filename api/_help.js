@@ -52,6 +52,7 @@ export const HELP_SECTIONS = [
     html: `<ul>
 <li>New accounts from outside the agency's email domain show under <b>Admin for Approval</b> in <b>Members</b>. Click <b>Approve</b> or <b>Reject</b>. Admins also get a notification (bell, desktop and Slack if connected) when someone signs up.</li>
 <li>Change someone's role with the <b>Member / Admin</b> menu. Admins can approve accounts, manage roles, reset passwords, see the app-wide <b>Activity</b> page and the <b>False alarms</b> list.</li>
+<li>When Slack is connected, each member shows <b>Slack ✓</b> or <b>No Slack match</b>. "No Slack match" means no Slack account uses that email, so Slack messages can't reach them: they should register here with the same email they use in Slack. Nobody needs to install anything in Slack.</li>
 <li><b>Reset password</b> creates a temporary password. Send it to the person privately; they can change it later with "Forgot password".</li>
 <li><b>✕</b> removes an account. Some accounts are protected and can't be changed.</li>
 <li>Members don't see who is an admin.</li>
@@ -244,6 +245,15 @@ export const HELP_SECTIONS = [
 <li><b>No custom domain</b>: the site only has its Duda address.</li>
 </ul>
 <p>An audited website that's no longer in the published list shows <b>No longer live in Duda</b> (unpublished or deleted). The audit is kept for reference.</p>`,
+  },
+  {
+    id: 'whatsnew', group: 'More', title: "What's New", audience: 'all',
+    html: `<p>The <b>light-bulb</b> button (top left) <b>glows</b> when there's an update you haven't read.</p>
+<ul>
+<li>Click the light bulb → <b>What's New</b>.</li>
+<li>Each note says what changed and, under <b>Where to find it</b>, the steps to try it. Some have a button that takes you straight there.</li>
+<li>Notes you haven't seen are marked <b>New</b>. Opening the list clears the glow.</li>
+</ul>`,
   },
   {
     id: 'suggest', group: 'More', title: 'Suggestions and False alarms', audience: 'all',

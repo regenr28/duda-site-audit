@@ -6,6 +6,14 @@ Each finding shows **page path · where (Header / Footer / Side panel / Popup / 
 
 ---
 
+## Adding a feature later (checklist)
+Keep these three in step with the code, or the team won't know what changed:
+1. `api/_help.js` — the Help guide (also what the Help assistant answers from). Add or update the section.
+2. `api/_news.js` — add a short "What's New" note at the top: what changed, and **Where to find it** steps. `audience: 'all'` for everyone, `'admin'` for admin-only tools. Never mention hosting, AI model names or settings.
+3. `renderAbout()` in `public/app.js` — update only if the summary of what the app does has changed.
+The light bulb glows for anyone whose latest seen note is older than the newest one.
+
+
 ## 1. Deploy to Vercel (about 15 minutes, no coding)
 
 ### Step 1: Put the files on GitHub

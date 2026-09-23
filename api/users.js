@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, OWNER_EMAIL, forgetUser } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -26,8 +26,15 @@ export default async function handler(req, res) {
       if (b.slackDM !== undefined) me.slackDM = !!b.slackDM;
       // Which editor address this member opens: the white-label one or my.duda.co
       if (b.editorEnv !== undefined) me.editorEnv = b.editorEnv === 'duda' ? 'duda' : 'white';
+      // Which "What's New" note this person has seen (so the light bulb stops glowing)
+      if (b.newsSeen !== undefined) me.newsSeen = String(b.newsSeen || '').slice(0, 60);
       await putUser(me);
       return res.status(200).json({ user: publicUser(me) });
+    }
+    if (b.op === 'slackWho') {
+      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      const all = await listUsers();
+      return res.status(200).json({ who: await slackWho(all.filter((u) => u.status === 'active').map((u) => u.email)) });
     }
     if (b.op === 'slackLink') {
       // Opens a Slack DM with a teammate (clicking their name in the app)

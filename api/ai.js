@@ -19,6 +19,7 @@
 // Results are cached for 60 days so rescans don't use any quota.
 import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL } from './_lib.js';
 import { helpFor, helpText } from './_help.js';
+import { newsFor, latestNewsId } from './_news.js';
 
 // ---------- made-up names: the team never sees which AI company or model is used ----------
 // Only the app owner (SUGGESTIONS_OWNER) sees real provider and model names, for troubleshooting.
@@ -449,6 +450,10 @@ export default async function handler(req, res) {
       else { await park(p, r.fail.reason, r.fail.until, r.fail.note); out.push({ id: aliasOf(p.id).toLowerCase(), ok: false, alias: aliasOf(p.id), note: owner ? r.fail.note : GENERIC_NOTE[r.fail.reason] || '' }); }
     }
     return res.status(200).json({ tested: out, providers: publicStatus(await loadStatus(list), owner), now: Date.now(), enabled: list.length > 0 });
+  }
+  // "What's New" notes, filtered by role
+  if (req.method === 'GET' && req.query.op === 'news') {
+    return res.status(200).json({ items: newsFor(me.role), latest: latestNewsId(me.role), seen: me.newsSeen || '' });
   }
   // Help guide (the same text the Help assistant knows), filtered by role
   if (req.method === 'GET' && req.query.op === 'help') {
