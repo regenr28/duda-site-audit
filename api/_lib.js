@@ -291,7 +291,9 @@ export async function slackDM(email, n) {
     if (user && user.slackDM === false && n.kind !== 'test') return { sent: false, reason: 'turned_off' };
     const id = await slackUserId(email);
     if (!id) return { sent: false, reason: 'not_in_slack' };
-    const head = `*${n.byName || 'Someone'}* ${KIND[n.kind] || 'sent you an update'}${n.siteName ? ` on *${n.siteName}*` : ''}${n.findingNum ? ` · item #${n.findingNum}` : ''}`;
+    // A message about your own scan should not read as though somebody else sent it.
+    const who = n.self ? `*Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished*` : `*${n.byName || 'Someone'}* ${KIND[n.kind] || 'sent you an update'}`;
+    const head = `${who}${n.siteName ? ` on *${n.siteName}*` : ''}${n.findingNum ? ` · item #${n.findingNum}` : ''}`;
     const link = notifLink(n);
     const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: head + (n.text ? `\n> ${String(n.text).replace(/\n+/g, ' ').slice(0, 400)}` : '') } }];
     if (link) blocks.push({ type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Open in Site Auditor' }, url: link }] });
@@ -302,6 +304,8 @@ export async function slackDM(email, n) {
 
 // ---------- realtime (Ably) ----------
 export const RT_PREFIX = (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, '');
+/** One channel every signed-in browser listens on, so a new Duda comment shows up at once. */
+export const commentsChannel = () => `${RT_PREFIX}-site:comments`;
 export const userChannel = (email) => `${RT_PREFIX}-user:${sha(normEmail(email)).slice(0, 16)}`;
 export async function ablyPublish(channel, name, data) {
   const key = process.env.ABLY_API_KEY;

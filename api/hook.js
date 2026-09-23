@@ -21,7 +21,7 @@
 // writes what it was told and gets out. Names, page paths and who-is-who are worked out when
 // somebody actually looks at the Comments page.
 import crypto from 'node:crypto';
-import { redis, P, now, newId, jparse } from './_lib.js';
+import { redis, P, now, newId, jparse, ablyPublish, commentsChannel } from './_lib.js';
 
 const MAX_COMMENTS = 60;      // per conversation, oldest dropped
 
@@ -98,6 +98,7 @@ export default async function handler(req, res) {
   const events = Array.isArray(payload) ? payload : [payload];
   const cmds = [];
   let touched = 0;
+  let sawComment = false;
 
   for (const ev of events) {
     const type = str(ev.event_type).toUpperCase();
@@ -112,6 +113,7 @@ export default async function handler(req, res) {
     if (/^(NEW_CONVERSATION|NEW_COMMENT|CONVERSATION_UPDATED|COMMENT_EDITED|COMMENT_DELETED)$/.test(type)) {
       const cu = str(d.conversation_uuid);
       if (!cu) continue;
+      sawComment = true;
       const ctx = d.conversation_context || {};
       const [rawConv] = await redis(['HGET', P + 'conv:' + siteId, cu]);
       const conv = jparse(rawConv) || { u: cu, site: siteId, at, comments: [] };
@@ -169,6 +171,8 @@ export default async function handler(req, res) {
     cmds.push(['LPUSH', P + 'hooklog', JSON.stringify({ at: now(), n: touched, types: events.map((e) => str(e.event_type)).slice(0, 8), verified })],
       ['LTRIM', P + 'hooklog', 0, LOG_KEEP - 1], ['INCR', P + 'ver:cmt']);
     try { await redis(...cmds); } catch (e) { res.status(500).json({ error: 'store' }); return; }
+    // Nudge every open browser so a comment appears in a second rather than on the next heartbeat.
+    if (sawComment) { try { await ablyPublish(commentsChannel(), 'cmt', { at: now() }); } catch (e) { /* the heartbeat still catches it */ } }
   }
   res.status(200).json({ ok: true, handled: touched });
 }

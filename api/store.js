@@ -253,10 +253,14 @@ export default async function handler(req, res) {
         await log(b.id, me, 'scan', `completed a scan: ${site.findings.length} findings (${c.critical || 0} critical)${add.length && Number(seqRaw || 0) ? `, ${add.length / 2} new` : ''}`);
         // Tell the person who added the website and whoever it's assigned to (bell, desktop and Slack) that it's ready
         const wasComplete = site.status === 'Complete' || !!site.completedAt;
-        const tell = [...new Set([site.addedBy, site.assignee, wasComplete ? site.completedBy : null].filter((e) => e && e !== me.email))];
+        // The person who started it is told as well — the whole point is to walk away and be called
+        // back. The browser says `bulk` when this is one of many, so a "rescan all" doesn't ring
+        // dozens of times for the person who pressed it.
+        const mine = b.bulk ? [] : [me.email];
+        const tell = [...new Set([site.addedBy, site.assignee, wasComplete ? site.completedBy : null, ...mine].filter(Boolean).filter((e) => e !== me.email || !b.bulk))];
         const name = site.businessName || site.siteId;
         for (const email of tell) {
-          await notify(email, { by: me.email, byName: me.name, siteId: b.id, siteName: name, kind: wasComplete ? 'rescan-done' : 'scan-done',
+          await notify(email, { by: me.email, byName: me.name, siteId: b.id, siteName: name, kind: wasComplete ? 'rescan-done' : 'scan-done', self: email === me.email,
             text: `${wasComplete ? `This audit was completed${site.completedAt ? ' on ' + new Date(site.completedAt).toDateString() : ''} and has been scanned again. ` : ''}${site.findings.length} audit item${site.findings.length === 1 ? '' : 's'}, ${c.critical || 0} critical · ${(r.pages || []).length} page${(r.pages || []).length === 1 ? '' : 's'}` });
         }
         return res.status(200).json(await saveIndex(b.id));

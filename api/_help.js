@@ -175,6 +175,7 @@ export const HELP_SECTIONS = [
   {
     id: 'notifications', group: 'Collaboration', title: 'Notifications and "someone is on this website"', audience: 'all',
     html: `<ul>
+<li>You are told when <b>your own</b> scan finishes too, so you can start one and go and do something else — except on a <b>Rescan all shown</b>, which would ring dozens of times.</li>
 <li>The <b>bell</b> collects mentions, replies, assignments, <b>finished scans</b> and any change to a website you own (see <b>Who owns an audit</b> below). Click one to jump to the item.</li>
 <li>New notifications also pop up at the top right (macOS style). Hover to pause the timer, ✕ to close. Set how long they stay in your account settings.</li>
 <li><b>Desktop notifications</b>: allow them when asked, and you'll get alerts even when the tab is in the background.</li>
@@ -191,6 +192,7 @@ export const HELP_SECTIONS = [
 <li>Each conversation shows the <b>page</b>, the <b>device</b> it was left on, who wrote it, when, and whether it is resolved.</li>
 <li>Comments are marked <b>client</b> or <b>internal</b>. Anyone with an account here, or an address at the agency's domain, is internal; anyone else is the client. An admin can correct that on any name.</li>
 <li><b>New to you</b> is per person: reading a website's comments clears your own count, not everyone's.</li>
+<li><b>It updates by itself.</b> Nothing needs refreshing: a new comment appears within a second or two, even while you are reading that website. The <b>↻ Refresh</b> button is only there for reassurance.</li>
 <li>If it turns out to need work, <b>Add to Audits</b> is on the same screen.</li>
 </ul>
 <h4>The one notification</h4>

@@ -7,7 +7,7 @@ export const NEWS = [
     id: '2026-09-24-duda-comments', date: '2026-09-24', audience: 'all', tag: 'Comments',
     what: 'Comments left in the <b>Duda editor</b> — by the client on their draft, or by us internally — now appear in the app on their own. There is a new <b>Duda comments</b> page in the top menu listing every website in the Duda account that has them: <b>published or not, on the Audits list or not</b>. Nothing has to be switched on per website, and you do not have to add a site to Audits just to read its comments. Each conversation shows the page, the device, who wrote it, when, and whether it is resolved, and each comment is marked <b>client</b> or <b>internal</b>.',
     title: 'Client comments come to you now',
-    where: ['<b>Admins first:</b> <b>Duda comments</b> → <b>⚙ Duda connection</b> → <b>Connect to Duda</b>. One click, for the whole account.', 'Then click <b>Duda comments</b> in the top menu.', 'Filter by <b>New to you</b>, <b>Waiting on us</b>, <b>Unresolved</b> or <b>All</b>, or search by website name or site ID.', 'Pick a website on the left to read its conversations; opening it clears your own <b>new</b> count.', 'Turns out it needs work? <b>Add to Audits</b> is on the same screen.'],
+    where: ['<b>Admins first:</b> <b>Duda comments</b> → <b>⚙ Duda connection</b> → <b>Connect to Duda</b>. One click, for the whole account.', 'Then click <b>Duda comments</b> in the top menu.', 'Filter by <b>New to you</b>, <b>Waiting on us</b>, <b>Unresolved</b> or <b>All</b>, or search by website name or site ID.', 'Pick a website on the left to read its conversations; opening it clears your own <b>new</b> count.', 'Leave the page open — new comments land on it by themselves, no refreshing.', 'Turns out it needs work? <b>Add to Audits</b> is on the same screen.'],
     link: '#/comments', linkText: 'Open Comments',
   },
   {
@@ -54,7 +54,7 @@ export const NEWS = [
     id: '2026-09-23-scan-done', date: '2026-09-23', audience: 'all', tag: 'Audits',
     title: "You're told when a scan finishes",
     what: 'Submit a website for audit and get on with something else. When the scan finishes, the person who <b>added</b> the website and the person it is <b>assigned</b> to both get a notification with the number of audit items found: in the bell, on the desktop, and on Slack if they\'ve switched that on.',
-    where: ['Click <b>+ Add website</b>, choose who to <b>Assign</b> it to, then <b>Add &amp; start audit</b>.', 'The dialog and the website page tell you that you\'ll be notified when it finishes.', 'Want it on Slack? Avatar → <b>Your account</b> → tick <b>Also message me on Slack</b>.'],
+    where: ['Click <b>+ Add website</b>, choose who to <b>Assign</b> it to, then <b>Add &amp; start audit</b>.', 'The dialog and the website page tell you that you\'ll be notified when it finishes.', 'Want it on Slack? Avatar → <b>Your account</b> → tick <b>Also message me on Slack</b>.', '<b>You are told about your own scans too</b> — start one, go and do something else, and the app calls you back. A <b>Rescan all shown</b> stays quiet.'],
   },
   {
     id: '2026-09-23-ai-credits', date: '2026-09-23', audience: 'all', tag: 'AI',

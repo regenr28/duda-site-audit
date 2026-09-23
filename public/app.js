@@ -395,7 +395,7 @@
     p.innerHTML = `<div class="np-head"><b>Notifications</b></div>` + (ds === 'default' ? `<div class="np-desk">🔔 Get desktop alerts when this app is minimized <button class="btn sm primary" id="npDesk">Turn on</button></div>`
       : ds === 'denied' ? `<div class="np-desk faint small">Desktop alerts are blocked in this browser's site settings. You'll still see everything here.</div>` : '') + (state.notifs.items.length ? state.notifs.items.map((n) => `
       <a class="np-item" href="${esc(notifLink(n))}">${avatar(n.by, 26)}
-        <div><div><b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : ''}</div>
+        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : ''}</div>
         <div class="small muted np-text">${esc(n.text || '')}</div><div class="small faint">${esc(fmtFull(n.at))}</div></div></a>`).join('') : '<div class="empty small">No notifications yet.</div>');
     document.body.appendChild(p);
     const nd = $('#npDesk', p); if (nd) nd.onclick = (e) => { e.preventDefault(); askDesktop(); };
@@ -429,6 +429,11 @@
       if (r.notifs) state.notifs = r.notifs;
       renderBell(); renderPresence(); roomFromPulse(); announceNotifs(state.notifs.items || []);
       if (state.notifs.unread > hadUnread && state.me.role === 'admin' && state.notifs.items.some((n) => n.kind === 'signup')) { loadUsers().then(renderTop).catch(() => {}); }
+      // A Duda comment landed somewhere: pick it up without anyone pressing Refresh.
+      if (r.cmtVer !== undefined && String(r.cmtVer) !== String(state.cmtVer || '')) {
+        if (state.cmtVer === undefined) state.cmtVer = String(r.cmtVer);
+        else refreshComments();
+      }
     } catch (e) { /* ignore */ }
   }
   function presenceOf(email) {
@@ -500,7 +505,7 @@
     const fresh = items.filter((n) => !state.notifKnown.has(n.id));
     fresh.forEach((n) => state.notifKnown.add(n.id));
     fresh.slice(0, 3).reverse().forEach((n) => {
-      const title = `${n.byName || 'Someone'} ${NOTIF_TEXT[n.kind] || 'notified you'}`;
+      const title = n.self ? `Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished` : `${n.byName || 'Someone'} ${NOTIF_TEXT[n.kind] || 'notified you'}`;
       const body = [n.siteName, n.findingNum ? '#' + n.findingNum : '', n.text].filter(Boolean).join(' · ');
       alertUser({ email: n.by, title, deskBody: body || 'Open the app to see details.', body: esc(body || 'Open the bell to see details.') + ` <a href="${esc(notifLink(n))}">Open</a>`, tag: n.id, link: notifLink(n), at: n.at });
     });
@@ -521,6 +526,8 @@
     if (!state.rtChannel || !state.config || !state.config.realtime) return;
     const client = await rtReady(); if (!client) return;
     try { client.channels.get(state.rtChannel).subscribe('notif', () => { wantNotifs = true; pulse(true); }); } catch (e) { /* ignore */ }
+    // Everyone listens on one channel for Duda comments, so they land while you are looking at them.
+    try { client.channels.get((state.config && state.config.cmtChannel) || '').subscribe('cmt', () => { refreshComments(); }); } catch (e) { /* the heartbeat still catches it */ }
   }
 
   // ---------- Click a teammate's name → Slack DM ----------
@@ -915,7 +922,8 @@
   async function requestScan(ids) {
     ids = [...new Set(ids)].filter((id) => !state.scanning[id] && !state.queue.includes(id));
     if (!ids.length) return;
-    ids.forEach((id) => { state.scanning[id] = { done: 0, total: 0, message: 'Queued', queued: true }; });
+    const batch = ids.length > 1;
+    ids.forEach((id) => { state.scanning[id] = { done: 0, total: 0, message: 'Queued', queued: true, bulk: batch }; });
     render();
     let r;
     try { r = await store({ op: 'scanClaim', ids, cid: CID, state: 'queued' }); }
@@ -1018,7 +1026,7 @@
       res.findings = A.filterAllowed(res.findings, site.allow);
       res.counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
       const profiles = await checkProfiles(res.truth);
-      const sum = await store({ op: 'saveScan', id, result: {
+      const sum = await store({ op: 'saveScan', id, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages,
         scan: { state: 'complete', startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
@@ -1573,6 +1581,7 @@
     return { name: 'sites' };
   }
   let lastSiteId = null;
+  let lastView = '';
   async function render() {
     if (!state.me) return renderAuth();
     const r = route();
@@ -1588,6 +1597,7 @@
       return renderSite();
     }
     lastSiteId = null; state.current = null; closeDrawer(true);
+    const cameFrom = lastView; lastView = r.name;
     // Coming back to a list while teammates' scans were showing: check whether they finished (one tiny read)
     if ((r.name === 'sites' || r.name === 'live') && Object.keys(state.claims).length && Date.now() - (state.claimsAt || 0) > 10000) {
       state.claimsAt = Date.now();
@@ -1597,7 +1607,9 @@
     if (r.name === 'help') return renderHelp(r.section);
     if (r.name === 'activity') return renderGlobalActivity();
     if (r.name === 'removed') return renderRemoved();
-    if (r.name === 'comments') return renderComments();
+    // Arriving on the page is an explicit "show me what's there now", so never trust a list that
+    // was loaded at sign-in. Re-renders (filters, searching) reuse what is already loaded.
+    if (r.name === 'comments') { if (cameFrom !== 'comments' && cmt.sites && !cmt.loading) loadCommentSites(true); return renderComments(); }
     if (r.name === 'live') return renderLive();
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
@@ -2612,12 +2624,12 @@
    * or not it is on the Audits list. Most client comments land on a draft before a site is ever
    * published, which is why this is its own page rather than a tab on an audit.
    */
-  const cmt = { sites: null, loading: false, error: '', q: '', filter: 'unread', site: null, threads: null, tloading: false };
+  const cmt = { sites: null, loading: false, error: '', q: '', filter: 'has', site: null, threads: null, tloading: false };
   async function loadCommentSites(quiet) {
     if (cmt.loading) return;
     cmt.loading = true; cmt.error = '';
     if (!quiet) renderComments();
-    try { const r = await api('/api/comments?op=sites'); cmt.sites = r.sites || []; state.cmtVer = r.ver || '0'; }
+    try { const r = await api('/api/comments?op=sites'); cmt.sites = r.sites || []; cmt.at = Date.now(); state.cmtVer = r.ver || '0'; }
     catch (e) { cmt.error = e.message; }
     finally { cmt.loading = false; if (route().name === 'comments') renderComments(); renderTop(); }
   }
@@ -2633,6 +2645,15 @@
     }
   }
   const store2 = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  /** New comments arrived: update the list, and the open conversation if one is being read. */
+  async function refreshComments() {
+    if (cmt.loading) return;
+    await loadCommentSites(true).catch(() => {});
+    if (cmt.site && route().name === 'comments') {
+      try { const r = await api('/api/comments?op=threads&site=' + encodeURIComponent(cmt.site)); cmt.threads = r.threads || []; renderComments(); }
+      catch (e) { /* the list is already up to date */ }
+    }
+  }
   const cmtUnread = () => (cmt.sites || []).reduce((a, s) => a + (s.unread || 0), 0);
   const cmtWaiting = () => (cmt.sites || []).reduce((a, s) => a + (s.waiting || 0), 0);
 
@@ -2715,6 +2736,9 @@
     if (cmt.filter === 'unread') list = list.filter((s) => s.unread);
     if (cmt.filter === 'waiting') list = list.filter((s) => s.waiting);
     if (cmt.filter === 'open') list = list.filter((s) => s.open);
+    // Duda tells us about publishes and new sites too, so most websites here have no comments at
+    // all. They are only worth showing when somebody deliberately asks for everything.
+    if (cmt.filter === 'has') list = list.filter((s) => s.total);
     const audited = new Map(state.sites.map((x) => [String(x.siteId || '').toLowerCase(), x]));
     const auditOf = (id) => audited.get(String(id || '').toLowerCase());
     const all = cmt.sites || [];
@@ -2735,7 +2759,7 @@
             <input type="search" id="cmtQ" placeholder="Search website or site ID…" value="${esc(cmt.q)}" style="flex:1;min-width:150px">
           </div>
           <div class="chips" style="padding:0 12px 10px">
-            ${[['unread', 'New to you', all.filter((s) => s.unread).length], ['waiting', 'Waiting on us', all.filter((s) => s.waiting).length], ['open', 'Unresolved', all.filter((s) => s.open).length], ['all', 'All', all.length]]
+            ${[['unread', 'New to you', all.filter((s) => s.unread).length], ['waiting', 'Waiting on us', all.filter((s) => s.waiting).length], ['open', 'Unresolved', all.filter((s) => s.open).length], ['has', 'With comments', all.filter((s) => s.total).length], ['all', 'Every website', all.length]]
               .map(([k, lbl, n]) => `<button class="chipbtn ${cmt.filter === k ? 'active' : ''}" data-cf="${k}">${lbl} <span class="faint">${n}</span></button>`).join('')}
           </div>
           ${list.length ? `<ul class="cmt-list">${list.map((s) => { const a = auditOf(s.id); return `
@@ -2747,7 +2771,7 @@
               </span>
               <span class="cmt-counts">
                 ${s.waiting ? `<span class="badge sev-critical" title="A client is waiting for an answer">${s.waiting} waiting</span>` : ''}
-                ${s.unread ? `<span class="badge sev-warning">${s.unread} new</span>` : s.open ? `<span class="small muted">${s.open} open</span>` : '<span class="small faint">none</span>'}
+                ${s.unread ? `<span class="badge sev-warning">${s.unread} new</span>` : s.open ? `<span class="small muted">${s.open} open</span>` : s.total ? `<span class="small faint">${s.total} resolved</span>` : '<span class="small faint">no comments</span>'}
               </span>
             </button></li>`; }).join('')}</ul>` : `<div class="empty small">${cmt.loading ? 'Loading…' : 'Nothing matches.'}</div>`}
           <div class="small faint" style="padding:10px 12px;border-top:1px solid var(--border)">Counted from the day this was switched on.</div>
@@ -2761,7 +2785,7 @@
               <a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(cur.id)}/home" target="_blank" rel="noopener">Open in Duda editor ↗</a>
               ${auditOf(cur.id) ? `<a class="btn sm" href="#/site/${esc(auditOf(cur.id).id)}">Open audit</a>` : `<button class="btn sm primary" data-cadd="${esc(cur.id)}">Add to Audits</button>`}
             </div>
-            ${cmt.tloading ? '<div class="empty small">Loading…</div>' : !(cmt.threads || []).length ? '<div class="empty small">No comments on this website.</div>' : `
+            ${cmt.tloading ? '<div class="empty small">Loading…</div>' : !(cmt.threads || []).length ? `<div class="empty small">No comments on this website yet.<br><span class="faint">It's listed because Duda told us about something else here — a publish, or the site being created.</span></div>` : `
             <ul class="cmt-threads">${cmt.threads.map((t) => `
               <li class="cmt-card ${t.waiting ? 'waiting' : ''} ${t.status === 'resolved' ? 'done' : ''}">
                 <div class="cmt-head">

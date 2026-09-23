@@ -31,6 +31,15 @@ async function duda(path) {
   try { return JSON.parse(t); } catch (e) { return null; }
 }
 
+/** The shared business-name cache holds {"n": name, "p": last published} — not a bare name. */
+function cachedName(v) {
+  if (!v) return '';
+  const j = String(v).startsWith('{') ? jparse(v) : null;
+  const n = j ? j.n : v;
+  return n && n !== '-' ? String(n) : '';
+}
+const nameEntry = (name, published) => JSON.stringify({ n: name || '-', p: published || '' });
+
 const domainsOf = (v) => String(v || '').split(',').map((s) => s.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
 
 /**
@@ -99,7 +108,7 @@ export default async function handler(req, res) {
         const sites = pairs(watch, true); const rows = pairs(idx, true);
         const mySeen = pairs(seen); const nameMap = pairs(names);
         const isClient = sideTest(await listUsers(), pairs(over));
-        const nameOf = (id) => (sites[id] && sites[id].name) || nameMap[id] || '';
+        const nameOf = (id) => (sites[id] && sites[id].name) || cachedName(nameMap[id]);
 
         // Fill in a few missing business names from Duda, so the list reads as names not IDs.
         const unknown = Object.keys(sites).filter((id) => !nameOf(id)).slice(0, NAME_LOOKUPS);
@@ -116,7 +125,7 @@ export default async function handler(req, res) {
             if (d === null && g.status !== 'fulfilled') w.gone = true;
             sites[id] = w;
             cmds.push(['HSET', P + 'watch', id, JSON.stringify(w)]);
-            if (nm) cmds.push(['HSET', P + 'dudanames', id, nm]);
+            if (nm) cmds.push(['HSET', P + 'dudanames', id, nameEntry(nm, w.published)]);
           });
           if (cmds.length) await redis(...cmds);
         }
