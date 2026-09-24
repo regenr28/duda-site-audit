@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-09-24-check-notice', date: '2026-09-24', audience: 'all', tag: 'Checks',
+    title: 'An audit tells you when new checks arrive',
+    what: 'When we add checks, finished audits are left exactly as they are — nothing is recalculated behind your back, and nothing appears overnight. But an audit scanned last month was judged against a shorter list, and until now there was no way to tell. Now there is: a website scanned before the newest checks shows a <b>blue note at the top of its Audit items</b> saying how many checks were added, with the full list of what they look for. Rescanning is your call, per website. If you do, <b>every item you already have is kept</b> — anything marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> keeps its state, its number and its comments — and the new checks simply add new <b>Open</b> items. None of them count as critical, so your critical numbers do not move.',
+    where: ['Open any website you scanned before today — the note is at the top of <b>Audit items</b>, above everything else.', 'Click <b>See what was added</b> to read the full list before deciding.', '<b>Rescan now</b> runs it; <b>Not now</b> hides the note on that website, for you only.', 'To find them all at once: on <b>Audits</b>, click <b>✨ Scanned before the newest checks</b> in the toolbar. Each one is also flagged in the <b>Scan</b> column.', 'Want them all done? Filter to them, then <b>Rescan all shown</b>.'],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
+    id: '2026-09-24-new-checks', date: '2026-09-24', audience: 'all', tag: 'Checks',
+    title: 'The scan now checks fonts properly — and nine other things',
+    what: 'From the QA sheet, now answered automatically on every scan. The big one is <b>typefaces</b>: the scan works out which font each piece of text really ends up in — following the stylesheet, inline styles and inheritance, and ignoring CSS that matches nothing — then checks <b>navigation, titles, paragraphs and buttons</b> separately. If the titles are in two fonts, it says so and names the exact headings. It also spots a font the page never loads, and one loaded from outside Google Fonts or Envato. Also new: <b>more than one FAQ block</b> per page, <b>local business schema</b> missing from the home page, <b>messy page addresses</b> (capitals, underscores, a number on the end from a duplicated page, leftovers like "copy-of"), a <b>thank-you page</b> with no call button or way home, <b>no analytics tag</b> (or an old UA- one), <b>two contact forms</b> on a page, a <b>phone field that is not required</b>, <b>buttons that go nowhere</b>, a <b>missing favicon</b>, and anything still loading over <b>http://</b>.',
+    where: ['Rescan any website; the new items appear with everything else.', 'On the website page, filter <b>Category</b> by <b>Design</b>, <b>Schema</b> or <b>Meta / SEO</b> to see them together.'],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
     id: '2026-09-24-drafts-tab', date: '2026-09-24', audience: 'all', tag: 'Comments',
     title: 'The websites still in build finally have a home',
     what: '<b>Live DR Sites</b> only ever listed <b>published</b> websites — but clients review and comment on the <b>draft</b>, before launch, so the sites with the most going on were invisible. There is now a <b>Not published yet</b> tab beside it, listing websites still in build, sorted so the ones with a client waiting come first. Both tabs now have a <b>Comments</b> column, so you can see where somebody is waiting without opening anything.',

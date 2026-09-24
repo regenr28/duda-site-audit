@@ -109,7 +109,17 @@ export const HELP_SECTIONS = [
 <li><b>Only one scan per website runs at a time.</b> If a teammate has it queued or is scanning it, you'll see "Queued by …" or "Scanning by …" and the Rescan button is greyed out until they finish. If their tab closed, it frees up within a few minutes.</li>
 <li>During the AI steps, a <b>Skip AI</b> button lets you finish the scan without the AI checks. Skipped parts become "AI check pending" items.</li>
 <li><b>Rescanning keeps your work.</b> The same issue keeps its number (#12), status, assignee and comments. New issues get new numbers.</li>
-</ul>`,
+</ul>
+<h3>When new checks are added</h3>
+<p>The check list grows over time. A finished audit is <b>never</b> changed behind your back: it keeps exactly the items it was given, and no new item appears until somebody rescans that website. A <b>Complete</b> audit stays Complete.</p>
+<ul>
+<li>A website scanned before the newest checks shows a <b>blue note at the top of its Audit items</b>: how many checks were added, and <b>See what was added</b> for the full list in plain words.</li>
+<li><b>Rescan now</b> runs it. <b>Not now</b> hides the note on that website — for you only, and it comes back the next time checks are added.</li>
+<li>Rescanning <b>keeps every item you already have</b>, including everything marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b>. The new checks only add new <b>Open</b> items, so a website at 24/24 might become 24/31.</li>
+<li>Checks added this way are <b>warnings and notes, never critical</b>, so your critical counts don't move.</li>
+<li>To find them all: on <b>Audits</b>, the toolbar button <b>✨ Scanned before the newest checks</b> filters the list to them, and each one is flagged in the <b>Scan</b> column. Filter first, then <b>Rescan all shown</b> if you want the lot done at once.</li>
+</ul>
+<p class="small muted">One thing to know on an update day: the scan runs in your browser tab, so a tab that's been open since before the update is still running the old checks. Reload the page once and you're on the new ones.</p>`,
   },
   {
     id: 'removed', group: 'Audits', title: 'Removing an audit (and finding it again)', audience: 'all',
@@ -250,6 +260,16 @@ export const HELP_SECTIONS = [
   {
     id: 'rules', group: 'Checks', title: 'What the checks look for', audience: 'all',
     html: `<ul>
+<li><b>FAQ schema</b>: more than one FAQ block on a page (Google only wants one), and an FAQ section with "enable FAQ schema" left off.</li>
+<li><b>Local business schema</b>: missing on the home page.</li>
+<li><b>Page addresses</b>: capital letters, underscores, spaces, a number on the end (usually a duplicated page), leftover names like "copy-of" or "untitled", and very long addresses.</li>
+<li><b>Typefaces</b>: the scan works out which font each piece of text really ends up in — following the stylesheet, inline styles and inheritance, and ignoring rules that match nothing on the page. It then checks <b>navigation, titles, paragraphs and buttons</b> separately: if any of them uses more than one typeface, the item says which and names the exact elements. It also reports a font used in only a place or two while the rest of the page uses others, a font the page never loads (so visitors see a fallback), and a font loaded from somewhere other than Google Fonts or Envato. Icon fonts are ignored.</li>
+<li><b>Thank-you page</b>: missing a call button or a way back to the home page.</li>
+<li><b>Analytics</b>: no Google Analytics or Tag Manager tag on the home page, or an old UA- tag that no longer collects anything.</li>
+<li><b>Contact form</b>: more than one form on a page, and a phone field that isn't required.</li>
+<li><b>Buttons that go nowhere</b>: a button whose link is empty, "#" or javascript:.</li>
+<li><b>Favicon</b> and <b>home screen icon</b> missing.</li>
+<li><b>Mixed content</b>: images, scripts or stylesheets loaded over http:// on an https:// website.</li>
 <li><b>Contact info</b>: phone numbers and click-to-call links (including buttons that show one number but dial another), email links, addresses, Google Map embeds pointing to another business.</li>
 <li><b>Business name</b>: another shop's name left over from a template, name written differently.</li>
 <li><b>Social</b>: links to another business's profiles, generic links that don't point to a profile. A Google Maps link that carries only a place ID (<code>data=!4m2!…</code>) can't be read by name, so it's only a note asking you to open it, or a warning when it's a different place than Business Info — never "another business". "Share this page" buttons on blog posts are ignored.</li>
@@ -350,7 +370,9 @@ export const HELP_SECTIONS = [
 <h4>An item keeps coming back after I marked it Done</h4><p>Rescans keep your status. If a live check says "Still on live site", the fix isn't published yet or didn't work.</p>
 <h4>The AI says "check pending"</h4><p>The daily AI allowance ran out. It resumes by itself when credits are back (see AI Status).</p>
 <h4>"Show on page" can't find the element on Mobile</h4><p>It may only exist on another device, or inside the side panel. Check the device chips under "Where".</p>
-<h4>Can two people work on the same website?</h4><p>Yes. You'll see a pop-up and a "… is also here" bar. Agree who takes which items.</p>`,
+<h4>Can two people work on the same website?</h4><p>Yes. You'll see a pop-up and a "… is also here" bar. Agree who takes which items.</p>
+<h4>A website says "new checks available" — do I have to rescan?</h4><p>No. It's an offer, not a warning. The audit keeps exactly the items it has until you rescan, and a rescan keeps your Done, False alarm and On hold items untouched — it only adds new Open ones. <b>Not now</b> hides the note on that website.</p>
+<h4>Will new checks reopen an audit I already marked Complete?</h4><p>No. The Complete stamp stays, and nothing changes unless someone rescans. If you do rescan, the website stays Complete but will show the new items as Open, so you'd see something like 24/31 instead of 24/24.</p>`,
   },
 ];
 

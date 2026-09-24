@@ -18,7 +18,7 @@
   const state = {
     config: {}, me: null, users: [], sites: [], current: null,
     scanning: {}, queue: [], running: 0, skipAI: {}, aiAbort: {}, claims: {},
-    filters: { q: '', status: '', assignee: '' },
+    filters: { q: '', status: '', assignee: '', oldChecks: false },
     ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' },
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
   };
@@ -1028,7 +1028,7 @@
       const profiles = await checkProfiles(res.truth);
       const sum = await store({ op: 'saveScan', id, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages,
-        scan: { state: 'complete', startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
+        scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
       upsertSummary(sum);
       toast(`Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
@@ -1813,10 +1813,11 @@
     const f = state.filters;
     const list = state.sites.filter((s) => (!f.status || s.status === f.status) && (!f.assignee || (f.assignee === '_none' ? !s.assignee : f.assignee === '_mine' ? s.assignee === state.me.email : s.assignee === f.assignee)) &&
       (!f.q || (s.businessName + ' ' + s.siteId + ' ' + s.editorUrl + ' ' + (s.addedByName || '')).toLowerCase().includes(f.q.toLowerCase())) &&
-      (!f.live || (f.live === 'gone' ? liveOf(s.siteId) === false : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)))
+      (!f.live || (f.live === 'gone' ? liveOf(s.siteId) === false : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)) &&
+      (!f.oldChecks || newChecksFor(s).length))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-    const tot = { crit: 0, clar: 0, complete: 0, scanned: 0 };
-    state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; });
+    const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0 };
+    state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
     $('#view').innerHTML = `
       <div class="page-head"><div><h1>Audits</h1><div class="muted">Audit Duda sites against their Business Info on every device. <a href="#/live">Browse Live DR Sites</a> to add more, or see what was <a href="#/removed">removed from Audits</a>.</div></div></div>
       <div class="stats">
@@ -1832,6 +1833,7 @@
           <select id="fstatus"><option value="">All statuses</option>${SITE_STATUSES.map((s) => `<option ${s === f.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
           <select id="fwho"><option value="">Everyone</option><option value="_mine" ${f.assignee === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${f.assignee === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${u.email === f.assignee ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
           ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>No longer live in Duda (${state.sites.filter((x) => liveOf(x.siteId) === false).length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${state.sites.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
+          ${tot.oldChecks ? `<button class="btn sm ${f.oldChecks ? 'primary' : ''}" id="foldck" title="These were scanned before the newest checks existed. Their items are unchanged — a rescan is what adds the new ones.">✨ Scanned before the newest checks (${tot.oldChecks})</button>` : ''}
           <span class="spacer"></span>
           <button class="btn sm" id="rescanAll">Rescan all shown</button>
         </div>
@@ -1847,7 +1849,7 @@
               <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}">${userOptions(s.assignee)}</select></span></td>
               <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
                 ${s.completedAt ? `<div class="small faint" title="Marked Complete ${esc(fmtFull(s.completedAt))}">by ${esc(nameOf(s.completedBy, s.completedByName))}${s.scan && s.scan.finishedAt && new Date(s.scan.finishedAt) > new Date(s.completedAt) ? ' · rescanned since' : ''}</div>` : ''}</td>
-              <td>${scanBadge(s)}</td>
+              <td>${scanBadge(s)}${newChecksFor(s).length ? `<div style="margin-top:4px"><span class="badge ck-new" title="New audit checks were added after this scan. The items here are unchanged — rescan to add what the new checks find.">✨ New checks available</span></div>` : ''}</td>
               <td>${issueChips(c, s.scan && s.scan.state === 'complete')}</td>
               <td style="min-width:110px"><div class="small">${c.closed || 0}/${c.total || 0}</div><div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div></td>
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
@@ -1860,6 +1862,7 @@
     $('#fstatus').onchange = (e) => { f.status = e.target.value; renderSites(); };
     $('#fwho').onchange = (e) => { f.assignee = e.target.value; renderSites(); };
     if ($('#flive')) $('#flive').onchange = (e) => { f.live = e.target.value; renderSites(); };
+    if ($('#foldck')) $('#foldck').onclick = () => { f.oldChecks = !f.oldChecks; renderSites(); };
     $('#rescanAll').onclick = () => {
       const todo = list.filter((s) => !state.scanning[s.id] && !otherClaim(s.id)), busy = list.length - todo.length;
       if (!todo.length) { toast('Every website shown is already queued or scanning.'); return; }
@@ -2345,6 +2348,43 @@
     loadPubInfo(s);
   }
 
+  // =====================================================================
+  // "NEW CHECKS ADDED SINCE THIS SCAN"
+  // Nothing recalculates behind anyone's back: an audit keeps exactly the items it was given until
+  // somebody rescans it. So when the check list grows, the audits scanned before it say so on their
+  // own page — and the team decides, per website, whether it's worth a rescan.
+  // =====================================================================
+  const ckKey = (s) => `dsa:ck:${s.id}:${A.CHECKS_VERSION}`;
+  const ckHidden = (s) => { try { return localStorage.getItem(ckKey(s)) === '1'; } catch (e) { return false; } };
+  /** Check releases this audit hasn't been scanned with yet. Empty unless it has a finished scan. */
+  function newChecksFor(s) {
+    const sc = s.scan || {};
+    if (sc.state !== 'complete' || !sc.finishedAt) return [];
+    return A.checksSince(sc.cv);
+  }
+  function newChecksBanner(s) {
+    const rel = newChecksFor(s);
+    if (!rel.length || ckHidden(s)) return '';
+    const sc = s.scan || {};
+    const n = rel.reduce((a, r) => a + r.items.length, 0);
+    return `<div class="note new-checks" id="ckBanner">
+      <div class="row-between" style="align-items:flex-start;gap:12px">
+        <div class="grow"><b>✨ ${n} new audit check${n === 1 ? '' : 's'} ${n === 1 ? 'has' : 'have'} been added since this website was scanned.</b>
+          <div class="small" style="margin-top:3px">This audit still shows what the scan found on ${esc(fmtFull(sc.finishedAt))}, and it stays that way until someone rescans it.
+          A rescan keeps every item you already have — anything marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> stays exactly as it is, with its number and its comments — and simply adds whatever the new checks find as new <b>Open</b> items. None of them are critical.</div></div>
+        <div style="white-space:nowrap"><button class="btn sm primary" id="ckRescan" ${state.scanning[s.id] || otherClaim(s.id) ? 'disabled' : ''}>Rescan now</button> <button class="btn sm ghost" id="ckLater" title="Hide this note on this website, for you">Not now</button></div>
+      </div>
+      <details style="margin-top:8px"><summary class="small">See what was added</summary>
+        ${rel.map((r) => `<div class="small" style="margin-top:8px"><b>${esc(r.title)}</b> <span class="faint">· added ${esc(fmtDate(r.date))}</span>
+          <ul class="ck-list">${r.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}
+      </details></div>`;
+  }
+  function bindNewChecks(body, s) {
+    const later = $('#ckLater', body); const go = $('#ckRescan', body);
+    if (later) later.onclick = () => { try { localStorage.setItem(ckKey(s), '1'); } catch (e) { /* private window */ } const b = $('#ckBanner', body); if (b) b.remove(); };
+    if (go) go.onclick = () => requestScan([s.id]);
+  }
+
   function renderFindingsTab(body, s, { cnt, sc, live }) {
     const t = s.truth || {};
     const ff = state.ff;
@@ -2362,6 +2402,7 @@
     body.innerHTML = `
       ${(() => { const lx = liveDR.data && liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(s.siteId).toLowerCase()); if (liveDR.data && !lx) return `<div class="note unk dom-banner"><b>This site is no longer live in Duda</b> (unpublished or deleted since the last pull). The audit is kept for reference.</div>`;
         return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
+      ${newChecksBanner(s)}
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}${state.scanning[s.id] || otherClaim(s.id) ? `<div class="small muted" style="margin-top:6px">${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to.</div>` : ''}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
@@ -2453,6 +2494,7 @@
     $$('[data-inspect]', body).forEach((c) => (c.onclick = () => { const f = s.findings.find((x) => x.id === c.dataset.inspect); if (f) openInspector(s, f); }));
     bindSelLinks(body, s);
     bindVerify(body, s);
+    bindNewChecks(body, s);
     $$('[data-unallow]', body).forEach((b) => (b.onclick = async () => { if (!confirm('Remove this approval? The value will be flagged again on the next scan.')) return; try { upsertSummary(await store({ op: 'allowRemove', id: s.id, key: b.dataset.unallow })); await loadSite(s.id); renderSite(); } catch (e) { toast(e.message); } }));
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
@@ -3282,6 +3324,7 @@
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the top menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
+        <li class="panel"><h3>Keep up as the checks grow</h3><p>New checks get added over time. A finished audit is never changed behind your back — it keeps its items until somebody rescans it. Instead, a website scanned before the newest checks shows a note at the top of its <b>Audit items</b> saying what was added, so you can decide whether it's worth a rescan. Rescanning keeps everything you've already marked and only adds new Open items.</p></li>
         <li class="panel"><h3>Your work stays yours</h3><p>Finish a website and it shows <b>✓ Marked Complete by you</b>. If anyone rescans, reopens or reassigns it, you're told what happened and who did it — and they're asked for a reason first. <b>Members → 📊 Team stats</b> shows what each person has closed. Taking an audit off the list also asks for a reason and keeps a card under <b>Removed from Audits</b> — the website itself is never touched in Duda.</p></li>
       </ol>
       <div class="panel panel-pad" style="margin-top:14px"><h2>Audit item statuses</h2>

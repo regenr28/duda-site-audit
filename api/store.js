@@ -56,7 +56,7 @@ function summary(site, comments) {
 function slimScan(sc) {
   sc = sc || {};
   const o = {};
-  ['state', 'startedAt', 'finishedAt', 'pages', 'error', 'by', 'startedBy', 'startedByName', 'durationMs'].forEach((k) => { if (sc[k] !== undefined && sc[k] !== '') o[k] = sc[k]; });
+  ['state', 'cv', 'startedAt', 'finishedAt', 'pages', 'error', 'by', 'startedBy', 'startedByName', 'durationMs'].forEach((k) => { if (sc[k] !== undefined && sc[k] !== '') o[k] = sc[k]; });
   if (sc.counts) o.counts = sc.counts;
   if (sc.ai && sc.ai.paused) o.ai = { paused: { retryAt: sc.ai.paused.retryAt } };
   if (o.error) o.error = String(o.error).slice(0, 200);

@@ -125,6 +125,11 @@ tr.done .finding-msg { text-decoration: line-through; }
 @media (max-width: 980px) { .grid-2 { grid-template-columns: 1fr; } }
 .note { border-left: 3px solid var(--border-strong); padding: 6px 10px; margin: 6px 0; background: var(--panel-2); border-radius: 0 6px 6px 0; font-size: 12.5px; }
 .note.bad { border-color: var(--crit); } .note.good { border-color: var(--ok); } .note.unk { border-color: var(--warn); }
+/* "New checks added since this scan" — an offer, not a problem, so it uses the info colour. */
+.note.new-checks { border-color: var(--info); background: var(--info-soft); padding: 10px 12px; margin-bottom: 14px; }
+.note.new-checks .ck-list { margin: 4px 0 0; padding-left: 18px; }
+.note.new-checks .ck-list li { margin: 2px 0; }
+.badge.ck-new { background: var(--info-soft); color: var(--info); }
 details > summary { cursor: pointer; font-weight: 600; }
 .empty { padding: 48px 16px; text-align: center; color: var(--muted); }
 
