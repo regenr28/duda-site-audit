@@ -1310,7 +1310,7 @@
   setTimeout(aiResumeTick, 8000);
 
   // ---------- Live DR Sites: every published site in the Duda account ----------
-  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'active' };
+  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'comments' };
   const liveDR = live; // alias: some views use a local variable called `live` for scan progress
   const DOM_OK = ['ok'];
   const domProblem = (d) => d && !['ok', 'nodomain'].includes(d.status);
@@ -1422,12 +1422,23 @@
    */
   function renderDrafts() {
     if (!live.un && !live.unLoading && !live.unError) loadDrafts(false);
-    const all = (live.un && live.un.sites) || [];
+    if (!cmt.sites && !cmt.loading) loadCommentSites(true).then(() => { if (route().name === 'live' && live.tab === 'unpublished') renderDrafts(); }).catch(() => {});
     const q = live.unQ.trim().toLowerCase();
     const audited = (id) => auditFor(id);
-    const rows = all.map((x) => Object.assign({}, x, { audit: audited(x.id), cmt: cmtFor(x.id) }));
+    // Duda's own unpublished list does not always include every draft, but a website we are
+    // receiving comments for is proof it exists — so the two are merged, and anything we have
+    // comments for that is not published belongs here whatever Duda's list says.
+    const byId = new Map(((live.un && live.un.sites) || []).map((x) => [String(x.id), Object.assign({}, x)]));
+    (cmt.sites || []).forEach((c) => {
+      if (c.published) return;                       // it is live: it belongs on the other tab
+      const have = byId.get(String(c.id));
+      if (have) { if (!have.name && c.name) have.name = c.name; return; }
+      byId.set(String(c.id), { id: c.id, name: c.name || '', defaultDomain: c.domain || '', created: c.firstSeen || '', fromComments: true });
+    });
+    const rows = [...byId.values()].map((x) => Object.assign({}, x, { audit: audited(x.id), cmt: cmtFor(x.id) }));
+    const withCmt = rows.filter((r) => r.cmt && r.cmt.total);
     const active = rows.filter((r) => r.audit || (r.cmt && r.cmt.total));
-    let list = live.unOnly === 'active' ? active : live.unOnly === 'comments' ? rows.filter((r) => r.cmt && r.cmt.total) : live.unOnly === 'audits' ? rows.filter((r) => r.audit) : rows;
+    let list = live.unOnly === 'comments' ? withCmt : live.unOnly === 'active' ? active : live.unOnly === 'audits' ? rows.filter((r) => r.audit) : rows;
     if (q) list = list.filter((r) => [r.id, r.name, r.defaultDomain].some((v) => String(v || '').toLowerCase().includes(q)));
     list = list.slice().sort((a, b) => ((b.cmt && b.cmt.waiting) || 0) - ((a.cmt && a.cmt.waiting) || 0)
       || ((b.cmt && b.cmt.unread) || 0) - ((a.cmt && a.cmt.unread) || 0)
@@ -1445,8 +1456,8 @@
       <div class="panel"><div class="toolbar">
         <input type="search" id="unQ" placeholder="Search by name or site ID…" value="${esc(live.unQ)}" style="flex:1;min-width:200px">
         <select id="unOnly">
-          <option value="active" ${live.unOnly === 'active' ? 'selected' : ''}>Active (in Audits or has comments) (${active.length})</option>
-          <option value="comments" ${live.unOnly === 'comments' ? 'selected' : ''}>Has comments (${rows.filter((r) => r.cmt && r.cmt.total).length})</option>
+          <option value="comments" ${live.unOnly === 'comments' ? 'selected' : ''}>Has comments (${withCmt.length})</option>
+          <option value="active" ${live.unOnly === 'active' ? 'selected' : ''}>In Audits or has comments (${active.length})</option>
           <option value="audits" ${live.unOnly === 'audits' ? 'selected' : ''}>In Audits (${rows.filter((r) => r.audit).length})</option>
           <option value="all" ${live.unOnly === 'all' ? 'selected' : ''}>Every unpublished website (${rows.length})</option>
         </select>
@@ -1454,10 +1465,10 @@
         ${live.un ? `<span class="small muted">Last pulled ${esc(ago(new Date(live.un.at).toISOString()))}</span>` : ''}
       </div>
       ${!live.un ? `<div class="empty">${live.unLoading ? 'Loading unpublished websites from Duda…' : 'No data yet.'}</div>`
-        : !list.length ? `<div class="empty">${live.unOnly === 'active' ? 'No unpublished website is in Audits or has comments yet.' : 'Nothing matches.'}</div>` : `
+        : !list.length ? `<div class="empty">${q ? 'Nothing matches that search.' : live.unOnly === 'comments' ? 'No unpublished website has comments yet.' : live.unOnly === 'active' ? 'No unpublished website is in Audits or has comments yet.' : 'Nothing here.'}</div>` : `
       <div class="table-wrap"><table class="grid"><thead><tr><th>Website</th><th>Site ID</th><th>Created</th><th>Comments</th><th>Audit</th><th></th></tr></thead><tbody>
       ${shown.map((r) => `<tr>
-        <td><b>${r.name ? esc(r.name) : `<span class="muted">${esc(r.defaultDomain || r.id)}</span>`}</b>${r.defaultDomain ? `<div class="small faint">${esc(r.defaultDomain)}</div>` : ''}</td>
+        <td><b>${r.name ? esc(r.name) : `<span class="muted">${esc(r.defaultDomain || r.id)}</span>`}</b>${r.defaultDomain ? `<div class="small faint">${esc(r.defaultDomain)}</div>` : ''}${r.fromComments ? '<div class="small faint" title="Duda\'s unpublished list did not include this one; we know about it because comments arrived for it">not in Duda\'s draft list</div>' : ''}</td>
         <td class="mono small">${esc(r.id)} <button class="linkbtn" data-copy="${esc(r.id)}" title="Copy site ID">Copy</button></td>
         <td class="small">${r.created ? esc(fmtFull(r.created)) : '—'}</td>
         <td style="white-space:nowrap">${cmtCell(r.id)}</td>

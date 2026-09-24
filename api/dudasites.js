@@ -40,7 +40,8 @@ async function fetchAll(status = 'PUBLISHED') {
     const j = await duda(`/sites/multiscreen?publish_status=${status}&limit=${PAGE}&offset=${offset}&sort=CREATION_DATE&direction=DESC`);
     const rows = Array.isArray(j) ? j : j.results || j.sites || j.data || [];
     let added = 0;
-    rows.forEach((x) => { if (x && x.site_name && !seen.has(x.site_name) && (!x.publish_status || x.publish_status === status)) { seen.add(x.site_name); out.push(slim(x)); added++; } });
+    const keep = (x) => (status === 'PUBLISHED' ? (!x.publish_status || x.publish_status === 'PUBLISHED') : x.publish_status !== 'PUBLISHED');
+    rows.forEach((x) => { if (x && x.site_name && !seen.has(x.site_name) && keep(x)) { seen.add(x.site_name); out.push(slim(x)); added++; } });
     const total = Number(j.total_responses || j.total || j.totalCount || j.total_count || 0);
     offset += rows.length;
     if (!rows.length || !added || (total && offset >= total)) break;

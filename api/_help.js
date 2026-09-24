@@ -298,7 +298,7 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'live', group: 'Live DR Sites', title: 'Live DR Sites', audience: 'all',
-    html: `<p><b>Live DR Sites</b> lists every <b>published</b> website in the Duda account, so you can pick what to audit. A second tab, <b>Not published yet</b>, lists the websites still in build — the ones clients are reviewing and commenting on, which never appeared anywhere before. It starts on the ones that matter (in Audits, or with comments) and can show every unpublished website if you need it. Both tabs have a <b>Comments</b> column.</p>
+    html: `<p><b>Live DR Sites</b> lists every <b>published</b> website in the Duda account, so you can pick what to audit. A second tab, <b>Not published yet</b>, lists the websites still in build — the ones clients are reviewing and commenting on, which never appeared anywhere before. It starts on the ones <b>with comments</b>, and can also show those in Audits, or every unpublished website. Any website we are receiving comments for appears here even when Duda's own draft list leaves it out (it says so on the row). Both tabs have a <b>Comments</b> column.</p>
 <ul>
 <li>The list refreshes automatically every 6 hours. <b>↻ Pull from Duda</b> refreshes it now. <b>Last pulled</b> shows when and by whom.</li>
 <li>Search and filter by name, site ID or domain, audited / not audited and domain health. Sort by newest publish, name or domain problems.</li>
