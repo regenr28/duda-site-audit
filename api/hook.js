@@ -116,7 +116,10 @@ export default async function handler(req, res) {
       sawComment = true;
       const ctx = d.conversation_context || {};
       const [rawConv] = await redis(['HGET', P + 'conv:' + siteId, cu]);
-      const conv = jparse(rawConv) || { u: cu, site: siteId, at, comments: [] };
+      // A thread we meet for the first time through a REPLY started before we were listening, so we
+      // will never have its opening comment, its page or its number. Say so rather than showing the
+      // tail as though it were the whole conversation.
+      const conv = jparse(rawConv) || { u: cu, site: siteId, at, comments: [], partial: type !== 'NEW_CONVERSATION' };
       if (ctx.page_uuid) conv.page = str(ctx.page_uuid);
       if (ctx.device) conv.device = str(ctx.device);
       if (ctx.conversation_number) conv.num = Number(ctx.conversation_number) || conv.num;
@@ -143,7 +146,7 @@ export default async function handler(req, res) {
       cmds.push(['HSET', P + 'conv:' + siteId, cu, JSON.stringify(conv)]);
       // A small index row per conversation, so one read answers "what is waiting, across every site".
       cmds.push(['HSET', P + 'convidx', cu, JSON.stringify({
-        s: siteId, n: conv.num || 0, d: conv.device || '', st: conv.status,
+        s: siteId, n: conv.num || 0, d: conv.device || '', st: conv.status, pt: conv.partial ? 1 : 0,
         la: conv.last, lb: conv.lastBy || '', tx: str(tail && tail.text).slice(0, 160),
       })]);
       const [rawW] = await redis(['HGET', P + 'watch', siteId]);

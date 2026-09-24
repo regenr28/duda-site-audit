@@ -563,3 +563,8 @@ select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-c
 .cmt-by { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 3px; }
 .cmt-text { font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 900px) { .cmt-wrap { grid-template-columns: 1fr; } .cmt-sites { max-height: 360px; } }
+.cmt-open { border-left: 3px solid var(--accent); padding-left: 10px; }
+.cmt-replies { margin-top: 10px; padding-left: 16px; border-left: 2px solid var(--border); }
+.cmt-rcount { margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
+.cmt-partial { color: var(--warn); background: var(--warn-soft); border-radius: 7px; padding: 6px 9px; margin-bottom: 9px; }
+.cmt-head .mono { font-family: var(--mono); }

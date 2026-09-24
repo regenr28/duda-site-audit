@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-09-24-drafts-tab', date: '2026-09-24', audience: 'all', tag: 'Comments',
+    title: 'The websites still in build finally have a home',
+    what: '<b>Live DR Sites</b> only ever listed <b>published</b> websites — but clients review and comment on the <b>draft</b>, before launch, so the sites with the most going on were invisible. There is now a <b>Not published yet</b> tab beside it, listing websites still in build, sorted so the ones with a client waiting come first. Both tabs now have a <b>Comments</b> column, so you can see where somebody is waiting without opening anything.',
+    where: ['Click <b>Live DR Sites</b> → the <b>Not published yet</b> tab.', 'It starts on <b>Active</b> — in Audits, or has comments. Switch to <b>Every unpublished website</b> for the full list.', 'The <b>Comments</b> column is on both tabs; click it to jump to that website\'s conversations.'],
+    link: '#/live/unpublished', linkText: 'Open it',
+  },
+  {
+    id: '2026-09-24-threads', date: '2026-09-24', audience: 'all', tag: 'Comments',
+    title: 'Comments now read like conversations',
+    what: 'A conversation shows its <b>number</b>, the <b>opening comment</b>, and its <b>replies grouped underneath</b> — the way it looks in the Duda editor, instead of a flat list. <b>Resolved conversations are hidden by default</b>, so a tidied-up website no longer looks like a wall of "Resolved". You can search inside a website\'s comments, and anything we only joined half-way through says so plainly.',
+    where: ['<b>Duda comments</b> → pick a website.', 'Tick <b>Show resolved</b> to see the finished ones.', 'Type in <b>Search inside these comments</b> to find one you half-remember.'],
+    link: '#/help/comments-duda', linkText: 'How it works',
+  },
+  {
     id: '2026-09-24-duda-comments', date: '2026-09-24', audience: 'all', tag: 'Comments',
     what: 'Comments left in the <b>Duda editor</b> — by the client on their draft, or by us internally — now appear in the app on their own. There is a new <b>Duda comments</b> page in the top menu listing every website in the Duda account that has them: <b>published or not, on the Audits list or not</b>. Nothing has to be switched on per website, and you do not have to add a site to Audits just to read its comments. Each conversation shows the page, the device, who wrote it, when, and whether it is resolved, and each comment is marked <b>client</b> or <b>internal</b>.',
     title: 'Client comments come to you now',

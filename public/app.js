@@ -1310,7 +1310,7 @@
   setTimeout(aiResumeTick, 8000);
 
   // ---------- Live DR Sites: every published site in the Duda account ----------
-  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null };
+  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'active' };
   const liveDR = live; // alias: some views use a local variable called `live` for scan progress
   const DOM_OK = ['ok'];
   const domProblem = (d) => d && !['ok', 'nodomain'].includes(d.status);
@@ -1362,12 +1362,36 @@
   }
   /** Never blocks adding a website: falls back to Duda's own address. */
   const editorHostOr = () => editorHost() || DUDA_HOST;
+  /**
+   * Websites that are not published yet. Live DR Sites only lists published ones, but the draft is
+   * exactly where clients leave comments — so this is the roster nobody could see before.
+   */
+  async function loadDrafts(refresh) {
+    if (live.unLoading) return;
+    live.unLoading = true; live.unError = '';
+    if (route().name === 'live') renderLive();
+    try { const d = await api('/api/dudasites?scope=unpublished' + (refresh ? '&refresh=1' : '')); live.un = d; }
+    catch (e) { live.unError = e.message; }
+    live.unLoading = false; if (route().name === 'live') renderLive();
+  }
   async function loadLive(refresh) {
     live.loading = true; live.error = ''; if (route().name === 'live') renderLive();
     try { const [d] = await Promise.all([api('/api/dudasites' + (refresh ? '?refresh=1' : '')), loadSites().catch(() => {})]); live.data = d; }
     catch (e) { live.error = e.message; }
     live.loading = false; if (route().name === 'live') renderLive();
     if (live.data && route().name === 'live') { live.bgStarted = true; fillNames().then(() => checkDomains(false)); }
+    if (!cmt.sites && !cmt.loading) loadCommentSites(true).then(() => { if (route().name === 'live') renderLive(); }).catch(() => {});
+  }
+  /** Comment counts for a Duda site, from whatever the Duda comments page has already loaded. */
+  const cmtFor = (id) => (cmt.sites || []).find((x) => String(x.id) === String(id));
+  function cmtCell(id) {
+    const c = cmtFor(id);
+    if (!c || !c.total) return '<span class="faint small">—</span>';
+    const bits = [];
+    if (c.waiting) bits.push(`<span class="badge sev-critical" title="A client is waiting for an answer">${c.waiting} waiting</span>`);
+    if (c.unread) bits.push(`<span class="badge sev-warning">${c.unread} new</span>`);
+    if (!bits.length) bits.push(c.open ? `<span class="small muted">${c.open} open</span>` : `<span class="small faint">${c.total} resolved</span>`);
+    return `<a href="#/comments" title="Open the Duda comments page">${bits.join(' ')}</a>`;
   }
   const sameId = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   /** The existing audit for a Duda site, however it was added (Live DR Sites or a pasted editor link). */
@@ -1383,6 +1407,83 @@
       : sc.finishedAt ? `<span class="badge ${c.critical ? 'sev-critical' : open ? 'sev-warning' : 'scan-complete'}">${c.critical ? c.critical + ' critical' : open ? open + ' open' : '✓ Clean'}</span> <span class="small">Audited ${esc(fmtFull(sc.finishedAt))}</span>`
       : '<span class="badge">Added, not scanned</span>'}<div class="small faint">${esc(a.status || '')}${a.assignee ? ' · ' + esc(nameOf(a.assignee)) : ''}</div></a>`;
   }
+
+  /** The tab strip shared by both rosters. */
+  function liveTabs(which) {
+    const n = (live.un && live.un.count) || '';
+    return `<div class="tabs" style="margin-bottom:14px">
+      <a href="#/live" data-ltab="published" class="${which === 'published' ? 'on' : ''}">Live DR Sites${live.data ? ` <span class="tcount">${live.data.count}</span>` : ''}</a>
+      <a href="#/live/unpublished" data-ltab="unpublished" class="${which === 'unpublished' ? 'on' : ''}">Not published yet${n !== '' ? ` <span class="tcount">${n}</span>` : ''}</a>
+    </div>`;
+  }
+  /**
+   * Websites that have not gone live. Clients review and comment on the draft, so these are the ones
+   * with conversations on them — and none of them appear on Live DR Sites.
+   */
+  function renderDrafts() {
+    if (!live.un && !live.unLoading && !live.unError) loadDrafts(false);
+    const all = (live.un && live.un.sites) || [];
+    const q = live.unQ.trim().toLowerCase();
+    const audited = (id) => auditFor(id);
+    const rows = all.map((x) => Object.assign({}, x, { audit: audited(x.id), cmt: cmtFor(x.id) }));
+    const active = rows.filter((r) => r.audit || (r.cmt && r.cmt.total));
+    let list = live.unOnly === 'active' ? active : live.unOnly === 'comments' ? rows.filter((r) => r.cmt && r.cmt.total) : live.unOnly === 'audits' ? rows.filter((r) => r.audit) : rows;
+    if (q) list = list.filter((r) => [r.id, r.name, r.defaultDomain].some((v) => String(v || '').toLowerCase().includes(q)));
+    list = list.slice().sort((a, b) => ((b.cmt && b.cmt.waiting) || 0) - ((a.cmt && a.cmt.waiting) || 0)
+      || ((b.cmt && b.cmt.unread) || 0) - ((a.cmt && a.cmt.unread) || 0)
+      || String((b.cmt && b.cmt.last) || '').localeCompare(String((a.cmt && a.cmt.last) || ''))
+      || String(a.name || a.id).localeCompare(String(b.name || b.id)));
+    const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER));
+    live.page = Math.min(live.page, pages - 1);
+    const shown = list.slice(live.page * PER, live.page * PER + PER);
+
+    $('#view').innerHTML = `<div class="page-head"><div><h1>Not published yet</h1>
+        <div class="muted">Websites still in build. This is where clients review the draft and leave comments — none of them show on Live DR Sites.</div></div>
+        <button class="btn" id="unRefresh" ${live.unLoading ? 'disabled' : ''}>${live.unLoading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div>
+      ${liveTabs('unpublished')}
+      ${live.unError ? `<div class="note bad">${esc(live.unError)}</div>` : ''}
+      <div class="panel"><div class="toolbar">
+        <input type="search" id="unQ" placeholder="Search by name or site ID…" value="${esc(live.unQ)}" style="flex:1;min-width:200px">
+        <select id="unOnly">
+          <option value="active" ${live.unOnly === 'active' ? 'selected' : ''}>Active (in Audits or has comments) (${active.length})</option>
+          <option value="comments" ${live.unOnly === 'comments' ? 'selected' : ''}>Has comments (${rows.filter((r) => r.cmt && r.cmt.total).length})</option>
+          <option value="audits" ${live.unOnly === 'audits' ? 'selected' : ''}>In Audits (${rows.filter((r) => r.audit).length})</option>
+          <option value="all" ${live.unOnly === 'all' ? 'selected' : ''}>Every unpublished website (${rows.length})</option>
+        </select>
+        <span class="spacer"></span>
+        ${live.un ? `<span class="small muted">Last pulled ${esc(ago(new Date(live.un.at).toISOString()))}</span>` : ''}
+      </div>
+      ${!live.un ? `<div class="empty">${live.unLoading ? 'Loading unpublished websites from Duda…' : 'No data yet.'}</div>`
+        : !list.length ? `<div class="empty">${live.unOnly === 'active' ? 'No unpublished website is in Audits or has comments yet.' : 'Nothing matches.'}</div>` : `
+      <div class="table-wrap"><table class="grid"><thead><tr><th>Website</th><th>Site ID</th><th>Created</th><th>Comments</th><th>Audit</th><th></th></tr></thead><tbody>
+      ${shown.map((r) => `<tr>
+        <td><b>${r.name ? esc(r.name) : `<span class="muted">${esc(r.defaultDomain || r.id)}</span>`}</b>${r.defaultDomain ? `<div class="small faint">${esc(r.defaultDomain)}</div>` : ''}</td>
+        <td class="mono small">${esc(r.id)} <button class="linkbtn" data-copy="${esc(r.id)}" title="Copy site ID">Copy</button></td>
+        <td class="small">${r.created ? esc(fmtFull(r.created)) : '—'}</td>
+        <td style="white-space:nowrap">${cmtCell(r.id)}</td>
+        <td>${auditCell(r)}</td>
+        <td style="white-space:nowrap">${r.audit ? `<a class="btn sm" href="#/site/${esc(r.audit.id)}">Open audit</a>` : `<button class="btn sm primary" data-audit="${esc(r.id)}">Audit this website</button>`}
+          <a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(r.id)}/home" target="_blank" rel="noopener" title="Open in the Duda editor">Editor ↗</a></td>
+      </tr>`).join('')}
+      </tbody></table></div>
+      ${pages > 1 ? `<div class="row-between" style="padding:10px 14px"><span class="small muted">${live.page * PER + 1}–${Math.min(list.length, live.page * PER + PER)} of ${list.length}</span><span><button class="btn sm" id="unPrev" ${live.page ? '' : 'disabled'}>← Prev</button> <button class="btn sm" id="unNext" ${live.page < pages - 1 ? '' : 'disabled'}>Next →</button></span></div>` : ''}`}
+      </div>`;
+
+    bindLiveTabs();
+    const qi = $('#unQ'); if (qi) qi.oninput = (e) => { live.unQ = e.target.value; live.page = 0; const at = e.target.selectionStart; renderDrafts(); const n = $('#unQ'); if (n) { n.focus(); n.setSelectionRange(at, at); } };
+    const on = $('#unOnly'); if (on) on.onchange = (e) => { live.unOnly = e.target.value; live.page = 0; renderDrafts(); };
+    const rf = $('#unRefresh'); if (rf) rf.onclick = () => loadDrafts(true);
+    if ($('#unPrev')) $('#unPrev').onclick = () => { live.page--; renderDrafts(); window.scrollTo(0, 0); };
+    if ($('#unNext')) $('#unNext').onclick = () => { live.page++; renderDrafts(); window.scrollTo(0, 0); };
+    $$('[data-copy]').forEach((b) => (b.onclick = () => navigator.clipboard.writeText(b.dataset.copy).then(() => toast('Site ID copied.')).catch(() => {})));
+    $$('[data-audit]').forEach((b) => (b.onclick = () => openAdd(b.dataset.audit)));
+    // Comment counts come from the Duda comments page; load them once so the column is not empty.
+    if (!cmt.sites && !cmt.loading) loadCommentSites(true).then(() => { if (route().name === 'live' && live.tab === 'unpublished') renderDrafts(); }).catch(() => {});
+  }
+  function bindLiveTabs() {
+    $$('[data-ltab]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = a.dataset.ltab; live.page = 0; location.hash = a.dataset.ltab === 'unpublished' ? '#/live/unpublished' : '#/live'; }));
+  }
+
   function renderLive() {
     const d = live.data;
     if (!d && !live.loading && !live.error) { loadLive(false); }
@@ -1402,8 +1503,10 @@
     const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
     const shown = list.slice(live.page * PER, live.page * PER + PER);
     const host = editorHostOr();
+    if (live.tab === 'unpublished') return renderDrafts();
     $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
         <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(new Date(d.at).toISOString()))}</b> <span class="faint">(${esc(ago(new Date(d.at).toISOString()))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div><button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div></div>
+      ${liveTabs('published')}
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
 
       <div class="panel"><div class="toolbar">
@@ -1414,12 +1517,13 @@
       </div>
       ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}
       ${!d ? `<div class="empty">${live.loading ? 'Loading published sites from Duda…' : 'No data yet.'}</div>` : !list.length ? '<div class="empty">No sites match.</div>' : `
-      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Audit</th><th></th></tr></thead><tbody>
+      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Comments</th><th>Audit</th><th></th></tr></thead><tbody>
       ${shown.map((x) => { const a = auditFor(x.id); const dom = x.domain || x.defaultDomain; return `<tr>
         <td><b>${x.name ? esc(x.name) : x.nameChecked ? `<span class="muted">${esc(dom || x.id)}</span>` : '<span class="faint">Loading name…</span>'}</b>${dom ? `<div class="small"><a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a></div>` : ''}${(x.labels || []).length ? `<div class="small faint">${x.labels.map(esc).join(' · ')}</div>` : ''}</td>
         <td class="mono small">${esc(x.id)} <button class="linkbtn" data-copy="${esc(x.id)}" title="Copy site ID">Copy</button></td>
         <td class="dom-cell">${domBadge(x.dom)}</td>
         <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
+        <td style="white-space:nowrap">${cmtCell(x.id)}</td>
         <td>${auditCell(x)}</td>
         <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : `<button class="btn sm primary" data-audit="${esc(x.id)}">Audit this website</button>`}
           ${host ? `<a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(x.id)}/home" target="_blank" rel="noopener" title="Open in the Duda editor">Editor ↗</a>` : ''}</td></tr>`; }).join('')}
@@ -1432,6 +1536,7 @@
     $('#liveDom').onchange = (e) => { live.dom = e.target.value; live.page = 0; renderLive(); };
     const cd = $('#liveCheck'); if (cd) cd.onclick = () => checkDomains(true);
     $('#liveRefresh').onclick = () => loadLive(true);
+    bindLiveTabs();
     if ($('#livePrev')) $('#livePrev').onclick = () => { live.page--; renderLive(); window.scrollTo(0, 0); };
     if ($('#liveNext')) $('#liveNext').onclick = () => { live.page++; renderLive(); window.scrollTo(0, 0); };
     $$('#view [data-copy]').forEach((b) => (b.onclick = () => copy(b.dataset.copy, 'Site ID copied')));
@@ -1576,7 +1681,7 @@
     if (parts[0] === 'removed') return { name: 'removed' };
     if (parts[0] === 'comments') return { name: 'comments' };
     if (parts[0] === 'ai') return { name: 'ai' };
-    if (parts[0] === 'live') return { name: 'live' };
+    if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : 'published' };
     if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas' };
     return { name: 'sites' };
   }
@@ -1610,7 +1715,7 @@
     // Arriving on the page is an explicit "show me what's there now", so never trust a list that
     // was loaded at sign-in. Re-renders (filters, searching) reuse what is already loaded.
     if (r.name === 'comments') { if (cameFrom !== 'comments' && cmt.sites && !cmt.loading) loadCommentSites(true); return renderComments(); }
-    if (r.name === 'live') return renderLive();
+    if (r.name === 'live') { live.tab = r.tab; return renderLive(); }
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
     if (/members=1/.test(location.hash)) { history.replaceState(null, '', '#/'); setTimeout(openMembers, 50); }
@@ -2624,7 +2729,7 @@
    * or not it is on the Audits list. Most client comments land on a draft before a site is ever
    * published, which is why this is its own page rather than a tab on an audit.
    */
-  const cmt = { sites: null, loading: false, error: '', q: '', filter: 'has', site: null, threads: null, tloading: false };
+  const cmt = { sites: null, loading: false, error: '', q: '', filter: 'has', site: null, threads: null, tloading: false, showDone: false, tq: '' };
   async function loadCommentSites(quiet) {
     if (cmt.loading) return;
     cmt.loading = true; cmt.error = '';
@@ -2634,7 +2739,7 @@
     finally { cmt.loading = false; if (route().name === 'comments') renderComments(); renderTop(); }
   }
   async function openCommentSite(id) {
-    cmt.site = id; cmt.threads = null; cmt.tloading = true; renderComments();
+    cmt.site = id; cmt.threads = null; cmt.tloading = true; cmt.tq = ''; renderComments();
     try { const r = await api('/api/comments?op=threads&site=' + encodeURIComponent(id)); cmt.threads = r.threads || []; }
     catch (e) { cmt.threads = []; toast(e.message); }
     finally {
@@ -2785,21 +2890,41 @@
               <a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(cur.id)}/home" target="_blank" rel="noopener">Open in Duda editor ↗</a>
               ${auditOf(cur.id) ? `<a class="btn sm" href="#/site/${esc(auditOf(cur.id).id)}">Open audit</a>` : `<button class="btn sm primary" data-cadd="${esc(cur.id)}">Add to Audits</button>`}
             </div>
-            ${cmt.tloading ? '<div class="empty small">Loading…</div>' : !(cmt.threads || []).length ? `<div class="empty small">No comments on this website yet.<br><span class="faint">It's listed because Duda told us about something else here — a publish, or the site being created.</span></div>` : `
-            <ul class="cmt-threads">${cmt.threads.map((t) => `
-              <li class="cmt-card ${t.waiting ? 'waiting' : ''} ${t.status === 'resolved' ? 'done' : ''}">
-                <div class="cmt-head">
-                  <span class="small muted">${t.page ? esc(t.page) : 'Page unknown'}${t.device ? ' · ' + esc(String(t.device).toLowerCase().replace(/^./, (c) => c.toUpperCase())) : ''}</span>
-                  <span class="spacer"></span>
-                  ${t.waiting ? '<span class="badge sev-critical">waiting on us</span>' : ''}
-                  <span class="badge ${t.status === 'resolved' ? 'sev-ok' : 'sev-warning'}">${t.status === 'resolved' ? 'resolved' : 'unresolved'}</span>
-                </div>
-                ${t.comments.map((c) => `<div class="cmt-msg">
-                  <div class="cmt-by"><b>${esc(c.by || 'Someone')}</b> <span class="badge ${c.side === 'client' ? 'sev-info' : 'sev-hold'}">${c.side}</span> <span class="small faint">${esc(fmtFull(c.at))}</span>${state.me.role === 'admin' && c.by ? ` <button class="linkbtn" data-cwho="${esc(c.by)}" data-cas="${c.side === 'client' ? 'team' : 'client'}" title="Correct who this person is">not ${esc(c.side)}?</button>` : ''}</div>
-                  <div class="cmt-text">${c.deleted ? '<span class="faint">(deleted)</span>' : esc(c.text)}</div>
-                </div>`).join('')}
-              </li>`).join('')}</ul>
-            <div class="note" style="margin:12px">Reading only — replying and resolving still happen in the Duda editor. When someone resolves one there, it turns green here.</div>`}
+            ${(() => {
+              if (cmt.tloading) return '<div class="empty small">Loading…</div>';
+              const all = cmt.threads || [];
+              if (!all.length) return `<div class="empty small">No comments on this website yet.<br><span class="faint">It's listed because Duda told us about something else here — a publish, or the site being created.</span></div>`;
+              const tq = cmt.tq.trim().toLowerCase();
+              const done = all.filter((t) => t.status === 'resolved').length;
+              let list = cmt.showDone ? all : all.filter((t) => t.status !== 'resolved');
+              if (tq) list = list.filter((t) => t.comments.some((c) => String(c.text || '').toLowerCase().includes(tq) || String(c.by || '').toLowerCase().includes(tq)));
+              return `
+              <div class="toolbar" style="border-bottom:1px solid var(--border)">
+                <input type="search" id="cmtTQ" placeholder="Search inside these comments…" value="${esc(cmt.tq)}" style="flex:1;min-width:180px">
+                <label class="small muted" style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="cmtDone" ${cmt.showDone ? 'checked' : ''}> Show resolved (${done})</label>
+              </div>
+              ${!list.length ? `<div class="empty small">${tq ? 'Nothing matches that.' : `Nothing open — all ${done} conversation(s) are resolved.`}</div>` : `
+              <ul class="cmt-threads">${list.map((t) => {
+                const open = t.comments[0];
+                const replies = t.comments.slice(1);
+                const who = (c) => `<div class="cmt-by"><b>${esc(c.by || 'Someone')}</b> <span class="badge ${c.side === 'client' ? 'sev-info' : 'sev-hold'}">${c.side}</span> <span class="small faint">${esc(fmtFull(c.at))}</span>${state.me.role === 'admin' && c.by ? ` <button class="linkbtn" data-cwho="${esc(c.by)}" data-cas="${c.side === 'client' ? 'team' : 'client'}" title="Correct who this person is">not ${esc(c.side)}?</button>` : ''}</div>`;
+                const body = (c) => `<div class="cmt-text">${c.deleted ? '<span class="faint">(deleted)</span>' : esc(c.text)}</div>`;
+                return `
+                <li class="cmt-card ${t.waiting ? 'waiting' : ''} ${t.status === 'resolved' ? 'done' : ''}">
+                  <div class="cmt-head">
+                    ${t.num ? `<span class="badge subtle mono">#${t.num}</span>` : ''}
+                    <span class="small muted">${t.page ? esc(t.page) : 'Page unknown'}${t.device ? ' · ' + esc(String(t.device).toLowerCase().replace(/^./, (c) => c.toUpperCase())) : ''}</span>
+                    <span class="spacer"></span>
+                    ${t.waiting ? '<span class="badge sev-critical">waiting on us</span>' : ''}
+                    <span class="badge ${t.status === 'resolved' ? 'sev-ok' : 'sev-warning'}">${t.status === 'resolved' ? 'resolved' : 'unresolved'}</span>
+                  </div>
+                  ${t.partial ? '<div class="cmt-partial small">This conversation started before comments were connected, so only what was said since then is here. Open it in the Duda editor to read the whole thread.</div>' : ''}
+                  ${open ? `<div class="cmt-msg cmt-open">${who(open)}${body(open)}</div>` : ''}
+                  ${replies.length ? `<div class="cmt-replies"><div class="small faint cmt-rcount">${replies.length} ${replies.length === 1 ? 'reply' : 'replies'}</div>${replies.map((c) => `<div class="cmt-msg">${who(c)}${body(c)}</div>`).join('')}</div>` : ''}
+                </li>`;
+              }).join('')}</ul>`}
+            <div class="note" style="margin:12px">Reading only — replying and resolving still happen in the Duda editor. When someone resolves one there, it turns green here.</div>`;
+            })()}
           `}
         </div>
       </div>`}`;
@@ -2811,6 +2936,8 @@
     $$('[data-cf]').forEach((b) => (b.onclick = () => { cmt.filter = b.dataset.cf; renderComments(); }));
     $$('[data-cs]').forEach((b) => (b.onclick = () => openCommentSite(b.dataset.cs)));
     $$('[data-cadd]').forEach((b) => (b.onclick = () => openAdd(b.dataset.cadd)));
+    const tq = $('#cmtTQ'); if (tq) tq.oninput = () => { const at = tq.selectionStart; cmt.tq = tq.value; renderComments(); const n = $('#cmtTQ'); if (n) { n.focus(); n.setSelectionRange(at, at); } };
+    const dn = $('#cmtDone'); if (dn) dn.onchange = () => { cmt.showDone = dn.checked; renderComments(); };
     $$('[data-cwho]').forEach((b) => (b.onclick = async () => {
       try { await store2('/api/comments', { op: 'who', email: b.dataset.cwho, as: b.dataset.cas }); toast(`${b.dataset.cwho} is now treated as ${b.dataset.cas}.`); openCommentSite(cmt.site); }
       catch (e) { toast(e.message); }

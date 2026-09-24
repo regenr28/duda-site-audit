@@ -174,7 +174,7 @@ export default async function handler(req, res) {
         const isClient = sideTest(await listUsers(), pairs(over));
         const since = pairs(seen)[siteId] || '';
         const out = threads.map((t) => ({
-          uuid: t.u, num: t.num || 0, device: t.device || '', status: t.status || 'open',
+          uuid: t.u, num: t.num || 0, device: t.device || '', status: t.status || 'open', partial: !!t.partial,
           page: pages[t.page] || (t.page ? 'Page ' + String(t.page).slice(0, 6) : ''),
           startedAt: t.at, lastAt: t.last || t.updatedAt || t.at,
           unread: (t.last || t.at) > since,

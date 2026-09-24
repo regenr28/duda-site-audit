@@ -8,6 +8,7 @@ import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const KEY = P + 'dudasites';
+const KEY_UN = P + 'dudadrafts';   // websites not published yet — the ones clients comment on
 const MAX_AGE = 6 * 3600 * 1000;
 const NAMES = P + 'dudanames';   // hash: site id → business name
 const DOMS = P + 'domstat';      // hash: site id → domain check result
@@ -30,16 +31,16 @@ const slim = (x) => ({
   labels: (x.labels || []).map((l) => (typeof l === 'string' ? l : l && (l.name || l.label))).filter(Boolean).slice(0, 6),
 });
 
-async function fetchAll() {
+async function fetchAll(status = 'PUBLISHED') {
   // Duda may return fewer rows per page than requested (e.g. 100 even when asking for 200), so keep paging
   // until a page comes back empty or adds nothing new, instead of assuming a short page means the end.
   const out = []; const seen = new Set(); let offset = 0;
   const PAGE = 100;
   for (let page = 0; page < 150; page++) { // up to 15,000 sites
-    const j = await duda(`/sites/multiscreen?publish_status=PUBLISHED&limit=${PAGE}&offset=${offset}&sort=CREATION_DATE&direction=DESC`);
+    const j = await duda(`/sites/multiscreen?publish_status=${status}&limit=${PAGE}&offset=${offset}&sort=CREATION_DATE&direction=DESC`);
     const rows = Array.isArray(j) ? j : j.results || j.sites || j.data || [];
     let added = 0;
-    rows.forEach((x) => { if (x && x.site_name && !seen.has(x.site_name) && (!x.publish_status || x.publish_status === 'PUBLISHED')) { seen.add(x.site_name); out.push(slim(x)); added++; } });
+    rows.forEach((x) => { if (x && x.site_name && !seen.has(x.site_name) && (!x.publish_status || x.publish_status === status)) { seen.add(x.site_name); out.push(slim(x)); added++; } });
     const total = Number(j.total_responses || j.total || j.totalCount || j.total_count || 0);
     offset += rows.length;
     if (!rows.length || !added || (total && offset >= total)) break;
@@ -145,17 +146,22 @@ export default async function handler(req, res) {
     } catch (e) { return res.status(500).json({ error: String(e.message || e) }); }
   }
   try {
-    const [raw] = await redis(['GET', KEY]);
+    // Not-yet-published websites: the ones clients are commenting on before launch. Kept in its own
+    // cache and only fetched when somebody asks, so it costs nothing on a normal day.
+    const drafts = req.query.scope === 'unpublished';
+    const key = drafts ? KEY_UN : KEY;
+    const [raw] = await redis(['GET', key]);
     let data = unpackJSON(raw);
     if (!(data && !req.query.refresh && Date.now() - data.at < MAX_AGE)) {
       // Someone else refreshing right now? Serve the cached copy instead of hitting Duda twice
-      const [lock] = await redis(['SET', KEY + ':lock', '1', 'NX', 'PX', 60000]);
+      const [lock] = await redis(['SET', key + ':lock', '1', 'NX', 'PX', 60000]);
       if (lock !== 'OK' && data) data = Object.assign({}, data, { refreshing: true });
       else {
-        const sites = await fetchAll();
+        const sites = await fetchAll(drafts ? 'UNPUBLISHED' : 'PUBLISHED');
         // Remember when and by whom the list was pulled (manual refresh vs automatic 6-hour refresh)
         data = { at: Date.now(), by: me.email, byName: me.name, manual: !!req.query.refresh, count: sites.length, sites };
-        await redis(['SET', KEY, packJSON(data)], ['DEL', KEY + ':lock']);
+        data.scope = drafts ? 'unpublished' : 'published';
+        await redis(['SET', key, packJSON(data)], ['DEL', key + ':lock']);
       }
     }
     // Merge remembered business names and domain checks
@@ -165,7 +171,7 @@ export default async function handler(req, res) {
     data.sites = data.sites.map((x) => { const m = nm[x.id]; const fresh = m && (m.p === null || m.p === (x.published || '')); return Object.assign({}, x, { name: x.name || (m && m.n !== '-' ? m.n : ''), nameChecked: !!(x.name || fresh), dom: dm[x.id] && (!x.domain || dm[x.id].domain === x.domain || dm[x.id].status === 'nodomain') ? dm[x.id] : null }); });
     return res.status(200).json(data);
   } catch (e) {
-    await redis(['DEL', KEY + ':lock']).catch(() => {});
+    await redis(['DEL', KEY + ':lock'], ['DEL', KEY_UN + ':lock']).catch(() => {});
     return res.status(502).json({ error: String(e.message || e) });
   }
 }

@@ -68,6 +68,7 @@ export const HELP_SECTIONS = [
     id: 'audits', group: 'Audits', title: 'The Audits page', audience: 'all',
     html: `<p><b>Audits</b> lists every website the team is auditing.</p>
 <ul>
+<li>Both site lists show a <b>Comments</b> column, so you can see where a client is waiting without leaving the page.</li>
 <li><b>Search</b> by business name, site ID or who added it. Filter by website status, assignee, and (once Live DR Sites has loaded) <b>Live or not</b>: sites no longer live in Duda, or with domain problems.</li>
 <li>Each row shows the assignee, the website status, the scan status, open issues by severity, and progress (closed / total items).</li>
 <li><b>Rescan</b> scans one website again. <b>Rescan all shown</b> rescans every website in the current filter.</li>
@@ -192,6 +193,10 @@ export const HELP_SECTIONS = [
 <li>Each conversation shows the <b>page</b>, the <b>device</b> it was left on, who wrote it, when, and whether it is resolved.</li>
 <li>Comments are marked <b>client</b> or <b>internal</b>. Anyone with an account here, or an address at the agency's domain, is internal; anyone else is the client. An admin can correct that on any name.</li>
 <li><b>New to you</b> is per person: reading a website's comments clears your own count, not everyone's.</li>
+<li>A conversation shows its <b>number</b> (as in the Duda editor), the opening comment, and its replies grouped underneath.</li>
+<li><b>Resolved conversations are hidden</b> unless you tick <b>Show resolved</b> — otherwise a website that has been tidied up looks like a wall of "Resolved".</li>
+<li>Search <b>inside</b> a website's comments to find the one you remember.</li>
+<li>Some conversations say <b>"started before comments were connected"</b>. Only what was said since the connection was switched on can be here; open it in the Duda editor to read the whole thread.</li>
 <li><b>It updates by itself.</b> Nothing needs refreshing: a new comment appears within a second or two, even while you are reading that website. The <b>↻ Refresh</b> button is only there for reassurance.</li>
 <li>If it turns out to need work, <b>Add to Audits</b> is on the same screen.</li>
 </ul>
@@ -293,7 +298,7 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'live', group: 'Live DR Sites', title: 'Live DR Sites', audience: 'all',
-    html: `<p><b>Live DR Sites</b> lists every <b>published</b> website in the Duda account, so you can pick what to audit.</p>
+    html: `<p><b>Live DR Sites</b> lists every <b>published</b> website in the Duda account, so you can pick what to audit. A second tab, <b>Not published yet</b>, lists the websites still in build — the ones clients are reviewing and commenting on, which never appeared anywhere before. It starts on the ones that matter (in Audits, or with comments) and can show every unpublished website if you need it. Both tabs have a <b>Comments</b> column.</p>
 <ul>
 <li>The list refreshes automatically every 6 hours. <b>↻ Pull from Duda</b> refreshes it now. <b>Last pulled</b> shows when and by whom.</li>
 <li>Search and filter by name, site ID or domain, audited / not audited and domain health. Sort by newest publish, name or domain problems.</li>
