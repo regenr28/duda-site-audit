@@ -1391,7 +1391,7 @@
     if (c.waiting) bits.push(`<span class="badge sev-critical" title="A client is waiting for an answer">${c.waiting} waiting</span>`);
     if (c.unread) bits.push(`<span class="badge sev-warning">${c.unread} new</span>`);
     if (!bits.length) bits.push(c.open ? `<span class="small muted">${c.open} open</span>` : `<span class="small faint">${c.total} resolved</span>`);
-    return `<a href="#/comments" title="Open the Duda comments page">${bits.join(' ')}</a>`;
+    return `<a href="#/comments/${encodeURIComponent(id)}" title="Read these comments">${bits.join(' ')}</a>`;
   }
   const sameId = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   /** The existing audit for a Duda site, however it was added (Live DR Sites or a pasted editor link). */
@@ -1690,7 +1690,7 @@
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'activity') return { name: 'activity' };
     if (parts[0] === 'removed') return { name: 'removed' };
-    if (parts[0] === 'comments') return { name: 'comments' };
+    if (parts[0] === 'comments') return { name: 'comments', site: parts[1] ? decodeURIComponent(parts[1]) : '' };
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : 'published' };
     if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas' };
@@ -1725,7 +1725,17 @@
     if (r.name === 'removed') return renderRemoved();
     // Arriving on the page is an explicit "show me what's there now", so never trust a list that
     // was loaded at sign-in. Re-renders (filters, searching) reuse what is already loaded.
-    if (r.name === 'comments') { if (cameFrom !== 'comments' && cmt.sites && !cmt.loading) loadCommentSites(true); return renderComments(); }
+    if (r.name === 'comments') {
+      if (cameFrom !== 'comments' && cmt.sites && !cmt.loading) loadCommentSites(true);
+      // Arriving from a Comments link on a site list: open that website and flash what is new on it.
+      // On a cold load the list is not there yet, and it is the list that knows how many are new —
+      // so wait for it rather than opening into an empty count.
+      if (r.site && cmt.site !== r.site) {
+        if (!cmt.sites) { loadCommentSites(true).finally(() => openCommentSite(r.site, true)); return renderComments(); }
+        openCommentSite(r.site, true); return;
+      }
+      return renderComments();
+    }
     if (r.name === 'live') { live.tab = r.tab; return renderLive(); }
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
@@ -2741,18 +2751,34 @@
    * published, which is why this is its own page rather than a tab on an audit.
    */
   const cmt = { sites: null, loading: false, error: '', q: '', filter: 'has', site: null, threads: null, tloading: false, showDone: false, tq: '' };
-  async function loadCommentSites(quiet) {
-    if (cmt.loading) return;
+  let cmtLoading = null;
+  function loadCommentSites(quiet) {
+    // Anyone asking while a load is already running waits for THAT one, instead of getting a
+    // promise that resolves before the list exists.
+    if (cmtLoading) return cmtLoading;
+    cmtLoading = loadCommentSitesNow(quiet).finally(() => { cmtLoading = null; });
+    return cmtLoading;
+  }
+  async function loadCommentSitesNow(quiet) {
     cmt.loading = true; cmt.error = '';
     if (!quiet) renderComments();
     try { const r = await api('/api/comments?op=sites'); cmt.sites = r.sites || []; cmt.at = Date.now(); state.cmtVer = r.ver || '0'; }
     catch (e) { cmt.error = e.message; }
     finally { cmt.loading = false; if (route().name === 'comments') renderComments(); renderTop(); }
   }
-  async function openCommentSite(id) {
+  async function openCommentSite(id, flash) {
+    // Already showing (or fetching) this website: leave it alone. A second call would re-read the
+    // new-comment count after opening has already cleared it, and wipe the highlight.
+    if (cmt.site === id && (cmt.threads || cmt.tloading)) return;
+    cmt.flash = !!flash;
     cmt.site = id; cmt.threads = null; cmt.tloading = true; cmt.tq = ''; renderComments();
-    try { const r = await api('/api/comments?op=threads&site=' + encodeURIComponent(id)); cmt.threads = r.threads || []; }
-    catch (e) { cmt.threads = []; toast(e.message); }
+    try {
+      const r = await api('/api/comments?op=threads&site=' + encodeURIComponent(id));
+      cmt.threads = r.threads || [];
+      // Which ones were new is settled here, once. Opening marks them read and the list refreshes
+      // itself in the background, so recomputing later would always come back empty.
+      cmt.flashIds = new Set(flash ? cmt.threads.filter((t) => t.unread).map((t) => t.uuid) : []);
+    } catch (e) { cmt.threads = []; cmt.flashIds = new Set(); toast(e.message); }
     finally {
       cmt.tloading = false; renderComments();
       store2('/api/comments', { op: 'seen', site: id }).then(() => {
@@ -2770,6 +2796,7 @@
       catch (e) { /* the list is already up to date */ }
     }
   }
+  let cmtFlashTimer = null;
   const cmtUnread = () => (cmt.sites || []).reduce((a, s) => a + (s.unread || 0), 0);
   const cmtWaiting = () => (cmt.sites || []).reduce((a, s) => a + (s.waiting || 0), 0);
 
@@ -2909,7 +2936,12 @@
               const done = all.filter((t) => t.status === 'resolved').length;
               let list = cmt.showDone ? all : all.filter((t) => t.status !== 'resolved');
               if (tq) list = list.filter((t) => t.comments.some((c) => String(c.text || '').toLowerCase().includes(tq) || String(c.by || '').toLowerCase().includes(tq)));
+              // What was new when this website was opened. The server tells us on that first read,
+              // before opening marks it all as seen.
+              const newest = cmt.flash ? (cmt.flashIds || new Set()) : new Set();
+              const fresh = newest.size;
               return `
+              ${fresh ? `<div class="cmt-newbar">${fresh} new ${fresh === 1 ? 'conversation' : 'conversations'} since you last looked</div>` : ''}
               <div class="toolbar" style="border-bottom:1px solid var(--border)">
                 <input type="search" id="cmtTQ" placeholder="Search inside these comments…" value="${esc(cmt.tq)}" style="flex:1;min-width:180px">
                 <label class="small muted" style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="cmtDone" ${cmt.showDone ? 'checked' : ''}> Show resolved (${done})</label>
@@ -2921,7 +2953,7 @@
                 const who = (c) => `<div class="cmt-by"><b>${esc(c.by || 'Someone')}</b> <span class="badge ${c.side === 'client' ? 'sev-info' : 'sev-hold'}">${c.side}</span> <span class="small faint">${esc(fmtFull(c.at))}</span>${state.me.role === 'admin' && c.by ? ` <button class="linkbtn" data-cwho="${esc(c.by)}" data-cas="${c.side === 'client' ? 'team' : 'client'}" title="Correct who this person is">not ${esc(c.side)}?</button>` : ''}</div>`;
                 const body = (c) => `<div class="cmt-text">${c.deleted ? '<span class="faint">(deleted)</span>' : esc(c.text)}</div>`;
                 return `
-                <li class="cmt-card ${t.waiting ? 'waiting' : ''} ${t.status === 'resolved' ? 'done' : ''}">
+                <li class="cmt-card ${t.waiting ? 'waiting' : ''} ${t.status === 'resolved' ? 'done' : ''} ${newest.has(t.uuid) ? 'isnew' : ''}">
                   <div class="cmt-head">
                     ${t.num ? `<span class="badge subtle mono">#${t.num}</span>` : ''}
                     <span class="small muted">${t.page ? esc(t.page) : 'Page unknown'}${t.device ? ' · ' + esc(String(t.device).toLowerCase().replace(/^./, (c) => c.toUpperCase())) : ''}</span>
@@ -2945,8 +2977,23 @@
     const cc2 = $('#cmtConn2'); if (cc2) cc2.onclick = openDudaConn;
     const qi = $('#cmtQ'); if (qi) qi.oninput = () => { const at = qi.selectionStart; cmt.q = qi.value; renderComments(); const n = $('#cmtQ'); if (n) { n.focus(); n.setSelectionRange(at, at); } };
     $$('[data-cf]').forEach((b) => (b.onclick = () => { cmt.filter = b.dataset.cf; renderComments(); }));
-    $$('[data-cs]').forEach((b) => (b.onclick = () => openCommentSite(b.dataset.cs)));
+    $$('[data-cs]').forEach((b) => (b.onclick = () => { history.replaceState(null, '', '#/comments/' + encodeURIComponent(b.dataset.cs)); openCommentSite(b.dataset.cs); }));
     $$('[data-cadd]').forEach((b) => (b.onclick = () => openAdd(b.dataset.cadd)));
+    // The website you arrived for should be visible in the list, not scrolled off somewhere.
+    const sel = $('.cmt-site.active');
+    if (sel && sel.scrollIntoView) { try { sel.scrollIntoView({ block: 'nearest' }); } catch (e) { sel.scrollIntoView(); } }
+    // The pulse on new conversations is a pointer, not a state: it runs once and stops.
+    // Only once the conversations are actually on screen — the "Loading…" pass has no cards yet,
+    // and clearing the flag there would throw the highlight away before it ever showed.
+    if (cmt.flash && !cmt.tloading && cmt.threads) {
+      const n = $$('.cmt-card.isnew').length;
+      if (n) {
+        const first = $('.cmt-card.isnew');
+        if (first && first.scrollIntoView) { try { first.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { /* older browsers */ } }
+        clearTimeout(cmtFlashTimer);
+        cmtFlashTimer = setTimeout(() => { cmt.flash = false; cmt.flashIds = new Set(); $$('.cmt-card.isnew').forEach((el) => el.classList.remove('isnew')); const bar = $('.cmt-newbar'); if (bar) bar.remove(); }, 4200);
+      } else cmt.flash = false;
+    }
     const tq = $('#cmtTQ'); if (tq) tq.oninput = () => { const at = tq.selectionStart; cmt.tq = tq.value; renderComments(); const n = $('#cmtTQ'); if (n) { n.focus(); n.setSelectionRange(at, at); } };
     const dn = $('#cmtDone'); if (dn) dn.onchange = () => { cmt.showDone = dn.checked; renderComments(); };
     $$('[data-cwho]').forEach((b) => (b.onclick = async () => {

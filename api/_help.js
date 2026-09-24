@@ -68,7 +68,7 @@ export const HELP_SECTIONS = [
     id: 'audits', group: 'Audits', title: 'The Audits page', audience: 'all',
     html: `<p><b>Audits</b> lists every website the team is auditing.</p>
 <ul>
-<li>Both site lists show a <b>Comments</b> column, so you can see where a client is waiting without leaving the page.</li>
+<li>Both site lists show a <b>Comments</b> column. Click the count and it opens that website's conversations, with the new ones highlighted for a few seconds.</li>
 <li><b>Search</b> by business name, site ID or who added it. Filter by website status, assignee, and (once Live DR Sites has loaded) <b>Live or not</b>: sites no longer live in Duda, or with domain problems.</li>
 <li>Each row shows the assignee, the website status, the scan status, open issues by severity, and progress (closed / total items).</li>
 <li><b>Rescan</b> scans one website again. <b>Rescan all shown</b> rescans every website in the current filter.</li>

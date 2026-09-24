@@ -568,3 +568,15 @@ select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-c
 .cmt-rcount { margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
 .cmt-partial { color: var(--warn); background: var(--warn-soft); border-radius: 7px; padding: 6px 9px; margin-bottom: 9px; }
 .cmt-head .mono { font-family: var(--mono); }
+
+/* Arriving from a Comments link: point at what is new, once. */
+.cmt-newbar { background: var(--warn-soft); color: var(--warn); font-size: 12.5px; font-weight: 650; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+@keyframes cmtFlash {
+  0%   { box-shadow: 0 0 0 3px var(--warn); background: var(--warn-soft); }
+  70%  { box-shadow: 0 0 0 3px var(--warn); background: var(--warn-soft); }
+  100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
+}
+.cmt-card.isnew { animation: cmtFlash 4s ease-out 1; }
+@media (prefers-reduced-motion: reduce) {
+  .cmt-card.isnew { animation: none; box-shadow: 0 0 0 2px var(--warn); }
+}

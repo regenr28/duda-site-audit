@@ -7,7 +7,7 @@ export const NEWS = [
     id: '2026-09-24-drafts-tab', date: '2026-09-24', audience: 'all', tag: 'Comments',
     title: 'The websites still in build finally have a home',
     what: '<b>Live DR Sites</b> only ever listed <b>published</b> websites — but clients review and comment on the <b>draft</b>, before launch, so the sites with the most going on were invisible. There is now a <b>Not published yet</b> tab beside it, listing websites still in build, sorted so the ones with a client waiting come first. Both tabs now have a <b>Comments</b> column, so you can see where somebody is waiting without opening anything.',
-    where: ['Click <b>Live DR Sites</b> → the <b>Not published yet</b> tab.', 'It starts on the ones <b>with comments</b>. Switch the box for those in Audits, or every unpublished website.', 'The <b>Comments</b> column is on both tabs; click it to jump to that website\'s conversations.'],
+    where: ['Click <b>Live DR Sites</b> → the <b>Not published yet</b> tab.', 'It starts on the ones <b>with comments</b>. Switch the box for those in Audits, or every unpublished website.', 'The <b>Comments</b> column is on both tabs; click the count and it opens that website and flashes the new conversations.'],
     link: '#/live/unpublished', linkText: 'Open it',
   },
   {
