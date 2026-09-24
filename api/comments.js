@@ -11,7 +11,7 @@
 //
 // Replying and resolving still happen in the Duda editor — there is no API to write a comment.
 // When somebody resolves one there, Duda tells us and it turns green here.
-import { redis, P, requireUser, readBody, jparse, now, listUsers, notifyUser, fetchWithTimeout } from './_lib.js';
+import { redis, P, requireUser, readBody, jparse, now, listUsers, notifyUser, fetchWithTimeout, unescapeHtml, savedEditorHost } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const WAIT_HOURS = Number(process.env.COMMENT_WAIT_HOURS || 24);
@@ -75,17 +75,23 @@ function answerDueAt(atISO, hours = WAIT_HOURS) {
  * It goes to admins, once per conversation, and never nags again.
  */
 async function alertStale(rows, isClient, nameOf) {
+  // Only when the CLIENT spoke last. A teammate's own note — a worklog, "this has been updated,
+  // let us know" — is us holding the ball, not the client waiting, so it never rings.
   const late = Object.entries(rows).filter(([, r]) => r && !r.al && r.st !== 'resolved' && r.lb && isClient(r.lb) === 'client' && Date.now() > answerDueAt(r.la));
   if (!late.length) return 0;
   const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
+  if (!admins.length) return 0;
+  const host = await savedEditorHost().catch(() => '');
   const cmds = [];
   for (const [uuid, r] of late.slice(0, 20)) {
     const site = nameOf(r.s);
     const hours = Math.round((Date.now() - (Date.parse(r.la) || Date.now())) / 3600000);
+    const where = [r.n ? `#${r.n}` : '', r.d ? String(r.d).toLowerCase() : ''].filter(Boolean).join(' · ');
     await Promise.all(admins.map((a) => notifyUser(a.email, {
       kind: 'comment-waiting', by: '', byName: site || r.s, siteId: '', siteName: '',
-      text: `A client comment has been waiting ${hours} hours with no reply: “${String(r.tx || '').slice(0, 120)}”`,
+      text: `${where ? where + ' — ' : ''}waiting ${hours} hours with no reply from us: “${unescapeHtml(r.tx || '').slice(0, 140)}”`,
       dudaSite: r.s,
+      editorUrl: host ? `https://${host}/home/site/${encodeURIComponent(r.s)}/home` : '',
     })));
     cmds.push(['HSET', P + 'convidx', uuid, JSON.stringify(Object.assign({}, r, { al: now() }))]);
   }
@@ -179,7 +185,7 @@ export default async function handler(req, res) {
           startedAt: t.at, lastAt: t.last || t.updatedAt || t.at,
           unread: (t.last || t.at) > since,
           waiting: t.status !== 'resolved' && t.lastBy && isClient(t.lastBy) === 'client' && Date.now() > answerDueAt(t.last || t.at),
-          comments: (t.comments || []).map((c) => ({ text: c.text, by: c.by, at: c.at, side: isClient(c.by), deleted: !!c.deleted, edited: c.edited || '' })),
+          comments: (t.comments || []).map((c) => ({ text: unescapeHtml(c.text), by: c.by, at: c.at, side: isClient(c.by), deleted: !!c.deleted, edited: c.edited || '' })),
         })).sort((a, b) => (b.waiting ? 1 : 0) - (a.waiting ? 1 : 0) || String(b.lastAt).localeCompare(String(a.lastAt)));
         return res.status(200).json({ site: siteId, threads: out, waitHours: WAIT_HOURS });
       }

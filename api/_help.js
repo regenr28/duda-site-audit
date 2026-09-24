@@ -201,6 +201,7 @@ export const HELP_SECTIONS = [
 <li>If it turns out to need work, <b>Add to Audits</b> is on the same screen.</li>
 </ul>
 <h4>The one notification</h4>
+<p class="small muted">It only fires when the <b>client</b> spoke last. A teammate's own note — a worklog, or "this has been updated, let us know" — means we are holding the ball, not the client waiting, so it never rings. The alert names the conversation number and device, and carries two buttons: one into this app on that website, one straight into the Duda editor.</p>
 <p>New comments do <b>not</b> notify anyone — there would be too many. The single exception: when a <b>client</b> comment has gone <b>24 hours with no reply from anyone on the team and is still unresolved</b>, the admins are told, once. Replying in Duda or resolving the conversation both count as answering. Weekends do not count, so a Friday-evening comment is flagged on Monday, not Saturday.</p>
 <h4>Switching it on (admins)</h4>
 <ul>

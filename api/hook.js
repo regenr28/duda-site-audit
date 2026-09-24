@@ -21,7 +21,7 @@
 // writes what it was told and gets out. Names, page paths and who-is-who are worked out when
 // somebody actually looks at the Comments page.
 import crypto from 'node:crypto';
-import { redis, P, now, newId, jparse, ablyPublish, commentsChannel } from './_lib.js';
+import { redis, P, now, newId, jparse, ablyPublish, commentsChannel, unescapeHtml } from './_lib.js';
 
 const MAX_COMMENTS = 60;      // per conversation, oldest dropped
 
@@ -130,10 +130,10 @@ export default async function handler(req, res) {
       if (type === 'COMMENT_DELETED') {
         conv.comments = (conv.comments || []).map((c) => (c.u === cid ? Object.assign(c, { deleted: true, text: '' }) : c));
       } else if (type === 'COMMENT_EDITED') {
-        conv.comments = (conv.comments || []).map((c) => (c.u === cid ? Object.assign(c, { text: str(cm.text), edited: at }) : c));
+        conv.comments = (conv.comments || []).map((c) => (c.u === cid ? Object.assign(c, { text: unescapeHtml(cm.text), edited: at }) : c));
       } else if (cid || cm.text) {
         const seen = (conv.comments || []).some((c) => c.u && c.u === cid);
-        if (!seen) conv.comments = [...(conv.comments || []), { u: cid || newId(6), text: str(cm.text), by, at }].slice(-MAX_COMMENTS);
+        if (!seen) conv.comments = [...(conv.comments || []), { u: cid || newId(6), text: unescapeHtml(cm.text), by, at }].slice(-MAX_COMMENTS);
       }
       // Who spoke last decides whether anyone still owes the client an answer.
       const live = (conv.comments || []).filter((c) => !c.deleted);
@@ -147,7 +147,7 @@ export default async function handler(req, res) {
       // A small index row per conversation, so one read answers "what is waiting, across every site".
       cmds.push(['HSET', P + 'convidx', cu, JSON.stringify({
         s: siteId, n: conv.num || 0, d: conv.device || '', st: conv.status, pt: conv.partial ? 1 : 0,
-        la: conv.last, lb: conv.lastBy || '', tx: str(tail && tail.text).slice(0, 160),
+        la: conv.last, lb: conv.lastBy || '', tx: unescapeHtml(tail && tail.text).slice(0, 160),
       })]);
       const [rawW] = await redis(['HGET', P + 'watch', siteId]);
       cmds.push(['HSET', P + 'watch', siteId, JSON.stringify(watchPatch(jparse(rawW), siteId, at, { lastComment: at }))]);

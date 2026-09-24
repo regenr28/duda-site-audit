@@ -36,6 +36,22 @@ export const newId = (n = 12) => crypto.randomBytes(n).toString('base64url');
 export const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 export const now = () => new Date().toISOString();
 
+/**
+ * Duda's comment text arrives HTML-escaped (&quot;, &#39;, &amp;). We escape again when drawing, so
+ * without this the reader sees the raw entity. Decoded once, on the way in.
+ */
+export function unescapeHtml(str) {
+  const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '\u2013', mdash: '\u2014', hellip: '\u2026', rsquo: '\u2019', lsquo: '\u2018', ldquo: '\u201c', rdquo: '\u201d' };
+  return String(str == null ? '' : str).replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, code) => {
+    if (code[0] === '#') {
+      const n = code[1] === 'x' || code[1] === 'X' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+      return Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    }
+    const v = named[code.toLowerCase()];
+    return v === undefined ? m : v;
+  });
+}
+
 export function readBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
   try { return JSON.parse(req.body || '{}'); } catch (e) { return {}; }
@@ -280,6 +296,7 @@ function notifLink(n) {
   if (n.kind === 'signup') return base + '/#/?members=1';
   if (n.kind === 'false-alarm') return base + '/#/suggestions/false-alarms';
   if (/^suggestion/.test(n.kind || '')) return base + '/#/suggestions';
+  if (n.kind === 'comment-waiting' && n.dudaSite) return `${base}/#/comments/${encodeURIComponent(n.dudaSite)}`;
   if (n.siteId) return `${base}/#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   return base;
 }
@@ -296,7 +313,10 @@ export async function slackDM(email, n) {
     const head = `${who}${n.siteName ? ` on *${n.siteName}*` : ''}${n.findingNum ? ` · item #${n.findingNum}` : ''}`;
     const link = notifLink(n);
     const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: head + (n.text ? `\n> ${String(n.text).replace(/\n+/g, ' ').slice(0, 400)}` : '') } }];
-    if (link) blocks.push({ type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Open in Site Auditor' }, url: link }] });
+    const buttons = [];
+    if (link) buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open in Site Auditor' }, url: link });
+    if (n.editorUrl) buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open in Duda editor' }, url: n.editorUrl });
+    if (buttons.length) blocks.push({ type: 'actions', elements: buttons });
     const r = await slackApi('chat.postMessage', { channel: id, text: head.replace(/\*/g, '') + (n.text ? ': ' + String(n.text).slice(0, 200) : ''), blocks, unfurl_links: false });
     return { sent: !!r.ok, reason: r.ok ? '' : r.error };
   } catch (e) { return { sent: false, reason: 'error' }; }
