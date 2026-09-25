@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-09-26-filters', date: '2026-09-26', audience: 'all', tag: 'Audits',
+    title: 'Filters can no longer hide your whole audit',
+    what: 'If a filter was left on — say <b>Design</b>, from clicking <b>Show them in Audit items</b> on the Fonts tab — the list could read "No audit items match these filters" while the chips above still said <b>Critical 5</b>, which looks like the audit has broken. Three fixes: the <b>severity chips now count what clicking them would actually show</b>, so they read <b>Critical 0</b> when something else is filtering; a filter that is doing something is <b>outlined</b>; and the empty message says how many items are hidden and by which filters, with a <b>Clear filters</b> button. Filters also reset when you open a different website, instead of following you around.',
+    where: ['Nothing to set up.', 'If a list ever looks empty, the message under it names the filters and the button clears them in one click.'],
+  },
+  {
     id: '2026-09-26-one-item-per-thing', date: '2026-09-26', audience: 'all', tag: 'Checks',
     title: 'One thing to fix, one audit item',
     what: 'Two kinds of double-counting are gone. <b>Fonts:</b> a menu whose six links are all in the wrong typeface used to be six audit items with six near-identical selectors; it is now <b>one item</b> pointing at the menu itself and naming every link inside it — <i>"5 navigation links in Titillium Web… Found: Car Detailing · RV Detailing and Coating · Additional Service Areas · Ocean City, MD · Bethany Beach, DE"</i>. <b>Contact info:</b> the same wrong phone number can be found three ways on one button — in the words, in the tel: link, and in an aria-label. That is one thing to fix, so it is one item now, which mentions in passing where else the number appears. A genuinely <i>different</i> wrong number in the aria-label is still its own item, because it is a different fix.',

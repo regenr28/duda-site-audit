@@ -1698,12 +1698,17 @@
     return { name: 'sites' };
   }
   let lastSiteId = null;
+  let ffSite = null;      // the website the current audit-item filters belong to
   let lastView = '';
   async function render() {
     if (!state.me) return renderAuth();
     const r = route();
     markNav();
     if (r.name === 'site') {
+      // A filter set on one website shouldn't hide another's items. Tracked separately from
+      // lastSiteId, which is cleared by every trip back to the list.
+      if (ffSite && ffSite !== r.id) clearFilters();
+      ffSite = r.id;
       if (!state.current || state.current.id !== r.id || lastSiteId !== r.id) {
         $('#view').innerHTML = '<div class="empty">Loading…</div>';
         try { await loadSite(r.id); } catch (e) { state.current = null; }
@@ -2129,8 +2134,9 @@
   }
   const statusSelect = (f, attr) => `<select class="pill fs-${f.status}" ${attr}="${esc(f.id)}">${FSTATUS.map((s) => `<option value="${s.v}" ${s.v === f.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select>`;
 
-  function filteredFindings(s) {
-    const ff = state.ff;
+  /** `skip` leaves one filter out, so the severity chips can count what clicking them would give. */
+  function filteredFindings(s, skip) {
+    const ff = skip ? Object.assign({}, state.ff, { [skip]: skip === 'st' ? 'active' : '' }) : state.ff;
     return (s.findings || []).filter((f) => {
       if (ff.st === 'active' && !['open', 'clarification'].includes(f.status)) return false;
       if (ff.st !== 'active' && ff.st !== 'all' && f.status !== ff.st) return false;
@@ -2428,6 +2434,21 @@
     </div>`;
   }
 
+  const FF_DEFAULTS = { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' };
+  /** The filters currently narrowing the list, named the way the person chose them. */
+  function activeFilters(ff) {
+    const on = [];
+    if (ff.sev) on.push(ff.sev === 'critical' ? 'Critical' : ff.sev === 'warning' ? 'Warning' : 'Info');
+    if (ff.st && ff.st !== 'active') on.push(FLABEL[ff.st] || 'All statuses');
+    if (ff.cat) on.push(ff.cat === '__ai' ? 'AI-reviewed' : ff.cat);
+    if (ff.loc) on.push(ff.loc);
+    if (ff.dev) on.push(ff.dev === 'hidden' ? 'Hidden on all devices' : 'Visible on ' + A.DEVICE_LABEL[ff.dev]);
+    if (ff.who) on.push(ff.who === '_mine' ? 'Assigned to me' : ff.who === '_none' ? 'Unassigned' : nameOf(ff.who));
+    if (ff.q) on.push(`"${ff.q}"`);
+    return on;
+  }
+  const clearFilters = () => { Object.assign(state.ff, FF_DEFAULTS); };
+
   function renderFindingsTab(body, s, { cnt, sc, live }) {
     const t = s.truth || {};
     const ff = state.ff;
@@ -2440,7 +2461,9 @@
       const items = v.map((h, i) => { const u = A.socialUrl(k, links[i] || h); const label = k === 'google_my_business' ? (A.placeNameFromUrl(u) || h) : (h || links[i]); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)} ↗</a>` : esc(label); });
       return `${esc(k.replace('google_my_business', 'Google Business'))}: ${items.join(', ')}`;
     }).join('<br>');
-    const activeCount = findings.filter((f) => ['open', 'clarification'].includes(f.status));
+    // The chips count what clicking them would actually show — everything else that's filtering
+    // still applies. A "Critical 5" that opens an empty list is worse than no number at all.
+    const activeCount = filteredFindings(s, 'sev');
     const sevCount = (sev) => activeCount.filter((f) => f.severity === sev).length;
     body.innerHTML = `
       ${(() => { const lx = liveDR.data && liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(s.siteId).toLowerCase()); if (liveDR.data && !lx) return `<div class="note unk dom-banner"><b>This site is no longer live in Duda</b> (unpublished or deleted since the last pull). The audit is kept for reference.</div>`;
@@ -2506,7 +2529,10 @@
           <select id="ffdev"><option value="">All devices</option>${A.DEVICES.map((d) => `<option value="${d}" ${ff.dev === d ? 'selected' : ''}>Visible on ${A.DEVICE_LABEL[d]}</option>`).join('')}<option value="hidden" ${ff.dev === 'hidden' ? 'selected' : ''}>Hidden on all devices</option></select>
           <select id="ffwho"><option value="">Anyone</option><option value="_mine" ${ff.who === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${ff.who === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${ff.who === u.email ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
         </div>
-        ${!findings.length ? `<div class="empty">${sc.state === 'complete' ? 'No issues found.' : live ? 'Scanning… results appear here when it finishes.' : 'Not scanned yet.'}</div>` : !shown.length ? '<div class="empty">No audit items match these filters.</div>' : `
+        ${!findings.length ? `<div class="empty">${sc.state === 'complete' ? 'No issues found.' : live ? 'Scanning… results appear here when it finishes.' : 'Not scanned yet.'}</div>` : !shown.length ? `<div class="empty">
+          <div><b>No audit items match these filters.</b></div>
+          <div class="small muted" style="margin:6px 0 10px">This website has ${findings.length} audit item${findings.length === 1 ? '' : 's'}${activeFilters(ff).length ? `, hidden by: <b>${esc(activeFilters(ff).join(', '))}</b>` : ''}.</div>
+          <button class="btn sm primary" id="ffClear">Clear filters</button></div>` : `
         <div class="table-wrap"><table class="grid findings">
           <thead><tr><th>ID</th><th>Status</th><th>Severity</th><th>Page / path</th><th>Where</th><th>Unique CSS selector</th><th>Finding</th><th title="Comments">💬</th><th>Assignee</th></tr></thead>
           <tbody>${shown.map((f) => {
@@ -2549,6 +2575,10 @@
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
+    if ($('#ffClear', body)) $('#ffClear', body).onclick = () => { clearFilters(); renderSite(); };
+    // A filter that is on should look on, so an empty list is never a mystery.
+    [['#ffcat', ff.cat], ['#ffloc', ff.loc], ['#ffdev', ff.dev], ['#ffwho', ff.who], ['#ffst', ff.st !== 'active' ? ff.st : '']]
+      .forEach(([sel, on]) => { const el = $(sel, body); if (el) el.classList.toggle('filter-on', !!on); });
   }
   async function setFinding(s, ids, changes) {
     if (changes.status === 'false' && changes.note === undefined) {
