@@ -20,6 +20,7 @@
     scanning: {}, queue: [], running: 0, skipAI: {}, aiAbort: {}, claims: {},
     filters: { q: '', status: '', assignee: '', oldChecks: false },
     ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' },
+    refTab: 'info',
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
   };
 
@@ -2385,30 +2386,45 @@
     if (go) go.onclick = () => requestScan([s.id]);
   }
 
-  /**
-   * The website's typefaces — reference, not an audit item. The home page settles it: whatever the
-   * H1 is in, the titles are in; whatever its paragraphs are in, the body text is in. The audit
-   * items then point at the text that isn't in them.
-   */
-  function fontPanel(s) {
+  // =====================================================================
+  // FONTS USED ON THE WEBSITE  (Reference data → second tab)
+  // Reference, like Business Info: this is what the website's design says its fonts are. Anything
+  // that ended up in something else is an audit item, not a line in here.
+  // =====================================================================
+  const FONT_LEVELS = [['body', 'Body text'], ['h1', 'Heading 1'], ['h2', 'Heading 2'], ['h3', 'Heading 3'], ['h4', 'Heading 4'], ['h5', 'Heading 5'], ['h6', 'Heading 6']];
+  const offFonts = (s) => ((s.fonts && s.fonts.all) || []).filter((x) => !x.theme);
+  const fontCount = (s) => (s.findings || []).filter((f) => /^FONT_/.test(f.code) && !['done', 'false'].includes(f.status)).length;
+
+  function fontsReference(s) {
     const f = s.fonts;
-    if (!f || (!f.heading && !f.body)) return '';
-    const used = f.all || [];
-    const main = [f.heading, f.body].filter(Boolean);
-    const extra = used.filter((x) => !main.includes(x.name));
-    const row = (k, v, note) => `<div><div class="k">${esc(k)}</div><div class="v">${v ? `<b>${esc(v)}</b>` : '<span class="faint">—</span>'}${note ? ` <span class="faint small">${esc(note)}</span>` : ''}</div></div>`;
-    return `<div class="panel panel-pad" style="margin-top:14px">
-      <h2>Fonts on this website <span class="badge subtle">Detected</span></h2>
-      <div class="truth font-truth">
-        ${row('Titles', f.heading, 'from the home page H1')}
-        ${row('Body text', f.body, 'from the home page paragraphs')}
-        ${row('Navigation', f.nav, (f.follows || {}).navigation)}
-        ${row('Buttons', f.button, (f.follows || {}).buttons)}
+    if (!f) return `<div class="panel panel-pad"><h2>Fonts used on the website</h2><p class="muted small">Read on the next scan of this website.</p></div>`;
+    const theme = f.roles || {};
+    const off = offFonts(s);
+    const open = fontCount(s);
+    const srcOf = (name) => (f.all || []).find((x) => x.name === name) || {};
+    const groups = [];
+    FONT_LEVELS.filter(([k]) => theme[k]).forEach(([k, label]) => {
+      const g = groups.find((x) => x.fam === theme[k]);
+      if (g) g.levels.push(label); else groups.push({ fam: theme[k], levels: [label] });
+    });
+    const card = (fam, lines, bad) => {
+      const src = srcOf(fam);
+      return `<div class="font-card${bad ? ' off' : ''}">
+        <div class="font-name">${esc(fam)}</div>
+        <div class="small muted">${esc(lines)}</div>
+        <div class="small faint">${src.loaded ? `Loaded from ${esc(src.src || 'the website')}` : '<span class="v-still-t">Not loaded by the website</span>'}${!bad && src.n ? ` · ${src.n} place${src.n === 1 ? '' : 's'}` : ''}</div>
+      </div>`;
+    };
+    return `<div class="panel panel-pad">
+      <div class="row-between" style="align-items:flex-start">
+        <div><h2 style="margin:0">Fonts used on the website ${f.fromTheme ? '<span class="badge scan-complete">From the design settings</span>' : '<span class="badge sev-warning">From the home page</span>'}</h2>
+          <div class="small muted">${f.fromTheme ? "The font this website sets for its body text and for each heading level. Anything else that turned up on the pages is listed as an audit item." : "This website has no global font settings to read, so the home page decides: its H1 sets the font for titles, its paragraphs set the font for body text."}</div></div>
       </div>
-      ${extra.length ? `<div class="k" style="margin-top:12px">Also on the website</div>
-        <div class="small">${extra.map((x) => `<span class="badge ${x.loaded ? 'subtle' : 'sev-warning'}" title="${esc(x.loaded ? 'Loaded from ' + (x.src || 'the website') : 'Used but never loaded — visitors without it see something else')}">${esc(x.name)} · ${x.n} place${x.n === 1 ? '' : 's'}${x.loaded ? '' : ' · not loaded'}</span>`).join(' ')}</div>
-        <p class="small faint" style="margin:6px 0 0">Every place that isn't in the two above is listed as an audit item, with the text to look for.</p>`
-        : `<p class="small faint" style="margin:10px 0 0">Everything on the website uses these. Nothing to fix.</p>`}
+      <div class="font-groups">${groups.map((g) => card(g.fam, g.levels.join(' · '))).join('') || '<div class="empty small">No font settings found.</div>'}</div>
+      ${off.length ? `<div class="k" style="margin-top:16px">Not part of the design <span class="faint">(${off.length} font${off.length === 1 ? '' : 's'})</span></div>
+        <div class="font-groups">${off.map((x) => card(x.name, `${x.n} place${x.n === 1 ? '' : 's'} on the website`, true)).join('')}</div>
+        <p class="small" style="margin:10px 0 0">${open ? `<b>${open} audit item${open === 1 ? '' : 's'}</b> name the exact text to fix. ` : 'The places using them are listed as audit items. '}<button class="linkbtn" id="fontToItems">Show them in Audit items ↓</button></p>`
+        : `<p class="small" style="margin:12px 0 0">✓ Every piece of text on this website uses the fonts above.</p>`}
     </div>`;
   }
 
@@ -2445,7 +2461,11 @@
       </div>
       <details class="ref-details" open>
         <summary class="small muted">Reference data</summary>
-        <div class="grid-2">
+        <div class="ref-tabs"><span class="chips">
+          <button class="chipbtn ${state.refTab === 'fonts' ? '' : 'active'}" data-ref="info">Business Info</button>
+          <button class="chipbtn ${state.refTab === 'fonts' ? 'active' : ''}" data-ref="fonts">Fonts used on the website${s.fonts && fontCount(s) ? ` <span class="tcount">${fontCount(s)}</span>` : ''}</button>
+        </span></div>
+        <div class="grid-2" ${state.refTab === 'fonts' ? 'hidden' : ''}>
           <div class="panel panel-pad">
             <h2>Reference: Business Info <span class="badge ${t.source === 'api' ? 'scan-complete' : 'sev-warning'}">${t.source === 'api' ? 'From Duda API' : t.source === 'schema' ? 'Fallback: site schema' : 'Not loaded yet'}</span></h2>
             <div class="truth">
@@ -2465,7 +2485,7 @@
             <p class="small faint" style="margin:8px 0 0">General note only. Facebook and Google often block automated reads, so verify anything marked yellow by hand.</p>
           </div>
         </div>
-        ${fontPanel(s)}
+        <div ${state.refTab === 'fonts' ? '' : 'hidden'}>${fontsReference(s)}</div>
       </details>
       <div class="panel">
         <div class="toolbar">
@@ -2523,6 +2543,8 @@
     bindSelLinks(body, s);
     bindVerify(body, s);
     bindNewChecks(body, s);
+    $$('[data-ref]', body).forEach((b) => (b.onclick = () => { state.refTab = b.dataset.ref; renderSite(); }));
+    if ($('#fontToItems', body)) $('#fontToItems', body).onclick = () => { state.ff.cat = 'Design'; state.ff.q = ''; state.ff.sev = ''; renderSite(); };
     $$('[data-unallow]', body).forEach((b) => (b.onclick = async () => { if (!confirm('Remove this approval? The value will be flagged again on the next scan.')) return; try { upsertSummary(await store({ op: 'allowRemove', id: s.id, key: b.dataset.unallow })); await loadSite(s.id); renderSite(); } catch (e) { toast(e.message); } }));
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));

@@ -4,10 +4,18 @@
 
 export const NEWS = [
   {
-    id: '2026-09-25-fonts-rebuilt', date: '2026-09-25', audience: 'all', tag: 'Checks',
-    title: 'The font check now tells you which text to fix',
-    what: 'The first version counted fonts — "Navigation use 2 different typefaces — Titillium Web (24 places), Yantramanav (14 places)" — which is true and useless. It has been rebuilt around how a website is actually built: the <b>home page H1</b> settles the font for every title, its <b>paragraphs</b> settle the font for all body text, and the navigation and buttons follow one of those two. Those four are now shown on the website page under <b>Fonts on this website</b>, as reference — not as something to fix. The audit items are the <b>exceptions</b>: each one names the actual words that are in the wrong font, on the page they are on, so <b>Show on page</b> takes you to them. Text that repeats across pages is a single item listing its pages.',
-    where: ['On a website page, open <b>Reference data</b> → <b>Fonts on this website</b> to see the four it detected.', 'The font items are in <b>Audit items</b> as usual, under the <b>Design</b> category — each one reads like "Title in Magistral-Medium — the rest of the titles use Bai Jamjuree".', 'Click <b>Show on page</b> on the item to jump to that exact text.', 'Websites scanned before today show the blue "new checks" note — rescan to swap the old font items for these.'],
+    id: '2026-09-25-fonts-tab', date: '2026-09-25', audience: 'all', tag: 'Checks',
+    title: 'The font check now uses the website\u2019s own settings',
+    what: 'The first version counted fonts — "Navigation use 2 different typefaces — Titillium Web (24 places), Yantramanav (14 places)" — which is true and useless. It now reads the website\u2019s <b>own design settings</b>: the font it sets for the body text, and for each heading level <b>H1 to H6</b>. Those are the website\u2019s fonts. Anything in a font that <b>isn\u2019t one of them</b> is an audit item naming the actual words, on the page they are on, so <b>Show on page</b> finds them. A heading set in the body font is no longer flagged — it is still the website\u2019s font. Reference data now has a second tab beside Business Info, <b>Fonts used on the website</b>: the design\u2019s fonts, and anything else that turned up on the pages.',
+    where: ['On a website, open <b>Reference data</b> → the <b>Fonts used on the website</b> tab, beside Business Info.', 'The first block is the design\u2019s fonts; below it is anything that isn\u2019t part of it.', '<b>Show them in Audit items</b> filters the list below to the Design category.', 'Websites scanned before today show the blue "new checks" note — rescan to pick this up.'],
+
+    link: '#/help/fonts', linkText: 'How the Fonts tab works',
+  },
+  {
+    id: '2026-09-25-one-item', date: '2026-09-25', audience: 'all', tag: 'Checks',
+    title: 'One problem, one audit item',
+    what: 'A phone button that <b>shows</b> the right number and <b>dials</b> a wrong one used to raise two items back to back — "dials a number that is not in Business Info" and "shows one number but dials another" — the same fault, counted twice. It is now a single item that says both: <i>"Phone button shows one number but dials another, and the number it dials is not in Business Info."</i> Email links behaved the same way and were fixed with it.',
+    where: ['Nothing to do. Rescan a website and the pair collapses into one item.', 'Your open counts will drop slightly as a result — the same faults, counted once.'],
     link: '#/help/rules', linkText: 'What the checks look for',
   },
   {

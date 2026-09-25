@@ -263,7 +263,7 @@ export const HELP_SECTIONS = [
 <li><b>FAQ schema</b>: more than one FAQ block on a page (Google only wants one), and an FAQ section with "enable FAQ schema" left off.</li>
 <li><b>Local business schema</b>: missing on the home page.</li>
 <li><b>Page addresses</b>: capital letters, underscores, spaces, a number on the end (usually a duplicated page), leftover names like "copy-of" or "untitled", and very long addresses.</li>
-<li><b>Typefaces</b>: the scan first works out <b>the website's own fonts</b> — the home page H1 settles the title font, its paragraphs settle the body font, and the navigation and buttons are reported as following one of those two. You'll see all four on the website page under <b>Fonts on this website</b>, in Reference data. The audit items are then the <b>exceptions</b>: one item per piece of text that isn't in one of the website's fonts, naming the words themselves ("Title in Magistral-Medium — the rest of the titles use Bai Jamjuree"), so <b>Show on page</b> takes you straight to it. Text that repeats across pages (a header, a footer) is one item listing its pages. If one slip covers a lot of ground, the first 12 are listed and a note says how many more there are. Also flagged: a font the website uses but never loads (visitors see something else), and a font loaded from somewhere other than Google Fonts or Envato. Icon fonts, and CSS that matches nothing on the page, are ignored.</li>
+<li><b>Typefaces</b>: the website's own design settings are the reference — the font it sets for the body text, and for each heading level H1 to H6. Those are the website's fonts, and they're listed on the <b>Fonts</b> tab of each website. The audit items are then anything in a font that <b>isn't one of them</b>: one item per piece of text, naming the words ("Title in Magistral-Medium, which is not one of the website's fonts — the website's titles are set in Bai Jamjuree"), so <b>Show on page</b> takes you straight to it. A heading set in the body font is fine — it's still the website's font. Text that repeats across pages is one item listing its pages; if one slip covers a lot of ground, the first 12 are listed and a note says how many more. Also flagged: a font the website uses but never loads (visitors see something else), and a font loaded from somewhere other than Google Fonts or Envato. Icon fonts, and CSS that matches nothing, are ignored.</li>
 <li><b>Thank-you page</b>: missing a call button or a way back to the home page.</li>
 <li><b>Analytics</b>: no Google Analytics or Tag Manager tag on the home page, or an old UA- tag that no longer collects anything.</li>
 <li><b>Contact form</b>: more than one form on a page, and a phone field that isn't required.</li>
@@ -281,6 +281,16 @@ export const HELP_SECTIONS = [
 <li><b>Content</b>: lorem ipsum and template filler, copyright lines from another business.</li>
 </ul>
 <p class="small">Still check by hand: business hours, prices, service areas, form recipients and text inside images.</p>`,
+  },
+  {
+    id: 'fonts', group: 'Checks', title: 'Fonts used on the website', audience: 'all',
+    html: `<p>On a scanned website, open <b>Reference data</b> and click the second tab, <b>Fonts used on the website</b>. It sits beside <b>Business Info</b> because it is the same kind of thing: the reference the audit is judged against.</p>
+<ul>
+<li><b>The website's fonts</b> — one card per font, saying what it dresses (Body text, Heading 1–6), where it's loaded from, and how many places use it. Read from the website's own design settings, so it's the design's answer, not a guess.</li>
+<li><b>Not part of the design</b> — fonts that turned up on the pages but aren't in the settings. Usually a pasted widget or a leftover from a template. Nothing here means the website is consistent.</li>
+<li>The places using them are <b>audit items</b>, each naming the exact text. <b>Show them in Audit items</b> filters the list below to Design.</li>
+</ul>
+<p class="small muted">A website with no global font settings to read (rare) falls back to the home page: its H1 sets the font for titles, its paragraphs set the font for body text. The tab says which of the two it used.</p>`,
   },
   {
     id: 'verify', group: 'Checks', title: 'Verify on live site', audience: 'all',

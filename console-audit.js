@@ -54,10 +54,12 @@
     {
       v: 3,
       date: '2026-09-25',
-      title: 'The font check, rebuilt around the website\u2019s own typefaces',
+      title: 'Fonts read from the design settings, and one audit item per problem instead of two',
       items: [
-        'The website\u2019s typefaces are worked out first and shown on the website page: the home page H1 settles the title font, its paragraphs settle the body font, and the navigation and buttons are reported as following one of the two',
-        'Instead of counting fonts, the audit now names each piece of text that isn\u2019t in one of them \u2014 the words themselves, on the page they\u2019re on, so Show on page finds them',
+        'Fonts are judged against the website\u2019s own design settings \u2014 the font it sets for the body text and for each heading level, H1 to H6. Anything that isn\u2019t one of those is what gets reported',
+        'Instead of counting fonts, the audit names each piece of text in a font that isn\u2019t part of the design \u2014 the words themselves, on the page they\u2019re on, so Show on page finds them',
+        'Reference data has a second tab beside Business Info \u2014 Fonts used on the website \u2014 showing the design\u2019s fonts and anything else that turned up',
+        'A phone button that shows one number and dials another raised two items saying the same thing; it is now one item that says both. Same for email links',
       ],
     },
   ];
@@ -345,7 +347,7 @@
   }
 
   /** Typefaces the page loads, and from where. */
-  function fontSources(doc) {
+  function fontSources(doc, resolve) {
     const loaded = new Map();   // family (lowercased) → source label
     doc.querySelectorAll('link[rel="stylesheet"], link[rel="preload"][as="font"]').forEach((l) => {
       const href = l.getAttribute('href') || '';
@@ -369,11 +371,78 @@
         if (!fam) continue;
         let host = '';
         try { host = new URL(src ? src[1] : '', 'https://x/').hostname; } catch (e) { /* relative */ }
-        const name = firstFamily(fam[1]);
-        loaded.set(name.toLowerCase(), { src: host && !/^x$/.test(host) ? host : 'this website', name });
+        const name = firstFamily(resolve(fam[1]));
+        if (name) loaded.set(name.toLowerCase(), { src: host && !/^x$/.test(host) ? host : 'this website', name });
       }
     });
     return loaded;
+  }
+
+  const THEME_TAGS = ['body', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+
+  /**
+   * The website's own typography — the fonts the theme sets, not the ones a widget asks for.
+   *
+   * Duda writes the site's typography as plain element rules in the page's stylesheet (body, p and
+   * h1–h6), often through custom properties on :root. That is the design's font set: whatever an
+   * element ends up in that is NOT one of these came from somewhere else, and that is the thing
+   * worth reporting. Custom properties are resolved here so `font-family: var(--font-h1)` answers.
+   */
+  /**
+   * The page's CSS custom properties, as a function that resolves `var(--x, fallback)` to a value.
+   * Duda's themes are written with them, so nothing about fonts reads correctly without this.
+   */
+  function varResolver(doc) {
+    const vars = new Map();
+    doc.querySelectorAll('style').forEach((st) => {
+      const css = st.textContent || '';
+      let m; const rule = /([^{}]+)\{([^{}]*)\}/g;
+      while ((m = rule.exec(css))) {
+        if (!/--[\w-]+\s*:/.test(m[2])) continue;
+        let v; const dec = /(--[\w-]+)\s*:\s*([^;]+)/g;
+        while ((v = dec.exec(m[2]))) { if (!vars.has(v[1])) vars.set(v[1], v[2].trim()); }
+      }
+    });
+    doc.querySelectorAll('[style*="--" i]').forEach((el) => {
+      let v; const dec = /(--[\w-]+)\s*:\s*([^;"]+)/g;
+      while ((v = dec.exec(el.getAttribute('style') || ''))) { if (!vars.has(v[1])) vars.set(v[1], v[2].trim()); }
+    });
+    const resolve = (val, depth) => String(val || '').replace(/var\(\s*(--[\w-]+)\s*(?:,([^()]*))?\)/g, (m, name, fb) => {
+      if ((depth || 0) > 5) return fb || '';
+      const got = vars.get(name);
+      return got !== undefined ? resolve(got, (depth || 0) + 1) : resolve(fb || '', (depth || 0) + 1);
+    });
+    return (val) => resolve(val, 0);
+  }
+
+  function themeFonts(doc, resolve) {
+    const roles = {};            // body / p / h1…h6 → family
+    const spec = {};             // how specific the rule that set it was, so the last word wins
+    const isPlain = (sel) => THEME_TAGS.includes(sel.trim().toLowerCase().replace(/::?[a-z-]+(\([^)]*\))?/gi, '').trim());
+
+    doc.querySelectorAll('style').forEach((st) => {
+      const css = (st.textContent || '').replace(/@font-face\s*\{[^}]*\}/gi, ' ');
+      let m; const rule = /([^{}]+)\{([^{}]*)\}/g;
+      while ((m = rule.exec(css))) {
+        const sels = m[1].split(',').map((x) => x.trim());
+        if (!/font-family/i.test(m[2])) continue;
+        const fam = /font-family\s*:\s*([^;]+)/i.exec(m[2]);
+        if (!fam) continue;
+        const weight = /!important/i.test(fam[1]) ? 2 : 1;
+        sels.forEach((sel) => {
+          if (!isPlain(sel)) return;
+          const tag = sel.toLowerCase().replace(/::?[a-z-]+(\([^)]*\))?/gi, '').trim();
+          if (spec[tag] && spec[tag] > weight) return;
+          const f = firstFamily(resolve(fam[1]));
+          if (!f || GENERIC_FONTS.test(f) || ICON_FONTS.test(f)) return;
+          roles[tag] = f; spec[tag] = weight;
+        });
+      }
+    });
+    // A theme that only dresses <body> still dresses the paragraphs.
+    if (!roles.p && roles.body) roles.p = roles.body;
+    const set = new Set(THEME_TAGS.map((t) => roles[t]).filter(Boolean));
+    return { roles, fonts: set, found: set.size > 0 };
   }
 
   /**
@@ -385,10 +454,10 @@
    * the nearest dressed ancestor's. Rules that match nothing on this page are ignored, which is what
    * keeps a stylesheet full of unused widget CSS out of the answer.
    */
-  function fontMap(doc) {
+  function fontMap(doc, resolve) {
     const won = new Map();      // element → { fam, spec, order }
     const claim = (el, fam, spec, order) => {
-      const f = firstFamily(fam);
+      const f = firstFamily(resolve(fam));
       if (!f) return;
       const prev = won.get(el);
       if (!prev || spec > prev.spec || (spec === prev.spec && order >= prev.order)) won.set(el, { fam: f, spec, order });
@@ -440,7 +509,8 @@
     { key: 'buttons', label: 'Buttons', sel: 'button, [role="button"], a[class*="btn" i], a[class*="button" i], .dmButtonLink' },
   ];
   const ROLE_LABEL = { titles: 'Title', paragraphs: 'Paragraph', navigation: 'Navigation link', buttons: 'Button', other: 'Text' };
-  const ROLE_PLURAL = { titles: 'titles', paragraphs: 'body text', navigation: 'navigation links', buttons: 'buttons' };
+  const ROLE_PLURAL = { titles: 'titles', paragraphs: 'paragraphs', navigation: 'navigation links', buttons: 'buttons', other: 'places' };
+  const ROLE_PHRASE = { titles: 'titles are', paragraphs: 'body text is', navigation: 'navigation is', buttons: 'buttons are', other: 'text is' };
   const MAX_FONT_ROWS = 900;   // per page, per device
   const FONT_ITEM_CAP = 12;    // audit items per part-of-the-page + wrong typeface, before one summary row
 
@@ -452,7 +522,8 @@
    * website's typefaces and then flags the text that doesn't use them.
    */
   function fontsUsed(doc, device) {
-    const familyOf = fontMap(doc);
+    const resolve = varResolver(doc);
+    const familyOf = fontMap(doc, resolve);
     const keep = (f) => f && !GENERIC_FONTS.test(f) && !ICON_FONTS.test(f);
     const rows = [];
     const seen = new Set();
@@ -479,8 +550,8 @@
       take(el, 'other');
     });
     const loaded = [];
-    fontSources(doc).forEach((src, key) => loaded.push({ key, name: src && src.name ? src.name : key, src: src && src.src ? src.src : String(src || '') }));
-    return { rows, loaded };
+    fontSources(doc, resolve).forEach((src, key) => loaded.push({ key, name: src && src.name ? src.name : key, src: src && src.src ? src.src : String(src || '') }));
+    return { rows, loaded, theme: themeFonts(doc, resolve).roles };
   }
 
   function extractSchema(doc) {
@@ -823,22 +894,35 @@
 
       if (/^tel:/i.test(href)) {
         const d = normPhone(safeDecode(href.slice(4)));
-        if (d.length !== 10) add(a, { code: 'TEL_INVALID', severity: 'critical', category: 'Contact info', message: 'Phone link has an invalid number', found: href });
-        else if (!phoneOk(d)) add(a, { code: 'TEL_MISMATCH', severity: 'critical', category: 'Contact info', message: 'Phone link (tel:) dials a number that is not in Business Info', found: fmtPhone(d), expected: expectedPhones });
+        if (d.length !== 10) { add(a, { code: 'TEL_INVALID', severity: 'critical', category: 'Contact info', message: 'Phone link has an invalid number', found: href }); return; }
         PHONE_RE.lastIndex = 0;
         const shown = PHONE_RE.exec(text);
-        if (shown) {
-          const sd = shown[1] + shown[2] + shown[3];
-          if (d.length === 10 && sd !== d) add(a, { code: 'TEL_TEXT_MISMATCH', severity: 'critical', category: 'Contact info', message: 'Phone button shows one number but dials another', found: `Shows ${fmtPhone(sd)} → dials ${fmtPhone(d)}`, expected: expectedPhones });
+        const sd = shown ? shown[1] + shown[2] + shown[3] : '';
+        const dialOk = phoneOk(d);
+        // One button, one problem, one item. A button that shows the right number and dials a wrong
+        // one used to raise two items saying the same thing; the mismatch now carries both facts.
+        if (sd && sd !== d) {
+          add(a, { code: 'TEL_TEXT_MISMATCH', severity: 'critical', category: 'Contact info',
+            message: dialOk ? 'Phone button shows one number but dials another' : 'Phone button shows one number but dials another, and the number it dials is not in Business Info',
+            found: `Shows ${fmtPhone(sd)} → dials ${fmtPhone(d)}`, expected: expectedPhones });
+        } else if (!dialOk) {
+          add(a, { code: 'TEL_MISMATCH', severity: 'critical', category: 'Contact info', message: 'Phone link (tel:) dials a number that is not in Business Info', found: fmtPhone(d), expected: expectedPhones });
         }
         return;
       }
       if (/^mailto:/i.test(href)) {
         const e = safeDecode(href.slice(7).split('?')[0]).trim().toLowerCase();
-        if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) add(a, { code: 'MAILTO_INVALID', severity: 'critical', category: 'Contact info', message: 'Email link has an invalid address', found: href });
-        else if (!emailOk(e)) add(a, { code: 'MAILTO_MISMATCH', severity: 'critical', category: 'Contact info', message: 'Email link (mailto:) goes to an address not in Business Info', found: e, expected: expectedEmails });
+        if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) { add(a, { code: 'MAILTO_INVALID', severity: 'critical', category: 'Contact info', message: 'Email link has an invalid address', found: href }); return; }
         const shownE = (text.match(EMAIL_RE) || [])[0];
-        if (shownE && shownE.toLowerCase() !== e) add(a, { code: 'MAILTO_TEXT_MISMATCH', severity: 'critical', category: 'Contact info', message: 'Email link shows one address but opens another', found: `Shows ${shownE} → opens ${e}` });
+        const mailOk = emailOk(e);
+        // Same again: one link, one item, carrying everything that is wrong with it.
+        if (shownE && shownE.toLowerCase() !== e) {
+          add(a, { code: 'MAILTO_TEXT_MISMATCH', severity: 'critical', category: 'Contact info',
+            message: mailOk ? 'Email link shows one address but opens another' : 'Email link shows one address but opens another, and the address it opens is not in Business Info',
+            found: `Shows ${shownE} → opens ${e}`, expected: expectedEmails });
+        } else if (!mailOk) {
+          add(a, { code: 'MAILTO_MISMATCH', severity: 'critical', category: 'Contact info', message: 'Email link (mailto:) goes to an address not in Business Info', found: e, expected: expectedEmails });
+        }
         return;
       }
       if (/^(sms|whatsapp):/i.test(href)) {
@@ -1119,66 +1203,70 @@
 
   // ---------- the website's typefaces ----------
   /**
-   * A website has a typeface for its headings and one for its body text. The home page settles both:
-   * whatever the H1 is in, the headings are in; whatever its paragraphs are in, the body text is in.
-   * The navigation and the buttons each follow one of those two — which one varies by design, so
-   * the majority within that part of the site decides, and it is reported rather than judged.
+   * The website's font set, and what each part of it is dressed in.
    *
-   * This is worked out once, from every page, and then the text that doesn't use it gets flagged.
+   * The design itself is the reference: the theme sets a font for the body text and one for each
+   * heading level, and those are the website's fonts. Anything an element ends up in that is not one
+   * of them came from a widget, a paste, or a leftover — and that is what the audit reports.
+   *
+   * A website with no theme rules to read (rare, and usually a broken export) falls back to what the
+   * home page does: whatever its H1 is in dresses the titles, whatever its paragraphs are in dresses
+   * the body text.
    */
-  function buildFontSystem(rows, loaded) {
+  function buildFontSystem(rows, loaded, theme) {
     // One element, counted once. The same heading sits on every page and is read three times over
     // (Desktop, Tablet, Mobile), so counting raw rows would say "9 places" about a single title.
     const places = (list) => { const seen = new Set(); return list.filter((r) => { const k = r.selector + '|' + r.text; if (seen.has(k)) return false; seen.add(k); return true; }); };
     const countBy = (list) => { const m = new Map(); places(list).forEach((r) => m.set(r.fam, (m.get(r.fam) || 0) + 1)); return m; };
     const top = (m) => (m && m.size ? [...m.entries()].sort((a, b) => b[1] - a[1])[0][0] : '');
-    const home = rows.filter((r) => r.path === '/');
-    const pick = (role, tag) => {
-      const t = top(countBy(home.filter((r) => r.role === role && (!tag || r.tag === tag))));
-      return t || top(countBy(home.filter((r) => r.role === role))) || top(countBy(rows.filter((r) => r.role === role)));
-    };
-    const heading = pick('titles', 'h1');
-    const body = pick('paragraphs', 'p');
-    const nav = top(countBy(rows.filter((r) => r.role === 'navigation')));
-    const button = top(countBy(rows.filter((r) => r.role === 'buttons')));
+    const roles = Object.assign({}, theme || {});
+    const fromTheme = THEME_TAGS.some((t) => roles[t]);
+    if (!fromTheme) {
+      const home = rows.filter((r) => r.path === '/');
+      const pick = (role, tag) => top(countBy(home.filter((r) => r.role === role && (!tag || r.tag === tag))))
+        || top(countBy(home.filter((r) => r.role === role))) || top(countBy(rows.filter((r) => r.role === role)));
+      const h = pick('titles', 'h1');
+      roles.body = pick('paragraphs', 'p');
+      ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].forEach((t) => { roles[t] = h; });
+      roles.p = roles.body;
+    }
+    const set = new Set(THEME_TAGS.map((t) => roles[t]).filter(Boolean));
+    const heading = roles.h1 || roles.h2 || '';
+    const body = roles.body || roles.p || '';
     const all = [...countBy(rows).entries()].sort((a, b) => b[1] - a[1]).map(([name, n]) => {
       const src = loaded.get(name.toLowerCase());
-      return { name, n, loaded: !!src, src: (src && src.src) || '' };
+      return { name, n, loaded: !!src, src: (src && src.src) || '', theme: set.has(name) };
     });
-    // What each part of the website should be in. Titles and body text follow the two above; the
-    // navigation and the buttons follow whichever they mostly already use.
-    const want = { titles: heading, paragraphs: body, navigation: nav || body || heading, buttons: button || body || heading };
-    const follows = (f) => (f && f === heading ? 'same as the titles' : f && f === body ? 'same as the body text' : f ? 'its own' : '');
-    return { heading, body, nav, button, want, all, follows: { navigation: follows(nav), buttons: follows(button) }, pages: new Set(rows.map((r) => r.path)).size };
+    return { roles, fonts: set, heading, body, all, fromTheme, pages: new Set(rows.map((r) => r.path)).size };
   }
 
   /**
-   * Text that isn't in one of the website's typefaces — one audit item per piece of text, so it can
-   * be found and fixed, rather than a count of fonts nobody can act on.
+   * Text that isn't in one of the website's fonts — one audit item per piece of text, so it can be
+   * found and fixed, rather than a count of fonts nobody can act on.
    */
   function fontFindings(rows, loaded, sys) {
     const out = [];
-    if (rows.length < 8 || !(sys.heading || sys.body)) return out;
-    const SITE = [sys.heading, sys.body].filter(Boolean);
+    if (rows.length < 8 || !sys.fonts.size) return out;
     const push = (r, f) => out.push(Object.assign({
       path: r.path, device: r.device, selector: r.selector, location: r.location,
       visible: !r.hiddenBy, hiddenBy: r.hiddenBy || '', snippet: r.text, category: 'Design',
     }, f));
+    // What this piece of text should have been in, said the way a designer would say it.
+    const wanted = (r) => {
+      const t = /^h[1-6]$/.test(r.tag) ? sys.roles[r.tag] : '';
+      return t || (r.role === 'titles' ? sys.heading : sys.body) || sys.heading || sys.body;
+    };
+    const setList = [...sys.fonts];
 
-    // One group per part-of-the-page + wrong typeface, so the count is honest and the cap is per slip.
+    // One group per part-of-the-page + off-theme typeface, so the count is honest and the cap is per slip.
     const groups = new Map();
-    rows.forEach((r) => {
-      const want = sys.want[r.role];
-      if (r.role === 'other') { if (!SITE.length || SITE.includes(r.fam)) return; }
-      else if (!want || r.fam === want) return;
-      const key = r.role + '|' + r.fam;
-      (groups.get(key) || groups.set(key, []).get(key)).push(r);
-    });
+    rows.forEach((r) => { if (sys.fonts.has(r.fam)) return; const key = r.role + '|' + r.fam; (groups.get(key) || groups.set(key, []).get(key)).push(r); });
     [...groups.entries()].forEach(([key, list]) => {
       const [role, fam] = key.split('|');
-      const want = role === 'other' ? SITE.join(' or ') : sys.want[role];
-      const where = role === 'other' ? "the website's typefaces" : `the rest of the ${ROLE_PLURAL[role]} use ${want}`;
-      // One audit item per piece of text — but a header or footer repeats on every page and on three
+      const want = wanted(list[0]);
+      const where = want ? `the website's ${ROLE_PHRASE[role] || 'text is'} set in ${want}`
+        : `the website uses ${setList.slice(0, 2).join(' and ')}`;
+      // One item per piece of text — but a header or footer repeats on every page and on three
       // devices, so those rows are kept and grouped later into a single item that lists its pages.
       const byText = new Map();
       list.forEach((r) => { const k = r.selector + '|' + r.text; (byText.get(k) || byText.set(k, []).get(k)).push(r); });
@@ -1189,13 +1277,13 @@
           const at = r.path + '|' + r.device;
           if (seenAt.has(at)) return;
           seenAt.add(at);
-          push(r, { code: 'FONT_OFF_SYSTEM', severity: 'warning', message: `${ROLE_LABEL[role]} in ${fam} — ${where}`, found: r.text, expected: want });
+          push(r, { code: 'FONT_OFF_SYSTEM', severity: 'warning', message: `${ROLE_LABEL[role]} in ${fam}, which is not one of the website's fonts — ${where}`, found: r.text, expected: want || setList.join(' / ') });
         });
       });
       if (texts.length > FONT_ITEM_CAP) push(byText.get(texts[FONT_ITEM_CAP])[0], {
         code: 'FONT_OFF_SYSTEM_MORE', severity: 'info',
         message: `${texts.length - FONT_ITEM_CAP} more ${ROLE_PLURAL[role] || 'places'} are in ${fam} as well — the first ${FONT_ITEM_CAP} are listed separately`,
-        found: `${texts.length} in total`, expected: want,
+        found: `${texts.length} in total`, expected: want || setList.join(' / '),
       });
     });
 
@@ -1243,6 +1331,7 @@
     const textIdx = [];
     const fontRows = [];          // every piece of text on the website, with the typeface it ends up in
     const fontLoaded = new Map(); // family (lowercased) → where the website loads it from
+    const fontTheme = {};         // body / p / h1…h6 → the font the website's own design sets
     const queue = [];
     const queued = new Set();
     const enqueue = (p, from) => { p = normalizePath(p); if (!queued.has(p) && queued.size < maxPages) { queued.add(p); queue.push(p); pageInfo[p] = pageInfo[p] || { path: p, from: from || null }; } };
@@ -1300,6 +1389,8 @@
           if (r.fonts) {
             r.fonts.rows.forEach((x) => { if (fontRows.length < 9000) fontRows.push(Object.assign({ path, device }, x)); });
             r.fonts.loaded.forEach((l) => { if (!fontLoaded.has(l.key)) fontLoaded.set(l.key, l); });
+            // The theme is the same on every page; the home page's is the one that counts.
+            if (r.fonts.theme && (path === '/' || !Object.keys(fontTheme).length)) Object.keys(r.fonts.theme).forEach((k) => { if (path === '/' || !fontTheme[k]) fontTheme[k] = r.fonts.theme[k]; });
           }
         }
       }
@@ -1340,7 +1431,7 @@
     // The website's typefaces, and the text that doesn't use them
     let fontSys = null;
     if (fontRows.length) {
-      fontSys = buildFontSystem(fontRows, fontLoaded);
+      fontSys = buildFontSystem(fontRows, fontLoaded, fontTheme);
       fontFindings(fontRows, fontLoaded, fontSys).forEach((f) => raw.push(f));
     }
 
@@ -1399,7 +1490,7 @@
     return {
       truth,
       checks: CHECKS_VERSION,
-      fonts: fontSys ? { heading: fontSys.heading, body: fontSys.body, nav: fontSys.nav, button: fontSys.button, follows: fontSys.follows, all: fontSys.all.slice(0, 10) } : null,
+      fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 12) } : null,
       findings: merged,
       pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
       externalLinks: external.size,
