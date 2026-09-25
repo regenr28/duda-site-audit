@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-26-one-item-per-thing', date: '2026-09-26', audience: 'all', tag: 'Checks',
+    title: 'One thing to fix, one audit item',
+    what: 'Two kinds of double-counting are gone. <b>Fonts:</b> a menu whose six links are all in the wrong typeface used to be six audit items with six near-identical selectors; it is now <b>one item</b> pointing at the menu itself and naming every link inside it — <i>"5 navigation links in Titillium Web… Found: Car Detailing · RV Detailing and Coating · Additional Service Areas · Ocean City, MD · Bethany Beach, DE"</i>. <b>Contact info:</b> the same wrong phone number can be found three ways on one button — in the words, in the tel: link, and in an aria-label. That is one thing to fix, so it is one item now, which mentions in passing where else the number appears. A genuinely <i>different</i> wrong number in the aria-label is still its own item, because it is a different fix.',
+    where: ['Rescan a website and the count drops — same faults, counted once.', 'On a grouped font item, <b>Show on page</b> highlights the whole menu or section, and <b>Found</b> lists every piece of text inside it.', 'Links in body text now get their typeface checked too, not just navigation links and buttons.'],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
     id: '2026-09-25-fonts-tab', date: '2026-09-25', audience: 'all', tag: 'Checks',
     title: 'The font check now uses the website\u2019s own settings',
     what: 'The first version counted fonts — "Navigation use 2 different typefaces — Titillium Web (24 places), Yantramanav (14 places)" — which is true and useless. It now reads the website\u2019s <b>own design settings</b>: the font it sets for the body text, and for each heading level <b>H1 to H6</b>. Those are the website\u2019s fonts. Anything in a font that <b>isn\u2019t one of them</b> is an audit item naming the actual words, on the page they are on, so <b>Show on page</b> finds them. A heading set in the body font is no longer flagged — it is still the website\u2019s font. Reference data now has a second tab beside Business Info, <b>Fonts used on the website</b>: the design\u2019s fonts, and anything else that turned up on the pages.',

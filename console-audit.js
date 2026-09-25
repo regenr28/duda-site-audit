@@ -62,6 +62,16 @@
         'A phone button that shows one number and dials another raised two items saying the same thing; it is now one item that says both. Same for email links',
       ],
     },
+    {
+      v: 4,
+      date: '2026-09-26',
+      title: 'One thing to fix, one audit item',
+      items: [
+        'A whole menu or section in the wrong font is now a single item naming every piece of text in it, instead of one item per link',
+        'The same wrong phone number found in the words, the tel: link and an aria-label is now one item that mentions where else it appears \u2014 the same for email addresses',
+        'Links in body text are checked for their typeface too, not just navigation links and buttons',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -543,7 +553,7 @@
       hits.forEach((el) => take(el, role.key));
     });
     // Everything else with words in it, so the totals cover the whole page.
-    doc.querySelectorAll('h4, h5, h6, span, td, th, label, figcaption, blockquote, strong, em, div').forEach((el) => {
+    doc.querySelectorAll('h4, h5, h6, span, td, th, label, figcaption, blockquote, strong, em, a, div').forEach((el) => {
       if (seen.has(el)) return;
       // Only the element that actually holds the words, not every wrapper around them.
       if (el.querySelector('h1,h2,h3,h4,h5,h6,p,li,span,td,th,label,a,button')) return;
@@ -655,6 +665,48 @@
       if (n.nodeValue && n.nodeValue.trim()) out.push(n);
     }
     return out;
+  }
+
+  // ---------- one element, one problem ----------
+  // The same wrong phone number can be found three ways on one button: in the words, in the tel:
+  // link, and in an aria-label. That is one thing to fix, so the fullest finding survives and the
+  // others are folded into it as a note about where else the number appears.
+  const CONTACT_RANK = { TEL_TEXT_MISMATCH: 0, MAILTO_TEXT_MISMATCH: 0, TEL_MISMATCH: 1, MAILTO_MISMATCH: 1, TEL_INVALID: 1, MAILTO_INVALID: 1, SMS_MISMATCH: 2, PHONE_MISMATCH: 3, EMAIL_MISMATCH: 3 };
+  const CONTACT_KIND = { TEL_TEXT_MISMATCH: 'phone', TEL_MISMATCH: 'phone', TEL_INVALID: 'phone', SMS_MISMATCH: 'phone', PHONE_MISMATCH: 'phone', MAILTO_TEXT_MISMATCH: 'email', MAILTO_MISMATCH: 'email', MAILTO_INVALID: 'email', EMAIL_MISMATCH: 'email' };
+  const contactValues = (f) => {
+    if (CONTACT_KIND[f.code] === 'email') return (String(f.found || '').match(EMAIL_RE) || []).map((x) => x.toLowerCase());
+    return (String(f.found || '').match(/\d[\d\s().-]{8,}\d/g) || []).map(normPhone).filter((d) => d.length === 10);
+  };
+  /** Where else the same number or address turned up on this element, said in passing. */
+  const attrNote = (msg) => { const m = /\(in ([\w-]+) attribute\)/.exec(String(msg || '')); return m ? m[1] : ''; };
+
+  function collapseContact(findings) {
+    const groups = new Map();
+    findings.forEach((f, i) => {
+      if (!CONTACT_KIND[f.code]) return;
+      const key = f.selector + '|' + CONTACT_KIND[f.code];
+      (groups.get(key) || groups.set(key, []).get(key)).push(i);
+    });
+    const drop = new Set();
+    groups.forEach((idx) => {
+      if (idx.length < 2) return;
+      const sorted = idx.slice().sort((a, b) => CONTACT_RANK[findings[a].code] - CONTACT_RANK[findings[b].code]);
+      const kept = [];
+      sorted.forEach((i) => {
+        const mine = contactValues(findings[i]);
+        // Only folded away when the fuller finding already names the same number or address.
+        const host = kept.find((k) => mine.length && mine.every((v) => contactValues(findings[k]).includes(v)));
+        if (!host && host !== 0) { kept.push(i); return; }
+        drop.add(i);
+        const attr = attrNote(findings[i].message);
+        if (attr) {
+          const h = findings[host];
+          const seen = String(h.alsoIn || '').split(', ').filter(Boolean);
+          if (!seen.includes(attr)) { seen.push(attr); h.alsoIn = seen.join(', '); h.message = h.message.replace(/ \(also in [^)]*\)$/, '') + ` (also in the ${h.alsoIn} attribute${seen.length > 1 ? 's' : ''})`; }
+        }
+      });
+    });
+    return findings.filter((f, i) => !drop.has(i));
   }
 
   // ---------- page audit ----------
@@ -1074,7 +1126,7 @@
 
     return {
       notFound: false,
-      findings,
+      findings: collapseContact(findings),
       internal: Array.from(internal),
       external: Array.from(external.keys()).map((url) => ({ url, selector: uniqueSelector(external.get(url).el), location: locationOf(external.get(url).el), hiddenBy: hiddenReason(external.get(url).el, device) || '' })),
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
@@ -1244,6 +1296,17 @@
    * Text that isn't in one of the website's fonts — one audit item per piece of text, so it can be
    * found and fixed, rather than a count of fonts nobody can act on.
    */
+  /**
+   * The block a selector sits in. Duda gives every widget an id, so a selector like
+   * `[id="1768548719"] > ul > li:nth-of-type(2) > a` belongs to the widget `[id="1768548719"]`:
+   * one menu, one banner, one section. Without an id there is nothing to group by, so the element
+   * stands on its own.
+   */
+  function blockOf(selector) {
+    const m = /^(\[id="[^"]+"\])/.exec(String(selector || ''));
+    return m ? m[1] : String(selector || '');
+  }
+
   function fontFindings(rows, loaded, sys) {
     const out = [];
     if (rows.length < 8 || !sys.fonts.size) return out;
@@ -1266,24 +1329,39 @@
       const want = wanted(list[0]);
       const where = want ? `the website's ${ROLE_PHRASE[role] || 'text is'} set in ${want}`
         : `the website uses ${setList.slice(0, 2).join(' and ')}`;
-      // One item per piece of text — but a header or footer repeats on every page and on three
-      // devices, so those rows are kept and grouped later into a single item that lists its pages.
-      const byText = new Map();
-      list.forEach((r) => { const k = r.selector + '|' + r.text; (byText.get(k) || byText.set(k, []).get(k)).push(r); });
-      const texts = [...byText.keys()];
-      texts.slice(0, FONT_ITEM_CAP).forEach((k) => {
-        const seenAt = new Set();
-        byText.get(k).forEach((r) => {
-          const at = r.path + '|' + r.device;
-          if (seenAt.has(at)) return;
-          seenAt.add(at);
-          push(r, { code: 'FONT_OFF_SYSTEM', severity: 'warning', message: `${ROLE_LABEL[role]} in ${fam}, which is not one of the website's fonts — ${where}`, found: r.text, expected: want || setList.join(' / ') });
+      // Six links in one menu is one thing to fix, not six audit items. Rows are gathered by the
+      // element they live in — in Duda that is the widget, the [id="…"] the selector starts with —
+      // and become a single item that names every piece of text inside it. A header or footer
+      // repeats on every page and on three devices; those rows are kept and grouped later into one
+      // item listing its pages.
+      const byBlock = new Map();
+      list.forEach((r) => {
+        const k = [blockOf(r.selector), r.path, r.device].join('|');
+        (byBlock.get(k) || byBlock.set(k, []).get(k)).push(r);
+      });
+      // Cap on how many distinct blocks are listed, not how many rows: the same menu on 14 pages
+      // and 3 devices is one slip, and it should not eat the whole allowance.
+      const blocks = [...new Set([...byBlock.keys()].map((k) => k.split('|')[0]))];
+      const shown = new Set(blocks.slice(0, FONT_ITEM_CAP));
+      byBlock.forEach((rs, k) => {
+        const block = k.split('|')[0];
+        if (!shown.has(block)) return;
+        const texts = [...new Set(rs.map((x) => x.text))];
+        const one = rs[0];
+        const many = texts.length > 1;
+        push(Object.assign({}, one, { selector: block || one.selector, location: rs[0].location }), {
+          code: 'FONT_OFF_SYSTEM', severity: 'warning',
+          message: many
+            ? `${texts.length} ${ROLE_PLURAL[role] || 'places'} in ${fam}, which is not one of the website's fonts — ${where}`
+            : `${ROLE_LABEL[role]} in ${fam}, which is not one of the website's fonts — ${where}`,
+          found: texts.slice(0, 8).join(' · ') + (texts.length > 8 ? ` · …and ${texts.length - 8} more` : ''),
+          expected: want || setList.join(' / '),
         });
       });
-      if (texts.length > FONT_ITEM_CAP) push(byText.get(texts[FONT_ITEM_CAP])[0], {
+      if (blocks.length > FONT_ITEM_CAP) push(byBlock.get([...byBlock.keys()].find((k) => k.split('|')[0] === blocks[FONT_ITEM_CAP]))[0], {
         code: 'FONT_OFF_SYSTEM_MORE', severity: 'info',
-        message: `${texts.length - FONT_ITEM_CAP} more ${ROLE_PLURAL[role] || 'places'} are in ${fam} as well — the first ${FONT_ITEM_CAP} are listed separately`,
-        found: `${texts.length} in total`, expected: want || setList.join(' / '),
+        message: `${blocks.length - FONT_ITEM_CAP} more places on the website are in ${fam} as well — the first ${FONT_ITEM_CAP} are listed separately`,
+        found: `${blocks.length} places in total`, expected: want || setList.join(' / '),
       });
     });
 
