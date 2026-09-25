@@ -8,6 +8,9 @@
     { v: 'hold', label: 'On hold' }, { v: 'false', label: 'False alarm' },
   ];
   const FLABEL = Object.fromEntries(FSTATUS.map((s) => [s.v, s.label]));
+  // One token that means "whoever can answer this". The server turns it into today's admins.
+  const GROUP_ADMINS = '*admins';
+  const GROUP_ADMINS_LABEL = 'Admins';
   const SCAN_CONCURRENCY_SITES = 2;
   const DUDA_HOST = 'my.duda.co';
   const SUG = [{ v: 'new', label: 'New' }, { v: 'ongoing', label: 'On going' }, { v: 'done', label: 'Done' }, { v: 'nope', label: 'Nope' }];
@@ -18,7 +21,7 @@
   const state = {
     config: {}, me: null, users: [], sites: [], current: null,
     scanning: {}, queue: [], running: 0, skipAI: {}, aiAbort: {}, claims: {},
-    filters: { q: '', status: '', assignee: '', oldChecks: false },
+    filters: { q: '', status: '', assignee: '', oldChecks: false, clar: false },
     ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' },
     refTab: 'info',
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
@@ -996,6 +999,7 @@
       const pagesMeta = {};
       ((meta && meta.pages) || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; });
       const res = await A.runScan({
+        
         siteId: site.siteId, host, truth, pagesMeta, seedPaths: Object.keys(pagesMeta), concurrency: 4,
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ host, site: site.siteId, path, device });
@@ -1025,7 +1029,7 @@
       manual.forEach((f) => { if (!res.findings.some((x) => x.id === f.id)) res.findings.push(stripState(f)); });
       // Values approved as "correct for this website" are never flagged
       res.findings = A.filterAllowed(res.findings, site.allow);
-      res.counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
+      res.counts = { critical: 0, outdated: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
       const profiles = await checkProfiles(res.truth);
       const sum = await store({ op: 'saveScan', id, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null,
@@ -1070,7 +1074,7 @@
       }
     }
     res.findings = A.applyAltVerdicts(res.findings, res.alts, verdicts, t);
-    res.counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
+    res.counts = { critical: 0, outdated: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
     const flagged = res.findings.filter((f) => f.ai && /^AI_/.test(f.code)).length;
     const softened = res.findings.filter((f) => f.ai && f.code === 'ALT_LOGO_NAME' && f.severity !== 'critical').length;
     return { checked: done, cached, flagged, softened, errors, total: items.length, used: [...used], paused, pending };
@@ -1280,7 +1284,7 @@
       const pend = [].concat(pendingFindings('alt', (aiAlt && aiAlt.pending) || [], paused), pendingFindings('text', (aiText && aiText.pending) || [], paused));
       res.findings.push(...pend);
       res.findings = A.filterAllowed(res.findings, s.allow);
-      const counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { counts[f.severity]++; });
+      const counts = { critical: 0, outdated: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { counts[f.severity]++; });
       const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || []))];
       const scan = Object.assign({}, s.scan || {}, { counts });
       scan.ai = Object.assign({}, scan.ai || {}, { paused, pendingItems: pend.length, resumedAt: new Date().toISOString(), resumedBy: state.me.email,
@@ -1801,6 +1805,7 @@
     c = c || {};
     const chips = [];
     if (c.critical) chips.push(`<span class="badge sev-critical">${c.critical} critical</span>`);
+    if (c.outdated) chips.push(`<span class="badge sev-outdated" title="Still showing something that used to be in Business Info">${c.outdated} outdated</span>`);
     if (c.warning) chips.push(`<span class="badge sev-warning">${c.warning} warning</span>`);
     if (c.info) chips.push(`<span class="badge sev-info">${c.info} info</span>`);
     if (c.clarification) chips.push(`<span class="badge fs-clarification">${c.clarification} for clarification</span>`);
@@ -1820,7 +1825,8 @@
     const list = state.sites.filter((s) => (!f.status || s.status === f.status) && (!f.assignee || (f.assignee === '_none' ? !s.assignee : f.assignee === '_mine' ? s.assignee === state.me.email : s.assignee === f.assignee)) &&
       (!f.q || (s.businessName + ' ' + s.siteId + ' ' + s.editorUrl + ' ' + (s.addedByName || '')).toLowerCase().includes(f.q.toLowerCase())) &&
       (!f.live || (f.live === 'gone' ? liveOf(s.siteId) === false : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)) &&
-      (!f.oldChecks || newChecksFor(s).length))
+      (!f.oldChecks || newChecksFor(s).length) &&
+      (!f.clar || ((s.counts || {}).clarification || 0) > 0))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0 };
     state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
@@ -1830,7 +1836,7 @@
         <div class="panel stat"><div class="n">${state.sites.length}</div><div class="l">Audits</div></div>
         <div class="panel stat"><div class="n">${tot.scanned}</div><div class="l">Scan complete</div></div>
         <div class="panel stat"><div class="n" style="color:var(--crit)">${tot.crit}</div><div class="l">Open critical issues</div></div>
-        <div class="panel stat"><div class="n" style="color:var(--query)">${tot.clar}</div><div class="l">For clarification</div></div>
+        <button class="panel stat ${f.clar ? 'on' : ''}" id="statClar" ${tot.clar ? '' : 'disabled'} title="${tot.clar ? 'Show only the websites with a question waiting for an answer' : 'Nothing is waiting on an answer'}"><div class="n" style="color:var(--query)">${tot.clar}</div><div class="l">For clarification</div></button>
         <div class="panel stat"><div class="n" style="color:var(--ok)">${tot.complete}</div><div class="l">Marked Complete</div></div>
       </div>
       <div class="panel">
@@ -1851,6 +1857,7 @@
             return `<tr class="row-link" data-open="${esc(s.id)}">
               <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
                 ${liveOf(s.siteId) === false ? `<div><span class="badge sev-warning" title="This site is no longer in the published list from Duda (unpublished or deleted). The audit is kept.">No longer live in Duda</span></div>` : liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom) ? `<div><span class="badge sev-critical" title="${esc(liveOf(s.siteId).dom.detail || '')}">🌐 ${esc(liveOf(s.siteId).dom.label)}</span></div>` : ''}
+                ${(s.counts || {}).clarification ? `<div><span class="badge fs-clarification" title="Someone asked a question and is waiting for an answer">❓ ${s.counts.clarification} waiting on an answer</span></div>` : ''}
                 <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtDate(s.createdAt)) : ''}</div></td>
               <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}">${userOptions(s.assignee)}</select></span></td>
               <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
@@ -1861,7 +1868,7 @@
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
                 ${state.me.role === 'admin' || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Remove this audit from the list (the website itself is untouched)">✕</button>` : ''}</td>
             </tr>`;
-          }).join('')}</tbody></table></div>` : `<div class="empty">${state.sites.length ? 'No websites match these filters.' : 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.'}</div>`}
+          }).join('')}</tbody></table></div>` : `<div class="empty">${state.sites.length ? `<div><b>No websites match these filters.</b></div><div class="small muted" style="margin:6px 0 10px">${state.sites.length} website${state.sites.length === 1 ? '' : 's'} on the list.</div><button class="btn sm primary" id="sfClear">Clear filters</button>` : 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.'}</div>`}
       </div>`;
     const v = $('#view');
     $('#fq').oninput = (e) => { f.q = e.target.value; const p = e.target.selectionStart; renderSites(); const i = $('#fq'); i.focus(); i.setSelectionRange(p, p); };
@@ -1869,6 +1876,8 @@
     $('#fwho').onchange = (e) => { f.assignee = e.target.value; renderSites(); };
     if ($('#flive')) $('#flive').onchange = (e) => { f.live = e.target.value; renderSites(); };
     if ($('#foldck')) $('#foldck').onclick = () => { f.oldChecks = !f.oldChecks; renderSites(); };
+    if ($('#statClar')) $('#statClar').onclick = () => { f.clar = !f.clar; renderSites(); };
+    if ($('#sfClear')) $('#sfClear').onclick = () => { Object.assign(f, { q: '', status: '', assignee: '', live: '', oldChecks: false, clar: false }); renderSites(); };
     $('#rescanAll').onclick = () => {
       const todo = list.filter((s) => !state.scanning[s.id] && !otherClaim(s.id)), busy = list.length - todo.length;
       if (!todo.length) { toast('Every website shown is already queued or scanning.'); return; }
@@ -1890,6 +1899,10 @@
     // @[Name|email] (new) or @[Name] (older comments). The email makes it clear who was meant, even after a rename.
     h = h.replace(/@\[([^\]\n|]{1,60})(?:\|([^\]\n]{3,80}))?\]/g, (m, n, mail) => {
       const email = (mail || '').toLowerCase();
+      if (email === GROUP_ADMINS) {
+        const who = activeUsers().filter((x) => x.role === 'admin').map((x) => x.name).join(', ');
+        return `<button type="button" class="mention known group" title="${esc('Everyone who can answer: ' + (who || 'the admins'))}">@${esc(GROUP_ADMINS_LABEL)}</button>`;
+      }
       const u = email ? user(email) : null;
       const shown = u ? u.name : n;
       const who = u ? `${u.name} · ${u.email}${u.status === 'disabled' ? ' · account switched off' : ''}${u.name !== n ? ` (was "${n}" when written)` : ''}` : email ? `${n} · ${email}` : `${n} — written before names were linked, hover the member list to check`;
@@ -1976,8 +1989,11 @@
       let m = noMentions ? null : before.match(/(^|\s)@([^\s@#\[\]]{0,30})$/);
       if (m) {
         trig = { start: pos - m[2].length - 1 }; const q = m[2].toLowerCase(); sel = 0;
-        items = activeUsers().filter((u) => !q || u.name.toLowerCase().includes(q) || u.email.includes(q)).slice(0, 6)
-          .map((u) => ({ insert: `@[${u.name}|${u.email}]`, html: `${avatar(u.email, 22)}<span>${esc(u.name)}</span><span class="faint small">${esc(u.email)}</span>` }));
+        const admins = activeUsers().filter((u) => u.role === 'admin');
+        const group = !q || 'admins'.startsWith(q) ? [{ insert: `@[${GROUP_ADMINS_LABEL}|${GROUP_ADMINS}]`,
+          html: `<span class="sg-group">@</span><span><b>${GROUP_ADMINS_LABEL}</b></span><span class="faint small">tags all ${admins.length} admin${admins.length === 1 ? '' : 's'} — bell, desktop and Slack</span>` }] : [];
+        items = group.concat(activeUsers().filter((u) => !q || u.name.toLowerCase().includes(q) || u.email.includes(q)).slice(0, 6)
+          .map((u) => ({ insert: `@[${u.name}|${u.email}]`, html: `${avatar(u.email, 22)}<span>${esc(u.name)}</span><span class="faint small">${esc(u.email)}</span>` })));
         return showSug();
       }
       m = before.match(/(^|\s)#(\d{0,5})$/);
@@ -2005,7 +2021,13 @@
       const imgs = images.filter((i) => i.url).map((i) => i.url);
       if (!text && !imgs.length && !allowEmpty) return;
       const mentions = [];
-      (text.match(/@\[([^\]\n]{1,140})\]/g) || []).forEach((tok) => { const body = tok.slice(2, -1); const bar = body.indexOf('|'); const n = (bar < 0 ? body : body.slice(0, bar)).toLowerCase(); const mail = bar < 0 ? '' : body.slice(bar + 1).toLowerCase(); (mail ? activeUsers().filter((u) => u.email === mail) : activeUsers().filter((u) => u.name.toLowerCase() === n)).forEach((u) => { if (!mentions.includes(u.email)) mentions.push(u.email); }); });
+      (text.match(/@\[([^\]\n]{1,140})\]/g) || []).forEach((tok) => {
+        const body = tok.slice(2, -1); const bar = body.indexOf('|');
+        const n = (bar < 0 ? body : body.slice(0, bar)).toLowerCase(); const mail = bar < 0 ? '' : body.slice(bar + 1).toLowerCase();
+        // The group token goes through as-is; the server decides who the admins are today.
+        if (mail === GROUP_ADMINS) { if (!mentions.includes(GROUP_ADMINS)) mentions.push(GROUP_ADMINS); return; }
+        (mail ? activeUsers().filter((u) => u.email === mail) : activeUsers().filter((u) => u.name.toLowerCase() === n)).forEach((u) => { if (!mentions.includes(u.email)) mentions.push(u.email); });
+      });
       btn.disabled = true;
       try {
         if (onSubmit) await onSubmit({ text, images: imgs, mentions, replyTo: replyTo ? replyTo.id : null });
@@ -2438,7 +2460,7 @@
   /** The filters currently narrowing the list, named the way the person chose them. */
   function activeFilters(ff) {
     const on = [];
-    if (ff.sev) on.push(ff.sev === 'critical' ? 'Critical' : ff.sev === 'warning' ? 'Warning' : 'Info');
+    if (ff.sev) on.push({ critical: 'Critical', outdated: 'Outdated', warning: 'Warning', info: 'Info' }[ff.sev] || ff.sev);
     if (ff.st && ff.st !== 'active') on.push(FLABEL[ff.st] || 'All statuses');
     if (ff.cat) on.push(ff.cat === '__ai' ? 'AI-reviewed' : ff.cat);
     if (ff.loc) on.push(ff.loc);
@@ -2448,6 +2470,41 @@
     return on;
   }
   const clearFilters = () => { Object.assign(state.ff, FF_DEFAULTS); };
+
+  // =====================================================================
+  // BUSINESS INFO HISTORY  (Reference data → third tab)
+  // Business Info is not a fact, it is a fact as of a date. Every scan compares what Duda says now
+  // against what it said last time, so the app can tell "a number we don't recognise" from "the old
+  // one, still up" — and say when it changed.
+  // =====================================================================
+  const BI_LABEL = { names: 'Business name', phones: 'Phone', emails: 'Email', addresses: 'Address', domain: 'Domain' };
+  const biChanges = (s) => (s.biHistory || []).filter((h) => (h.changes || []).length).length;
+
+  function biReference(s) {
+    const hist = s.biHistory || [];
+    const changed = hist.filter((h) => (h.changes || []).length);
+    const retired = s.retired || {};
+    const stale = ['names', 'phones', 'emails', 'addresses'].reduce((a, k) => a + ((retired[k] || []).length), 0);
+    const val = (k, v) => (k === 'phones' ? A.fmtPhone(v) : v);
+    return `<div class="panel panel-pad">
+      <div class="row-between" style="align-items:flex-start">
+        <div><h2 style="margin:0">Business Info history</h2>
+          <div class="small muted">What Duda said, and when it changed. Recorded on every scan, so the audit can tell an unknown detail from one that simply went out of date.</div></div>
+        ${stale ? `<span class="badge sev-outdated" title="Values this website used to publish">${stale} retired value${stale === 1 ? '' : 's'}</span>` : ''}
+      </div>
+      ${changed.length ? `<ul class="bi-log">${changed.map((h) => `<li>
+          <div class="bi-when">${esc(fmtFull(h.at))} <span class="faint small">${esc(ago(h.at))}${h.byName ? ' · seen by ' + esc(h.byName) : ''}</span></div>
+          ${(h.changes || []).map((c) => `<div class="bi-change"><span class="k">${esc(BI_LABEL[c.field] || c.field)}</span>
+            ${c.added.map((v) => `<span class="bi-now">${esc(val(c.field, v))}</span>`).join(' ')}
+            ${c.removed.map((v) => `<span class="bi-was" title="No longer in Business Info">${esc(val(c.field, v))}</span>`).join(' ')}</div>`).join('')}
+        </li>`).join('')}</ul>`
+        : `<p class="small" style="margin:12px 0 0">Business Info hasn't changed since ${hist.length ? `the first scan on <b>${esc(fmtDate(hist[hist.length - 1].at))}</b>` : 'this website was added'}. Once it does, the change is listed here with its date.</p>`}
+      ${stale ? `<div class="k" style="margin-top:16px">No longer in Business Info</div>
+        <div class="small muted">Anything on the website still using one of these reads as <span class="badge sev-outdated">outdated</span> rather than wrong.</div>
+        <ul class="allow-list small">${['names', 'phones', 'emails', 'addresses'].flatMap((k) => (retired[k] || []).map((r) =>
+          `<li><b>${esc(val(k, r.value))}</b> <span class="faint">— ${esc((BI_LABEL[k] || k).toLowerCase())}, until ${esc(fmtDate(r.since))}</span></li>`)).join('')}</ul>` : ''}
+    </div>`;
+  }
 
   function renderFindingsTab(body, s, { cnt, sc, live }) {
     const t = s.truth || {};
@@ -2485,10 +2542,11 @@
       <details class="ref-details" open>
         <summary class="small muted">Reference data</summary>
         <div class="ref-tabs"><span class="chips">
-          <button class="chipbtn ${state.refTab === 'fonts' ? '' : 'active'}" data-ref="info">Business Info</button>
+          <button class="chipbtn ${state.refTab === 'info' || !state.refTab ? 'active' : ''}" data-ref="info">Business Info</button>
           <button class="chipbtn ${state.refTab === 'fonts' ? 'active' : ''}" data-ref="fonts">Fonts used on the website${s.fonts && fontCount(s) ? ` <span class="tcount">${fontCount(s)}</span>` : ''}</button>
+          ${(s.biHistory || []).length ? `<button class="chipbtn ${state.refTab === 'history' ? 'active' : ''}" data-ref="history">Business Info history${biChanges(s) ? ` <span class="tcount">${biChanges(s)}</span>` : ''}</button>` : ''}
         </span></div>
-        <div class="grid-2" ${state.refTab === 'fonts' ? 'hidden' : ''}>
+        <div class="grid-2" ${state.refTab === 'info' || !state.refTab ? '' : 'hidden'}>
           <div class="panel panel-pad">
             <h2>Reference: Business Info <span class="badge ${t.source === 'api' ? 'scan-complete' : 'sev-warning'}">${t.source === 'api' ? 'From Duda API' : t.source === 'schema' ? 'Fallback: site schema' : 'Not loaded yet'}</span></h2>
             <div class="truth">
@@ -2500,7 +2558,9 @@
               <div><div class="k">Social (Business Info)</div><div class="v small">${socials || '—'}</div></div>
             </div>
             ${(s.allow || []).length ? `<div class="k" style="margin-top:12px">Also correct for this website <span class="faint">(approved by the team, never flagged)</span></div>
-              <ul class="allow-list">${s.allow.map((a) => `<li><b>${esc(a.value)}</b> <span class="faint small">${esc(a.type)} · ${esc(a.byName || nameOf(a.by))}, ${esc(fmtDate(a.at))}${a.item ? ` · from #${a.item}` : ''}</span>${a.reason ? `<div class="small muted">${esc(a.reason)}</div>` : ''} <button class="linkbtn danger small" data-unallow="${esc(a.key)}" title="Check this value again on the next scan">Remove</button></li>`).join('')}</ul>` : ''}
+              <ul class="allow-list">${s.allow.map((a) => `<li><b>${esc(a.value)}</b> <span class="faint small">${esc(a.type)} · ${esc(a.byName || nameOf(a.by))}, ${esc(fmtDate(a.at))}${a.item ? ` · from #${a.item}` : ''}</span>${a.reason ? `<div class="small muted">${esc(a.reason)}</div>` : ''}${a.stale ? `<div class="note unk small" style="margin:4px 0 0">This was in Business Info when it was approved, but Duda changed it on <b>${esc(fmtDate(a.stale))}</b>. Worth checking whether it's still correct.</div>` : ''} <button class="linkbtn danger small" data-unallow="${esc(a.key)}" title="Check this value again on the next scan">Remove</button></li>`).join('')}</ul>` : ''}
+            ${(s.allowRetired || []).length ? `<details style="margin-top:10px"><summary class="small faint">Approvals that retired themselves (${s.allowRetired.length})</summary>
+              <ul class="allow-list small">${s.allowRetired.slice().reverse().map((a) => `<li><b>${esc(a.value)}</b> <span class="faint">— became the official ${esc(a.type === 'name' ? 'business name' : a.type)} in Business Info on ${esc(fmtDate(a.retiredAt))}, so the approval was no longer needed. Approved by ${esc(a.byName || nameOf(a.by))}, ${esc(fmtDate(a.at))}.</span></li>`).join('')}</ul></details>` : ''}
           </div>
           <div class="panel panel-pad">
             <h2>Facebook / Google Business check</h2>
@@ -2509,12 +2569,14 @@
           </div>
         </div>
         <div ${state.refTab === 'fonts' ? '' : 'hidden'}>${fontsReference(s)}</div>
+        <div ${state.refTab === 'history' ? '' : 'hidden'}>${biReference(s)}</div>
       </details>
       <div class="panel">
         <div class="toolbar">
           <span class="chips">
             <button class="chipbtn ${ff.sev === '' ? 'active' : ''}" data-sev="">All ${activeCount.length}</button>
             <button class="chipbtn ${ff.sev === 'critical' ? 'active' : ''}" data-sev="critical">Critical ${sevCount('critical')}</button>
+            ${sevCount('outdated') || ff.sev === 'outdated' ? `<button class="chipbtn ${ff.sev === 'outdated' ? 'active' : ''}" data-sev="outdated" title="The website is still showing something that used to be in Business Info">Outdated ${sevCount('outdated')}</button>` : ''}
             <button class="chipbtn ${ff.sev === 'warning' ? 'active' : ''}" data-sev="warning">Warning ${sevCount('warning')}</button>
             <button class="chipbtn ${ff.sev === 'info' ? 'active' : ''}" data-sev="info">Info ${sevCount('info')}</button>
           </span>
@@ -2581,6 +2643,39 @@
       .forEach(([sel, on]) => { const el = $(sel, body); if (el) el.classList.toggle('filter-on', !!on); });
   }
   async function setFinding(s, ids, changes) {
+    // "For clarification" means somebody is waiting on an answer. An item parked there without
+    // saying what the question is, or who can answer it, just leaves the work stuck quietly — so
+    // the question is asked here, posted as a comment on the item, and the people tagged are told.
+    if (changes.status === 'clarification' && changes.asked === undefined) {
+      const picked = (s.findings || []).filter((x) => ids.includes(x.id));
+      const one = picked.length === 1 ? picked[0] : null;
+      const admins = activeUsers().filter((u) => u.role === 'admin');
+      modal(`<header><h2>What needs clarifying?</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body">
+          <div class="small muted" style="margin-bottom:10px">${one ? `<b>#${one.num}</b> ${esc(one.message)}${one.found ? ` <span class="faint">— ${esc(one.found)}</span>` : ''}` : `${picked.length} audit items`}</div>
+          <div class="k">Your question</div>
+          <div id="clarBox"></div>
+          <div class="small faint" style="margin-top:8px">Type <b>@</b> to tag someone${admins.length ? `, or <b>@Admins</b> to reach all ${admins.length} of them at once` : ''}. Everyone tagged gets it on the bell, on their desktop and in Slack.</div>
+        </div>
+        <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><span class="small faint" id="clarHint">A question is needed — that's the whole point of this status.</span></footer>`);
+      const host = $('#clarBox');
+      composer(host, {
+        site: s, placeholder: 'e.g. @[Euch|euch@example.com] is this second number the new shop line, or a leftover?',
+        submitLabel: 'Ask and set For clarification',
+        onSubmit: async (pl) => {
+          if (!pl.text.trim()) { toast('Write the question first'); throw new Error('empty'); }
+          closeModal();
+          // The question goes on the first item as a comment, so the answer has somewhere to land.
+          try { await store({ op: 'comment', siteId: s.id, target: ids[0], text: pl.text, images: pl.images, mentions: pl.mentions }); }
+          catch (e) { toast('Could not post the question: ' + e.message); }
+          await setFinding(s, ids, Object.assign({}, changes, { asked: true }));
+          toast(pl.mentions.length ? 'Asked — the people you tagged have been told' : 'Marked For clarification');
+        },
+      });
+      $$('[data-close]', $('.modal')).forEach((b) => b.addEventListener('click', () => renderSite()));
+      setTimeout(() => { const ta = $('#clarBox textarea'); if (ta) ta.focus(); }, 50);
+      return;
+    }
     if (changes.status === 'false' && changes.note === undefined) {
       // Ask why (optional): this goes to the admins' False alarms list and helps fix the checks
       const picked = (s.findings || []).filter((x) => ids.includes(x.id));
@@ -2608,7 +2703,8 @@
       setTimeout(() => $('#faReason') && $('#faReason').focus(), 50);
       return;
     }
-    try { upsertSummary(await store({ op: 'patchFinding', siteId: s.id, findingIds: ids, changes })); await loadSite(s.id); renderSite(); if (changes.status) toast(`Marked ${FLABEL[changes.status]}`); }
+    const send = Object.assign({}, changes); delete send.asked;
+    try { upsertSummary(await store({ op: 'patchFinding', siteId: s.id, findingIds: ids, changes: send })); await loadSite(s.id); renderSite(); if (changes.status && !changes.asked) toast(`Marked ${FLABEL[changes.status]}`); }
     catch (e) { toast('Save failed: ' + e.message); }
   }
 
@@ -2625,7 +2721,7 @@
     bindComments(body, s, siteComposer);
   }
 
-  const ACT_ICON = { verify: '🌐', rename: '✏️', disable: '🚫', enable: '✅', allow: '👍', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
+  const ACT_ICON = { bi: '🏷', verify: '🌐', rename: '✏️', disable: '🚫', enable: '✅', allow: '👍', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
   function renderActivityTab(body, s) {
     const act = s.activity || [];
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {
@@ -2645,6 +2741,32 @@
     document.body.classList.remove('drawer-open');
     if (!silent && route().item) location.hash = `#/site/${route().id}`;
   }
+  /**
+   * What the team already knows about this value: a client who asked about it in the Duda editor,
+   * or the same value marked a False alarm before. Shown on the item rather than left for someone
+   * to remember — and, when a client asked, saying why the item was moved out of the default list.
+   */
+  function knownNote(f, s) {
+    const k = f.known;
+    const auto = f.auto && f.auto.why === 'client-comment';
+    if (!k && !auto) return '';
+    const cmts = (k && k.comments) || [];
+    const fas = (k && k.falseAlarms) || [];
+    if (!cmts.length && !fas.length) return '';
+    return `<div class="note known-note">
+      ${auto ? `<div class="small"><b>Set to For clarification automatically</b> — a client asked about this value. Nobody had touched the item, so it's out of the default list until someone answers.</div>` : ''}
+      ${cmts.length ? `<div class="k" style="margin-top:${auto ? 8 : 0}px">${cmts.length === 1 ? 'A comment mentions this' : `${cmts.length} comments mention this`}</div>
+        ${cmts.map((c) => `<div class="known-row"><span class="badge ${c.client ? 'sev-critical' : 'subtle'}">${c.client ? 'Client' : 'Team'}</span>
+          <span class="small">${esc(c.text)}</span>
+          <span class="faint small">— ${esc(c.by || 'someone')}${c.at ? ', ' + esc(ago(c.at)) : ''}${c.num ? ` · conversation #${c.num}` : ''}</span>
+          <a class="small" href="#/comments/${esc(s.siteId)}">open ↗</a></div>`).join('')}` : ''}
+      ${fas.length ? `<div class="k" style="margin-top:8px">Marked a False alarm before</div>
+        ${fas.map((x) => `<div class="known-row"><span class="small">${esc(x.siteName || x.siteRef || 'another website')}${x.path ? ` · ${esc(x.path)}` : ''}</span>
+          ${x.reason ? `<span class="small muted">"${esc(x.reason)}"</span>` : '<span class="faint small">no reason given</span>'}
+          <span class="faint small">— ${esc(x.by || 'someone')}${x.at ? ', ' + esc(ago(x.at)) : ''}</span></div>`).join('')}` : ''}
+    </div>`;
+  }
+
   function openDrawer(num) {
     const s = state.current; if (!s) return;
     const f = (s.findings || []).find((x) => x.num === num);
@@ -2671,7 +2793,7 @@
         ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
         ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
-        ${aiNote(f, true)}${aiPendingHtml(f, true)}
+        ${aiNote(f, true)}${aiPendingHtml(f, true)}${knownNote(f, s)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}</div>
@@ -3404,13 +3526,14 @@
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the top menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
+        <li class="panel"><h3>Details change — the audit keeps up</h3><p>Every scan records what Business Info said and what changed since last time. A website still showing an old phone number or email reads <b>"Still using the old …"</b> with the date it changed, at an <b>Outdated</b> severity of its own rather than looking like a detail nobody recognises. Approvals retire themselves once Duda catches up. The dates are under <b>Reference data → Business Info history</b>.</p></li>
         <li class="panel"><h3>Keep up as the checks grow</h3><p>New checks get added over time. A finished audit is never changed behind your back — it keeps its items until somebody rescans it. Instead, a website scanned before the newest checks shows a note at the top of its <b>Audit items</b> saying what was added, so you can decide whether it's worth a rescan. Rescanning keeps everything you've already marked and only adds new Open items.</p></li>
         <li class="panel"><h3>Your work stays yours</h3><p>Finish a website and it shows <b>✓ Marked Complete by you</b>. If anyone rescans, reopens or reassigns it, you're told what happened and who did it — and they're asked for a reason first. <b>Members → 📊 Team stats</b> shows what each person has closed. Taking an audit off the list also asks for a reason and keeps a card under <b>Removed from Audits</b> — the website itself is never touched in Duda.</p></li>
       </ol>
       <div class="panel panel-pad" style="margin-top:14px"><h2>Audit item statuses</h2>
         <table class="help-table"><tbody>
           <tr><td><b>Open</b></td><td>Needs fixing (default).</td></tr>
-          <tr><td><b>For clarification</b></td><td>"I have a question before I can fix this." Something is unclear; add a comment and @mention who can answer. Stays in the default list.</td></tr>
+          <tr><td><b>For clarification</b></td><td>"I have a question before I can fix this." Picking it asks you what the question is and who can answer — type <b>@</b> for a person or <b>@Admins</b> for all of them. Stays in the default list.</td></tr>
           <tr><td><b>Done</b></td><td>Fixed in the Duda editor. Confirmed later with <b>Verify on live site</b>.</td></tr>
           <tr><td><b>On hold</b></td><td>"We know what to do, but it can't be done yet." Waiting on something outside the team (client, domain, approval). Leaves the default list.</td></tr>
           <tr><td><b>False alarm</b></td><td>Not actually a problem. Add a reason to help improve the checks. Skipped by the live check.</td></tr>

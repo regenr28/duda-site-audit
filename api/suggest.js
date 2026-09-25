@@ -2,7 +2,7 @@
 // Everyone else only sees the suggestions they submitted themselves (so they can read the owner's replies).
 // GET  /api/suggest                      → { owner: bool, items }
 // POST /api/suggest { op: create | status | comment, ... }
-import { redis, P, readBody, requireUser, jparse, newId, now, sendEmail, emailShell, esc, appUrl, notifyUser, OWNER_EMAIL } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, newId, now, sendEmail, emailShell, esc, appUrl, notifyUser, OWNER_EMAIL, plainMentions } from './_lib.js';
 
 const STATUSES = ['new', 'ongoing', 'done', 'nope'];
 const LABEL = { new: 'New', ongoing: 'On going', done: 'Done', nope: 'Nope' };
@@ -67,7 +67,7 @@ export default async function handler(req, res) {
       await redis(['HSET', P + 'sugg', s.id, JSON.stringify(s)]);
       const to = me.email === s.by ? OWNER_EMAIL : s.by;
       if (to !== me.email) {
-        await notifyUser(to, { by: me.email, byName: me.name, kind: 'suggestion-comment', text: `On "${s.title}": ${text.slice(0, 150)}` }).catch(() => {});
+        await notifyUser(to, { by: me.email, byName: me.name, kind: 'suggestion-comment', text: `On "${s.title}": ${plainMentions(text).slice(0, 150)}` }).catch(() => {});
         await sendEmail(to, `${me.name} commented on the suggestion: ${s.title}`, emailShell('New comment on a suggestion', `<p><b>${esc(me.name)}</b> on <b>${esc(s.title)}</b>:</p><blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(text.slice(0, 600)).replace(/\n/g, '<br>')}</blockquote><p><a href="${link}">Open suggestions</a></p>`)).catch(() => {});
       }
       return res.status(200).json(s);

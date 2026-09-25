@@ -149,16 +149,28 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'statuses', group: 'Audit items', title: 'Audit item statuses', audience: 'all',
-    html: `<table class="help-table"><thead><tr><th>Status</th><th>Meaning</th><th>When to use it</th></tr></thead><tbody>
-<tr><td><b>Open</b></td><td>Needs fixing.</td><td>Default for every new item.</td></tr>
-<tr><td><b>For clarification</b></td><td>"I have a question before I can fix this."</td><td>Something is unclear (which phone number? is this logo right?). Add a comment and <b>@mention</b> the person who can answer. It stays in the default list and counts in "For clarification".</td></tr>
-<tr><td><b>Done</b></td><td>Fixed in the Duda editor.</td><td>After you've made the change. It's checked again on the live site with <b>Verify on live site</b>.</td></tr>
-<tr><td><b>On hold</b></td><td>"We know what to do, but it can't be done yet."</td><td>Waiting on something outside the team: the client's new logo, a domain fix, an approval. It leaves the default list and the open critical counts. Find it with the <b>On hold</b> filter.</td></tr>
-<tr><td><b>False alarm</b></td><td>"This isn't actually a problem."</td><td>The check was wrong (a partner logo, a correct alt text). You can add a reason; it goes to the admins to improve the checks. False alarms are skipped by the live-site check.</td></tr>
+    html: `<table class="help-table"><tbody>
+<tr><td><b>Open</b></td><td>Needs fixing. The default.</td></tr>
+<tr><td><b>For clarification</b></td><td>"I have a question before I can fix this." Picking it <b>asks you what the question is</b> and who can answer — see below.</td></tr>
+<tr><td><b>Done</b></td><td>Fixed in the Duda editor. Confirm later with <b>Verify on live site</b>.</td></tr>
+<tr><td><b>On hold</b></td><td>"We know what to do, but it can't be done yet." Waiting on someone outside the team. Leaves the default list.</td></tr>
+<tr><td><b>False alarm</b></td><td>Not actually a problem. You're asked why, and can approve the value so it's never flagged again.</td></tr>
 </tbody></table>
-<p><b>Rule of thumb:</b> if someone <i>inside</i> the team can answer, use <b>For clarification</b>. If you're waiting on someone <i>outside</i>, use <b>On hold</b>.</p>
-<p>Only <b>Done</b> and <b>False alarm</b> count as cleared. The "All items are cleared" message shows when every item is one of those two.</p>
-<p>The default filter shows <b>Open + For clarification</b>. Switch the status filter to see Done, On hold, False alarm or All. You can also filter by severity (the All / Critical / Warning / Info chips), category, location, device and assignee, and search (type <b>#12</b> to jump to an item).</p>`,
+<p class="small muted">Rule of thumb: someone <i>inside</i> the team can answer → For clarification. Waiting on someone <i>outside</i> → On hold. Only Done and False alarm count as cleared.</p>
+<h3>Asking for clarification</h3>
+<p>An item parked on "For clarification" without saying what the question is leaves the work stuck quietly, so picking that status asks for the question up front.</p>
+<ul>
+<li>Type the question. It's <b>posted as a comment on the item</b>, so the answer has somewhere to land and the whole exchange stays with the finding.</li>
+<li>Type <b>@</b> to tag a member, or <b>@Admins</b> to reach every admin at once. Everyone tagged gets it on the <b>bell</b>, on their <b>desktop</b> and in <b>Slack</b>.</li>
+<li><b>@Admins</b> is worked out when you send it, so it always means whoever is an admin today — not whoever was one when you typed it.</li>
+<li>You can attach a screenshot, same as any comment.</li>
+</ul>
+<h3>Finding what's waiting</h3>
+<ul>
+<li>On <b>Audits</b>, a website with a question outstanding shows <b>❓ N waiting on an answer</b> under its name.</li>
+<li>The <b>For clarification</b> tile at the top is a filter — click it to see only those websites, click again to clear.</li>
+<li>Inside a website, the <b>For clarification</b> chip does the same for the item list.</li>
+</ul>`,
   },
   {
     id: 'find', group: 'Audit items', title: 'Finding an element (Show on page, preview, editor)', audience: 'all',
@@ -283,6 +295,25 @@ export const HELP_SECTIONS = [
 <p class="small">Still check by hand: business hours, prices, service areas, form recipients and text inside images.</p>`,
   },
   {
+    id: 'bi-history', group: 'Checks', title: 'Business Info history and "Outdated" items', audience: 'all',
+    html: `<p>Business Info isn't a permanent fact — it's a fact <b>as of a date</b>. A client changes their email and everything the audit knew yesterday quietly goes wrong: the old address still on the website looks like a detail nobody recognises, and the new one gets flagged as incorrect. Every scan now records what Duda says and what changed since last time, which lets the audit tell those two apart.</p>
+<h3>Outdated</h3>
+<ul>
+<li>A website still showing something Duda no longer carries reads <b>"Still using the old phone number — Business Info was changed on 12 Aug 2026"</b>, with the current value as <b>Expected</b>.</li>
+<li>These sit at a severity of their own, <b>Outdated</b>, between Critical and Warning. A chip appears above the audit items when a website has any, so a client-change sweep is one click.</li>
+<li>A value that was <i>never</i> theirs stays <b>Critical</b> — we have no idea where that one came from, which is a different problem.</li>
+<li>The item keeps its number, its comments and whatever status someone gave it. It only changes what it says about itself.</li>
+</ul>
+<h3>The history tab</h3>
+<p><b>Reference data</b> → <b>Business Info history</b> lists every change with its date and what it was before, plus everything that is no longer official. It's kept against the Duda site ID, so it survives an audit being removed from the list and added again months later — which is exactly when it's worth having.</p>
+<h3>Approvals look after themselves</h3>
+<ul>
+<li>An approval says "this value is correct for this website even though Business Info disagrees". The moment Business Info agrees, the approval has nothing left to do — it <b>retires itself</b>, and stays visible under <b>Approvals that retired themselves</b> so nothing vanishes silently.</li>
+<li>The reverse is flagged, not removed: an approval for a value that has just <b>stopped</b> being official gets a note asking you to check whether it's still right.</li>
+</ul>
+<p class="small muted">History starts from the next scan of each website. Until a website has been scanned twice, there's nothing to compare against and everything behaves as it always did.</p>`,
+  },
+  {
     id: 'fonts', group: 'Checks', title: 'Fonts used on the website', audience: 'all',
     html: `<p>On a scanned website, open <b>Reference data</b> and click the second tab, <b>Fonts used on the website</b>. It sits beside <b>Business Info</b> because it is the same kind of thing: the reference the audit is judged against.</p>
 <ul>
@@ -380,6 +411,7 @@ export const HELP_SECTIONS = [
 <h4>An item keeps coming back after I marked it Done</h4><p>Rescans keep your status. If a live check says "Still on live site", the fix isn't published yet or didn't work.</p>
 <h4>The AI says "check pending"</h4><p>The daily AI allowance ran out. It resumes by itself when credits are back (see AI Status).</p>
 <h4>"Show on page" can't find the element on Mobile</h4><p>It may only exist on another device, or inside the side panel. Check the device chips under "Where".</p>
+<h4>An item moved to For clarification and nobody touched it</h4><p>A client asked about that value in a Duda comment. Items nobody has worked on are moved out of the default list when there's a question outstanding — the item says so, and shows the comment. It never overrides a status someone already set.</p>
 <h4>The list says "No audit items match these filters" but the counts aren't zero</h4><p>A filter is still on from earlier — often <b>Design</b>, left behind by <b>Show them in Audit items</b> on the Fonts tab. The empty message names which filters are hiding things and has a <b>Clear filters</b> button. Filters that are doing something are outlined, and they reset when you open a different website.</p>
 <h4>Why is one audit item covering five links?</h4><p>Because it's one fix. If a whole menu or section is in the wrong font, the item points at the block and lists every piece of text inside it. Separate blocks stay separate items.</p>
 <h4>Can two people work on the same website?</h4><p>Yes. You'll see a pop-up and a "… is also here" bar. Agree who takes which items.</p>

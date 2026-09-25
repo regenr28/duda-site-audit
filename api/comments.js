@@ -47,7 +47,7 @@ const domainsOf = (v) => String(v || '').split(',').map((s) => s.trim().toLowerC
  * they are on, so: anyone with an account here, or an address at one of the agency's domains, is us.
  * Anyone else is the client. An admin can correct any address, and the correction wins.
  */
-function sideTest(users, overrides) {
+export function sideTest(users, overrides) {
   const mine = new Set(users.map((u) => String(u.email || '').toLowerCase()));
   const doms = [...domainsOf(process.env.ALLOWED_EMAIL_DOMAINS), ...domainsOf(process.env.AGENCY_EMAIL_DOMAINS)];
   return (email) => {

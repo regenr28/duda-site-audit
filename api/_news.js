@@ -4,6 +4,27 @@
 
 export const NEWS = [
   {
+    id: '2026-09-26-clarification', date: '2026-09-26', audience: 'all', tag: 'Audits',
+    title: 'Asking a question now actually asks somebody',
+    what: '"For clarification" was a status you could park an item on and nobody would ever know. Picking it now <b>asks what the question is</b>, and the question is posted as a comment on the item so the answer has somewhere to land. Type <b>@</b> to tag a member, or the new <b>@Admins</b> to reach every admin in one go \u2014 everyone tagged gets it on the bell, on their desktop and in Slack. @Admins is worked out when you send it, so it always means whoever is an admin today. And a website with a question outstanding now says so on the <b>Audits</b> list: <b>\u2753 N waiting on an answer</b> under its name, with the <b>For clarification</b> tile at the top working as a filter.',
+    where: ['Set any audit item to <b>For clarification</b> \u2014 the question box opens straight away.', 'Type <b>@Admins</b> to tag all of them at once, or <b>@</b> and a name for one person.', 'On <b>Audits</b>, click the <b>For clarification</b> tile to see only the websites waiting on an answer.', 'Inside a website, the <b>For clarification</b> chip filters the items the same way.'],
+    link: '#/help/statuses', linkText: 'How the statuses work',
+  },
+  {
+    id: '2026-09-26-bi-history', date: '2026-09-26', audience: 'all', tag: 'Audits',
+    title: 'The audit now knows what Business Info used to say',
+    what: 'Business Info was treated as timeless truth, so a client changing their email quietly turned everything we knew into a lie: the old address still on the website looked like a detail nobody recognised, and the new one \u2014 correct \u2014 got flagged until somebody approved it by hand. Every scan now <b>records Business Info and what changed since last time</b>. Three things follow. A website still showing a detail Duda no longer carries reads <i>"Still using the old email address \u2014 Business Info was changed on 12 Aug 2026"</i>, with the current value as Expected, and sits at a new <b>Outdated</b> severity between Critical and Warning \u2014 so a client-change sweep is one filter. An <b>approval retires itself</b> the moment Business Info catches up and carries that value officially, and an approval for something that has just <i>stopped</i> being official is flagged for a second look. And the dates are all on a new <b>Business Info history</b> tab.',
+    where: ['On a website, open <b>Reference data</b> \u2192 <b>Business Info history</b> for every change with its date, and what is no longer official.', 'The <b>Outdated</b> chip appears above the audit items when there is something to show \u2014 click it to see only those.', 'Retired approvals are under <b>Approvals that retired themselves</b> on the Business Info tab.', 'History starts from your next scan, so give it one rescan before expecting it to know anything.'],
+    link: '#/help/bi-history', linkText: 'How it works',
+  },
+  {
+    id: '2026-09-26-crosscheck', date: '2026-09-26', audience: 'all', tag: 'Audits',
+    title: 'Audit items now show what we already knew',
+    what: 'When the audit flags a phone number or an email, the answer is often already written down \u2014 the client left a comment in the Duda editor saying "use our new number", or somebody marked the same value a False alarm on another website last month. Neither was ever shown next to the item that needed it. A contact item now carries both: <b>the comment that mentions the value</b>, marked client or team, and <b>any past False alarm on the same value</b> with the reason somebody wrote. One thing is decided for you: an item <b>nobody has touched</b> whose value a <b>client</b> asked about is set to <b>For clarification</b>, because there is a question outstanding and it should not sit in the default list looking like ordinary work.',
+    where: ['Open any contact audit item \u2014 the blue block under the finding is what we already knew.', 'It links straight to the conversation in <b>Duda comments</b>.', 'An item moved automatically says so, so it never looks like somebody else changed it.'],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
     id: '2026-09-26-filters', date: '2026-09-26', audience: 'all', tag: 'Audits',
     title: 'Filters can no longer hide your whole audit',
     what: 'If a filter was left on — say <b>Design</b>, from clicking <b>Show them in Audit items</b> on the Fonts tab — the list could read "No audit items match these filters" while the chips above still said <b>Critical 5</b>, which looks like the audit has broken. Three fixes: the <b>severity chips now count what clicking them would actually show</b>, so they read <b>Critical 0</b> when something else is filtering; a filter that is doing something is <b>outlined</b>; and the empty message says how many items are hidden and by which filters, with a <b>Clear filters</b> button. Filters also reset when you open a different website, instead of following you around.',

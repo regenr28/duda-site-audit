@@ -5,9 +5,13 @@
 // Keys:  site:<id> (scan results + meta)   index (hash id → summary)   fstate:<id> (hash findingId → {status, assignee})
 //        fnum:<id> (hash findingId → #)   seq:<id>   cmt:<id> (hash commentId → comment)   act:<id> (list)
 //        notif:<email> (list)   notifseen:<email>
-import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, plainMentions } from './_lib.js';
+import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
+import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 
 const FSTATUS = ['open', 'clarification', 'done', 'hold', 'false'];
+// One token that means "whoever can answer this", expanded to the current admins when it is used.
+const GROUP_ADMINS = '*admins';
 const FLABEL = { open: 'Open', clarification: 'For clarification', done: 'Done', hold: 'On hold', false: 'False alarm' };
 const SITE_STATUSES = ['Not started', 'In progress', 'Complete with query', 'Complete', 'On hold'];
 
@@ -23,6 +27,7 @@ async function loadSite(id) {
     f.status = s.status || (f.done ? 'done' : 'open');
     f.assignee = s.assignee !== undefined ? s.assignee : (f.assignee || '');
     f.statusBy = s.updatedBy || ''; f.statusAt = s.updatedAt || '';
+    if (s.auto) f.auto = { why: s.auto, at: s.autoAt || '', ref: s.autoRef || '' };
     f.num = nums[f.id] ? Number(nums[f.id]) : f.num || null;
     f.comments = cCount[f.id] || 0;
     delete f.done;
@@ -35,7 +40,7 @@ function pairs(arr, json) {
   return o;
 }
 function summary(site, comments) {
-  const c = { critical: 0, warning: 0, info: 0, clarification: 0, hold: 0, closed: 0, total: 0, comments: 0, aiPending: 0, aiPendingBlocks: 0 };
+  const c = { critical: 0, outdated: 0, warning: 0, info: 0, clarification: 0, hold: 0, closed: 0, total: 0, comments: 0, aiPending: 0, aiPendingBlocks: 0 };
   (site.findings || []).forEach((f) => {
     c.total++;
     if (/^AI_PENDING/.test(f.code) && f.status !== 'done' && f.status !== 'false') { c.aiPending++; c.aiPendingBlocks += ((f.aiPending && f.aiPending.items) || []).length; }
@@ -125,6 +130,24 @@ export default async function handler(req, res) {
         l.site.ver = String(sv || 0);
         const [cr] = await redis(['HGET', P + 'scanclaims', req.query.id]);
         l.site.claim = liveClaim(cr);
+        // Business Info as of every scan that saw it change, and the values it used to carry.
+        const hist = await biHistory(l.site.siteId);
+        l.site.biHistory = hist;
+        l.site.retired = retiredFrom(hist, biShape(l.site.truth));
+        // The reverse of an approval going official: one made for a value that has SINCE stopped
+        // being official is now approving last year's details. Say so rather than quietly obeying it.
+        const retiredOf = { phone: 'phones', email: 'emails', name: 'names' };
+        // What the team already knows about the values these items flag.
+        try {
+          const cc = await crossCheck(l.site.findings, l.site.siteId);
+          (l.site.findings || []).forEach((f) => { const k = cc.byFinding[f.id]; if (k && (k.comments.length || k.falseAlarms.length)) f.known = k; });
+        } catch (e) { /* context is a bonus */ }
+        (l.site.allow || []).forEach((a) => {
+          const list = l.site.retired[retiredOf[a.type]] || [];
+          const norm = (v) => (a.type === 'phone' ? String(v).replace(/\D/g, '').slice(-10) : String(v).trim().toLowerCase());
+          const hit = list.find((r) => norm(r.value) === norm(a.value));
+          if (hit) a.stale = hit.since;
+        });
         return res.status(200).json(l.site);
       }
       if (op === 'stats') {
@@ -236,20 +259,81 @@ export default async function handler(req, res) {
         site.findings = (r.findings || []).map((f) => { const c = Object.assign({}, f); ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done'].forEach((k) => delete c[k]); return c; });
         // Stable ID numbers: the same issue keeps its # across rescans; new issues get the next number
         const nums = pairs(fnum); let seq = Number(seqRaw || 0); const add = [];
-        site.findings.sort((a, c) => ({ critical: 0, warning: 1, info: 2 }[a.severity] - { critical: 0, warning: 1, info: 2 }[c.severity]));
+        const RANK = { critical: 0, outdated: 1, warning: 2, info: 3 };
+        site.findings.sort((a, c) => RANK[a.severity] - RANK[c.severity]);
         site.findings.forEach((f) => { if (!nums[f.id]) { seq++; nums[f.id] = seq; add.push(f.id, String(seq)); } });
         if (site.status === 'Not started') site.status = 'In progress';
+
+        // Business Info as of today, against Business Info as of last time. A change here is the
+        // thing that turns "some number we don't recognise" into "the old one, still up".
+        const bi = await biRecord(site.siteId, site.truth, me);
+        const shape = biShape(site.truth);
+        // Judged here, not in the browser: the scan ran before this change was recorded, so only
+        // the save knows what the website used to publish. Rewriting the finding also lets it keep
+        // its number, its comments and whatever status someone already gave it.
+        const retired = retiredFrom(await biHistory(site.siteId), shape);
+        const stale = markOutdated(site.findings, retired);
+        const biNotes = [];
+        if (stale) await log(b.id, me, 'bi', `${stale} audit item${stale === 1 ? '' : 's'} marked Outdated — the website is still showing something Business Info no longer carries`);
+        if (bi.changes.length) {
+          bi.changes.forEach((c) => {
+            const label = (BI_FIELDS.find((f) => f.key === c.field) || {}).many || c.field;
+            const bits = [];
+            if (c.added.length) bits.push(`now ${c.added.join(', ')}`);
+            if (c.removed.length) bits.push(`was ${c.removed.join(', ')}`);
+            biNotes.push(`${label}: ${bits.join(' · ')}`);
+          });
+          await log(b.id, me, 'bi', `Business Info changed in Duda — ${biNotes.join(' | ')}`);
+        }
+
+        // An approval says "this value is correct for this website even though Business Info
+        // disagrees". The moment Business Info agrees, the approval has nothing left to do.
+        if ((site.allow || []).length) {
+          const kept = [];
+          for (const a of site.allow) {
+            if (isCurrentValue(shape, a.type, a.value)) {
+              site.allowRetired = [...(site.allowRetired || []), Object.assign({}, a, { retiredAt: now(), why: 'official' })].slice(-30);
+              await log(b.id, me, 'allow', `approval for ${a.value} retired — it is now the ${a.type === 'name' ? 'business name' : a.type} in Business Info, so there is nothing to approve`);
+              continue;
+            }
+            kept.push(a);
+          }
+          site.allow = kept;
+        }
         site.updatedAt = now();
         const cmds = [['SET', P + 'site:' + b.id, packJSON(site)], ['SET', P + 'seq:' + b.id, String(seq)]];
         if (add.length) cmds.push(['HSET', P + 'fnum:' + b.id, ...add]);
         await redis(...cmds);
-        const c = (r.scan && r.scan.counts) || {};
+        const c = { critical: 0, outdated: 0, warning: 0, info: 0 };
+        site.findings.forEach((f) => { if (c[f.severity] !== undefined) c[f.severity]++; });
+        if (site.scan) site.scan.counts = c;
         if (b.mode === 'aiResume') {
           const a = b.aiLog || {};
           await log(b.id, me, 'ai', `resumed the AI check: ${a.checked || 0} item(s) checked, ${a.flagged || 0} new finding(s)${a.stillPending ? `, ${a.stillPending} still waiting for AI credits` : ''}`);
           await redis(['DEL', P + 'ailock:' + b.id]);
           return res.status(200).json(await saveIndex(b.id));
         }
+        // A client has asked about one of these values. That is a question, not ordinary work, so an
+        // item nobody has touched is moved out of the default list and marked for clarification —
+        // once, and never over the top of a decision somebody already made.
+        let asked = 0;
+        try {
+          const cc = await crossCheck(site.findings, site.siteId);
+          const [stRaw] = await redis(['HGETALL', P + 'fstate:' + b.id]);
+          const st = pairs(stRaw, true);
+          const autos = [];
+          site.findings.forEach((f) => {
+            const k = cc.byFinding[f.id];
+            if (!k || !k.comments.some((c) => c.client)) return;
+            const cur = st[f.id];
+            if (cur && (cur.status || cur.updatedBy)) return;        // somebody has already decided
+            const c = k.comments.find((x) => x.client);
+            autos.push(f.id, JSON.stringify({ status: 'clarification', assignee: (cur && cur.assignee) || '', updatedBy: '', updatedAt: now(), auto: 'client-comment', autoRef: c.conv, autoAt: c.at }));
+            asked++;
+          });
+          if (autos.length) await redis(['HSET', P + 'fstate:' + b.id, ...autos]);
+        } catch (e) { /* the item simply stays Open */ }
+        if (asked) await log(b.id, me, 'item-status', `${asked} item${asked === 1 ? '' : 's'} set to For clarification automatically — a client comment mentions the value`);
         await log(b.id, me, 'scan', `completed a scan: ${site.findings.length} findings (${c.critical || 0} critical)${add.length && Number(seqRaw || 0) ? `, ${add.length / 2} new` : ''}`);
         // Tell the person who added the website and whoever it's assigned to (bell, desktop and Slack) that it's ready
         const wasComplete = site.status === 'Complete' || !!site.completedAt;
@@ -459,6 +543,7 @@ export default async function handler(req, res) {
         const faCmds = [];
         const faKeys = touched.filter((t) => t.kind === 'status' && (t.to === 'false' || t.from === 'false')).map((t) => b.siteId + ':' + t.f.id);
         const faOld = faKeys.length ? (await redis(['HMGET', P + 'fa', ...faKeys]))[0] || [] : [];
+        const faValue = [];
         const note = String(ch.note || '').trim().slice(0, 1000);
         touched.filter((t) => t.kind === 'status' && (t.to === 'false' || t.from === 'false')).forEach((t, k) => {
           const key = b.siteId + ':' + t.f.id;
@@ -473,8 +558,12 @@ export default async function handler(req, res) {
           if (t.to === 'false') { Object.assign(rec, { active: true, markedBy: me.email, markedByName: me.name, markedAt: now() }); if (note) rec.reason = note; if (old && old.status === 'done') rec.status = 'new'; }
           else { rec.active = false; rec.unmarkedBy = me.name; rec.unmarkedAt = now(); }
           faCmds.push(['HSET', P + 'fa', key, JSON.stringify(rec)]);
+          faValue.push(rec);
         });
         if (faCmds.length) await redis(...faCmds);
+        // Indexed by the value itself, so the next audit that flags the same number can say
+        // "this was marked a False alarm before, and here is the reason".
+        for (const rec of faValue) { if (rec.active) await rememberFalseAlarm(rec); else await forgetFalseAlarm(rec); }
         const marked = touched.filter((t) => t.kind === 'status' && t.to === 'false');
         if (marked.length) {
           for (const a of users.filter((u) => u.role === 'admin' && u.status === 'active' && u.email !== me.email)) {
@@ -502,13 +591,21 @@ export default async function handler(req, res) {
         const finding = target !== 'site' ? l.site.findings.find((f) => f.id === target) : null;
         if (target !== 'site' && !finding) return res.status(404).json({ error: 'Audit item not found' });
         const users = (await listUsers()).filter((u) => u.status === 'active');
-        const mentions = [].concat(b.mentions || []).filter((e) => users.some((u) => u.email === e));
+        // @Admins is one token that means everyone who can answer. Expanded here rather than in the
+        // browser, so who it reaches is decided by the member list as it stands right now.
+        const asked = [].concat(b.mentions || []);
+        const mentions = [];
+        asked.forEach((e) => {
+          if (e === GROUP_ADMINS) { users.filter((u) => u.role === 'admin').forEach((u) => { if (!mentions.includes(u.email)) mentions.push(u.email); }); return; }
+          if (users.some((u) => u.email === e) && !mentions.includes(e)) mentions.push(e);
+        });
         let replyTo = null;
         if (b.replyTo) {
           const parent = l.comments.find((c) => c.id === b.replyTo);
           if (parent) replyTo = { id: parent.id, by: parent.by, byName: parent.byName, excerpt: String(parent.text || (parent.images && parent.images.length ? '[image]' : '')).slice(0, 160) };
         }
         const c = { id: newId(8), siteId: b.siteId, target, findingNum: finding ? finding.num : null, by: me.email, byName: me.name, text, images, mentions, replyTo, createdAt: now() };
+        if (asked.includes(GROUP_ADMINS)) c.groups = ['admins'];
         await redis(['HSET', P + 'cmt:' + b.siteId, c.id, JSON.stringify(c)]);
         const where = finding ? ` on #${finding.num}` : '';
         await log(b.siteId, me, replyTo ? 'reply' : (finding ? 'item-comment' : 'comment'), replyTo ? `replied to ${replyTo.byName}${where}` : (finding ? `commented on #${finding.num}` : 'added a comment'), { commentId: c.id, findingId: finding ? finding.id : null, findingNum: finding ? finding.num : null });
@@ -520,10 +617,10 @@ export default async function handler(req, res) {
         if (replyTo && replyTo.by !== me.email && !recipients.has(replyTo.by)) recipients.set(replyTo.by, 'reply');
         for (const [email, kind] of recipients) {
           if (email === me.email) continue;
-          await notify(email, { by: me.email, byName: me.name, siteId: b.siteId, siteName, commentId: c.id, findingNum: finding ? finding.num : null, kind, text: text.slice(0, 200) });
+          await notify(email, { by: me.email, byName: me.name, siteId: b.siteId, siteName, commentId: c.id, findingNum: finding ? finding.num : null, kind, text: plainMentions(text).slice(0, 200) });
           await sendEmail(email, `${me.name} ${kind === 'mention' ? 'mentioned you' : 'replied to you'} on ${siteName}${where}`,
             emailShell(`${esc(me.name)} ${kind === 'mention' ? 'mentioned you' : 'replied to you'}`, `<p style="color:#5d6572">${esc(siteName)}${esc(where)}</p>
-              <blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(text.slice(0, 600)).replace(/\n/g, '<br>')}</blockquote>
+              <blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(plainMentions(text).slice(0, 600)).replace(/\n/g, '<br>')}</blockquote>
               <p><a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none">Open in Duda Site Auditor</a></p>`)).catch(() => {});
         }
         await saveIndex(b.siteId);

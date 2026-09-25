@@ -140,6 +140,14 @@ export async function nameTaken(name, exceptEmail) {
   const all = await listUsers();
   return all.some((u) => u.email !== exceptEmail && String(u.name || '').trim().toLowerCase() === want && u.status !== 'rejected');
 }
+/**
+ * A comment as it should be READ, not as it is stored. Mentions are written `@[Name|email]` so a
+ * rename never breaks them, but nobody wants to see that in a Slack message or on the bell.
+ * `@[Admins|*admins]` is the group token and reads as @Admins.
+ */
+export const plainMentions = (text) => String(text == null ? '' : text)
+  .replace(/@\[([^\]\n|]{1,60})(?:\|[^\]\n]{1,80})?\]/g, '@$1');
+
 export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white' });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);

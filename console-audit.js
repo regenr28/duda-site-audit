@@ -19,7 +19,9 @@
     mobile: { classes: ['showOnLarge', 'showOnMedium', 'hide-for-small'], attr: 'data-hidden-on-mobile' },
   };
 
-  const SEV_RANK = { critical: 0, warning: 1, info: 2 };
+  // "Outdated" sits between critical and warning: the value on the website is wrong and live, but
+  // we know exactly what happened to it — Business Info changed and the website wasn't updated.
+  const SEV_RANK = { critical: 0, outdated: 1, warning: 2, info: 3 };
 
   // ---------------------------------------------------------------------
   // What this version of the app knows how to check.
@@ -70,6 +72,18 @@
         'A whole menu or section in the wrong font is now a single item naming every piece of text in it, instead of one item per link',
         'The same wrong phone number found in the words, the tel: link and an aria-label is now one item that mentions where else it appears \u2014 the same for email addresses',
         'Links in body text are checked for their typeface too, not just navigation links and buttons',
+      ],
+    },
+    {
+      v: 5,
+      date: '2026-09-26',
+      title: 'Business Info remembers what it used to say',
+      items: [
+        'Every scan records Business Info and what changed since last time, so the audit can tell a detail nobody recognises from one that simply went out of date',
+        'A website still showing a detail Duda no longer carries reads "Still using the old phone number \u2014 Business Info was changed on 12 Aug 2026", at a new Outdated severity rather than Critical',
+        'An approval ("correct for this website") retires itself once Business Info catches up and carries that value officially',
+        'A contact item now shows what the team already knows about that value \u2014 a Duda comment mentioning it, or the same value marked a False alarm before',
+        'An item nobody has touched, whose value a client asked about in a comment, is set to For clarification automatically',
       ],
     },
   ];
@@ -1563,7 +1577,7 @@
     }
 
     const merged = sortFindings(groupAcrossPages(mergeDevices(raw)));
-    const counts = { critical: 0, warning: 0, info: 0 };
+    const counts = { critical: 0, outdated: 0, warning: 0, info: 0 };
     merged.forEach((f) => { counts[f.severity]++; });
     return {
       truth,
