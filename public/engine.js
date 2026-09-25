@@ -51,6 +51,15 @@
         'Buttons that go nowhere (now catches more button styles than before)',
       ],
     },
+    {
+      v: 3,
+      date: '2026-09-25',
+      title: 'The font check, rebuilt around the website\u2019s own typefaces',
+      items: [
+        'The website\u2019s typefaces are worked out first and shown on the website page: the home page H1 settles the title font, its paragraphs settle the body font, and the navigation and buttons are reported as following one of the two',
+        'Instead of counting fonts, the audit now names each piece of text that isn\u2019t in one of them \u2014 the words themselves, on the page they\u2019re on, so Show on page finds them',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -421,53 +430,59 @@
     return familyOf;
   }
 
-  // What each part of the page is, so "the titles are in two fonts" can be said plainly.
+  // What each piece of text is for. A website has a typeface for its headings and one for its body
+  // text; the navigation and the buttons follow one of those two. Naming the part lets the audit say
+  // "this title is in the wrong font" instead of counting fonts.
   const FONT_ROLES = [
-    { key: 'navigation', label: 'Navigation', sel: 'nav a, header a, [class*="nav" i] a, [class*="menu" i] a' },
     { key: 'titles', label: 'Titles', sel: 'h1, h2, h3' },
     { key: 'paragraphs', label: 'Paragraphs', sel: 'p, li' },
+    { key: 'navigation', label: 'Navigation', sel: 'nav a, header a, [class*="nav" i] a, [class*="menu" i] a' },
     { key: 'buttons', label: 'Buttons', sel: 'button, [role="button"], a[class*="btn" i], a[class*="button" i], .dmButtonLink' },
   ];
+  const ROLE_LABEL = { titles: 'Title', paragraphs: 'Paragraph', navigation: 'Navigation link', buttons: 'Button', other: 'Text' };
+  const ROLE_PLURAL = { titles: 'titles', paragraphs: 'body text', navigation: 'navigation links', buttons: 'buttons' };
+  const MAX_FONT_ROWS = 900;   // per page, per device
+  const FONT_ITEM_CAP = 12;    // audit items per part-of-the-page + wrong typeface, before one summary row
 
-  /** Typeface usage for the page: totals, and a breakdown by what the text is for. */
-  function fontsUsed(doc) {
+  /**
+   * Every piece of text on the page, with the typeface it really ends up in and what it is for.
+   *
+   * Nothing is judged here. One page can't know what the website's heading font is — the answer only
+   * appears once every page has been read — so the rows go back to runScan, which works out the
+   * website's typefaces and then flags the text that doesn't use them.
+   */
+  function fontsUsed(doc, device) {
     const familyOf = fontMap(doc);
     const keep = (f) => f && !GENERIC_FONTS.test(f) && !ICON_FONTS.test(f);
-    const all = new Map();      // family → { n, where:Set }
-    const roles = {};
+    const rows = [];
     const seen = new Set();
-    const tally = (el, roleKey) => {
-      const f = familyOf(el);
-      if (!keep(f)) return;
-      const e = all.get(f) || { n: 0, where: new Set() };
-      e.n++;
-      if (e.where.size < 4) e.where.add(uniqueSelector(el));
-      all.set(f, e);
-      if (roleKey) {
-        const r = roles[roleKey] || (roles[roleKey] = new Map());
-        const re = r.get(f) || { n: 0, where: new Set() };
-        re.n++;
-        if (re.where.size < 3) re.where.add(uniqueSelector(el));
-        r.set(f, re);
-      }
+    const take = (el, role) => {
+      if (seen.has(el) || rows.length >= MAX_FONT_ROWS) return;
+      const fam = familyOf(el);
+      if (!keep(fam)) return;
+      const text = clean(el.textContent);
+      if (!text || text.length < 2) return;
+      seen.add(el);
+      const hid = hiddenReason(el, device);
+      rows.push({ fam, role, text: cut(text, 90), selector: uniqueSelector(el), location: locationOf(el) || 'Body', tag: (el.tagName || '').toLowerCase(), hiddenBy: hid || '' });
     };
     FONT_ROLES.forEach((role) => {
       let hits = [];
       try { hits = doc.querySelectorAll(role.sel); } catch (e) { return; }
-      hits.forEach((el) => { if (clean(el.textContent)) { seen.add(el); tally(el, role.key); } });
+      hits.forEach((el) => take(el, role.key));
     });
-    // Everything else with words in it, so the totals reflect the whole page.
+    // Everything else with words in it, so the totals cover the whole page.
     doc.querySelectorAll('h4, h5, h6, span, td, th, label, figcaption, blockquote, strong, em, div').forEach((el) => {
       if (seen.has(el)) return;
-      const txt = clean(el.textContent);
-      if (!txt || txt.length < 2) return;
-      // Only count the element that actually holds the words, not every wrapper around them.
+      // Only the element that actually holds the words, not every wrapper around them.
       if (el.querySelector('h1,h2,h3,h4,h5,h6,p,li,span,td,th,label,a,button')) return;
-      seen.add(el);
-      tally(el, null);
+      take(el, 'other');
     });
-    return { all, roles, loaded: fontSources(doc) };
+    const loaded = [];
+    fontSources(doc).forEach((src, key) => loaded.push({ key, name: src && src.name ? src.name : key, src: src && src.src ? src.src : String(src || '') }));
+    return { rows, loaded };
   }
+
   function extractSchema(doc) {
     const out = [];
     doc.querySelectorAll('script[type="application/ld+json"]').forEach((s) => {
@@ -703,59 +718,9 @@
     });
 
     // --- Typefaces ---
-    const { all: fontAll, roles: fontRoles, loaded: fontLoaded } = fontsUsed(doc);
-    if (fontAll.size) {
-      const list = [...fontAll.entries()].sort((a, b) => b[1].n - a[1].n);
-      const total = list.reduce((a, x) => a + x[1].n, 0);
-      const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-
-      // Each part of the page should be in one typeface. Two in the titles is the classic slip.
-      const namedInRole = new Set();
-      FONT_ROLES.forEach((role) => {
-        const r = fontRoles[role.key];
-        if (!r || r.size < 2) return;
-        const fams = [...r.entries()].sort((a, b) => b[1].n - a[1].n);
-        const clear = fams[0][1].n > fams[1][1].n;      // is there actually a majority to keep?
-        fams.forEach(([f]) => namedInRole.add(f));
-        add(titleEl, { code: 'FONT_ROLE_MIXED', severity: 'warning', category: 'Design',
-          message: `${role.label} use ${fams.length} different typefaces — ${fams.map(([f, e]) => `${f} (${plural(e.n, 'place')})`).join(', ')}`,
-          found: fams.map(([f, e]) => `${f}: ${[...e.where].join(' · ')}`).join(' | '),
-          expected: clear ? `all ${role.label.toLowerCase()} in ${fams[0][0]}` : `one typeface for all ${role.label.toLowerCase()}` });
-      });
-
-      if (list.length > 4) {
-        add(titleEl, { code: 'FONT_MANY', severity: 'info', category: 'Design', message: `${list.length} different typefaces are used on this page`, found: list.map(([f, e]) => `${f} (${e.n})`).join(', ') });
-      }
-
-      // The odd one out across the whole page: a typeface on a handful of elements while others
-      // carry everything is nearly always a leftover, and naming where it is saves the hunt.
-      if (list.length > 1 && total >= 12) {
-        const odd = list.filter(([f, e]) => e.n <= 2 && e.n / total < 0.1 && !namedInRole.has(f));
-        const main = list.filter(([f]) => !odd.some((o) => o[0] === f)).slice(0, 2).map((x) => x[0]);
-        if (odd.length && main.length) {
-          add(titleEl, { code: 'FONT_ODD_ONE_OUT', severity: 'warning', category: 'Design',
-            message: `${odd.map((o) => `"${o[0]}"`).join(', ')} ${odd.length === 1 ? 'is' : 'are'} used in a couple of places while the rest of the page uses ${main.join(' and ')} — probably left over`,
-            found: odd.map(([f, e]) => `${f}: ${[...e.where].join(' · ') || 'inline'}`).join(' | ') });
-        }
-      }
-
-      // A typeface the page never loads is one the visitor may simply not have.
-      const notLoaded = list.filter(([f]) => !fontLoaded.has(f.toLowerCase()));
-      if (notLoaded.length && fontLoaded.size) {
-        add(titleEl, { code: 'FONT_NOT_LOADED', severity: 'info', category: 'Design',
-          message: `${notLoaded.map((x) => `"${x[0]}"`).join(', ')} ${notLoaded.length === 1 ? 'is' : 'are'} used but never loaded by the page — visitors without ${notLoaded.length === 1 ? 'it' : 'them'} installed see a fallback`,
-          found: notLoaded.map(([f, e]) => `${f} (${e.n})`).join(', ') });
-      }
-      // …and one loaded from somewhere unexpected is worth a look: the rule is Google Fonts or Envato.
-      [...fontLoaded.entries()].forEach(([key, info]) => {
-        if (![...fontAll.keys()].some((k) => k.toLowerCase() === key)) return;
-        const src = (info && info.src) || '';
-        if (src === 'Google Fonts' || src === 'this website' || FONT_HOST_OK.test(src)) return;
-        add(titleEl, { code: 'FONT_SOURCE_ODD', severity: 'warning', category: 'Design',
-          message: 'A typeface is loaded from an unexpected place — fonts should come from Google Fonts or Envato',
-          found: `${(info && info.name) || key} from ${src}`, expected: 'Google Fonts or Envato' });
-      });
-    }
+    // Collected, not judged. What counts as "the wrong font" depends on the typefaces the WEBSITE
+    // uses, and no single page knows those — runScan works them out once every page has been read.
+    const fonts = fontsUsed(doc, device);
 
     // --- Basics that are simply present or absent ---
     if (!doc.querySelector('link[rel~="icon" i], link[rel="shortcut icon" i]')) add(titleEl, { code: 'FAVICON_MISSING', severity: 'warning', category: 'Meta / SEO', message: 'No favicon on this page — upload one in Duda SEO settings' });
@@ -1031,6 +996,7 @@
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
       alts: altList,
       textIndex: textIndex.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
+      fonts,
       meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)) },
       schema: schemas.map((s) => s.data),
     };
@@ -1151,6 +1117,106 @@
     return list.sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || a.category.localeCompare(b.category) || String(a.path).localeCompare(String(b.path)));
   }
 
+  // ---------- the website's typefaces ----------
+  /**
+   * A website has a typeface for its headings and one for its body text. The home page settles both:
+   * whatever the H1 is in, the headings are in; whatever its paragraphs are in, the body text is in.
+   * The navigation and the buttons each follow one of those two — which one varies by design, so
+   * the majority within that part of the site decides, and it is reported rather than judged.
+   *
+   * This is worked out once, from every page, and then the text that doesn't use it gets flagged.
+   */
+  function buildFontSystem(rows, loaded) {
+    // One element, counted once. The same heading sits on every page and is read three times over
+    // (Desktop, Tablet, Mobile), so counting raw rows would say "9 places" about a single title.
+    const places = (list) => { const seen = new Set(); return list.filter((r) => { const k = r.selector + '|' + r.text; if (seen.has(k)) return false; seen.add(k); return true; }); };
+    const countBy = (list) => { const m = new Map(); places(list).forEach((r) => m.set(r.fam, (m.get(r.fam) || 0) + 1)); return m; };
+    const top = (m) => (m && m.size ? [...m.entries()].sort((a, b) => b[1] - a[1])[0][0] : '');
+    const home = rows.filter((r) => r.path === '/');
+    const pick = (role, tag) => {
+      const t = top(countBy(home.filter((r) => r.role === role && (!tag || r.tag === tag))));
+      return t || top(countBy(home.filter((r) => r.role === role))) || top(countBy(rows.filter((r) => r.role === role)));
+    };
+    const heading = pick('titles', 'h1');
+    const body = pick('paragraphs', 'p');
+    const nav = top(countBy(rows.filter((r) => r.role === 'navigation')));
+    const button = top(countBy(rows.filter((r) => r.role === 'buttons')));
+    const all = [...countBy(rows).entries()].sort((a, b) => b[1] - a[1]).map(([name, n]) => {
+      const src = loaded.get(name.toLowerCase());
+      return { name, n, loaded: !!src, src: (src && src.src) || '' };
+    });
+    // What each part of the website should be in. Titles and body text follow the two above; the
+    // navigation and the buttons follow whichever they mostly already use.
+    const want = { titles: heading, paragraphs: body, navigation: nav || body || heading, buttons: button || body || heading };
+    const follows = (f) => (f && f === heading ? 'same as the titles' : f && f === body ? 'same as the body text' : f ? 'its own' : '');
+    return { heading, body, nav, button, want, all, follows: { navigation: follows(nav), buttons: follows(button) }, pages: new Set(rows.map((r) => r.path)).size };
+  }
+
+  /**
+   * Text that isn't in one of the website's typefaces — one audit item per piece of text, so it can
+   * be found and fixed, rather than a count of fonts nobody can act on.
+   */
+  function fontFindings(rows, loaded, sys) {
+    const out = [];
+    if (rows.length < 8 || !(sys.heading || sys.body)) return out;
+    const SITE = [sys.heading, sys.body].filter(Boolean);
+    const push = (r, f) => out.push(Object.assign({
+      path: r.path, device: r.device, selector: r.selector, location: r.location,
+      visible: !r.hiddenBy, hiddenBy: r.hiddenBy || '', snippet: r.text, category: 'Design',
+    }, f));
+
+    // One group per part-of-the-page + wrong typeface, so the count is honest and the cap is per slip.
+    const groups = new Map();
+    rows.forEach((r) => {
+      const want = sys.want[r.role];
+      if (r.role === 'other') { if (!SITE.length || SITE.includes(r.fam)) return; }
+      else if (!want || r.fam === want) return;
+      const key = r.role + '|' + r.fam;
+      (groups.get(key) || groups.set(key, []).get(key)).push(r);
+    });
+    [...groups.entries()].forEach(([key, list]) => {
+      const [role, fam] = key.split('|');
+      const want = role === 'other' ? SITE.join(' or ') : sys.want[role];
+      const where = role === 'other' ? "the website's typefaces" : `the rest of the ${ROLE_PLURAL[role]} use ${want}`;
+      // One audit item per piece of text — but a header or footer repeats on every page and on three
+      // devices, so those rows are kept and grouped later into a single item that lists its pages.
+      const byText = new Map();
+      list.forEach((r) => { const k = r.selector + '|' + r.text; (byText.get(k) || byText.set(k, []).get(k)).push(r); });
+      const texts = [...byText.keys()];
+      texts.slice(0, FONT_ITEM_CAP).forEach((k) => {
+        const seenAt = new Set();
+        byText.get(k).forEach((r) => {
+          const at = r.path + '|' + r.device;
+          if (seenAt.has(at)) return;
+          seenAt.add(at);
+          push(r, { code: 'FONT_OFF_SYSTEM', severity: 'warning', message: `${ROLE_LABEL[role]} in ${fam} — ${where}`, found: r.text, expected: want });
+        });
+      });
+      if (texts.length > FONT_ITEM_CAP) push(byText.get(texts[FONT_ITEM_CAP])[0], {
+        code: 'FONT_OFF_SYSTEM_MORE', severity: 'info',
+        message: `${texts.length - FONT_ITEM_CAP} more ${ROLE_PLURAL[role] || 'places'} are in ${fam} as well — the first ${FONT_ITEM_CAP} are listed separately`,
+        found: `${texts.length} in total`, expected: want,
+      });
+    });
+
+    // A typeface the website asks for but never loads: visitors without it see something else.
+    const firstWith = (fam) => rows.find((r) => r.fam === fam);
+    if (loaded.size) {
+      sys.all.filter((f) => !f.loaded).forEach((f) => {
+        const r = firstWith(f.name); if (!r) return;
+        push(r, { code: 'FONT_NOT_LOADED', severity: 'info', message: `"${f.name}" is used but the website never loads it — visitors without it installed see a different typeface`, found: `${f.name}, ${f.n} place${f.n === 1 ? '' : 's'}`, expected: 'a loaded typeface' });
+      });
+    }
+    // …and one loaded from somewhere unexpected: the rule is Google Fonts or Envato.
+    sys.all.forEach((f) => {
+      const src = f.src;
+      if (!f.loaded || !src || src === 'Google Fonts' || src === 'this website' || FONT_HOST_OK.test(src)) return;
+      const r = firstWith(f.name); if (!r) return;
+      push(r, { code: 'FONT_SOURCE_ODD', severity: 'warning', message: `"${f.name}" is loaded from an unexpected place — typefaces should come from Google Fonts or Envato`, found: `${f.name} from ${src}`, expected: 'Google Fonts or Envato' });
+    });
+    return out;
+  }
+
   // ---------- full scan orchestration ----------
   /**
    * opts: {
@@ -1175,6 +1241,8 @@
     const images = new Map();
     const altMap = new Map();
     const textIdx = [];
+    const fontRows = [];          // every piece of text on the website, with the typeface it ends up in
+    const fontLoaded = new Map(); // family (lowercased) → where the website loads it from
     const queue = [];
     const queued = new Set();
     const enqueue = (p, from) => { p = normalizePath(p); if (!queued.has(p) && queued.size < maxPages) { queued.add(p); queue.push(p); pageInfo[p] = pageInfo[p] || { path: p, from: from || null }; } };
@@ -1229,6 +1297,10 @@
             m.isLogo = m.isLogo || x.isLogo;
           });
           r.textIndex.forEach((x) => textIdx.push(Object.assign({ path, device }, x)));
+          if (r.fonts) {
+            r.fonts.rows.forEach((x) => { if (fontRows.length < 9000) fontRows.push(Object.assign({ path, device }, x)); });
+            r.fonts.loaded.forEach((l) => { if (!fontLoaded.has(l.key)) fontLoaded.set(l.key, l); });
+          }
         }
       }
     }
@@ -1263,6 +1335,13 @@
           if (at >= 0 && !matchesBusiness(ph.phrase, truth)) raw.push({ code: 'TEXT_OTHER_BUSINESS', severity: 'critical', category: 'Business name', message: 'Text mentions another business name', found: (at > 70 ? '…' : '') + cut(x.text.slice(Math.max(0, at - 70)), 170), expected: truth.businessName, path: x.path, device: x.device, selector: x.selector, location: x.location, visible: !x.hiddenBy, hiddenBy: x.hiddenBy, snippet: cut(x.text, 120) });
         });
       });
+    }
+
+    // The website's typefaces, and the text that doesn't use them
+    let fontSys = null;
+    if (fontRows.length) {
+      fontSys = buildFontSystem(fontRows, fontLoaded);
+      fontFindings(fontRows, fontLoaded, fontSys).forEach((f) => raw.push(f));
     }
 
     // External link + image checks
@@ -1320,6 +1399,7 @@
     return {
       truth,
       checks: CHECKS_VERSION,
+      fonts: fontSys ? { heading: fontSys.heading, body: fontSys.body, nav: fontSys.nav, button: fontSys.button, follows: fontSys.follows, all: fontSys.all.slice(0, 10) } : null,
       findings: merged,
       pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
       externalLinks: external.size,
@@ -1416,7 +1496,7 @@
 
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince,
-    buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages,
+    buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
     matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

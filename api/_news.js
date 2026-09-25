@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-25-fonts-rebuilt', date: '2026-09-25', audience: 'all', tag: 'Checks',
+    title: 'The font check now tells you which text to fix',
+    what: 'The first version counted fonts — "Navigation use 2 different typefaces — Titillium Web (24 places), Yantramanav (14 places)" — which is true and useless. It has been rebuilt around how a website is actually built: the <b>home page H1</b> settles the font for every title, its <b>paragraphs</b> settle the font for all body text, and the navigation and buttons follow one of those two. Those four are now shown on the website page under <b>Fonts on this website</b>, as reference — not as something to fix. The audit items are the <b>exceptions</b>: each one names the actual words that are in the wrong font, on the page they are on, so <b>Show on page</b> takes you to them. Text that repeats across pages is a single item listing its pages.',
+    where: ['On a website page, open <b>Reference data</b> → <b>Fonts on this website</b> to see the four it detected.', 'The font items are in <b>Audit items</b> as usual, under the <b>Design</b> category — each one reads like "Title in Magistral-Medium — the rest of the titles use Bai Jamjuree".', 'Click <b>Show on page</b> on the item to jump to that exact text.', 'Websites scanned before today show the blue "new checks" note — rescan to swap the old font items for these.'],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
     id: '2026-09-24-check-notice', date: '2026-09-24', audience: 'all', tag: 'Checks',
     title: 'An audit tells you when new checks arrive',
     what: 'When we add checks, finished audits are left exactly as they are — nothing is recalculated behind your back, and nothing appears overnight. But an audit scanned last month was judged against a shorter list, and until now there was no way to tell. Now there is: a website scanned before the newest checks shows a <b>blue note at the top of its Audit items</b> saying how many checks were added, with the full list of what they look for. Rescanning is your call, per website. If you do, <b>every item you already have is kept</b> — anything marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> keeps its state, its number and its comments — and the new checks simply add new <b>Open</b> items. None of them count as critical, so your critical numbers do not move.',

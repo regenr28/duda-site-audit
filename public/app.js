@@ -1027,7 +1027,7 @@
       res.counts = { critical: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
       const profiles = await checkProfiles(res.truth);
       const sum = await store({ op: 'saveScan', id, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
-        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages,
+        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null,
         scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
       upsertSummary(sum);
@@ -2385,6 +2385,33 @@
     if (go) go.onclick = () => requestScan([s.id]);
   }
 
+  /**
+   * The website's typefaces — reference, not an audit item. The home page settles it: whatever the
+   * H1 is in, the titles are in; whatever its paragraphs are in, the body text is in. The audit
+   * items then point at the text that isn't in them.
+   */
+  function fontPanel(s) {
+    const f = s.fonts;
+    if (!f || (!f.heading && !f.body)) return '';
+    const used = f.all || [];
+    const main = [f.heading, f.body].filter(Boolean);
+    const extra = used.filter((x) => !main.includes(x.name));
+    const row = (k, v, note) => `<div><div class="k">${esc(k)}</div><div class="v">${v ? `<b>${esc(v)}</b>` : '<span class="faint">—</span>'}${note ? ` <span class="faint small">${esc(note)}</span>` : ''}</div></div>`;
+    return `<div class="panel panel-pad" style="margin-top:14px">
+      <h2>Fonts on this website <span class="badge subtle">Detected</span></h2>
+      <div class="truth font-truth">
+        ${row('Titles', f.heading, 'from the home page H1')}
+        ${row('Body text', f.body, 'from the home page paragraphs')}
+        ${row('Navigation', f.nav, (f.follows || {}).navigation)}
+        ${row('Buttons', f.button, (f.follows || {}).buttons)}
+      </div>
+      ${extra.length ? `<div class="k" style="margin-top:12px">Also on the website</div>
+        <div class="small">${extra.map((x) => `<span class="badge ${x.loaded ? 'subtle' : 'sev-warning'}" title="${esc(x.loaded ? 'Loaded from ' + (x.src || 'the website') : 'Used but never loaded — visitors without it see something else')}">${esc(x.name)} · ${x.n} place${x.n === 1 ? '' : 's'}${x.loaded ? '' : ' · not loaded'}</span>`).join(' ')}</div>
+        <p class="small faint" style="margin:6px 0 0">Every place that isn't in the two above is listed as an audit item, with the text to look for.</p>`
+        : `<p class="small faint" style="margin:10px 0 0">Everything on the website uses these. Nothing to fix.</p>`}
+    </div>`;
+  }
+
   function renderFindingsTab(body, s, { cnt, sc, live }) {
     const t = s.truth || {};
     const ff = state.ff;
@@ -2438,6 +2465,7 @@
             <p class="small faint" style="margin:8px 0 0">General note only. Facebook and Google often block automated reads, so verify anything marked yellow by hand.</p>
           </div>
         </div>
+        ${fontPanel(s)}
       </details>
       <div class="panel">
         <div class="toolbar">
