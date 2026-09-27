@@ -112,6 +112,16 @@ export function sideTest(users, overrides, roster, dudaType) {
   };
 }
 
+/**
+ * Has this conversation got anything left in it?
+ *
+ * Duda sends a NEW_CONVERSATION before any words are typed, and a comment can be deleted afterwards.
+ * Either way what is left is a card with nothing on it — and, worse, something that counts towards
+ * "6 waiting" and can raise an alert nobody can act on. `live` is written by the webhook; rows that
+ * predate it are judged by whether the last comment left any text behind.
+ */
+const hasContent = (r) => (r && r.live !== undefined ? r.live > 0 : !!String((r && r.tx) || '').trim());
+
 /** 24 hours from the comment, but never landing on a Saturday or Sunday when nobody is there. */
 function answerDueAt(atISO, hours = WAIT_HOURS) {
   let t = Date.parse(atISO || '') || Date.now();
@@ -130,7 +140,7 @@ function answerDueAt(atISO, hours = WAIT_HOURS) {
 async function alertStale(rows, isClient, nameOf) {
   // Only when the CLIENT spoke last. A teammate's own note — a worklog, "this has been updated,
   // let us know" — is us holding the ball, not the client waiting, so it never rings.
-  const late = Object.entries(rows).filter(([, r]) => r && !r.al && r.st !== 'resolved' && r.lb && isClient(r.lb) === 'client' && Date.now() > answerDueAt(r.la));
+  const late = Object.entries(rows).filter(([, r]) => r && !r.al && hasContent(r) && r.st !== 'resolved' && r.lb && isClient(r.lb) === 'client' && Date.now() > answerDueAt(r.la));
   if (!late.length) return 0;
   const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
   if (!admins.length) return 0;
@@ -196,7 +206,7 @@ export default async function handler(req, res) {
 
         const per = {};
         Object.values(rows).forEach((r) => {
-          if (!r || !r.s) return;
+          if (!r || !r.s || !hasContent(r)) return;    // an empty conversation is not a conversation
           const p = per[r.s] || (per[r.s] = { total: 0, open: 0, unread: 0, waiting: 0, last: '', oldest: '' });
           p.total++;
           if (r.st !== 'resolved') p.open++;
@@ -246,14 +256,29 @@ export default async function handler(req, res) {
         threads.forEach((t) => (t.comments || []).forEach((c) => { if (c.by) authors.push(c.by); }));
         const isClient = sideTest(await listUsers(), pairs(over), await slackRoster(), await dudaTypes(authors));
         const since = pairs(seen)[siteId] || '';
-        const out = threads.map((t) => ({
-          uuid: t.u, num: t.num || 0, device: t.device || '', status: t.status || 'open', partial: !!t.partial,
-          page: pages[t.page] || (t.page ? 'Page ' + String(t.page).slice(0, 6) : ''),
-          startedAt: t.at, lastAt: t.last || t.updatedAt || t.at,
-          unread: (t.last || t.at) > since,
-          waiting: t.status !== 'resolved' && t.lastBy && isClient(t.lastBy) === 'client' && Date.now() > answerDueAt(t.last || t.at),
-          comments: (t.comments || []).map((c) => ({ text: unescapeHtml(c.text), by: c.by, at: c.at, side: isClient(c.by), deleted: !!c.deleted, edited: c.edited || '' })),
-        })).sort((a, b) => (b.waiting ? 1 : 0) - (a.waiting ? 1 : 0) || String(b.lastAt).localeCompare(String(a.lastAt)));
+        const out = threads.map((t) => {
+          // A deleted comment is gone, not blank: it is dropped, and a conversation with nothing
+          // left in it is dropped with it rather than shown as an empty card that counts as waiting.
+          const live = (t.comments || []).filter((c) => !c.deleted && String(c.text || '').trim());
+          if (!live.length) return null;
+          const tail = live[live.length - 1];
+          const lastAt = tail.at || t.last || t.at;
+          const owed = t.status !== 'resolved' && tail.by && isClient(tail.by) === 'client';
+          return {
+            uuid: t.u, num: t.num || 0, device: t.device || '', status: t.status || 'open', partial: !!t.partial,
+            page: pages[t.page] || (t.page ? 'Page ' + String(t.page).slice(0, 6) : ''),
+            startedAt: t.at, lastAt,
+            unread: lastAt > since,
+            waiting: owed && Date.now() > answerDueAt(lastAt),
+            // How long they have actually been waiting, so a thread can say so itself rather than
+            // leaving it to be worked out from a date.
+            since: owed ? lastAt : '',
+            comments: live.map((c) => ({ text: unescapeHtml(c.text), by: c.by, at: c.at, side: isClient(c.by), edited: c.edited || '' })),
+          };
+        }).filter(Boolean)
+          .sort((a, b) => (b.waiting ? 1 : 0) - (a.waiting ? 1 : 0)
+            || (a.waiting && b.waiting ? String(a.since).localeCompare(String(b.since)) : 0)
+            || String(b.lastAt).localeCompare(String(a.lastAt)));
         return res.status(200).json({ site: siteId, threads: out, waitHours: WAIT_HOURS });
       }
 

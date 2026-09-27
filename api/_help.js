@@ -272,9 +272,17 @@ export const HELP_SECTIONS = [
 <li>A line at the top says how many client comments are waiting, on how many websites, and names the one that has waited longest with the date it came in. It turns red once anyone has been waiting two days or more.</li>
 <li>The list is <b>ordered by longest wait first</b>. Websites nobody is waiting on come after, most recent first.</li>
 <li>Each waiting website shows <b>how long</b>: "1 waiting · 4 days". The badge gets louder at two days, and louder again at three.</li>
+<li>Open a website and <b>every conversation says its own wait</b> too: <b>waiting on us · 31h</b> once it's overdue, or <b>ours to answer · 2h</b> when the client spoke last but the clock hasn't run out. Under three days it counts in hours, because "31h" lands harder than "1 day".</li>
+<li>Threads are ordered the same way inside a website: longest wait first.</li>
 <li><b>Work through them, oldest first</b> on that top line filters the list to just those.</li>
 </ul>
-<p class="small muted">Weekends don't count towards the wait, so a Friday-evening comment is flagged on Monday rather than on Saturday — which is why a website can hold a comment from Friday and still not be listed as waiting.</p>`,
+<p class="small muted">Weekends don't count towards the wait, so a Friday-evening comment is flagged on Monday rather than on Saturday — which is why a website can hold a comment from Friday and still not be listed as waiting.</p>
+<h3>Empty and deleted comments</h3>
+<p>Duda opens a conversation the moment someone clicks to comment, before any words are typed, and a comment can be deleted afterwards. Either way what's left is a card with nothing on it.</p>
+<ul>
+<li>A conversation with nothing left in it is <b>not shown, not counted and never alerts</b>. It used to sit in the list as "Page unknown" with no text and still count towards "6 waiting".</li>
+<li>Deleted comments are dropped rather than shown as "(deleted)". If the deleted one was the last, the clock stays where the last real comment left it — deleting something no longer looks like activity.</li>
+</ul>`,
   },
   {
     id: 'ownership', group: 'Collaboration', title: 'Who owns an audit (and how your work is protected)', audience: 'all',

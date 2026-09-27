@@ -3233,7 +3233,7 @@
     if (!iso) return '';
     const h = Math.floor((Date.now() - new Date(iso).getTime()) / 3600000);
     if (h < 1) return 'under an hour';
-    if (h < 48) return `${h}h`;
+    if (h < 72) return `${h}h`;            // hours right up to three days: "31h" lands harder than "1 day"
     return `${Math.floor(h / 24)} days`;
   }
   const waitClass = (iso) => {
@@ -3333,14 +3333,15 @@
                 const open = t.comments[0];
                 const replies = t.comments.slice(1);
                 const who = (c) => `<div class="cmt-by"><b>${esc(c.by || 'Someone')}</b> <span class="badge ${c.side === 'client' ? 'sev-info' : 'sev-hold'}">${c.side}</span> <span class="small faint">${esc(fmtFull(c.at))}</span>${state.me.role === 'admin' && c.by ? ` <button class="linkbtn" data-cwho="${esc(c.by)}" data-cas="${c.side === 'client' ? 'team' : 'client'}" title="Correct who this person is">not ${esc(c.side)}?</button>` : ''}</div>`;
-                const body = (c) => `<div class="cmt-text">${c.deleted ? '<span class="faint">(deleted)</span>' : esc(c.text)}</div>`;
+                const body = (c) => `<div class="cmt-text">${esc(c.text)}</div>`;
                 return `
                 <li class="cmt-card ${t.waiting ? 'waiting' : ''} ${t.status === 'resolved' ? 'done' : ''} ${newest.has(t.uuid) ? 'isnew' : ''}">
                   <div class="cmt-head">
                     ${t.num ? `<span class="badge subtle mono">#${t.num}</span>` : ''}
                     <span class="small muted">${t.page ? esc(t.page) : 'Page unknown'}${t.device ? ' · ' + esc(String(t.device).toLowerCase().replace(/^./, (c) => c.toUpperCase())) : ''}</span>
                     <span class="spacer"></span>
-                    ${t.waiting ? '<span class="badge sev-critical">waiting on us</span>' : ''}
+                    ${t.waiting ? `<span class="badge ${waitClass(t.since)}" title="No reply since ${esc(fmtFull(t.since))}">waiting on us · ${esc(waitAge(t.since))}</span>`
+                      : t.since ? `<span class="badge subtle" title="The client spoke last, but it is not overdue yet">ours to answer · ${esc(waitAge(t.since))}</span>` : ''}
                     <span class="badge ${t.status === 'resolved' ? 'sev-ok' : 'sev-warning'}">${t.status === 'resolved' ? 'resolved' : 'unresolved'}</span>
                   </div>
                   ${t.partial ? '<div class="cmt-partial small">This conversation started before comments were connected, so only what was said since then is here. Open it in the Duda editor to read the whole thread.</div>' : ''}

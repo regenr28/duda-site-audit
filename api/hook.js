@@ -135,11 +135,16 @@ export default async function handler(req, res) {
         const seen = (conv.comments || []).some((c) => c.u && c.u === cid);
         if (!seen) conv.comments = [...(conv.comments || []), { u: cid || newId(6), text: unescapeHtml(cm.text), by, at }].slice(-MAX_COMMENTS);
       }
-      // Who spoke last decides whether anyone still owes the client an answer.
-      const live = (conv.comments || []).filter((c) => !c.deleted);
+      // Who spoke last decides whether anyone still owes the client an answer — and a comment that
+      // has been deleted, or that never carried any words, is not somebody speaking. A conversation
+      // with nothing left in it is empty: it must not be counted, shown, or alerted about.
+      const live = (conv.comments || []).filter((c) => !c.deleted && String(c.text || '').trim());
       const tail = live[live.length - 1];
-      conv.last = tail ? tail.at : at;
-      conv.lastBy = tail ? tail.by : by;
+      // Deleting the last comment must not look like fresh activity, so the clock stays where the
+      // last real comment left it.
+      conv.last = tail ? tail.at : (conv.at || at);
+      conv.lastBy = tail ? tail.by : '';
+      conv.live = live.length;
       conv.updatedAt = at;
       if (!conv.status) conv.status = 'open';
 
@@ -147,6 +152,7 @@ export default async function handler(req, res) {
       // A small index row per conversation, so one read answers "what is waiting, across every site".
       cmds.push(['HSET', P + 'convidx', cu, JSON.stringify({
         s: siteId, n: conv.num || 0, d: conv.device || '', st: conv.status, pt: conv.partial ? 1 : 0,
+        live: live.length,
         la: conv.last, lb: conv.lastBy || '', tx: unescapeHtml(tail && tail.text).slice(0, 160),
       })]);
       const [rawW] = await redis(['HGET', P + 'watch', siteId]);

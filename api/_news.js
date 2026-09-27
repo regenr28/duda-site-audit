@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-27-empty-threads', date: '2026-09-27', audience: 'all', tag: 'Comments',
+    title: 'Empty conversations no longer count against you',
+    what: 'Duda opens a conversation the moment somebody clicks to comment, before any words are typed, and a comment can be deleted afterwards — so the list was carrying cards with nothing on them, reading "Page unknown" with no text, and <b>counting towards "6 waiting"</b> and raising alerts nobody could act on. A conversation with nothing left in it is now <b>not shown, not counted and never alerts</b>, and deleted comments are dropped rather than shown as "(deleted)". Deleting the last comment no longer looks like fresh activity either — the clock stays where the last real comment left it. Separately, every conversation now says its own wait: <b>waiting on us · 31h</b> once it is overdue, or <b>ours to answer · 2h</b> when the client spoke last but the clock has not run out.',
+    where: ['Nothing to do — the counts correct themselves as comments arrive.', 'Open any website in <b>Duda comments</b>: the wait is on each conversation, top right.', 'Under three days it counts in hours, because "31h" reads more urgently than "1 day".'],
+    link: '#/help/comments-duda', linkText: 'How comments work',
+  },
+  {
     id: '2026-09-27-triage', date: '2026-09-27', audience: 'all', tag: 'Comments',
     title: 'Monday morning: who has been waiting longest',
     what: 'The comments list was ordered by whatever came in last, which is the wrong question after a weekend. It now leads with <b>who has been waiting longest</b>. A line at the top says how many client comments are waiting and on how many websites, and names the worst one with the date — red once anyone has waited two days. The list is ordered oldest-wait first, and each website shows the wait in plain terms: <b>1 waiting · 4 days</b>, with the badge getting louder at two days and louder again at three.',
