@@ -392,16 +392,48 @@
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   }
+  // Everything lands in one bell, so a client waiting on an answer sits between two finished scans.
+  // These groups are the questions people actually arrive with: "is a client waiting on me?",
+  // "did someone tag me?", "did my scan finish?".
+  const NOTIF_TABS = [
+    { key: 'all', label: 'All', has: () => true },
+    { key: 'duda', label: 'Duda comments', has: (n) => n.kind === 'comment-waiting' },
+    { key: 'talk', label: 'Mentions & replies', has: (n) => ['mention', 'reply', 'assign'].includes(n.kind) },
+    { key: 'scans', label: 'Scans', has: (n) => ['scan-done', 'rescan-done'].includes(n.kind) },
+    { key: 'audits', label: 'Audits', has: (n) => ['site-assign', 'site-unassign', 'site-reopen', 'site-removed', 'false-alarm'].includes(n.kind) },
+    { key: 'admin', label: 'Admin', has: (n) => n.kind === 'signup' || /^suggestion/.test(n.kind) },
+  ];
+  let notifTab = 'all';
+
+  function notifList(p) {
+    const items = state.notifs.items.filter((n) => (NOTIF_TABS.find((t) => t.key === notifTab) || NOTIF_TABS[0]).has(n));
+    const body = $('.np-body', p);
+    body.innerHTML = items.length ? items.map((n) => `
+      <a class="np-item" href="${esc(notifLink(n))}">${avatar(n.by, 26)}
+        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : ''}</div>
+        <div class="small muted np-text">${esc(n.text || '')}</div><div class="small faint">${esc(fmtFull(n.at))}</div></div></a>`).join('')
+      : `<div class="empty small">${notifTab === 'all' ? 'No notifications yet.' : 'Nothing here. Try <b>All</b>.'}</div>`;
+  }
+
   function toggleNotifs() {
     const ex = $('.notif-panel'); if (ex) return ex.remove();
     const p = document.createElement('div'); p.className = 'notif-panel panel';
     const ds = deskState();
-    p.innerHTML = `<div class="np-head"><b>Notifications</b></div>` + (ds === 'default' ? `<div class="np-desk">🔔 Get desktop alerts when this app is minimized <button class="btn sm primary" id="npDesk">Turn on</button></div>`
-      : ds === 'denied' ? `<div class="np-desk faint small">Desktop alerts are blocked in this browser's site settings. You'll still see everything here.</div>` : '') + (state.notifs.items.length ? state.notifs.items.map((n) => `
-      <a class="np-item" href="${esc(notifLink(n))}">${avatar(n.by, 26)}
-        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : ''}</div>
-        <div class="small muted np-text">${esc(n.text || '')}</div><div class="small faint">${esc(fmtFull(n.at))}</div></div></a>`).join('') : '<div class="empty small">No notifications yet.</div>');
+    const count = (t) => state.notifs.items.filter(t.has).length;
+    p.innerHTML = `<div class="np-head"><b>Notifications</b></div>`
+      + (ds === 'default' ? `<div class="np-desk">🔔 Get desktop alerts when this app is minimized <button class="btn sm primary" id="npDesk">Turn on</button></div>`
+        : ds === 'denied' ? `<div class="np-desk faint small">Desktop alerts are blocked in this browser's site settings. You'll still see everything here.</div>` : '')
+      + `<div class="np-tabs"><span class="chips">${NOTIF_TABS.filter((t) => t.key === 'all' || count(t)).map((t) =>
+          `<button class="chipbtn ${notifTab === t.key ? 'active' : ''}" data-nt="${t.key}">${esc(t.label)}${t.key === 'all' ? '' : ` <span class="tcount">${count(t)}</span>`}</button>`).join('')}</span></div>`
+      + `<div class="np-body"></div>`;
     document.body.appendChild(p);
+    notifList(p);
+    $$('[data-nt]', p).forEach((b) => (b.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      notifTab = b.dataset.nt;
+      $$('[data-nt]', p).forEach((x) => x.classList.toggle('active', x.dataset.nt === notifTab));
+      notifList(p);
+    }));
     const nd = $('#npDesk', p); if (nd) nd.onclick = (e) => { e.preventDefault(); askDesktop(); };
     p.addEventListener('click', (e) => { if (e.target.closest('a')) p.remove(); });
     setTimeout(() => document.addEventListener('mousedown', function h(e) { if (!p.contains(e.target) && !e.target.closest('#btnBell')) { p.remove(); document.removeEventListener('mousedown', h); } }), 0);
@@ -2721,7 +2753,7 @@
     bindComments(body, s, siteComposer);
   }
 
-  const ACT_ICON = { bi: '🏷', verify: '🌐', rename: '✏️', disable: '🚫', enable: '✅', allow: '👍', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
+  const ACT_ICON = { slack: '💬', bi: '🏷', verify: '🌐', rename: '✏️', disable: '🚫', enable: '✅', allow: '👍', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
   function renderActivityTab(body, s) {
     const act = s.activity || [];
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {
@@ -3049,6 +3081,80 @@
    * Switching the Duda connection on. Duda lets us subscribe through its own API with the
    * credentials the app already has, so this is a button rather than a support ticket.
    */
+  /**
+   * Who is one of us, taken from Slack.
+   *
+   * Deciding by email domain breaks the moment a teammate comments from a personal address, and it
+   * is exactly those comments that then look like a client waiting for an answer. Slack already
+   * knows the answer, so the workspace is read once and kept.
+   */
+  async function openSlackTeam() {
+    modal(`<header><h2>Who is on the team</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body" id="stBody"><div class="empty small">Checking…</div></div>
+      <footer><button class="btn" data-close>Close</button></footer>`, { wide: true });
+    const draw = async (data) => {
+      let d = data;
+      if (!d) { try { d = await api('/api/comments?op=slack'); } catch (e) { $('#stBody').innerHTML = `<div class="note bad">${esc(e.message)}</div>`; return; } }
+      const r = d.roster;
+      $('#stBody').innerHTML = `
+        <div class="panel panel-pad" style="margin-bottom:12px">
+          <h3 style="margin:0 0 4px">Ask Duda</h3>
+          <div class="small muted">Duda knows exactly who is staff and who is a customer, and it is the best answer there is — but it has no way to list everyone, only to answer about one person at a time. So this asks about <b>every address that has ever left a comment</b>, which is the same thing arrived at from the other end.</div>
+          <div id="dpOut" class="small" style="margin-top:8px"></div>
+          <p style="margin:10px 0 0"><button class="btn primary" id="dpGo">Ask Duda about everyone who has commented</button></p>
+        </div>
+        ${!d.slack ? `<div class="note unk"><b>Slack isn't connected to this app yet.</b> Once it is, this reads the workspace and uses it to tell your team's comments from the client's.</div>`
+        : `<div class="panel panel-pad" style="margin-bottom:12px">
+            <h3 style="margin:0 0 4px">${r ? `✅ ${r.count} teammate${r.count === 1 ? '' : 's'} from Slack` : '○ Not read yet'}</h3>
+            <div class="small muted">${r ? `Read by ${esc(r.byName || 'an admin')} ${esc(ago(r.at))}.` : 'Nobody has read the Slack workspace yet.'}
+              A comment from anyone on this list counts as <b>one of us</b>, whatever address they wrote from${r && r.guests ? `. ${r.guests} Slack guest${r.guests === 1 ? '' : 's'} ${r.guests === 1 ? 'is' : 'are'} deliberately left as <b>${r.guests === 1 ? 'a client' : 'clients'}</b> — a client invited into a shared channel is a Slack member too` : ''}.</div>
+            <p style="margin:10px 0 0"><button class="btn primary" id="stSync">${r ? 'Read Slack again' : 'Read the Slack workspace'}</button>
+              ${r ? ' <button class="btn ghost danger" id="stForget">Forget it</button>' : ''}</p>
+          </div>
+          ${r && r.team.length ? `<details ${r.team.length > 12 ? '' : 'open'}><summary class="small">Counted as our team (${r.team.length})</summary>
+            <ul class="allow-list small">${r.team.map((u) => `<li><b>${esc(u.name)}</b> <span class="faint">${esc(u.email)}</span></li>`).join('')}</ul></details>` : ''}
+          ${r && r.guestList && r.guestList.length ? `<details><summary class="small">Slack guests, treated as clients (${r.guestList.length})</summary>
+            <div class="small muted">Guests are usually the clients themselves. If one of these is really a teammate, use <b>not the client?</b> beside their comment instead.</div>
+            <ul class="allow-list small">${r.guestList.map((u) => `<li><b>${esc(u.name)}</b> <span class="faint">${esc(u.email)}</span></li>`).join('')}</ul></details>` : ''}
+          <p class="small faint" style="margin-top:10px">Anyone you've tagged by hand with <b>not the client?</b> keeps that, whatever Slack says.</p>`}`;
+      const dp = $('#dpGo'); const out = $('#dpOut');
+      if (dp) dp.onclick = async () => {
+        dp.disabled = true;
+        let from = 0; let guard = 0;
+        try {
+          for (;;) {
+            const r = await post('/api/comments', { op: 'dudaPeople', from });
+            if (r.done) {
+              out.innerHTML = `<div class="note good"><b>${r.staff.length} designer${r.staff.length === 1 ? '' : 's'}</b> and <b>${r.customers.length} customer${r.customers.length === 1 ? '' : 's'}</b> out of ${r.total} ${r.total === 1 ? 'person' : 'people'} who have commented.
+                ${r.pending ? `<br><span class="faint">${r.pending} still to ask about — click again to carry on, Duda is asked in batches.</span>` : ''}
+                ${r.nobody.length ? `<br><span class="faint">${r.nobody.length} ${r.nobody.length === 1 ? 'address has' : 'addresses have'} no Duda account at all; those stay clients unless you say otherwise.</span>` : ''}</div>
+                ${r.staff.length ? `<details open style="margin-top:8px"><summary>Duda staff — counted as our team (${r.staff.length})</summary><ul class="allow-list small">${r.staff.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></details>` : ''}
+                ${r.customers.length ? `<details style="margin-top:6px"><summary>Duda customers — counted as clients (${r.customers.length})</summary><ul class="allow-list small">${r.customers.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></details>` : ''}`;
+              cmt.sites = null; loadCommentSites(false);
+              break;
+            }
+            from = r.next;
+            out.innerHTML = `<div class="small faint">Reading comments… ${r.scanned} of ${r.of} websites</div>`;
+            if (++guard > 60) break;
+          }
+        } catch (e) { out.innerHTML = `<div class="note bad">${esc(e.message)}</div>`; }
+        dp.disabled = false; dp.textContent = 'Ask Duda again';
+      };
+      const sync = $('#stSync');
+      if (sync) sync.onclick = async () => {
+        sync.disabled = true; sync.textContent = 'Reading Slack…';
+        try { const got = await post('/api/comments', { op: 'slackSync' }); toast(`${got.roster.count} teammate${got.roster.count === 1 ? '' : 's'} read from Slack`); await draw(got); cmt.sites = null; loadCommentSites(false); }
+        catch (e) { toast(e.message); sync.disabled = false; sync.textContent = 'Try again'; }
+      };
+      const forget = $('#stForget');
+      if (forget) forget.onclick = async () => {
+        if (!confirm('Forget the Slack member list? Who counts as one of us goes back to email domains until you read it again.')) return;
+        try { await post('/api/comments', { op: 'slackForget' }); await draw({ slack: true, roster: null }); cmt.sites = null; loadCommentSites(false); } catch (e) { toast(e.message); }
+      };
+    };
+    draw();
+  }
+
   async function openDudaConn() {
     modal(`<header><h2>Duda connection</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body" id="dcBody"><div class="empty small">Checking…</div></div>
@@ -3116,6 +3222,25 @@
     draw();
   }
 
+  /**
+   * How long a client has actually been waiting, in whole days and hours.
+   *
+   * "2h ago" and "3 days ago" are the same word in the rest of the app, but here the difference is
+   * the whole point: on Monday morning the question is who has been waiting longest, and a website
+   * sitting on three days has to look worse than one sitting on three hours.
+   */
+  function waitAge(iso) {
+    if (!iso) return '';
+    const h = Math.floor((Date.now() - new Date(iso).getTime()) / 3600000);
+    if (h < 1) return 'under an hour';
+    if (h < 48) return `${h}h`;
+    return `${Math.floor(h / 24)} days`;
+  }
+  const waitClass = (iso) => {
+    const h = iso ? (Date.now() - new Date(iso).getTime()) / 3600000 : 0;
+    return h >= 72 ? 'wait-3' : h >= 48 ? 'wait-2' : 'sev-critical';
+  };
+
   function renderComments() {
     if (!cmt.sites && !cmt.loading && !cmt.error) { loadCommentSites(true); }
     const q = cmt.q.trim().toLowerCase();
@@ -3133,13 +3258,26 @@
 
     $('#view').innerHTML = `<div class="page-head"><div><h1>Duda comments</h1>
         <div class="muted">Comments left in the <b>Duda editor</b> — by clients on their draft, or by us. Every website in the account, published or not, on the Audits list or not. <a href="#/help/comments-duda">How this works</a></div></div>
-        <div style="display:flex;gap:8px">${state.me.role === 'admin' ? '<button class="btn" id="cmtConn">⚙ Duda connection</button>' : ''}
+        <div style="display:flex;gap:8px">${state.me.role === 'admin' ? '<button class="btn" id="cmtTeam" title="Who counts as one of us when a comment arrives">👥 Who is on the team</button><button class="btn" id="cmtConn">⚙ Duda connection</button>' : ''}
         <button class="btn" id="cmtRefresh" ${cmt.loading ? 'disabled' : ''}>${cmt.loading ? 'Loading…' : '↻ Refresh'}</button></div></div>
       ${cmt.error ? `<div class="note bad">${esc(cmt.error)}</div>` : ''}
       ${!all.length && !cmt.loading ? `<div class="panel panel-pad"><h2>Nothing has arrived yet</h2>
         <p class="muted">Comments appear here by themselves once Duda is sending them. Nothing needs to be switched on for each website.</p>
         <p class="small faint">Only comments made from the day this was switched on can appear — there is no way to fetch older ones.</p>
         ${state.me.role === 'admin' ? '<p style="margin:10px 0 0"><button class="btn primary" id="cmtConn2">⚙ Set up the Duda connection</button></p>' : ''}</div>` : `
+      ${(() => {
+        // Monday morning: how bad is it, and who has been waiting longest. One line, before anything else.
+        const w = all.filter((s) => s.waiting);
+        if (!w.length) return '';
+        const worst = w.slice().sort((a, b) => String(a.oldest).localeCompare(String(b.oldest)))[0];
+        const days = worst.oldest ? Math.floor((Date.now() - new Date(worst.oldest).getTime()) / 86400000) : 0;
+        const total = w.reduce((n, s) => n + s.waiting, 0);
+        return `<div class="note ${days >= 2 ? 'bad' : 'unk'} cmt-triage">
+          <b>${total} client comment${total === 1 ? '' : 's'} on ${w.length} website${w.length === 1 ? '' : 's'} ${total === 1 ? 'is' : 'are'} waiting for an answer.</b>
+          Longest: <b>${esc(worst.name || worst.id)}</b>, ${esc(waitAge(worst.oldest))} — since ${esc(fmtFull(worst.oldest))}.
+          <button class="linkbtn" data-cf="waiting">Work through them, oldest first ↓</button>
+        </div>`;
+      })()}
       <div class="cmt-wrap">
         <div class="panel cmt-sites">
           <div class="toolbar">
@@ -3157,7 +3295,7 @@
                 <span class="small faint">${a ? 'In Audits' : s.published ? 'Published · not in Audits' : 'Draft · not in Audits'}${s.last ? ' · ' + esc(ago(s.last)) : ''}</span>
               </span>
               <span class="cmt-counts">
-                ${s.waiting ? `<span class="badge sev-critical" title="A client is waiting for an answer">${s.waiting} waiting</span>` : ''}
+                ${s.waiting ? `<span class="badge ${waitClass(s.oldest)}" title="Longest unanswered client comment: ${esc(fmtFull(s.oldest))}">${s.waiting} waiting · ${esc(waitAge(s.oldest))}</span>` : ''}
                 ${s.unread ? `<span class="badge sev-warning">${s.unread} new</span>` : s.open ? `<span class="small muted">${s.open} open</span>` : s.total ? `<span class="small faint">${s.total} resolved</span>` : '<span class="small faint">no comments</span>'}
               </span>
             </button></li>`; }).join('')}</ul>` : `<div class="empty small">${cmt.loading ? 'Loading…' : 'Nothing matches.'}</div>`}
@@ -3217,6 +3355,7 @@
       </div>`}`;
 
     const r = $('#cmtRefresh'); if (r) r.onclick = () => loadCommentSites(false);
+    const ct = $('#cmtTeam'); if (ct) ct.onclick = openSlackTeam;
     const cc = $('#cmtConn'); if (cc) cc.onclick = openDudaConn;
     const cc2 = $('#cmtConn2'); if (cc2) cc2.onclick = openDudaConn;
     const qi = $('#cmtQ'); if (qi) qi.oninput = () => { const at = qi.selectionStart; cmt.q = qi.value; renderComments(); const n = $('#cmtQ'); if (n) { n.focus(); n.setSelectionRange(at, at); } };

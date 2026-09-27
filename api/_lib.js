@@ -277,6 +277,43 @@ async function slackUserId(email) {
   if (r.ok || r.error === 'users_not_found') await redis(['SET', key, id || '-', 'EX', id ? 30 * 86400 : 86400]);
   return id;
 }
+/**
+ * Everyone in the Slack workspace, with their email.
+ *
+ * The app has to decide whether a Duda comment came from us or from the client, and it was guessing
+ * from email domains — which fails the moment a teammate comments from a personal address. Slack
+ * already holds the real answer: if they are in the workspace, they are one of us.
+ *
+ * Guests are deliberately kept separate. A client invited into a shared channel is a Slack member
+ * too, and counting them as team would silence exactly the comments this is meant to catch.
+ *
+ * Needs the bot scopes users:read and users:read.email.
+ */
+export async function slackMembers() {
+  if (!slackBotEnabled()) return { ok: false, error: 'not_configured' };
+  const team = []; const guests = [];
+  let cursor = '';
+  for (let page = 0; page < 8; page++) {
+    const r = await slackApi('users.list', Object.assign({ limit: 200 }, cursor ? { cursor } : {}));
+    if (!r.ok) return { ok: false, error: r.error || 'slack_error' };
+    (r.members || []).forEach((u) => {
+      if (u.deleted || u.is_bot || u.id === 'USLACKBOT') return;
+      const email = normEmail((u.profile && u.profile.email) || '');
+      if (!email) return;                                   // no email visible: nothing we can match on
+      const row = { email, name: (u.profile && (u.profile.real_name || u.profile.display_name)) || u.name || email, id: u.id };
+      if (u.is_restricted || u.is_ultra_restricted) guests.push(row); else team.push(row);
+    });
+    cursor = (r.response_metadata && r.response_metadata.next_cursor) || '';
+    if (!cursor) break;
+  }
+  return { ok: true, team, guests };
+}
+
+/** The saved Slack roster: who counts as one of us when a Duda comment arrives. */
+export async function slackRoster() {
+  try { const [raw] = await redis(['GET', P + 'slackroster']); return jparse(raw) || null; } catch (e) { return null; }
+}
+
 /** Slack workspace id + member id for a teammate, so the app can open a Slack DM with them. Cached (no Slack call on repeat). */
 export async function slackLink(email) {
   if (!slackBotEnabled()) return { ok: false, reason: 'not_configured' };

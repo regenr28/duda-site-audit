@@ -4,6 +4,33 @@
 
 export const NEWS = [
   {
+    id: '2026-09-27-triage', date: '2026-09-27', audience: 'all', tag: 'Comments',
+    title: 'Monday morning: who has been waiting longest',
+    what: 'The comments list was ordered by whatever came in last, which is the wrong question after a weekend. It now leads with <b>who has been waiting longest</b>. A line at the top says how many client comments are waiting and on how many websites, and names the worst one with the date — red once anyone has waited two days. The list is ordered oldest-wait first, and each website shows the wait in plain terms: <b>1 waiting · 4 days</b>, with the badge getting louder at two days and louder again at three.',
+    where: ['<b>Duda comments</b> — the line is above the list, before anything else.', '<b>Work through them, oldest first</b> filters to just the websites with someone waiting.', 'Weekends still do not count towards the wait, so a Friday comment is flagged on Monday, not Saturday.'],
+    link: '#/help/comments-duda', linkText: 'How comments work',
+  },
+  {
+    id: '2026-09-27-notif-tabs', date: '2026-09-27', audience: 'all', tag: 'Collaboration',
+    title: 'The bell is sorted into tabs',
+    what: 'Everything arrived in one list, so a client waiting for an answer sat between two finished scans. The bell now has tabs — <b>All</b>, <b>Duda comments</b>, <b>Mentions &amp; replies</b>, <b>Scans</b>, <b>Audits</b> and <b>Admin</b> — each with a count, and a tab only appears when there is something in it.',
+    where: ['Click the bell. <b>Duda comments</b> is the one to check first: a client waiting on an answer.', '<b>Mentions &amp; replies</b> is anything aimed at you personally.', 'Opening the bell still marks everything read, whichever tab you are on.'],
+  },
+  {
+    id: '2026-09-26-duda-staff', date: '2026-09-26', audience: 'all', tag: 'Comments',
+    title: 'Duda itself now says who is a designer',
+    what: 'Duda knows exactly who is <b>staff</b> and who is a <b>customer</b> — it is the best answer there is, better than Slack and far better than guessing at email domains. It just has no way to list everyone: you can only ask about one person at a time. So the app now asks, automatically, the first time an address turns up in a comment, and keeps the answer for a month. A designer commenting from a personal Gmail is recognised as one of us <b>with nothing to set up</b>. There is also a button that asks about <b>everyone who has ever commented</b> at once, which arrives at your list of designers from the other end.',
+    where: ['Nothing to do — it works on its own from the next comment.', 'To see the whole picture: <b>Duda comments</b> → <b>👥 Who is on the team</b> → <b>Ask Duda about everyone who has commented</b>.', 'It lists who came back as staff, who as a customer, and who has no Duda account; Duda is asked in batches, so click again to carry on.', 'Slack is still worth reading in — it catches the people Duda has never heard of, like someone who works on the sites but has no Duda login.'],
+    link: '#/help/comments-duda', linkText: 'How comments work',
+  },
+  {
+    id: '2026-09-26-slack-team', date: '2026-09-26', audience: 'all', tag: 'Comments',
+    title: 'Slack decides who is one of us',
+    what: 'Every Duda comment is marked <b>client</b> or <b>team</b>, and only a client left waiting ever raises an alert. Until now that was guessed from email domains, which breaks the moment a teammate comments from a personal Gmail — and that comment then looks like a client waiting for an answer. There is now a <b>Team from Slack</b> button on the Duda comments page: it reads your Slack workspace once and keeps the list, so anyone in it counts as team whatever address they write from. <b>Slack guests are deliberately left as clients</b> — a client invited into a shared channel is a Slack member too, and counting them as team would silence exactly the comments this is here to catch. Bots and deactivated accounts are skipped, and <b>not the client?</b> still overrides everything.',
+    where: ['<b>Duda comments</b> → <b>👥 Team from Slack</b> → <b>Read the Slack workspace</b>. Admins only, once for the whole team.', 'The panel lists who was counted as team and who was left as a guest, so you can check before trusting it.', 'Somebody joined or left? Open it again and <b>Read Slack again</b>.', 'It needs the Slack app to have <b>users:read</b> and <b>users:read.email</b>; if they are missing the panel says which to add.'],
+    link: '#/help/comments-duda', linkText: 'How comments work',
+  },
+  {
     id: '2026-09-26-clarification', date: '2026-09-26', audience: 'all', tag: 'Audits',
     title: 'Asking a question now actually asks somebody',
     what: '"For clarification" was a status you could park an item on and nobody would ever know. Picking it now <b>asks what the question is</b>, and the question is posted as a comment on the item so the answer has somewhere to land. Type <b>@</b> to tag a member, or the new <b>@Admins</b> to reach every admin in one go \u2014 everyone tagged gets it on the bell, on their desktop and in Slack. @Admins is worked out when you send it, so it always means whoever is an admin today. And a website with a question outstanding now says so on the <b>Audits</b> list: <b>\u2753 N waiting on an answer</b> under its name, with the <b>For clarification</b> tile at the top working as a filter.',

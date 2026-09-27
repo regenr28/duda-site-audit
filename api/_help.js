@@ -204,6 +204,16 @@ export const HELP_SECTIONS = [
 <li><b>Desktop notifications</b>: allow them when asked, and you'll get alerts even when the tab is in the background.</li>
 <li><b>Slack</b> (when connected): the same updates as a Slack message from <b>Site Auditor</b>. Turn it on or off in your account settings.</li>
 <li><b>Someone is on this website</b>: when you open a website a teammate is working on (or they open yours), a pop-up tells you, and the bar under the title shows "… is also here" and which item they're on. Talk to them so you don't fix the same item twice.</li>
+</ul>
+<h3>Finding one thing in the bell</h3>
+<p>Everything lands in one list, which gets hard to read once there's a lot in it. The bell is split into tabs, and a tab only appears when there's something in it:</p>
+<ul>
+<li><b>All</b> — everything, newest first.</li>
+<li><b>Duda comments</b> — a client has been waiting for an answer. The one to check first.</li>
+<li><b>Mentions & replies</b> — someone tagged you, replied to you, or assigned you an item.</li>
+<li><b>Scans</b> — a scan or rescan finished.</li>
+<li><b>Audits</b> — a website assigned to you, taken off you, reopened or removed, and False alarms.</li>
+<li><b>Admin</b> — sign-ups waiting for approval, and feature suggestions.</li>
 </ul>`,
   },
   {
@@ -234,7 +244,37 @@ export const HELP_SECTIONS = [
 <ul>
 <li><b>Reading only.</b> Replying and resolving still happen in the Duda editor — there is no way to write a comment from here. When someone resolves one there, it turns green here within a second.</li>
 <li><b>No history.</b> Only comments made from the day this was switched on can appear. Anything said before that cannot be fetched.</li>
-</ul>`,
+</ul>
+<h3>Who counts as one of us</h3>
+<p>Every comment is marked <b>client</b> or <b>team</b>, and only a client's unanswered comment ever raises an alert. Getting that right matters, and guessing from email domains fails the moment a teammate comments from a personal address — which is exactly the comment that then looks like a client waiting for an answer.</p>
+<p>Four things are checked, best answer first:</p>
+<ol>
+<li><b>Your own correction.</b> <b>not the client?</b> beside any comment wins over everything else, for good.</li>
+<li><b>They have an account in this app.</b></li>
+<li><b>Duda says so.</b> Duda knows exactly who is <b>staff</b> and who is a <b>customer</b>, and it's asked automatically the first time an address turns up — nothing to set up. The answer is kept for a month.</li>
+<li><b>Your Slack workspace</b>, if you've read it in (below). This is what catches someone Duda has never heard of.</li>
+</ol>
+<p>Only if none of those know the person does it fall back to the email domain.</p>
+<h3>Ask Duda about everyone</h3>
+<p>Duda has no way to list the people in an account — you can only ask about one at a time. <b>👥 Who is on the team → Ask Duda about everyone who has commented</b> does exactly that: it walks every address that has ever left a comment and asks Duda about each, which arrives at the same list from the other end. It shows who came back as staff, who came back as a customer, and who has no Duda account at all. Duda is asked in batches, so on a big account click it again to carry on.</p>
+<h3>Reading Slack</h3>
+<ul>
+<li><b>👥 Who is on the team</b> (admins, on the Duda comments page) reads your Slack workspace once and keeps the list. Anyone in it counts as team, whatever address they comment from.</li>
+<li><b>Slack guests are deliberately left as clients.</b> A client invited into a shared channel is a Slack member too, and counting them as team would silence the comments this is here to catch. The panel names them so you can check.</li>
+<li>Bots, deactivated accounts and anyone whose email Slack won't share are skipped.</li>
+<li><b>not the client?</b> beside any comment still wins over everything, including Slack. Use it for the odd exception.</li>
+<li>It's a snapshot, not a live feed — click <b>Read Slack again</b> after someone joins or leaves.</li>
+</ul>
+<p class="small muted">Needs the Slack app to have the <b>users:read</b> and <b>users:read.email</b> permissions. If they're missing, the panel says so.</p>
+<h3>Knowing what to answer first</h3>
+<p>On a busy Monday the question isn't what came in last, it's <b>who has been waiting longest</b>. The page answers that before anything else:</p>
+<ul>
+<li>A line at the top says how many client comments are waiting, on how many websites, and names the one that has waited longest with the date it came in. It turns red once anyone has been waiting two days or more.</li>
+<li>The list is <b>ordered by longest wait first</b>. Websites nobody is waiting on come after, most recent first.</li>
+<li>Each waiting website shows <b>how long</b>: "1 waiting · 4 days". The badge gets louder at two days, and louder again at three.</li>
+<li><b>Work through them, oldest first</b> on that top line filters the list to just those.</li>
+</ul>
+<p class="small muted">Weekends don't count towards the wait, so a Friday-evening comment is flagged on Monday rather than on Saturday — which is why a website can hold a comment from Friday and still not be listed as waiting.</p>`,
   },
   {
     id: 'ownership', group: 'Collaboration', title: 'Who owns an audit (and how your work is protected)', audience: 'all',

@@ -9,8 +9,8 @@
 // except one thing: an item nobody has touched yet, whose value a CLIENT has commented about, is
 // moved to "For clarification", because there is a question outstanding and it should not sit in
 // the default list looking like ordinary work.
-import { redis, P, jparse, unescapeHtml, listUsers } from './_lib.js';
-import { sideTest } from './comments.js';
+import { redis, P, jparse, unescapeHtml, listUsers, slackRoster } from './_lib.js';
+import { sideTest, dudaTypes } from './comments.js';
 
 const CONTACT_CODES = /^(TEL_|PHONE_|MAILTO_|EMAIL_|SMS_|COPYRIGHT_NAME|TEXT_OTHER_BUSINESS|SCHEMA_(PHONE|EMAIL|NAME|ADDRESS)|MAP_ADDRESS|SOCIAL_)/;
 const MAX_PER_ITEM = 3;
@@ -64,7 +64,9 @@ export async function crossCheck(findings, dudaSiteId) {
       const [conv, over] = await redis(['HGETALL', P + 'conv:' + dudaSiteId], ['HGETALL', P + 'cmtwho']);
       const overrides = {};
       for (let i = 0; over && i < over.length; i += 2) overrides[over[i]] = over[i + 1];
-      const isClient = sideTest(await listUsers(), overrides);
+      const authors = [];
+      threads.forEach((t) => (t.comments || []).forEach((c) => { if (c.by) authors.push(c.by); }));
+      const isClient = sideTest(await listUsers(), overrides, await slackRoster(), await dudaTypes(authors, 6));
       const threads = [];
       for (let i = 1; conv && i < conv.length; i += 2) { const c = jparse(conv[i]); if (c) threads.push(c); }
       threads.forEach((t) => {

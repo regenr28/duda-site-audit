@@ -151,6 +151,10 @@ export default async function handler(req, res) {
       })]);
       const [rawW] = await redis(['HGET', P + 'watch', siteId]);
       cmds.push(['HSET', P + 'watch', siteId, JSON.stringify(watchPatch(jparse(rawW), siteId, at, { lastComment: at }))]);
+      // Everyone who has ever commented, in one place. Duda has no endpoint that lists the people in
+      // an account, but it will answer about any one of them — so the list of who to ask about is
+      // built here, from whoever actually turns up.
+      if (by) cmds.push(['HSET', P + 'cmtauthors', by, at]);
       continue;
     }
 

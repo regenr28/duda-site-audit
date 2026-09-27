@@ -11,11 +11,12 @@
 //
 // Replying and resolving still happen in the Duda editor — there is no API to write a comment.
 // When somebody resolves one there, Duda tells us and it turns green here.
-import { redis, P, requireUser, readBody, jparse, now, listUsers, notifyUser, fetchWithTimeout, unescapeHtml, savedEditorHost } from './_lib.js';
+import { redis, P, requireUser, readBody, jparse, now, listUsers, notifyUser, fetchWithTimeout, unescapeHtml, savedEditorHost, slackMembers, slackRoster, slackBotEnabled, globalLog } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const WAIT_HOURS = Number(process.env.COMMENT_WAIT_HOURS || 24);
 const NAME_LOOKUPS = 8;   // Duda calls per request, so a first load never crawls
+const DUDA_LOOKUPS = 10;  // account-type lookups per request, same reason
 
 function pairs(arr, json) {
   const o = {};
@@ -40,6 +41,48 @@ function cachedName(v) {
 }
 const nameEntry = (name, published) => JSON.stringify({ n: name || '-', p: published || '' });
 
+/**
+ * Is this email a Duda STAFF account, or a customer?
+ *
+ * Duda has no endpoint that lists everyone in the account — you can only look up one account at a
+ * time — but the answer it gives is the authoritative one: account_type is STAFF for the people who
+ * build sites and CUSTOMER for the people who own them. That is precisely the line the comments
+ * page needs to draw, so every email we meet gets asked about once and the answer is kept.
+ *
+ * Cached for a month, and a "no such account" is cached for a day so an unknown address does not
+ * cost a Duda call on every page load.
+ */
+async function dudaAccountType(email) {
+  const e = String(email || '').toLowerCase().trim();
+  if (!e) return '';
+  const key = P + 'dudaacct:' + e;
+  try { const [hit] = await redis(['GET', key]); if (hit) return hit === '-' ? '' : hit; } catch (x) { /* ask Duda instead */ }
+  let type = '';
+  try {
+    const a = await duda('/accounts/' + encodeURIComponent(e));
+    type = String((a && a.account_type) || '').toUpperCase();
+  } catch (x) {
+    if (!/ 404/.test(String(x.message || ''))) return '';        // a real failure: don't cache a guess
+  }
+  try { await redis(['SET', key, type || '-', 'EX', type ? 30 * 86400 : 86400]); } catch (x) { /* fine */ }
+  return type;
+}
+
+/**
+ * Ask Duda about the addresses we have not asked about yet, a few at a time so a page load never
+ * turns into a crawl. Everything already known comes back from the cache for free.
+ */
+export async function dudaTypes(emails, budget = DUDA_LOOKUPS) {
+  const out = {};
+  const todo = [];
+  for (const raw of [...new Set(emails.filter(Boolean).map((x) => String(x).toLowerCase().trim()))]) {
+    try { const [hit] = await redis(['GET', P + 'dudaacct:' + raw]); if (hit) { out[raw] = hit === '-' ? '' : hit; continue; } } catch (x) { /* ask */ }
+    todo.push(raw);
+  }
+  for (const e of todo.slice(0, budget)) out[e] = await dudaAccountType(e);
+  return out;
+}
+
 const domainsOf = (v) => String(v || '').split(',').map((s) => s.trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
 
 /**
@@ -47,14 +90,24 @@ const domainsOf = (v) => String(v || '').split(',').map((s) => s.trim().toLowerC
  * they are on, so: anyone with an account here, or an address at one of the agency's domains, is us.
  * Anyone else is the client. An admin can correct any address, and the correction wins.
  */
-export function sideTest(users, overrides) {
+export function sideTest(users, overrides, roster, dudaType) {
   const mine = new Set(users.map((u) => String(u.email || '').toLowerCase()));
   const doms = [...domainsOf(process.env.ALLOWED_EMAIL_DOMAINS), ...domainsOf(process.env.AGENCY_EMAIL_DOMAINS)];
+  // Anyone in the Slack workspace is one of us, whatever address they comment from. Slack guests are
+  // deliberately NOT team — a client invited into a shared channel is a member too.
+  const slack = new Set(((roster && roster.team) || []).map((x) => String(x.email || '').toLowerCase()));
+  const types = dudaType || {};
+  // Best answer first, guess last:
+  //   1. what a person told us      2. they have an account here      3. Duda says STAFF or CUSTOMER
+  //   4. they are in our Slack      5. the address looks like ours
   return (email) => {
     const e = String(email || '').toLowerCase().trim();
     if (!e) return 'team';
     if (overrides[e]) return overrides[e] === 'team' ? 'team' : 'client';
     if (mine.has(e)) return 'team';
+    if (types[e] === 'STAFF') return 'team';
+    if (types[e] === 'CUSTOMER') return 'client';     // Duda is certain, so stop guessing
+    if (slack.has(e)) return 'team';
     return doms.includes(e.split('@')[1] || '') ? 'team' : 'client';
   };
 }
@@ -113,7 +166,10 @@ export default async function handler(req, res) {
           ['HGETALL', P + 'cmtwho'], ['HGETALL', P + 'dudanames'], ['GET', P + 'ver:cmt']);
         const sites = pairs(watch, true); const rows = pairs(idx, true);
         const mySeen = pairs(seen); const nameMap = pairs(names);
-        const isClient = sideTest(await listUsers(), pairs(over));
+        // Who last spoke on each website decides whether anyone is waiting, so those are the
+        // addresses worth asking Duda about.
+        const lastBys = Object.values(rows).map((r) => r && r.lb).filter(Boolean);
+        const isClient = sideTest(await listUsers(), pairs(over), await slackRoster(), await dudaTypes(lastBys));
         const nameOf = (id) => (sites[id] && sites[id].name) || cachedName(nameMap[id]);
 
         // Fill in a few missing business names from Duda, so the list reads as names not IDs.
@@ -141,20 +197,29 @@ export default async function handler(req, res) {
         const per = {};
         Object.values(rows).forEach((r) => {
           if (!r || !r.s) return;
-          const p = per[r.s] || (per[r.s] = { total: 0, open: 0, unread: 0, waiting: 0, last: '' });
+          const p = per[r.s] || (per[r.s] = { total: 0, open: 0, unread: 0, waiting: 0, last: '', oldest: '' });
           p.total++;
           if (r.st !== 'resolved') p.open++;
           if (r.la > (mySeen[r.s] || '')) p.unread++;
-          if (r.st !== 'resolved' && r.lb && isClient(r.lb) === 'client' && Date.now() > answerDueAt(r.la)) p.waiting++;
+          if (r.st !== 'resolved' && r.lb && isClient(r.lb) === 'client' && Date.now() > answerDueAt(r.la)) {
+            p.waiting++;
+            // The oldest unanswered client comment is what decides where this website sits in the
+            // queue: on Monday morning the question is "who has been waiting longest", not "what
+            // came in last".
+            if (!p.oldest || r.la < p.oldest) p.oldest = r.la;
+          }
           if (r.la > p.last) p.last = r.la;
         });
 
         const out = Object.values(sites).map((w) => Object.assign({
           id: w.id, name: nameOf(w.id), published: w.published || '', domain: w.domain || '',
           firstSeen: w.firstSeen || '', lastEvent: w.lastEvent || '', gone: !!w.gone,
-        }, per[w.id] || { total: 0, open: 0, unread: 0, waiting: 0, last: '' }));
-        out.sort((a, b) => String(b.last || b.lastEvent).localeCompare(String(a.last || a.lastEvent)));
-        return res.status(200).json({ sites: out, ver: String(ver || 0) });
+        }, per[w.id] || { total: 0, open: 0, unread: 0, waiting: 0, last: '', oldest: '' }));
+        // Anybody waiting comes first, longest wait at the top. Everything else by what moved last.
+        out.sort((a, b) => (b.waiting ? 1 : 0) - (a.waiting ? 1 : 0)
+          || (a.waiting && b.waiting ? String(a.oldest).localeCompare(String(b.oldest)) : 0)
+          || String(b.last || b.lastEvent).localeCompare(String(a.last || a.lastEvent)));
+        return res.status(200).json({ sites: out, ver: String(ver || 0), waitHours: WAIT_HOURS });
       }
 
       if (op === 'threads') {
@@ -177,7 +242,9 @@ export default async function handler(req, res) {
             if (cmds.length) await redis(...cmds);
           } catch (e) { /* names are a nicety, the comments still read fine */ }
         }
-        const isClient = sideTest(await listUsers(), pairs(over));
+        const authors = [];
+        threads.forEach((t) => (t.comments || []).forEach((c) => { if (c.by) authors.push(c.by); }));
+        const isClient = sideTest(await listUsers(), pairs(over), await slackRoster(), await dudaTypes(authors));
         const since = pairs(seen)[siteId] || '';
         const out = threads.map((t) => ({
           uuid: t.u, num: t.num || 0, device: t.device || '', status: t.status || 'open', partial: !!t.partial,
@@ -190,6 +257,10 @@ export default async function handler(req, res) {
         return res.status(200).json({ site: siteId, threads: out, waitHours: WAIT_HOURS });
       }
 
+      if (op === 'slack') {
+        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        return res.status(200).json(slim(await slackRoster()));
+      }
       if (op === 'log') {
         // Owner-only: did anything actually arrive? Useful while Duda is being set up.
         if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
@@ -215,8 +286,78 @@ export default async function handler(req, res) {
       else await redis(['HDEL', P + 'cmtwho', email]);
       return res.status(200).json({ ok: true });
     }
+    if (b.op === 'slackSync') {
+      // Read the Slack workspace once and keep the result. From then on, a comment from a teammate
+      // is recognised by who they are rather than by which domain their address happens to use.
+      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      if (!slackBotEnabled()) return res.status(400).json({ error: 'Slack is not connected yet.' });
+      const r = await slackMembers();
+      if (!r.ok) {
+        const why = r.error === 'missing_scope' ? 'Slack needs two more permissions before it can list people: users:read and users:read.email. Add them to the app and reinstall it to the workspace.'
+          : r.error === 'not_configured' ? 'Slack is not connected yet.'
+          : `Slack said: ${r.error}`;
+        return res.status(400).json({ error: why });
+      }
+      const rec = { at: now(), by: me.email, byName: me.name, team: r.team, guests: r.guests };
+      await redis(['SET', P + 'slackroster', JSON.stringify(rec)]);
+      await globalLog({ type: 'slack', by: me.email, byName: me.name, text: `read the Slack workspace: ${r.team.length} teammate${r.team.length === 1 ? '' : 's'}${r.guests.length ? `, ${r.guests.length} guest${r.guests.length === 1 ? '' : 's'} left as clients` : ''}` });
+      return res.status(200).json(slim(rec));
+    }
+    if (b.op === 'dudaPeople') {
+      // Who actually works in this Duda account.
+      //
+      // Duda has no endpoint that lists the people in an account — you can only ask about one at a
+      // time — so the list of who to ask about comes from who has turned up: every address that has
+      // ever left a comment. Each one is asked about once, Duda says STAFF or CUSTOMER, and that is
+      // the answer from then on. Older comments predate the author index, so the first run also
+      // walks the conversations, a page of websites at a time.
+      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      const from = Math.max(0, Number(b.from) || 0);
+      const PAGE = 120;
+      const [watch] = await redis(['HGETALL', P + 'watch']);
+      const siteIds = []; for (let i = 0; watch && i < watch.length; i += 2) siteIds.push(watch[i]);
+      const slice = siteIds.slice(from, from + PAGE);
+      const found = [];
+      if (slice.length) {
+        const convs = await redis(...slice.map((id) => ['HGETALL', P + 'conv:' + id]));
+        convs.forEach((rows) => {
+          for (let i = 1; rows && i < rows.length; i += 2) {
+            const t = jparse(rows[i]);
+            (t && t.comments || []).forEach((c) => { if (c.by) found.push(String(c.by).toLowerCase()); });
+          }
+        });
+      }
+      if (found.length) await redis(['HSET', P + 'cmtauthors', ...[...new Set(found)].flatMap((e) => [e, now()])]);
+      const done = from + PAGE >= siteIds.length;
+      if (!done) return res.status(200).json({ done: false, next: from + PAGE, of: siteIds.length, scanned: from + slice.length });
+
+      // Everyone we know of, asked about in batches so one click never stalls on hundreds of calls.
+      const [authors] = await redis(['HGETALL', P + 'cmtauthors']);
+      const emails = []; for (let i = 0; authors && i < authors.length; i += 2) emails.push(authors[i]);
+      const types = await dudaTypes(emails, 40);
+      const unknown = emails.filter((e) => types[e] === undefined);
+      const staff = emails.filter((e) => types[e] === 'STAFF');
+      const customers = emails.filter((e) => types[e] === 'CUSTOMER');
+      const nobody = emails.filter((e) => types[e] === '');
+      await globalLog({ type: 'slack', by: me.email, byName: me.name, text: `asked Duda about ${emails.length - unknown.length} comment author${emails.length - unknown.length === 1 ? '' : 's'}: ${staff.length} staff, ${customers.length} customers` });
+      return res.status(200).json({ done: true, total: emails.length, staff, customers, nobody, pending: unknown.length });
+    }
+    if (b.op === 'slackForget') {
+      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      await redis(['DEL', P + 'slackroster']);
+      await globalLog({ type: 'slack', by: me.email, byName: me.name, text: 'cleared the Slack member list' });
+      return res.status(200).json({ ok: true, roster: null });
+    }
     return res.status(400).json({ error: 'Unknown op' });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }
+}
+
+/** The roster as the page needs it: who and how many, not a copy of the workspace. */
+function slim(rec) {
+  if (!rec) return { roster: null, slack: slackBotEnabled() };
+  return { slack: true, roster: { at: rec.at, byName: rec.byName || '', count: (rec.team || []).length, guests: (rec.guests || []).length,
+    team: (rec.team || []).slice(0, 200).map((x) => ({ email: x.email, name: x.name })),
+    guestList: (rec.guests || []).slice(0, 60).map((x) => ({ email: x.email, name: x.name })) } };
 }
