@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-28-due-in', date: '2026-09-28', audience: 'all', tag: 'Comments',
+    title: 'Dates say the day, and "ours to answer" says when',
+    what: 'Two small things that were costing you a calculation. <b>Every date now carries the day of the week</b> — "Sat, Sep 26, 12:01 AM" — because knowing something landed on a Saturday is half the explanation of why nothing has happened to it. And a client comment that is ours to answer but <b>not overdue yet</b> used to read "ours to answer · 70h", which looks like three days of neglect; it now reads <b>"ours to answer · due in 2h"</b>, with the full explanation on hover. Both mean the same thing — the client spoke last and the 24 hours excludes weekends — but one of them answers the question. The Slack digest also now says <b>overdue</b> rather than "unanswered", since that is what it counts.',
+    where: ['Anywhere a date is shown — Audits, comments, the activity log.', 'On a conversation: <b>waiting on us · 31h</b> is late, <b>ours to answer · due in 2h</b> is not late yet.', 'Hover either badge for when it came in and when it counts as overdue.'],
+    link: '#/help/comments-duda', linkText: 'How comments work',
+  },
+  {
     id: '2026-09-28-digest', date: '2026-09-28', audience: 'all', tag: 'Comments',
     title: 'One message per website, not one per comment',
     what: 'A client leaving twenty comments in a sitting used to mean <b>twenty Slack messages</b> once they went overdue — the fastest way to teach everyone to ignore Slack. It is now <b>one message per website</b>: the business name, how many are unanswered, how long the worst one has waited, then the five oldest listed with their ages and the rest counted. After that the website <b>goes quiet</b> and speaks again only when things are genuinely worse — more comments overdue, or the oldest crossing another day — and never more than once a day. The thinking: whoever picks up the 48-hour comment is looking at the rest anyway. And when more than five websites fall behind at once, it becomes a <b>single roll-up</b> rather than a message each.',

@@ -272,7 +272,8 @@ export const HELP_SECTIONS = [
 <li>A line at the top says how many client comments are waiting, on how many websites, and names the one that has waited longest with the date it came in. It turns red once anyone has been waiting two days or more.</li>
 <li>The list is <b>ordered by longest wait first</b>. Websites nobody is waiting on come after, most recent first.</li>
 <li>Each waiting website shows <b>how long</b>: "1 waiting · 4 days". The badge gets louder at two days, and louder again at three.</li>
-<li>Open a website and <b>every conversation says its own wait</b> too: <b>waiting on us · 31h</b> once it's overdue, or <b>ours to answer · 2h</b> when the client spoke last but the clock hasn't run out. Under three days it counts in hours, because "31h" lands harder than "1 day".</li>
+<li>Open a website and <b>every conversation says its own state</b> too: <b>waiting on us · 31h</b> once it's overdue, or <b>ours to answer · due in 2h</b> when the client spoke last but the clock hasn't run out. Under three days the wait counts in hours, because "31h" lands harder than "1 day".</li>
+<li><b>"ours to answer" is still a client request</b> — it just isn't late yet. It says when it becomes late, and hovering explains why: a Friday-evening comment isn't overdue until Monday, because weekends don't count.</li>
 <li>Threads are ordered the same way inside a website: longest wait first.</li>
 <li><b>Work through them, oldest first</b> on that top line filters the list to just those.</li>
 </ul>
@@ -286,7 +287,7 @@ export const HELP_SECTIONS = [
 <h3>How the alert works</h3>
 <p>There is <b>one message per website</b>, never one per comment. A client who leaves twenty comments in a sitting is doing one thing, and twenty Slack messages about it is the fastest way to teach everyone to ignore Slack.</p>
 <ul>
-<li>The message names the business, says how many are unanswered and how long the worst one has waited, then lists the <b>five oldest</b> with their ages and counts the rest.</li>
+<li>The message names the business, says how many are <b>overdue</b> and how long the worst one has waited, then lists the <b>five oldest</b> with their ages and counts the rest. It counts only the overdue ones, so a website can show more client comments on the page than the alert mentions — the others simply aren't late yet.</li>
 <li>After that the website <b>goes quiet</b>. It speaks again only when things are genuinely worse — <b>more</b> comments overdue than last time, or the oldest has <b>crossed another day</b> — and never more than once a day.</li>
 <li>The reasoning: whoever picks up the 48-hour comment is looking at the rest anyway. Repeating 46h, 30h, 29h and 28h at them is noise.</li>
 <li>If more than five websites fall behind at once — a Monday after a quiet weekend — it becomes a <b>single roll-up</b> naming them worst first, rather than a message each.</li>

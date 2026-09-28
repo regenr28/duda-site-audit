@@ -32,13 +32,13 @@
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z]+/g, '-');
-  const fmtDate = (d) => d ? new Date(d).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+  const fmtDate = (d) => d ? new Date(d).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
   const ago = (d) => {
     if (!d) return ''; const s = (Date.now() - new Date(d).getTime()) / 1000;
     if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + 'm ago'; if (s < 86400) return Math.floor(s / 3600) + 'h ago';
     return fmtDate(d);
   };
-  const fmtFull = (d) => d ? new Date(d).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+  const fmtFull = (d) => d ? new Date(d).toLocaleString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
   const initials = (n) => String(n || '?').split(/\s+/).map((x) => x[0]).join('').slice(0, 2).toUpperCase();
   const user = (email) => state.users.find((u) => u.email === email);
   const nameOf = (email, fallback) => (user(email) || {}).name || fallback || email || 'Unassigned';
@@ -3239,6 +3239,24 @@
     if (h < 72) return `${h}h`;            // hours right up to three days: "31h" lands harder than "1 day"
     return `${Math.floor(h / 24)} days`;
   }
+  /**
+   * When the clock actually runs out on a client comment.
+   *
+   * Weekends don't count towards the 24 hours, so a Friday-evening comment is not overdue until
+   * Monday — and "70h" on its own reads as three days of neglect. Saying "due in 2h" instead is the
+   * difference between a number and an answer.
+   */
+  function dueIn(dueAt) {
+    if (!dueAt) return '';
+    const m = Math.round((new Date(dueAt).getTime() - Date.now()) / 60000);
+    if (m <= 0) return 'due now';
+    if (m < 90) return `due in ${m}m`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `due in ${h}h`;
+    return `due ${new Date(dueAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
+  }
+  const dueTitle = (t) => `The client spoke last, so this is ours to answer. It came in ${fmtFull(t.since)} and counts as overdue ${fmtFull(t.dueAt)} — weekends don't count towards the 24 hours.`;
+
   const waitClass = (iso) => {
     const h = iso ? (Date.now() - new Date(iso).getTime()) / 3600000 : 0;
     return h >= 72 ? 'wait-3' : h >= 48 ? 'wait-2' : 'sev-critical';
@@ -3344,7 +3362,7 @@
                     <span class="small muted">${t.page ? esc(t.page) : 'Page unknown'}${t.device ? ' · ' + esc(String(t.device).toLowerCase().replace(/^./, (c) => c.toUpperCase())) : ''}</span>
                     <span class="spacer"></span>
                     ${t.waiting ? `<span class="badge ${waitClass(t.since)}" title="No reply since ${esc(fmtFull(t.since))}">waiting on us · ${esc(waitAge(t.since))}</span>`
-                      : t.since ? `<span class="badge subtle" title="The client spoke last, but it is not overdue yet">ours to answer · ${esc(waitAge(t.since))}</span>` : ''}
+                      : t.since ? `<span class="badge subtle" title="${esc(dueTitle(t))}">ours to answer · ${esc(dueIn(t.dueAt))}</span>` : ''}
                     <span class="badge ${t.status === 'resolved' ? 'sev-ok' : 'sev-warning'}">${t.status === 'resolved' ? 'resolved' : 'unresolved'}</span>
                   </div>
                   ${t.partial ? '<div class="cmt-partial small">This conversation started before comments were connected, so only what was said since then is here. Open it in the Duda editor to read the whole thread.</div>' : ''}

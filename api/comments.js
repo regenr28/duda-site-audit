@@ -221,7 +221,7 @@ async function alertStale(rows, isClient, nameOf) {
       if (g.items.length > DIGEST_LINES) lines.push(`…and ${g.items.length - DIGEST_LINES} more`);
       await Promise.all(admins.map((a) => notifyUser(a.email, {
         kind: 'comment-waiting', by: '', byName: name, siteId: '', siteName: '',
-        headline: `*Comments waiting* — *${name}*\n${g.n} client comment${g.n === 1 ? '' : 's'} unanswered, longest *${hoursSince(g.oldest)}h*`,
+        headline: `*Comments waiting* — *${name}*\n${g.n} client comment${g.n === 1 ? '' : 's'} *overdue*, longest *${hoursSince(g.oldest)}h*`,
         count: g.n, oldestHours: hoursSince(g.oldest),
         lines, text: lines.join('\n'),
         dudaSite: g.site, editorUrl: editor(g.site),
@@ -343,8 +343,10 @@ export default async function handler(req, res) {
             unread: lastAt > since,
             waiting: owed && Date.now() > answerDueAt(lastAt),
             // How long they have actually been waiting, so a thread can say so itself rather than
-            // leaving it to be worked out from a date.
+            // leaving it to be worked out from a date — and when the clock actually runs out, since
+            // weekends don't count and "70h" on its own reads like nobody has looked at it.
             since: owed ? lastAt : '',
+            dueAt: owed ? new Date(answerDueAt(lastAt)).toISOString() : '',
             comments: live.map((c) => ({ text: unescapeHtml(c.text), by: c.by, at: c.at, side: isClient(c.by), edited: c.edited || '' })),
           };
         }).filter(Boolean)
