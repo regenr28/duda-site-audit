@@ -258,7 +258,7 @@ export async function notifyUser(email, n) {
 const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assign: 'assigned you an audit item', signup: 'created an account and needs approval',
   suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed',
   'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened a website you completed', 'site-removed': 'removed an audit from the Audits list',
-  'comment-waiting': 'has a client comment nobody has answered',
+  'comment-waiting': 'has client comments waiting for an answer',
   test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
 async function slackApi(method, body) {
@@ -355,14 +355,19 @@ export async function slackDM(email, n) {
     if (!id) return { sent: false, reason: 'not_in_slack' };
     // A message about your own scan should not read as though somebody else sent it.
     const who = n.self ? `*Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished*` : `*${n.byName || 'Someone'}* ${KIND[n.kind] || 'sent you an update'}`;
-    const head = `${who}${n.siteName ? ` on *${n.siteName}*` : ''}${n.findingNum ? ` · item #${n.findingNum}` : ''}`;
+    const head = n.headline || `${who}${n.siteName ? ` on *${n.siteName}*` : ''}${n.findingNum ? ` · item #${n.findingNum}` : ''}`;
     const link = notifLink(n);
-    const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: head + (n.text ? `\n> ${String(n.text).replace(/\n+/g, ' ').slice(0, 400)}` : '') } }];
+    // A digest arrives as lines, and lines have to stay lines: a list of five overdue comments
+    // squashed onto one row is the thing this was built to stop.
+    const body = Array.isArray(n.lines) && n.lines.length
+      ? '\n' + n.lines.slice(0, 12).map((l) => String(l).slice(0, 200)).join('\n')
+      : (n.text ? `\n> ${String(n.text).replace(/\n+/g, ' ').slice(0, 400)}` : '');
+    const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: head + body } }];
     const buttons = [];
     if (link) buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open in Site Auditor' }, url: link });
     if (n.editorUrl) buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open in Duda editor' }, url: n.editorUrl });
     if (buttons.length) blocks.push({ type: 'actions', elements: buttons });
-    const r = await slackApi('chat.postMessage', { channel: id, text: head.replace(/\*/g, '') + (n.text ? ': ' + String(n.text).slice(0, 200) : ''), blocks, unfurl_links: false });
+    const r = await slackApi('chat.postMessage', { channel: id, text: head.replace(/\*/g, '') + (n.text ? ': ' + String(n.text).replace(/\n+/g, ' ').slice(0, 200) : ''), blocks, unfurl_links: false });
     return { sent: !!r.ok, reason: r.ok ? '' : r.error };
   } catch (e) { return { sent: false, reason: 'error' }; }
 }

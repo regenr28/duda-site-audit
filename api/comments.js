@@ -134,32 +134,104 @@ function answerDueAt(atISO, hours = WAIT_HOURS) {
 }
 
 /**
- * The one notification this feature sends: a client asked something and nobody has answered.
- * It goes to admins, once per conversation, and never nags again.
+ * The one notification this feature sends: clients are waiting and nobody has answered.
+ *
+ * One message per WEBSITE, not per comment. A client who leaves twenty comments in a sitting is
+ * doing one thing, and twenty Slack messages about it is the fastest way to teach everyone to
+ * ignore Slack. The message lists what is overdue, oldest first, so the worst one is the first
+ * thing read.
+ *
+ * After the first message a website goes quiet. It speaks again only when the situation is
+ * genuinely worse — more comments overdue than last time, or the oldest has crossed another day —
+ * and at most once a day. The thinking is simple: whoever picks up the 48-hour comment is looking
+ * at the others anyway, so repeating them is noise. If the website is answered and later falls
+ * behind again, it starts fresh.
  */
+const ALERT_KEY = P + 'cmtalert';       // dudaSiteId → { at, n, oldest } for the last thing we said
+const DIGEST_LINES = 5;                 // listed in full; the rest are counted
+const ROLLUP_SITES = 5;                 // more websites than this in one go and it becomes one message
+export const QUIET_HOURS = 20;                 // never more than one message a day about the same website
+
+export const hoursSince = (iso) => Math.max(0, Math.round((Date.now() - (Date.parse(iso) || Date.now())) / 3600000));
+const overdueDays = (iso) => Math.floor(hoursSince(iso) / 24);
+
+/** Is this website worse off than the last time we said anything about it? */
+export function worthSaying(prev, now_) {
+  if (!prev) return true;                                            // nothing said yet
+  if (now_.n > (prev.n || 0)) return true;                           // more of them are waiting
+  if (overdueDays(now_.oldest) > overdueDays(prev.oldest || now_.oldest)) return true;  // another day has passed
+  return false;
+}
+
 async function alertStale(rows, isClient, nameOf) {
   // Only when the CLIENT spoke last. A teammate's own note — a worklog, "this has been updated,
   // let us know" — is us holding the ball, not the client waiting, so it never rings.
-  const late = Object.entries(rows).filter(([, r]) => r && !r.al && hasContent(r) && r.st !== 'resolved' && r.lb && isClient(r.lb) === 'client' && Date.now() > answerDueAt(r.la));
-  if (!late.length) return 0;
+  const late = Object.entries(rows).filter(([, r]) => r && hasContent(r) && r.st !== 'resolved' && r.lb && isClient(r.lb) === 'client' && Date.now() > answerDueAt(r.la));
+  const [prevRaw] = await redis(['HGETALL', ALERT_KEY]);
+  const prev = pairs(prevRaw, true);
+
+  // Group by website, worst first.
+  const bySite = {};
+  late.forEach(([uuid, r]) => {
+    const g = bySite[r.s] || (bySite[r.s] = { site: r.s, items: [], oldest: '', n: 0, seen: '' });
+    g.items.push({ uuid, num: r.n || 0, at: r.la, device: r.d || '', text: unescapeHtml(r.tx || '') });
+    g.n++;
+    if (!g.oldest || r.la < g.oldest) g.oldest = r.la;
+    if (r.al && r.al > g.seen) g.seen = r.al;        // what the old per-comment alerts already said
+  });
+  Object.values(bySite).forEach((g) => g.items.sort((a, b) => String(a.at).localeCompare(String(b.at))));
+
+  // A website that has been answered since should start fresh next time it falls behind.
+  const clear = Object.keys(prev).filter((id) => !bySite[id]);
+
+  const due = Object.values(bySite).filter((g) => {
+    // Upgrading from the old per-comment alerts: if those already went out, treat that as the last
+    // thing said, so nobody gets a fresh wall of messages about a backlog they already know about.
+    const was = prev[g.site] || (g.seen ? { at: g.seen, n: g.n, oldest: g.oldest } : null);
+    if (was && hoursSince(was.at) < QUIET_HOURS) return false;
+    return worthSaying(was, g);
+  });
+  if (!due.length && !clear.length) return 0;
+
+  const cmds = [];
+  clear.forEach((id) => cmds.push(['HDEL', ALERT_KEY, id]));
+  if (!due.length) { if (cmds.length) await redis(...cmds); return 0; }
+
   const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
   if (!admins.length) return 0;
   const host = await savedEditorHost().catch(() => '');
-  const cmds = [];
-  for (const [uuid, r] of late.slice(0, 20)) {
-    const site = nameOf(r.s);
-    const hours = Math.round((Date.now() - (Date.parse(r.la) || Date.now())) / 3600000);
-    const where = [r.n ? `#${r.n}` : '', r.d ? String(r.d).toLowerCase() : ''].filter(Boolean).join(' · ');
+  const editor = (id) => (host ? `https://${host}/home/site/${encodeURIComponent(id)}/home` : '');
+  const line = (it, i) => `${i + 1}. *#${it.num || '?'}* · ${hoursSince(it.at)}h${it.device ? ' · ' + String(it.device).toLowerCase() : ''} — ${String(it.text || '').replace(/\s+/g, ' ').slice(0, 120)}`;
+  due.sort((a, b) => String(a.oldest).localeCompare(String(b.oldest)));
+
+  if (due.length > ROLLUP_SITES) {
+    // A Monday-morning backlog: one message about all of it beats a message per website.
+    const lines = due.slice(0, 10).map((g, i) => `${i + 1}. *${nameOf(g.site) || g.site}* — ${g.n} waiting, longest ${hoursSince(g.oldest)}h`);
+    if (due.length > 10) lines.push(`…and ${due.length - 10} more websites`);
     await Promise.all(admins.map((a) => notifyUser(a.email, {
-      kind: 'comment-waiting', by: '', byName: site || r.s, siteId: '', siteName: '',
-      text: `${where ? where + ' — ' : ''}waiting ${hours} hours with no reply from us: “${unescapeHtml(r.tx || '').slice(0, 140)}”`,
-      dudaSite: r.s,
-      editorUrl: host ? `https://${host}/home/site/${encodeURIComponent(r.s)}/home` : '',
+      kind: 'comment-waiting', by: '', byName: `${due.length} websites`, siteId: '', siteName: '',
+      headline: `*Comments waiting* — ${due.length} websites, longest ${hoursSince(due[0].oldest)}h`,
+      count: due.reduce((n, g) => n + g.n, 0), sites: due.length, oldestHours: hoursSince(due[0].oldest),
+      lines, text: lines.join('\n'), dudaSite: '',
     })));
-    cmds.push(['HSET', P + 'convidx', uuid, JSON.stringify(Object.assign({}, r, { al: now() }))]);
+  } else {
+    for (const g of due) {
+      const name = nameOf(g.site) || g.site;
+      const lines = g.items.slice(0, DIGEST_LINES).map(line);
+      if (g.items.length > DIGEST_LINES) lines.push(`…and ${g.items.length - DIGEST_LINES} more`);
+      await Promise.all(admins.map((a) => notifyUser(a.email, {
+        kind: 'comment-waiting', by: '', byName: name, siteId: '', siteName: '',
+        headline: `*Comments waiting* — *${name}*\n${g.n} client comment${g.n === 1 ? '' : 's'} unanswered, longest *${hoursSince(g.oldest)}h*`,
+        count: g.n, oldestHours: hoursSince(g.oldest),
+        lines, text: lines.join('\n'),
+        dudaSite: g.site, editorUrl: editor(g.site),
+      })));
+    }
   }
-  if (cmds.length) await redis(...cmds);
-  return late.length;
+
+  due.forEach((g) => cmds.push(['HSET', ALERT_KEY, g.site, JSON.stringify({ at: now(), n: g.n, oldest: g.oldest })]));
+  await redis(...cmds);
+  return due.length;
 }
 
 export default async function handler(req, res) {

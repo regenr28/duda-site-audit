@@ -282,7 +282,17 @@ export const HELP_SECTIONS = [
 <ul>
 <li>A conversation with nothing left in it is <b>not shown, not counted and never alerts</b>. It used to sit in the list as "Page unknown" with no text and still count towards "6 waiting".</li>
 <li>Deleted comments are dropped rather than shown as "(deleted)". If the deleted one was the last, the clock stays where the last real comment left it — deleting something no longer looks like activity.</li>
-</ul>`,
+</ul>
+<h3>How the alert works</h3>
+<p>There is <b>one message per website</b>, never one per comment. A client who leaves twenty comments in a sitting is doing one thing, and twenty Slack messages about it is the fastest way to teach everyone to ignore Slack.</p>
+<ul>
+<li>The message names the business, says how many are unanswered and how long the worst one has waited, then lists the <b>five oldest</b> with their ages and counts the rest.</li>
+<li>After that the website <b>goes quiet</b>. It speaks again only when things are genuinely worse — <b>more</b> comments overdue than last time, or the oldest has <b>crossed another day</b> — and never more than once a day.</li>
+<li>The reasoning: whoever picks up the 48-hour comment is looking at the rest anyway. Repeating 46h, 30h, 29h and 28h at them is noise.</li>
+<li>If more than five websites fall behind at once — a Monday after a quiet weekend — it becomes a <b>single roll-up</b> naming them worst first, rather than a message each.</li>
+<li>Once a website is fully answered it's forgotten, so if it falls behind again later it alerts fresh.</li>
+</ul>
+<p class="small muted">Everything still appears on the page and the bell immediately — the quiet rule only governs how often Slack is interrupted.</p>`,
   },
   {
     id: 'ownership', group: 'Collaboration', title: 'Who owns an audit (and how your work is protected)', audience: 'all',

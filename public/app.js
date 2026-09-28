@@ -382,7 +382,7 @@
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
   }
-  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has a client comment nobody has answered', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
+  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
@@ -410,8 +410,11 @@
     const body = $('.np-body', p);
     body.innerHTML = items.length ? items.map((n) => `
       <a class="np-item" href="${esc(notifLink(n))}">${avatar(n.by, 26)}
-        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : ''}</div>
-        <div class="small muted np-text">${esc(n.text || '')}</div><div class="small faint">${esc(fmtFull(n.at))}</div></div></a>`).join('')
+        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.count ? ` <span class="badge ${n.oldestHours >= 48 ? 'sev-critical' : 'sev-warning'}">${n.count} waiting · longest ${n.oldestHours}h</span>` : ''}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : ''}</div>
+        ${Array.isArray(n.lines) && n.lines.length
+          ? `<ul class="np-lines">${n.lines.map((l) => `<li>${esc(String(l).replace(/^\d+\.\s*/, '').replace(/\*/g, ''))}</li>`).join('')}</ul>`
+          : `<div class="small muted np-text">${esc(n.text || '')}</div>`}
+        <div class="small faint">${esc(fmtFull(n.at))}</div></div></a>`).join('')
       : `<div class="empty small">${notifTab === 'all' ? 'No notifications yet.' : 'Nothing here. Try <b>All</b>.'}</div>`;
   }
 

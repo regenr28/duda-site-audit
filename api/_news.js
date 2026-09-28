@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-28-digest', date: '2026-09-28', audience: 'all', tag: 'Comments',
+    title: 'One message per website, not one per comment',
+    what: 'A client leaving twenty comments in a sitting used to mean <b>twenty Slack messages</b> once they went overdue — the fastest way to teach everyone to ignore Slack. It is now <b>one message per website</b>: the business name, how many are unanswered, how long the worst one has waited, then the five oldest listed with their ages and the rest counted. After that the website <b>goes quiet</b> and speaks again only when things are genuinely worse — more comments overdue, or the oldest crossing another day — and never more than once a day. The thinking: whoever picks up the 48-hour comment is looking at the rest anyway. And when more than five websites fall behind at once, it becomes a <b>single roll-up</b> rather than a message each.',
+    where: ['Nothing to set up. The next alert arrives in the new shape.', 'The bell shows the same digest, with each comment on its own line.', 'Everything still appears on the page and the bell immediately — the quiet rule only governs Slack.', 'A website that gets fully answered is forgotten, so it alerts fresh if it falls behind again.'],
+    link: '#/help/comments-duda', linkText: 'How the alert works',
+  },
+  {
     id: '2026-09-27-empty-threads', date: '2026-09-27', audience: 'all', tag: 'Comments',
     title: 'Empty conversations no longer count against you',
     what: 'Duda opens a conversation the moment somebody clicks to comment, before any words are typed, and a comment can be deleted afterwards — so the list was carrying cards with nothing on them, reading "Page unknown" with no text, and <b>counting towards "6 waiting"</b> and raising alerts nobody could act on. A conversation with nothing left in it is now <b>not shown, not counted and never alerts</b>, and deleted comments are dropped rather than shown as "(deleted)". Deleting the last comment no longer looks like fresh activity either — the clock stays where the last real comment left it. Separately, every conversation now says its own wait: <b>waiting on us · 31h</b> once it is overdue, or <b>ours to answer · 2h</b> when the client spoke last but the clock has not run out.',
