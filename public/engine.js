@@ -101,6 +101,11 @@
       v: 7,
       date: '2026-09-29',
       title: 'Weights of the same typeface count as one font',
+      // A release can CORRECT a check, not just add one. Items already on a website from a check
+      // listed here were produced by the old, wrong version — they are not work, they are noise —
+      // so the audits carrying them say so plainly instead of quietly looking like a to-do list.
+      fixes: ['FONT_OFF_SYSTEM', 'FONT_OFF_SYSTEM_MORE', 'FONT_NOT_LOADED'],
+      fixedWhat: 'The font check was reading every weight of an uploaded typeface as a different font, so websites using one font in several weights came back with dozens of items saying the wrong font was used. Those items were never real.',
       items: [
         'An uploaded font that Duda serves one weight at a time — BarcolaExpanded-Bold, -SemiBold, -Medium, -Regular — is read as one typeface, not four different fonts',
         'The Fonts tab shows one card per typeface with its weights listed, instead of a separate card for every weight',
@@ -112,6 +117,8 @@
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
   function checksSince(v) { const n = Number(v) || 1; return CHECK_RELEASES.filter((r) => r.v > n); }
+  /** The check codes corrected since a scan ran — items carrying one of these are known to be unreliable. */
+  function fixedSince(v) { const out = new Set(); checksSince(v).forEach((r) => (r.fixes || []).forEach((c) => out.add(c))); return out; }
 
   // Words that don't identify a specific business (used for name/handle matching)
   const GENERIC = new Set(('the and of for co company llc inc ltd corp auto autos automotive car cars truck trucks ' +
@@ -1807,7 +1814,7 @@
   }
 
   global.DudaAudit = {
-    DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince,
+    DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
     matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };

@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-29-corrected-checks', date: '2026-09-29', audience: 'all', tag: 'Audits',
+    title: 'When a check turns out to be wrong, the audit says so',
+    what: 'Until now an update could only <b>add</b> checks, and the note on an old audit said "new checks available — rescan if you like". But a check can also be <b>corrected</b>, and then the items it already produced are not work at all — they are wrong, sitting in somebody’s list looking exactly like everything else. Nothing is deleted behind your back (an item may carry your comments, a status, a number somebody quoted in Slack), so it is <b>marked</b> instead. The website shows an orange note saying how many items came from the corrected check and what was wrong with it, every affected item carries <b>⚠ This check was corrected — rescan</b>, and there is deliberately <b>no "Not now"</b> — a wrong item is not optional noise. Rescanning replaces them; anything that was a real problem comes straight back with its number.',
+    where: ['On a website with an old scan: the note is at the top of <b>Audit items</b>, above the list.', 'Affected items are marked in the list and again when you open them, so nobody starts fixing one by accident.', 'On <b>Audits</b>, the <b>Scan</b> column flags the website with <b>⚠ A check was corrected — rescan</b>.', 'Items you already marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> are left alone — you made your decision, it stands.', 'The first correction to use this is the font one, in the note below.'],
+    link: '#/help/scan', linkText: 'Scanning and rescanning',
+  },
+  {
     id: '2026-09-29-font-weights', date: '2026-09-29', audience: 'all', tag: 'Audits',
     title: 'Bold and SemiBold are the same font again',
     what: 'When a designer uploads a custom typeface, Duda serves each weight as its own font file with the weight in the name — <b>BarcolaExpanded-Bold</b>, <b>BarcolaExpanded-SemiBold</b>, <b>BarcolaExpanded-Medium</b>, <b>BarcolaExpanded-Regular</b>. The audit was reading those as <b>four different typefaces</b>, so a website using one font in four weights came back with a hundred items saying the headings were in the wrong font. They are now read as <b>one typeface with four weights</b>. The Fonts tab shows a single card per typeface with its weights listed underneath, and an audit item names the family — "Title in Magistral" rather than "Title in Magistral-Medium" — so <b>approving a font covers every weight of it</b> in one go. Only text in a typeface that genuinely is not part of the design is flagged now.',

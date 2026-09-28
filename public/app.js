@@ -1899,7 +1899,9 @@
               <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}">${userOptions(s.assignee)}</select></span></td>
               <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
                 ${s.completedAt ? `<div class="small faint" title="Marked Complete ${esc(fmtFull(s.completedAt))}">by ${esc(nameOf(s.completedBy, s.completedByName))}${s.scan && s.scan.finishedAt && new Date(s.scan.finishedAt) > new Date(s.completedAt) ? ' · rescanned since' : ''}</div>` : ''}</td>
-              <td>${scanBadge(s)}${newChecksFor(s).length ? `<div style="margin-top:4px"><span class="badge ck-new" title="New audit checks were added after this scan. The items here are unchanged — rescan to add what the new checks find.">✨ New checks available</span></div>` : ''}</td>
+              <td>${scanBadge(s)}${fixedCodes(s).size
+                ? `<div style="margin-top:4px"><span class="badge ck-fixed" title="A check that produced items on this website has since been corrected. Those items may not be real — open the website and rescan to replace them.">⚠ A check was corrected — rescan</span></div>`
+                : newChecksFor(s).length ? `<div style="margin-top:4px"><span class="badge ck-new" title="New audit checks were added after this scan. The items here are unchanged — rescan to add what the new checks find.">✨ New checks available</span></div>` : ''}</td>
               <td>${issueChips(c, s.scan && s.scan.state === 'complete')}</td>
               <td style="min-width:110px"><div class="small">${c.closed || 0}/${c.total || 0}</div><div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div></td>
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
@@ -2428,20 +2430,46 @@
     if (sc.state !== 'complete' || !sc.finishedAt) return [];
     return A.checksSince(sc.cv);
   }
+  /**
+   * A check can be CORRECTED, not just added — and then the items it already produced are wrong.
+   * Nothing is deleted behind anyone's back (an item may carry comments, a status, a number someone
+   * quoted in Slack), so instead the items are marked and the website says how many it is carrying.
+   */
+  const fixedCodes = (s) => (newChecksFor(s).length ? A.fixedSince((s.scan || {}).cv) : new Set());
+  /** Items on this website that came from a check that has since been corrected, and still look like work. */
+  function correctedItems(s) {
+    const codes = fixedCodes(s);
+    if (!codes.size) return [];
+    return (s.findings || []).filter((f) => codes.has(f.code) && !['done', 'false'].includes(f.status));
+  }
+  const isCorrected = (s, f) => fixedCodes(s).has(f.code) && !['done', 'false'].includes(f.status);
+  const correctedBadge = (s, f) => (isCorrected(s, f)
+    ? `<div style="margin-bottom:4px"><span class="badge ck-fixed" title="The check that produced this item has since been corrected, so it may not be a real problem. Rescan the website to replace it.">⚠ This check was corrected — rescan</span></div>` : '');
+
   function newChecksBanner(s) {
     const rel = newChecksFor(s);
     if (!rel.length || ckHidden(s)) return '';
     const sc = s.scan || {};
     const n = rel.reduce((a, r) => a + r.items.length, 0);
-    return `<div class="note new-checks" id="ckBanner">
+    const bad = correctedItems(s);
+    const fixes = rel.filter((r) => r.fixes && r.fixes.length);
+    // A corrected check leads, because it is the difference between "you're missing something" and
+    // "what you're looking at is wrong". The additions stay below it.
+    const head = bad.length
+      ? `<b>⚠ ${bad.length} item${bad.length === 1 ? '' : 's'} on this website came from a check that has since been corrected.</b>
+         <div class="small" style="margin-top:3px">${fixes.map((r) => esc(r.fixedWhat || r.title)).join(' ')}
+         <b>Don't work through them</b> — rescan and they go, along with anything else the correction affects. The rescan keeps everything you have already marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b>, with its number and its comments.</div>
+         ${n ? `<div class="small" style="margin-top:6px">The same rescan also picks up <b>${n} new check${n === 1 ? '' : 's'}</b> added since ${esc(fmtFull(sc.finishedAt))}.</div>` : ''}`
+      : `<b>✨ ${n} new audit check${n === 1 ? '' : 's'} ${n === 1 ? 'has' : 'have'} been added since this website was scanned.</b>
+         <div class="small" style="margin-top:3px">This audit still shows what the scan found on ${esc(fmtFull(sc.finishedAt))}, and it stays that way until someone rescans it.
+         A rescan keeps every item you already have — anything marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> stays exactly as it is, with its number and its comments — and simply adds whatever the new checks find as new <b>Open</b> items. None of them are critical.</div>`;
+    return `<div class="note ${bad.length ? 'fixed-checks' : 'new-checks'}" id="ckBanner">
       <div class="row-between" style="align-items:flex-start;gap:12px">
-        <div class="grow"><b>✨ ${n} new audit check${n === 1 ? '' : 's'} ${n === 1 ? 'has' : 'have'} been added since this website was scanned.</b>
-          <div class="small" style="margin-top:3px">This audit still shows what the scan found on ${esc(fmtFull(sc.finishedAt))}, and it stays that way until someone rescans it.
-          A rescan keeps every item you already have — anything marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> stays exactly as it is, with its number and its comments — and simply adds whatever the new checks find as new <b>Open</b> items. None of them are critical.</div></div>
-        <div style="white-space:nowrap"><button class="btn sm primary" id="ckRescan" ${state.scanning[s.id] || otherClaim(s.id) ? 'disabled' : ''}>Rescan now</button> <button class="btn sm ghost" id="ckLater" title="Hide this note on this website, for you">Not now</button></div>
+        <div class="grow">${head}</div>
+        <div style="white-space:nowrap"><button class="btn sm primary" id="ckRescan" ${state.scanning[s.id] || otherClaim(s.id) ? 'disabled' : ''}>${bad.length ? 'Rescan to clear them' : 'Rescan now'}</button>${bad.length ? '' : ` <button class="btn sm ghost" id="ckLater" title="Hide this note on this website, for you">Not now</button>`}</div>
       </div>
-      <details style="margin-top:8px"><summary class="small">See what was added</summary>
-        ${rel.map((r) => `<div class="small" style="margin-top:8px"><b>${esc(r.title)}</b> <span class="faint">· added ${esc(fmtDate(r.date))}</span>
+      <details style="margin-top:8px"><summary class="small">${bad.length ? 'What changed' : 'See what was added'}</summary>
+        ${rel.map((r) => `<div class="small" style="margin-top:8px"><b>${esc(r.title)}</b> <span class="faint">· ${r.fixes && r.fixes.length ? 'corrected' : 'added'} ${esc(fmtDate(r.date))}</span>
           <ul class="ck-list">${r.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}
       </details></div>`;
   }
@@ -2490,6 +2518,8 @@
         <div><h2 style="margin:0">Fonts used on the website ${f.fromTheme ? '<span class="badge scan-complete">From the design settings</span>' : '<span class="badge sev-warning">From the home page</span>'}</h2>
           <div class="small muted">${f.fromTheme ? "The font this website sets for its body text and for each heading level. Anything else that turned up on the pages is listed as an audit item." : "This website has no global font settings to read, so the home page decides: its H1 sets the font for titles, its paragraphs set the font for body text."}</div></div>
       </div>
+      ${correctedItems(s).some((x) => /^FONT_/.test(x.code)) ? `<div class="note fixed-checks" style="margin:10px 0 0"><b>⚠ This was read by a font check that has since been corrected.</b>
+        <div class="small" style="margin-top:3px">What you see below is what the old check made of the website. <b>Rescan</b> and it is read again properly.</div></div>` : ''}
       <div class="font-groups">${groups.map((g) => card(g.fam, g.levels.join(' · '))).join('') || '<div class="empty small">No font settings found.</div>'}</div>
       ${off.length ? `<div class="k" style="margin-top:16px">Not part of the design <span class="faint">(${off.length} font${off.length === 1 ? '' : 's'})</span></div>
         <div class="font-groups">${off.map((x) => card(x.name, `${x.n} place${x.n === 1 ? '' : 's'} on the website`, true)).join('')}</div>
@@ -2764,7 +2794,7 @@
               <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
                 <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
-              <td style="min-width:240px"><div class="finding-msg">${esc(f.message)}</div>
+              <td style="min-width:240px">${correctedBadge(s, f)}<div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
                 ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
@@ -2957,6 +2987,8 @@
         ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
         ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
+        ${isCorrected(s, f) ? `<div class="note fixed-checks" style="margin-top:10px"><b>⚠ The check that produced this item has since been corrected.</b>
+          <div class="small" style="margin-top:3px">It may not be a real problem at all. Don't spend time on it — <b>rescan the website</b> and it is replaced with what the corrected check finds. Your Done, False alarm and On hold items are untouched by a rescan.</div></div>` : ''}
         ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${knownNote(f, s)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>

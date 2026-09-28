@@ -119,6 +119,16 @@ export const HELP_SECTIONS = [
 <li>Checks added this way are <b>warnings and notes, never critical</b>, so your critical counts don't move.</li>
 <li>To find them all: on <b>Audits</b>, the toolbar button <b>✨ Scanned before the newest checks</b> filters the list to them, and each one is flagged in the <b>Scan</b> column. Filter first, then <b>Rescan all shown</b> if you want the lot done at once.</li>
 </ul>
+<h3>When a check is corrected</h3>
+<p>Sometimes a check was <b>wrong</b>, not just missing — it flagged things that were never a problem. The items it already produced are still sitting on websites, looking exactly like work. Those are not quietly deleted (an item may have your comments, a status, a number somebody quoted in Slack), so they are <b>marked</b> instead.</p>
+<ul>
+<li>The website shows an <b>orange note</b> at the top of its Audit items: how many items came from the corrected check, what was wrong with it, and <b>Rescan to clear them</b>.</li>
+<li>Each affected item carries <b>⚠ This check was corrected — rescan</b> next to its finding, and says the same thing when you open it. <b>Don't work through them.</b></li>
+<li>There is no <b>Not now</b> on this one — a wrong item is not optional noise, and hiding it would leave somebody fixing a problem that doesn't exist.</li>
+<li>On <b>Audits</b>, the <b>Scan</b> column flags the website with <b>⚠ A check was corrected — rescan</b>.</li>
+<li>Items you already marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> are left alone and not marked — you've already made your decision about them.</li>
+<li>Rescanning replaces them with whatever the corrected check finds. If something was a real problem all along, it comes straight back, with its number.</li>
+</ul>
 <p class="small muted">One thing to know on an update day: the scan runs in your browser tab, so a tab that's been open since before the update is still running the old checks. Reload the page once and you're on the new ones.</p>`,
   },
   {
