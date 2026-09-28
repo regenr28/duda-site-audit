@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-09-29-font-weights', date: '2026-09-29', audience: 'all', tag: 'Audits',
+    title: 'Bold and SemiBold are the same font again',
+    what: 'When a designer uploads a custom typeface, Duda serves each weight as its own font file with the weight in the name — <b>BarcolaExpanded-Bold</b>, <b>BarcolaExpanded-SemiBold</b>, <b>BarcolaExpanded-Medium</b>, <b>BarcolaExpanded-Regular</b>. The audit was reading those as <b>four different typefaces</b>, so a website using one font in four weights came back with a hundred items saying the headings were in the wrong font. They are now read as <b>one typeface with four weights</b>. The Fonts tab shows a single card per typeface with its weights listed underneath, and an audit item names the family — "Title in Magistral" rather than "Title in Magistral-Medium" — so <b>approving a font covers every weight of it</b> in one go. Only text in a typeface that genuinely is not part of the design is flagged now.',
+    where: ['On a website: <b>Reference data</b> → <b>Fonts used on the website</b> — one card per typeface, with <b>Weights: Bold · SemiBold · Medium</b> underneath.', 'Audit items sit under the <b>Design</b> category and name the exact words to fix.', 'Already scanned websites keep their old result until you rescan — the website will show a <b>new checks available</b> note.', 'Approving a typeface (<b>Reference data</b> → <b>Business Info</b> → <b>＋ Add or exclude a value</b> → <b>Typeface</b>) now covers all of its weights, whichever one you type.'],
+    link: '#/help/fonts', linkText: 'How the font check works',
+  },
+  {
+    id: '2026-09-29-our-layer', date: '2026-09-29', audience: 'all', tag: 'Audits',
+    title: 'Your own additions and exceptions, beside Business Info',
+    what: 'Clients rebrand, add a second line, change their email. Business Info still comes from Duda and is <b>never edited here</b> — that stays the reference, fresh on every scan — but there is now a layer beside it that your team owns and a rescan never touches. It runs <b>both ways</b>: mark a value <b>correct for this website</b> (a second shop line, an owner\u2019s personal email, a typeface chosen on purpose) so it is never flagged; or mark one <b>not correct</b> (your own agency address sitting in a client\u2019s Business Info, a retired number) so it <i>is</i> flagged even though Duda lists it. Duda\u2019s copy still shows those, struck through, so you can see what Duda says and what you decided. And approving a value <b>closes the open items that flagged it</b> \u2014 it tells you how many first, writes the reason on each one, and they can be reopened.',
+    where: ['On a website: <b>Reference data</b> \u2192 <b>Business Info</b> \u2192 <b>\uff0b Add or exclude a value</b>.', 'Phone, email, business name, social link or typeface \u2014 with a note the next person will want to read.', 'Every entry shows who added it, when, why, and its history. <b>Edit</b> changes it, <b>Remove</b> puts it back to being checked normally.', 'Rescans ask nothing: Duda refreshes, your layer stays.'],
+    link: '#/help/approved', linkText: 'How the layer works',
+  },
+  {
     id: '2026-09-28-due-in', date: '2026-09-28', audience: 'all', tag: 'Comments',
     title: 'Dates say the day, and "ours to answer" says when',
     what: 'Two small things that were costing you a calculation. <b>Every date now carries the day of the week</b> — "Sat, Sep 26, 12:01 AM" — because knowing something landed on a Saturday is half the explanation of why nothing has happened to it. And a client comment that is ours to answer but <b>not overdue yet</b> used to read "ours to answer · 70h", which looks like three days of neglect; it now reads <b>"ours to answer · due in 2h"</b>, with the full explanation on hover. Both mean the same thing — the client spoke last and the 24 hours excludes weekends — but one of them answers the question. The Slack digest also now says <b>overdue</b> rather than "unanswered", since that is what it counts.',

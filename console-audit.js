@@ -86,6 +86,28 @@
         'An item nobody has touched, whose value a client asked about in a comment, is set to For clarification automatically',
       ],
     },
+    {
+      v: 6,
+      date: '2026-09-29',
+      title: 'Your own additions and exceptions on top of Business Info',
+      items: [
+        'Values the client really uses that Duda doesn\u2019t carry \u2014 a second phone, an owner\u2019s personal email \u2014 can be marked correct for that website and are never flagged again',
+        'Values Duda DOES carry that must not appear on a client\u2019s website \u2014 an agency address, a retired number \u2014 can be struck out, and are flagged if they turn up',
+        'A typeface chosen on purpose can be approved for one website, so the font check stops arguing about it',
+        'Approving a value closes the open items that flagged it, saying why, and the items can be reopened',
+      ],
+    },
+    {
+      v: 7,
+      date: '2026-09-29',
+      title: 'Weights of the same typeface count as one font',
+      items: [
+        'An uploaded font that Duda serves one weight at a time — BarcolaExpanded-Bold, -SemiBold, -Medium, -Regular — is read as one typeface, not four different fonts',
+        'The Fonts tab shows one card per typeface with its weights listed, instead of a separate card for every weight',
+        'Text is only flagged when its typeface is not part of the design; a heading set in a heavier weight of the heading font is no longer an audit item',
+        'An audit item names the family ("Title in Magistral"), so approving a font covers every weight of it at once',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -361,6 +383,44 @@
   // Where a typeface may legitimately come from: Google Fonts, the Duda/Envato asset CDNs, Typekit.
   const FONT_HOST_OK = /(^|\.)(fonts\.googleapis\.com|fonts\.gstatic\.com|use\.typekit\.net|p\.typekit\.net|cdn-website\.com|multiscreensite\.com|dudaone\.com|dudamobile\.com|envato\.com|envatousercontent\.com)$/i;
 
+  /**
+   * One typeface, whatever the weights are called.
+   *
+   * A self-hosted font is usually loaded as one family per weight — BarcolaExpanded-Bold,
+   * BarcolaExpanded-SemiBold, BarcolaExpanded-Medium — rather than one family with several weights.
+   * Compared by name those are four different typefaces, and a website using its own font properly
+   * ends up with a hundred audit items saying so. They are the same typeface, so the weight is
+   * stripped off the end and the base name is what gets compared.
+   *
+   * Only a TRAILING weight word is removed, and only when at least three characters are left, so a
+   * family whose name merely ends in something weight-ish keeps it.
+   */
+  const FONT_WEIGHT_WORD = /^(thin|hairline|extra ?light|ultra ?light|light|regular|normal|book|medium|semi ?bold|demi ?bold|bold|extra ?bold|ultra ?bold|black|heavy|italic|oblique|roman|[1-9]00)$/i;
+  const FONT_WEIGHT_CAMEL = /^(.*[a-z])((?:Extra|Ultra|Semi|Demi)?(?:Thin|Hairline|Light|Regular|Normal|Book|Medium|Bold|Black|Heavy|Italic|Oblique))$/;
+  // "Demi" and "Extra" are never a weight on their own, but "Avenir Next Demi Bold" is one font.
+  // So they're only stripped in the pass straight after a weight word was taken off the end.
+  const FONT_WEIGHT_MOD = /^(extra|ultra|semi|demi)$/i;
+  function fontBase(name) {
+    let s = String(name == null ? '' : name).replace(/['"]/g, '').trim();
+    let justStripped = false;
+    for (let i = 0; i < 4 && s; i++) {
+      const sep = /^(.*?)[\s_-]+([A-Za-z]+|[1-9]00)$/.exec(s);
+      const modOK = sep && justStripped && FONT_WEIGHT_MOD.test(sep[2]);
+      if (sep && (FONT_WEIGHT_WORD.test(sep[2]) || modOK) && sep[1].trim().length >= 3) { s = sep[1].trim(); justStripped = !modOK; continue; }
+      const camel = FONT_WEIGHT_CAMEL.exec(s);
+      if (camel && camel[1].length >= 3) { s = camel[1]; justStripped = true; continue; }
+      break;
+    }
+    return s;
+  }
+  /** The weight this family name carries, if any — "BarcolaExpanded-SemiBold" → "SemiBold". */
+  function fontWeight(name) {
+    const full = String(name == null ? '' : name).replace(/['"]/g, '').trim();
+    const base = fontBase(full);
+    if (!base || base === full) return '';
+    return full.slice(base.length).replace(/^[\s_-]+/, '').trim();
+  }
+
   /** Roughly CSS specificity, enough to decide which of two rules dresses an element. */
   function specificity(sel) {
     const s = String(sel || '');
@@ -465,7 +525,9 @@
     });
     // A theme that only dresses <body> still dresses the paragraphs.
     if (!roles.p && roles.body) roles.p = roles.body;
-    const set = new Set(THEME_TAGS.map((t) => roles[t]).filter(Boolean));
+    // Compared as families: a theme that sets H1 in the Bold weight and H2 in the SemiBold weight of
+    // the same typeface is using one typeface, not two.
+    const set = new Set(THEME_TAGS.map((t) => roles[t]).filter(Boolean).map(fontBase));
     return { roles, fonts: set, found: set.size > 0 };
   }
 
@@ -1170,6 +1232,7 @@
     phone: ['PHONE_MISMATCH', 'TEL_MISMATCH', 'TEL_TEXT_MISMATCH', 'SMS_MISMATCH', 'SCHEMA_PHONE'],
     social: ['SOCIAL_OTHER_BUSINESS', 'SOCIAL_MISMATCH', 'GMB_ID_MISMATCH', 'GMB_ID_ONLY'],
     name: ['TEXT_OTHER_BUSINESS', 'COPYRIGHT_NAME', 'SCHEMA_NAME', 'MAP_OTHER_BUSINESS'],
+    font: ['FONT_OFF_SYSTEM', 'FONT_OFF_SYSTEM_MORE', 'FONT_NOT_LOADED', 'FONT_SOURCE_ODD'],
   };
   /** Normalised key for an approved value, e.g. "email:sales@x.com", "phone:2625550147", "social:facebook:joesdetail", "name:joesdetailing". */
   function allowKey(type, value) {
@@ -1179,11 +1242,13 @@
     if (type === 'phone') { const d = normPhone(v); return d.length >= 10 ? 'phone:' + d.slice(-10) : ''; }
     if (type === 'social') { const net = socialNetOf(/^https?:/i.test(v) ? v : 'https://' + v.replace(/^\/+/, '')); const h = net ? compact(socialHandle(net, v)) : compact(v); return h ? 'social:' + (net || 'any') + ':' + h : ''; }
     if (type === 'name') { const c = compact(v); return c.length >= 3 ? 'name:' + c : ''; }
+    if (type === 'font') { const c = fontBase(v).toLowerCase().replace(/\s+/g, ' ').trim(); return c ? 'font:' + c : ''; }
     return '';
   }
   /** Which value of a finding could be approved as correct for the website: { type, value, key } or null. */
   function allowValueOf(f) {
     if (!f) return null;
+    if (/^FONT_/.test(f.code || '')) { const fam = fontOf(f); const key = allowKey('font', fam); return key ? { type: 'font', value: fam, key } : null; }
     for (const [type, codes] of Object.entries(ALLOW_CODES)) {
       if (!codes.includes(f.code)) continue;
       const value = type === 'name' ? (f.foreignName || f.found) : f.found;
@@ -1194,12 +1259,59 @@
     if (f.foreignName && /^AI_|TEXT_OTHER/.test(f.code)) { const key = allowKey('name', f.foreignName); if (key) return { type: 'name', value: f.foreignName, key }; }
     return null;
   }
+  /** The typeface a font finding is about, taken from the way the finding words itself. */
+  function fontOf(f) {
+    if (!f || !/^FONT_/.test(f.code || '')) return '';
+    let m = /(?:in|places in) ([^,]+?), which is not one of/.exec(f.message || '');
+    if (m) return m[1].trim();
+    m = /^"([^"]+)"/.exec(f.message || '');
+    if (m) return m[1].trim();
+    m = /are in ([^ ]+(?: [^ ]+)?) as well/.exec(f.message || '');
+    return m ? m[1].trim() : '';
+  }
   /** Drop findings whose value was approved for this website. */
   function filterAllowed(findings, allow) {
     if (!allow || !allow.length) return findings;
-    const keys = new Set(allow.map((a) => a.key));
+    // Only the "correct for this website" side silences anything. The other side — a value Duda
+    // carries that must NOT appear on the client's website — is handled by striking it out of the
+    // reference before the scan, so the ordinary checks catch it by themselves.
+    const keys = new Set(allow.filter((a) => a.mode !== 'deny').map((a) => a.key));
     return findings.filter((f) => { const a = allowValueOf(f); return !(a && keys.has(a.key)); });
   }
+
+  /**
+   * Business Info as this website should actually be judged against.
+   *
+   * Duda's copy is never edited — it is what Duda says, and the app must not quietly show something
+   * else. What a team CAN do is strike a value out: an agency's own email sitting in a client's
+   * Business Info is truth as far as Duda is concerned, and a bug if it turns up on the website.
+   * Those are removed here, at scan time only, so the reference on screen stays Duda's.
+   */
+  function truthWithout(truth, allow) {
+    const deny = (allow || []).filter((a) => a.mode === 'deny');
+    if (!deny.length || !truth) return truth;
+    const has = (type, value) => deny.some((a) => a.type === type && a.key === allowKey(type, value));
+    const t = Object.assign({}, truth);
+    t.emails = (truth.emails || []).filter((e) => !has('email', e));
+    t.phones = (truth.phones || []).filter((p) => !has('phone', p));
+    t.names = (truth.names || []).filter((n) => !has('name', n));
+    if (t.names.length && !t.names.some((n) => n === truth.businessName)) t.businessName = t.names[0];
+    t.socials = {}; t.socialLinks = {};
+    Object.keys(truth.socials || {}).forEach((net) => {
+      const keep = [];
+      const links = [];
+      (truth.socials[net] || []).forEach((h, i) => {
+        const link = (truth.socialLinks || {})[net] ? truth.socialLinks[net][i] : '';
+        if (has('social', link || h)) return;
+        keep.push(h); links.push(link);
+      });
+      if (keep.length) { t.socials[net] = keep; t.socialLinks[net] = links; }
+    });
+    return t;
+  }
+
+  /** Typefaces a team has said are fine on this website, however far off the design they look. */
+  const allowedFonts = (allow) => new Set((allow || []).filter((a) => a.type === 'font' && a.mode !== 'deny').map((a) => fontBase(a.value).toLowerCase()));
   // ---------- Which page text is worth sending to the AI ----------
   // Brands, platforms and suppliers that are fine to mention (never "another business")
   const SAFE_BRANDS = /\b(ceramic pro|xpel|suntek|llumar|gtechniq|gyeon|igl|meguiar'?s?|chemical guys|koch[- ]?chemie|opti-?coat|modesta|cquartz|system ?x|stek|fuel off[- ]?road|kmc|black rhino|toyo|nitto|bfgoodrich|falken|rough country|3m|google|yelp|facebook|instagram|youtube|tiktok|urable|square|paypal|visa|mastercard|bmw|tesla|audi|mercedes|porsche|toyota|honda|ford|chevrolet|chevy|jeep|dodge|ram|nissan|subaru|lexus|mazda|kia|hyundai|volkswagen|volvo|cadillac|gmc|corvette|mustang|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|june|july|august|september|october|november|december)\b/i;
@@ -1279,7 +1391,7 @@
    * home page does: whatever its H1 is in dresses the titles, whatever its paragraphs are in dresses
    * the body text.
    */
-  function buildFontSystem(rows, loaded, theme) {
+  function buildFontSystem(rows, loaded, theme, allowed) {
     // One element, counted once. The same heading sits on every page and is read three times over
     // (Desktop, Tablet, Mobile), so counting raw rows would say "9 places" about a single title.
     const places = (list) => { const seen = new Set(); return list.filter((r) => { const k = r.selector + '|' + r.text; if (seen.has(k)) return false; seen.add(k); return true; }); };
@@ -1296,14 +1408,29 @@
       ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].forEach((t) => { roles[t] = h; });
       roles.p = roles.body;
     }
-    const set = new Set(THEME_TAGS.map((t) => roles[t]).filter(Boolean));
-    const heading = roles.h1 || roles.h2 || '';
-    const body = roles.body || roles.p || '';
-    const all = [...countBy(rows).entries()].sort((a, b) => b[1] - a[1]).map(([name, n]) => {
+    const set = new Set(THEME_TAGS.map((t) => roles[t]).filter(Boolean).map(fontBase));
+    const heading = fontBase(roles.h1 || roles.h2 || '');
+    const body = fontBase(roles.body || roles.p || '');
+    // A typeface the team has said is fine here is fine here, whatever the design settings say — a
+    // designer choosing something deliberately for one banner should not argue with the app forever.
+    const okd = allowed || new Set();
+    // One card per typeface, with the weights it turned up in. Four cards for one font that happens
+    // to be self-hosted a weight at a time is a hundred audit items nobody can act on.
+    const fam = new Map();
+    [...countBy(rows).entries()].forEach(([name, n]) => {
+      const base = fontBase(name) || name;
       const src = loaded.get(name.toLowerCase());
-      return { name, n, loaded: !!src, src: (src && src.src) || '', theme: set.has(name) };
+      const e = fam.get(base) || { name: base, n: 0, weights: [], loaded: false, src: '' };
+      e.n += n;
+      const w = fontWeight(name);
+      if (w && !e.weights.includes(w)) e.weights.push(w);
+      if (src && !e.loaded) { e.loaded = true; e.src = src.src || ''; }
+      fam.set(base, e);
     });
-    return { roles, fonts: set, heading, body, all, fromTheme, pages: new Set(rows.map((r) => r.path)).size };
+    const all = [...fam.values()].sort((a, b) => b.n - a.n)
+      .map((e) => Object.assign(e, { theme: set.has(e.name), approved: okd.has(e.name.toLowerCase()) }));
+    const judge = new Set([...set, ...all.filter((f) => f.approved).map((f) => f.name)]);
+    return { roles, fonts: set, judgeFonts: judge, heading, body, all, fromTheme, pages: new Set(rows.map((r) => r.path)).size };
   }
 
   /**
@@ -1330,14 +1457,15 @@
     }, f));
     // What this piece of text should have been in, said the way a designer would say it.
     const wanted = (r) => {
-      const t = /^h[1-6]$/.test(r.tag) ? sys.roles[r.tag] : '';
+      const t = /^h[1-6]$/.test(r.tag) ? fontBase(sys.roles[r.tag] || '') : '';
       return t || (r.role === 'titles' ? sys.heading : sys.body) || sys.heading || sys.body;
     };
     const setList = [...sys.fonts];
 
     // One group per part-of-the-page + off-theme typeface, so the count is honest and the cap is per slip.
     const groups = new Map();
-    rows.forEach((r) => { if (sys.fonts.has(r.fam)) return; const key = r.role + '|' + r.fam; (groups.get(key) || groups.set(key, []).get(key)).push(r); });
+    const ok = sys.judgeFonts || sys.fonts;
+    rows.forEach((r) => { const base = fontBase(r.fam) || r.fam; if (ok.has(base)) return; const key = r.role + '|' + base; (groups.get(key) || groups.set(key, []).get(key)).push(r); });
     [...groups.entries()].forEach(([key, list]) => {
       const [role, fam] = key.split('|');
       const want = wanted(list[0]);
@@ -1380,9 +1508,9 @@
     });
 
     // A typeface the website asks for but never loads: visitors without it see something else.
-    const firstWith = (fam) => rows.find((r) => r.fam === fam);
+    const firstWith = (fam) => rows.find((r) => (fontBase(r.fam) || r.fam) === fam);
     if (loaded.size) {
-      sys.all.filter((f) => !f.loaded).forEach((f) => {
+      sys.all.filter((f) => !f.loaded && !f.approved).forEach((f) => {
         const r = firstWith(f.name); if (!r) return;
         push(r, { code: 'FONT_NOT_LOADED', severity: 'info', message: `"${f.name}" is used but the website never loads it — visitors without it installed see a different typeface`, found: `${f.name}, ${f.n} place${f.n === 1 ? '' : 's'}`, expected: 'a loaded typeface' });
       });
@@ -1390,6 +1518,7 @@
     // …and one loaded from somewhere unexpected: the rule is Google Fonts or Envato.
     sys.all.forEach((f) => {
       const src = f.src;
+      if (f.approved) return;
       if (!f.loaded || !src || src === 'Google Fonts' || src === 'this website' || FONT_HOST_OK.test(src)) return;
       const r = firstWith(f.name); if (!r) return;
       push(r, { code: 'FONT_SOURCE_ODD', severity: 'warning', message: `"${f.name}" is loaded from an unexpected place — typefaces should come from Google Fonts or Envato`, found: `${f.name} from ${src}`, expected: 'Google Fonts or Envato' });
@@ -1523,7 +1652,7 @@
     // The website's typefaces, and the text that doesn't use them
     let fontSys = null;
     if (fontRows.length) {
-      fontSys = buildFontSystem(fontRows, fontLoaded, fontTheme);
+      fontSys = buildFontSystem(fontRows, fontLoaded, fontTheme, allowedFonts(opts.allow));
       fontFindings(fontRows, fontLoaded, fontSys).forEach((f) => raw.push(f));
     }
 
@@ -1582,7 +1711,7 @@
     return {
       truth,
       checks: CHECKS_VERSION,
-      fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 12) } : null,
+      fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 14) } : null,
       findings: merged,
       pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
       externalLinks: external.size,
@@ -1680,7 +1809,7 @@
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 

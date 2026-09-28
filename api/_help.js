@@ -380,6 +380,9 @@ export const HELP_SECTIONS = [
 <li><b>Not part of the design</b> — fonts that turned up on the pages but aren't in the settings. Usually a pasted widget or a leftover from a template. Nothing here means the website is consistent.</li>
 <li>The places using them are <b>audit items</b>, each naming the exact text. <b>Show them in Audit items</b> filters the list below to Design.</li>
 </ul>
+<h4>Weights are not separate fonts</h4>
+<p>An uploaded typeface is served by Duda one weight at a time, each with the weight in its file name — <b>BarcolaExpanded-Bold</b>, <b>BarcolaExpanded-SemiBold</b>, <b>BarcolaExpanded-Medium</b>. Those are <b>one typeface</b>, not three. The tab shows a single card for it with <b>Weights: Bold · SemiBold · Medium</b> underneath, and nothing is flagged for using a heavier weight of a font the design already uses.</p>
+<p>Audit items name the <b>family</b> — "Title in Magistral, which is not one of the website's fonts". So approving a typeface under <b>Business Info → ＋ Add or exclude a value → Typeface</b> covers <b>every weight of it</b>, whichever weight you happen to type in.</p>
 <p class="small muted">A website with no global font settings to read (rare) falls back to the home page: its H1 sets the font for titles, its paragraphs set the font for body text. The tab says which of the two it used.</p>`,
   },
   {
@@ -407,16 +410,31 @@ export const HELP_SECTIONS = [
 <p>When every item is Done or False alarm, the box says <b>🎉 All items are cleared</b>. The result is saved on the page and in the Activity log. Only one live check or scan per website runs at a time.</p>`,
   },
   {
-    id: 'approved', group: 'Checks', title: 'Approved values (correct for this website)', audience: 'all',
-    html: `<p>Sometimes a value that isn't in Business Info is intentional. For example, the client asked for forms to go to a different email, or a second phone number is correct.</p>
-<ol>
-<li>Mark the item <b>False alarm</b> and write why (for example "Client asked for this email, see Duda comment #144").</li>
-<li>For emails, phone numbers, social links and business names, the window shows a ticked box: <b>"… is the correct … for this website. Don't flag it again"</b>. The value is taken from the item's <b>Found</b>, so it works for any website.</li>
-<li>If other open items on the same website have the same value, the box lists their numbers and closes them as False alarm too, with the same reason.</li>
-<li>Future scans of <b>this website only</b> never flag that value again, on any page. Other websites are not affected.</li>
-</ol>
-<p>Approved values are listed under <b>Reference data → Also correct for this website</b>, with who approved them, when, from which item and why. Click <b>Remove</b> to have the value checked again on the next scan. Untick the box if you only want to close this one item.</p>`,
+    id: 'approved', group: 'Checks', title: 'Our additions and exceptions', audience: 'all',
+    html: `<p>Business Info comes from Duda and is <b>never edited here</b> — what Duda says is what the page shows, and every scan takes it fresh. Editing a local copy would quietly become a second source of truth and force a "yours or Duda's?" decision on every rescan.</p>
+<p>Instead there's a layer beside it, under <b>Reference data → Business Info</b>, owned by your team and <b>never touched by a rescan</b>. It works both ways.</p>
+<h3>Correct for this website</h3>
+<ul>
+<li>A value the client really uses that Duda doesn't carry: a second shop line, an owner's personal email, a social account, or a <b>typeface</b> a designer chose on purpose.</li>
+<li>It's never flagged again, on this website only.</li>
+<li>Approving it <b>closes the open items that flagged it</b> — see below.</li>
+</ul>
+<h3>Not correct for this website</h3>
+<ul>
+<li>The opposite: a value Duda <i>does</i> carry that shouldn't appear on the client's site. The classic is <b>your own agency email</b> sitting in a client's Business Info — Duda calls it truth, and it's a bug if it reaches their website.</li>
+<li>It's struck out of the reference at scan time, so the ordinary checks flag it. Duda's copy on screen still shows it, struck through, so you can see both what Duda says and what you've decided.</li>
+</ul>
+<h3>What happens to items that already flagged it</h3>
+<ul>
+<li>Before you save, it tells you <b>how many open items will close</b> and lets you see them.</li>
+<li>They close as <b>False alarm</b> with the reason written on the item: "Closed automatically: (610) 349-8299 was approved as correct for this website by Euch — Second shop line, confirmed with the owner."</li>
+<li>They're <b>kept and reversible</b> — reopen one if the decision turns out to be wrong — and they stay out of the admins' False alarms review list, because there's nothing to learn about the check.</li>
+</ul>
+<h3>Rescans</h3>
+<p>Nothing to reconcile and nothing to confirm. Duda's copy refreshes, your layer stays. The only automatic change is one that was already there: an <b>approval</b> whose value later becomes official in Business Info retires itself, since it has nothing left to do. An <b>exception</b> never retires — it exists precisely because Duda still carries the value.</p>
+<p class="small muted">Every entry records who added it, when, and why, and keeps a history of changes. Removing one puts the value back to being checked normally from the next scan.</p>`,
   },
+
   {
     id: 'live', group: 'Live DR Sites', title: 'Live DR Sites', audience: 'all',
     html: `<p><b>Live DR Sites</b> lists every <b>published</b> website in the Duda account, so you can pick what to audit. A second tab, <b>Not published yet</b>, lists the websites still in build — the ones clients are reviewing and commenting on, which never appeared anywhere before. It starts on the ones <b>with comments</b>, and can also show those in Audits, or every unpublished website. Any website we are receiving comments for appears here even when Duda's own draft list leaves it out (it says so on the row). Both tabs have a <b>Comments</b> column.</p>

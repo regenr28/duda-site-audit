@@ -1031,11 +1031,13 @@
       if (meta) (meta.errors || []).forEach((x) => log.push(x));
       let truth = meta ? A.buildTruth({ site: meta.site, content: meta.content }) : null;
       if (truth && truth.source === 'none') truth = null;
+      // Duda's copy is kept as it is — it is what the page shows and what gets saved. The scan is
+      // judged against it minus anything the team has struck out for this website.
+      const scanTruth = A.truthWithout(truth, site.allow);
       const pagesMeta = {};
       ((meta && meta.pages) || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; });
       const res = await A.runScan({
-        
-        siteId: site.siteId, host, truth, pagesMeta, seedPaths: Object.keys(pagesMeta), concurrency: 4,
+        siteId: site.siteId, allow: site.allow || [], host, truth: scanTruth, pagesMeta, seedPaths: Object.keys(pagesMeta), concurrency: 4,
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ host, site: site.siteId, path, device });
           for (let attempt = 0; attempt < 3; attempt++) {
@@ -1067,7 +1069,7 @@
       res.counts = { critical: 0, outdated: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
       const profiles = await checkProfiles(res.truth);
       const sum = await store({ op: 'saveScan', id, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
-        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: res.truth.businessName || site.businessName, truth: res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null,
+        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null,
         scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
       upsertSummary(sum);
@@ -2286,7 +2288,7 @@
       const pagesMeta = {};
       try { const meta = await api('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); } catch (e) { log.push('Duda pages list unavailable: ' + e.message); }
       const res = await A.runScan({
-        siteId: s.siteId, host: info.domain, truth: s.truth, pagesMeta, seedPaths: (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: Math.max(10, (s.pages || []).length + 5),
+        siteId: s.siteId, host: info.domain, truth: A.truthWithout(s.truth, s.allow), allow: s.allow || [], pagesMeta, seedPaths: (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: Math.max(10, (s.pages || []).length + 5),
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ live: '1', domain: info.domain, site: s.siteId, path, device });
           for (let attempt = 0; attempt < 3; attempt++) {
@@ -2465,16 +2467,21 @@
     const off = offFonts(s);
     const open = fontCount(s);
     const srcOf = (name) => (f.all || []).find((x) => x.name === name) || {};
+    // The design may set each heading level in a different WEIGHT of the same typeface. That is one
+    // typeface, so the card is per typeface and the levels are listed on it.
     const groups = [];
     FONT_LEVELS.filter(([k]) => theme[k]).forEach(([k, label]) => {
-      const g = groups.find((x) => x.fam === theme[k]);
-      if (g) g.levels.push(label); else groups.push({ fam: theme[k], levels: [label] });
+      const fam = A.fontBase(theme[k]) || theme[k];
+      const g = groups.find((x) => x.fam === fam);
+      if (g) g.levels.push(label); else groups.push({ fam, levels: [label] });
     });
     const card = (fam, lines, bad) => {
       const src = srcOf(fam);
+      const w = (src.weights || []).filter(Boolean);
       return `<div class="font-card${bad ? ' off' : ''}">
         <div class="font-name">${esc(fam)}</div>
         <div class="small muted">${esc(lines)}</div>
+        ${w.length ? `<div class="small faint">Weights: ${esc(w.join(', '))}</div>` : ''}
         <div class="small faint">${src.loaded ? `Loaded from ${esc(src.src || 'the website')}` : '<span class="v-still-t">Not loaded by the website</span>'}${!bad && src.n ? ` · ${src.n} place${src.n === 1 ? '' : 's'}` : ''}</div>
       </div>`;
     };
@@ -2505,6 +2512,121 @@
     return on;
   }
   const clearFilters = () => { Object.assign(state.ff, FF_DEFAULTS); };
+
+  // =====================================================================
+  // OUR ADDITIONS AND EXCEPTIONS
+  //
+  // Duda's Business Info is never edited here. What Duda says is what the page shows, and a rescan
+  // takes it fresh every time — an editable copy would quietly become a second source of truth and
+  // force a "yours or Duda's?" decision on every scan.
+  //
+  // This is the layer beside it, owned by the team and never touched by a rescan. It runs both ways:
+  //   · correct for this website — a second phone, an owner's personal email, a font chosen on purpose
+  //   · NOT correct — an agency address sitting in a client's Business Info, a retired number
+  // =====================================================================
+  const ALLOW_TYPES = [
+    { v: 'phone', label: 'Phone number', ph: '(302) 317-2793' },
+    { v: 'email', label: 'Email address', ph: 'sales@theirshop.com' },
+    { v: 'name', label: 'Business name', ph: 'Shore Detailing LLC' },
+    { v: 'social', label: 'Social link', ph: 'https://facebook.com/theirpage' },
+    { v: 'font', label: 'Typeface', ph: 'Magistral-Medium' },
+  ];
+  const typeLabel = (t) => (ALLOW_TYPES.find((x) => x.v === t) || {}).label || t;
+  const denied = (s, type, value) => (s.allow || []).find((a) => a.mode === 'deny' && a.type === type && a.key === A.allowKey(type, value));
+
+  /** Duda's values, with anything the team has struck out shown as struck out rather than hidden. */
+  function vals(s, type, list, fmt) {
+    if (!list.length) return '—';
+    return list.map((v) => {
+      const d = denied(s, type, v);
+      return d ? `<span class="bi-was" title="${esc('Not correct for this website' + (d.reason ? ' — ' + d.reason : ''))}">${esc(fmt(v))}</span>` : esc(fmt(v));
+    }).join(', ');
+  }
+
+  /** Open items that would stop being issues if this value were approved. */
+  const affectedBy = (s, key) => (s.findings || []).filter((f) => !['done', 'false'].includes(f.status) && (A.allowValueOf(f) || {}).key === key);
+
+  function ourLayer(s) {
+    const list = (s.allow || []).slice().sort((a, b) => String(a.type).localeCompare(String(b.type)) || String(a.value).localeCompare(String(b.value)));
+    const ok = list.filter((a) => a.mode !== 'deny');
+    const no = list.filter((a) => a.mode === 'deny');
+    const row = (a) => `<li>
+      <b>${esc(a.value)}</b> <span class="badge subtle">${esc(typeLabel(a.type))}</span>
+      <span class="faint small">${esc(a.byName || nameOf(a.by))}, ${esc(fmtDate(a.at))}${a.item ? ` · from #${a.item}` : ''}</span>
+      ${a.reason ? `<div class="small muted">${esc(a.reason)}</div>` : ''}
+      ${a.stale ? `<div class="note unk small" style="margin:4px 0 0">This was in Business Info when it was approved, but Duda changed it on <b>${esc(fmtDate(a.stale))}</b>. Worth checking whether it's still correct.</div>` : ''}
+      ${(a.history || []).length ? `<details class="small"><summary class="faint">Changed ${a.history.length} time${a.history.length === 1 ? '' : 's'}</summary>
+        <ul class="allow-hist">${a.history.slice().reverse().map((h) => `<li>${esc(fmtDate(h.at))} · ${esc(h.byName || nameOf(h.by))} — ${h.from !== h.to ? `${esc(h.from === 'deny' ? 'not correct' : 'correct')} → <b>${esc(h.to === 'deny' ? 'not correct' : 'correct')}</b>` : 'note changed'}${h.note ? `: ${esc(h.note)}` : ''}</li>`).join('')}</ul></details>` : ''}
+      <span class="allow-acts"><button class="linkbtn small" data-allow-edit="${esc(a.key)}">Edit</button>
+        <button class="linkbtn danger small" data-unallow="${esc(a.key)}" title="Check this value normally again from the next scan">Remove</button></span>
+    </li>`;
+    return `<div class="k" style="margin-top:14px">Our additions and exceptions
+        <span class="faint">(kept through every rescan — Duda's copy above is never edited)</span></div>
+      ${ok.length ? `<div class="small muted" style="margin:6px 0 2px">Correct for this website — never flagged</div><ul class="allow-list">${ok.map(row).join('')}</ul>` : ''}
+      ${no.length ? `<div class="small muted" style="margin:10px 0 2px">Not correct for this website — flagged if it turns up, even though Duda lists it</div><ul class="allow-list deny">${no.map(row).join('')}</ul>` : ''}
+      ${!list.length ? `<p class="small muted" style="margin:6px 0 0">Nothing yet. Add a value the client really uses that Duda doesn't carry, or strike out one of Duda's that shouldn't appear on their website.</p>` : ''}
+      <p style="margin:10px 0 0"><button class="btn sm" id="allowAdd">＋ Add or exclude a value</button></p>
+      ${(s.allowRetired || []).length ? `<details style="margin-top:10px"><summary class="small faint">Approvals that retired themselves (${s.allowRetired.length})</summary>
+        <ul class="allow-list small">${s.allowRetired.slice().reverse().map((a) => `<li><b>${esc(a.value)}</b> <span class="faint">— became the official ${esc(typeLabel(a.type).toLowerCase())} in Business Info on ${esc(fmtDate(a.retiredAt))}, so the approval was no longer needed. Approved by ${esc(a.byName || nameOf(a.by))}, ${esc(fmtDate(a.at))}.</span></li>`).join('')}</ul></details>` : ''}`;
+  }
+
+  function openAllowEditor(s, existing) {
+    const a = existing || null;
+    modal(`<header><h2>${a ? 'Edit' : 'Add or exclude a value'}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <div class="grid-2" style="grid-template-columns:1fr 1fr">
+          <label class="field">What is it
+            <select id="alType" ${a ? 'disabled' : ''}>${ALLOW_TYPES.map((t) => `<option value="${t.v}" ${a && a.type === t.v ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select></label>
+          <label class="field">Value
+            <input id="alValue" value="${esc(a ? a.value : '')}" ${a ? 'disabled' : ''} placeholder="${esc(ALLOW_TYPES[0].ph)}"></label>
+        </div>
+        <div class="k" style="margin-top:10px">Which is it?</div>
+        <label class="check-row"><input type="radio" name="alMode" value="allow" ${!a || a.mode !== 'deny' ? 'checked' : ''}>
+          <span><b>Correct for this website.</b> Never flag it, even though Business Info doesn't carry it.</span></label>
+        <label class="check-row"><input type="radio" name="alMode" value="deny" ${a && a.mode === 'deny' ? 'checked' : ''}>
+          <span><b>Not correct for this website.</b> Flag it if it turns up, even though Business Info does carry it — an agency address, a retired number.</span></label>
+        <label class="field" style="margin-top:10px">Why <span class="faint">(the next person will want to know)</span>
+          <textarea id="alReason" rows="2" placeholder="e.g. Second shop line, confirmed with the owner on 12 Sep">${esc(a ? a.reason || '' : '')}</textarea></label>
+        <div id="alHit" class="small" style="margin-top:8px"></div>
+      </div>
+      <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn primary" id="alSave">${a ? 'Save' : 'Add it'}</button></footer>`, { wide: true });
+
+    const typeEl = $('#alType'); const valEl = $('#alValue'); const hit = $('#alHit');
+    const mode = () => ($$('input[name="alMode"]').find((r) => r.checked) || {}).value || 'allow';
+    const preview = () => {
+      const key = A.allowKey(typeEl.value, valEl.value);
+      if (!key) { hit.innerHTML = valEl.value.trim() ? '<span class="v-still-t">That doesn\'t look like a valid ' + esc(typeLabel(typeEl.value).toLowerCase()) + '.</span>' : ''; return; }
+      if (mode() === 'deny') { hit.innerHTML = '<span class="faint">It will be flagged from the next scan if it appears on the website.</span>'; return; }
+      const n = affectedBy(s, key).length;
+      hit.innerHTML = n ? `<b>${n} open audit item${n === 1 ? '' : 's'}</b> flagged this. Saving closes ${n === 1 ? 'it' : 'them'} as a False alarm, with your reason on the item. <button class="linkbtn" id="alShow">Show ${n === 1 ? 'it' : 'them'}</button>`
+        : '<span class="faint">Nothing open flags this at the moment.</span>';
+      const sh = $('#alShow');
+      if (sh) sh.onclick = () => { hit.innerHTML += `<ul class="allow-list small">${affectedBy(s, key).map((f) => `<li>#${f.num} — ${esc(f.message)}</li>`).join('')}</ul>`; };
+    };
+    typeEl.onchange = () => { valEl.placeholder = (ALLOW_TYPES.find((t) => t.v === typeEl.value) || {}).ph || ''; preview(); };
+    valEl.oninput = preview;
+    $$('input[name="alMode"]').forEach((r) => (r.onchange = preview));
+    preview();
+    setTimeout(() => valEl.focus(), 50);
+
+    $('#alSave').onclick = async () => {
+      const type = a ? a.type : typeEl.value;
+      const value = a ? a.value : valEl.value.trim();
+      const key = A.allowKey(type, value);
+      if (!key) return toast(`That doesn't look like a valid ${typeLabel(type).toLowerCase()}`);
+      const reason = $('#alReason').value.trim();
+      const chosen = mode();                      // read before the dialog goes: the radios go with it
+      const closeIds = chosen === 'allow' ? affectedBy(s, key).map((f) => f.id) : [];
+      closeModal();
+      try {
+        const r = await store({ op: a ? 'allowEdit' : 'allowAdd', id: s.id, type, value, key, mode: chosen, reason, closeIds });
+        upsertSummary(r);
+        toast(r.closed ? `Saved · ${r.closed} audit item${r.closed === 1 ? '' : 's'} closed` : 'Saved');
+        await loadSite(s.id); renderSite();
+      } catch (e) { toast(e.message); }
+    };
+    $$('[data-close]', $('.modal')).forEach((b) => b.addEventListener('click', () => renderSite()));
+  }
 
   // =====================================================================
   // BUSINESS INFO HISTORY  (Reference data → third tab)
@@ -2585,17 +2707,14 @@
           <div class="panel panel-pad">
             <h2>Reference: Business Info <span class="badge ${t.source === 'api' ? 'scan-complete' : 'sev-warning'}">${t.source === 'api' ? 'From Duda API' : t.source === 'schema' ? 'Fallback: site schema' : 'Not loaded yet'}</span></h2>
             <div class="truth">
-              <div><div class="k">Business name</div><div class="v">${esc((t.names || []).join(' / ') || '—')}</div></div>
-              <div><div class="k">Phone</div><div class="v">${esc((t.phones || []).map(A.fmtPhone).join(', ') || '—')}</div></div>
-              <div><div class="k">Email</div><div class="v">${esc((t.emails || []).join(', ') || '—')}</div></div>
+              <div><div class="k">Business name</div><div class="v">${vals(s, 'name', t.names || [], (x) => x)}</div></div>
+              <div><div class="k">Phone</div><div class="v">${vals(s, 'phone', t.phones || [], A.fmtPhone)}</div></div>
+              <div><div class="k">Email</div><div class="v">${vals(s, 'email', t.emails || [], (x) => x)}</div></div>
               <div><div class="k">Address</div><div class="v">${esc((t.addresses || []).map((a) => [a.street, a.city, a.region, a.zip].filter(Boolean).join(', ')).join(' | ') || '—')}</div></div>
               <div><div class="k">Domain</div><div class="v">${esc(t.domain || '—')}</div></div>
               <div><div class="k">Social (Business Info)</div><div class="v small">${socials || '—'}</div></div>
             </div>
-            ${(s.allow || []).length ? `<div class="k" style="margin-top:12px">Also correct for this website <span class="faint">(approved by the team, never flagged)</span></div>
-              <ul class="allow-list">${s.allow.map((a) => `<li><b>${esc(a.value)}</b> <span class="faint small">${esc(a.type)} · ${esc(a.byName || nameOf(a.by))}, ${esc(fmtDate(a.at))}${a.item ? ` · from #${a.item}` : ''}</span>${a.reason ? `<div class="small muted">${esc(a.reason)}</div>` : ''}${a.stale ? `<div class="note unk small" style="margin:4px 0 0">This was in Business Info when it was approved, but Duda changed it on <b>${esc(fmtDate(a.stale))}</b>. Worth checking whether it's still correct.</div>` : ''} <button class="linkbtn danger small" data-unallow="${esc(a.key)}" title="Check this value again on the next scan">Remove</button></li>`).join('')}</ul>` : ''}
-            ${(s.allowRetired || []).length ? `<details style="margin-top:10px"><summary class="small faint">Approvals that retired themselves (${s.allowRetired.length})</summary>
-              <ul class="allow-list small">${s.allowRetired.slice().reverse().map((a) => `<li><b>${esc(a.value)}</b> <span class="faint">— became the official ${esc(a.type === 'name' ? 'business name' : a.type)} in Business Info on ${esc(fmtDate(a.retiredAt))}, so the approval was no longer needed. Approved by ${esc(a.byName || nameOf(a.by))}, ${esc(fmtDate(a.at))}.</span></li>`).join('')}</ul></details>` : ''}
+            ${ourLayer(s)}
           </div>
           <div class="panel panel-pad">
             <h2>Facebook / Google Business check</h2>
@@ -2668,7 +2787,13 @@
     bindNewChecks(body, s);
     $$('[data-ref]', body).forEach((b) => (b.onclick = () => { state.refTab = b.dataset.ref; renderSite(); }));
     if ($('#fontToItems', body)) $('#fontToItems', body).onclick = () => { state.ff.cat = 'Design'; state.ff.q = ''; state.ff.sev = ''; renderSite(); };
-    $$('[data-unallow]', body).forEach((b) => (b.onclick = async () => { if (!confirm('Remove this approval? The value will be flagged again on the next scan.')) return; try { upsertSummary(await store({ op: 'allowRemove', id: s.id, key: b.dataset.unallow })); await loadSite(s.id); renderSite(); } catch (e) { toast(e.message); } }));
+    $$('[data-unallow]', body).forEach((b) => (b.onclick = async () => {
+      const a = (s.allow || []).find((x) => x.key === b.dataset.unallow) || {};
+      if (!confirm(`Remove this ${a.mode === 'deny' ? 'exception' : 'approval'} for ${a.value}?\n\nIt goes back to being checked normally from the next scan.`)) return;
+      try { upsertSummary(await store({ op: 'allowRemove', id: s.id, key: b.dataset.unallow })); await loadSite(s.id); renderSite(); } catch (e) { toast(e.message); }
+    }));
+    $$('[data-allow-edit]', body).forEach((b) => (b.onclick = () => openAllowEditor(s, (s.allow || []).find((x) => x.key === b.dataset.allowEdit))));
+    if ($('#allowAdd', body)) $('#allowAdd', body).onclick = () => openAllowEditor(s, null);
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
@@ -2781,6 +2906,10 @@
    * or the same value marked a False alarm before. Shown on the item rather than left for someone
    * to remember — and, when a client asked, saying why the item was moved out of the default list.
    */
+  /** An item closed because the reference moved, not because anybody judged the check wrong. */
+  const autoNote = (f) => (f.auto && f.auto.why === 'reference-changed' && f.auto.note
+    ? `<div class="note known-note"><div class="small">${esc(f.auto.note)}. The item is kept so it can be reopened if that turns out to be wrong.</div></div>` : '');
+
   function knownNote(f, s) {
     const k = f.known;
     const auto = f.auto && f.auto.why === 'client-comment';
@@ -2828,7 +2957,7 @@
         ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
         ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
-        ${aiNote(f, true)}${aiPendingHtml(f, true)}${knownNote(f, s)}
+        ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${knownNote(f, s)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}</div>
@@ -3680,6 +3809,7 @@
           <li><b>Other-client leftovers:</b> names, logos, links and copyright lines from a different business</li>
           <li><b>Links and images:</b> broken pages, broken links and images, alt text</li>
           <li><b>SEO basics:</b> titles, descriptions, H1s, noindex, placeholder text</li>
+          <li><b>Design:</b> text set in a typeface that isn't one of the website's own fonts — read from the design settings, and counting every weight of a font as the same font</li>
         </ul></div>
       <ol class="steps" style="margin-top:14px">
         <li class="panel"><h3>Add websites</h3><p>Click <b>+ Add website</b>, paste editor links (one per line) and assign someone. Keep the tab open while it scans.</p></li>

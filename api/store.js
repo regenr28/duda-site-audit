@@ -27,7 +27,7 @@ async function loadSite(id) {
     f.status = s.status || (f.done ? 'done' : 'open');
     f.assignee = s.assignee !== undefined ? s.assignee : (f.assignee || '');
     f.statusBy = s.updatedBy || ''; f.statusAt = s.updatedAt || '';
-    if (s.auto) f.auto = { why: s.auto, at: s.autoAt || '', ref: s.autoRef || '' };
+    if (s.auto) f.auto = { why: s.auto, at: s.autoAt || '', ref: s.autoRef || '', note: s.autoNote || '' };
     f.num = nums[f.id] ? Number(nums[f.id]) : f.num || null;
     f.comments = cCount[f.id] || 0;
     delete f.done;
@@ -291,7 +291,9 @@ export default async function handler(req, res) {
         if ((site.allow || []).length) {
           const kept = [];
           for (const a of site.allow) {
-            if (isCurrentValue(shape, a.type, a.value)) {
+            // Only an approval can become redundant. An exception is the opposite: it exists BECAUSE
+            // Duda still carries the value, so "Duda agrees" is never a reason to drop it.
+            if (a.mode !== 'deny' && isCurrentValue(shape, a.type, a.value)) {
               site.allowRetired = [...(site.allowRetired || []), Object.assign({}, a, { retiredAt: now(), why: 'official' })].slice(-30);
               await log(b.id, me, 'allow', `approval for ${a.value} retired — it is now the ${a.type === 'name' ? 'business name' : a.type} in Business Info, so there is nothing to approve`);
               continue;
@@ -408,26 +410,84 @@ export default async function handler(req, res) {
         await redis(['HDEL', P + 'fa', String(b.key || '')]);
         return res.status(200).json({ ok: true });
       }
-      case 'allowAdd': case 'allowRemove': {
-        // "Correct for this website" exceptions: values (email, phone, social link, business name) that must not be flagged
+      case 'allowAdd': case 'allowRemove': case 'allowEdit': {
+        // The team's own layer on top of Business Info.
+        //
+        // Duda's copy is never edited here: what Duda says is what the page shows, always fresh on
+        // the next scan. This is the layer beside it — values the team has ruled on, which a rescan
+        // must never touch. Two directions: "correct for this website" (a second phone, a personal
+        // email the owner really uses, a font the designer chose on purpose) and "not correct"
+        // (an agency address sitting in a client's Business Info, a number they have retired).
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
         site.allow = site.allow || [];
-        if (b.op === 'allowAdd') {
-          const type = ['email', 'phone', 'social', 'name'].includes(b.type) ? b.type : '';
-          const value = String(b.value || '').trim().slice(0, 300); const key = String(b.key || '').slice(0, 300);
-          if (!type || !value || !key) return res.status(400).json({ error: 'Nothing to approve' });
-          if (!site.allow.some((x) => x.key === key)) site.allow.push({ key, type, value, reason: String(b.reason || '').trim().slice(0, 500), by: me.email, byName: me.name, at: now(), item: Number(b.item) || null });
-          site.allow = site.allow.slice(-200);
-          await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
-          await log(b.id, me, 'allow', `approved ${value} as correct for this website${b.reason ? ': ' + String(b.reason).slice(0, 200) : ''}`);
-        } else {
+        const noteOf = (v) => String(v || '').trim().slice(0, 500);
+
+        if (b.op === 'allowRemove') {
           const x = site.allow.find((y) => y.key === b.key);
           site.allow = site.allow.filter((y) => y.key !== b.key);
           await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
-          if (x) await log(b.id, me, 'allow', `removed the approval for ${x.value} (it will be checked again on the next scan)`);
+          if (x) await log(b.id, me, 'allow', `removed the ${x.mode === 'deny' ? 'exception' : 'approval'} for ${x.value} — it will be checked normally again from the next scan`);
+          return res.status(200).json(await saveIndex(b.id));
         }
-        return res.status(200).json(await saveIndex(b.id));
+
+        if (b.op === 'allowEdit') {
+          const x = site.allow.find((y) => y.key === b.key);
+          if (!x) return res.status(404).json({ error: 'Not found' });
+          const was = { mode: x.mode || 'allow', reason: x.reason || '' };
+          if (b.mode === 'allow' || b.mode === 'deny') x.mode = b.mode;
+          if (b.reason !== undefined) x.reason = noteOf(b.reason);
+          (x.history = x.history || []).push({ at: now(), by: me.email, byName: me.name,
+            from: was.mode, to: x.mode || 'allow', note: x.reason !== was.reason ? x.reason : '' });
+          x.history = x.history.slice(-20);
+          x.updatedAt = now(); x.updatedBy = me.email; x.updatedByName = me.name;
+          await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+          await log(b.id, me, 'allow', `updated ${x.value}: now ${x.mode === 'deny' ? 'NOT correct for this website' : 'correct for this website'}${x.reason ? ' — ' + String(x.reason).slice(0, 200) : ''}`);
+          return res.status(200).json(await saveIndex(b.id));
+        }
+
+        const type = ['email', 'phone', 'social', 'name', 'font'].includes(b.type) ? b.type : '';
+        const value = String(b.value || '').trim().slice(0, 300);
+        const key = String(b.key || '').slice(0, 300);
+        const mode = b.mode === 'deny' ? 'deny' : 'allow';
+        if (!type || !value || !key) return res.status(400).json({ error: 'Nothing to save' });
+        const already = site.allow.find((x) => x.key === key);
+        if (already) {
+          already.mode = mode; already.reason = noteOf(b.reason);
+          (already.history = already.history || []).push({ at: now(), by: me.email, byName: me.name, from: already.mode, to: mode, note: already.reason });
+          already.history = already.history.slice(-20);
+        } else {
+          site.allow.push({ key, type, value, mode, reason: noteOf(b.reason), by: me.email, byName: me.name, at: now(), item: Number(b.item) || null, history: [] });
+        }
+        site.allow = site.allow.slice(-300);
+
+        // Anything open that flagged this value is no longer an issue — the reference changed, not
+        // the website. Closed with the reason written out, and reversible: the item is still there.
+        //
+        // Which items those are is worked out in the browser, where the check definitions live, and
+        // sent here as ids; the server only trusts ids that really belong to this website and are
+        // really still open.
+        let closed = 0;
+        if (mode === 'allow') {
+          const want = new Set([].concat(b.closeIds || []).map(String));
+          const [stRaw] = await redis(['HGETALL', P + 'fstate:' + b.id]);
+          const st = pairs(stRaw, true);
+          const hit = (site.findings || []).filter((f) => {
+            if (!want.has(String(f.id))) return false;
+            const cur = st[f.id] || {};
+            return cur.status !== 'done' && cur.status !== 'false';
+          });
+          if (hit.length) {
+            const note = `Closed automatically: ${value} was approved as correct for this website by ${me.name}${b.reason ? ' — ' + noteOf(b.reason) : ''}`;
+            await redis(['HSET', P + 'fstate:' + b.id, ...hit.flatMap((f) => [f.id,
+              JSON.stringify(Object.assign({}, st[f.id] || {}, { status: 'false', updatedBy: me.email, updatedAt: now(), auto: 'reference-changed', autoNote: note }))])]);
+            closed = hit.length;
+          }
+        }
+        await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+        await log(b.id, me, 'allow', `${mode === 'deny' ? 'marked' : 'approved'} ${value} as ${mode === 'deny' ? 'NOT correct for this website' : 'correct for this website'}${b.reason ? ': ' + noteOf(b.reason) : ''}${closed ? ` · ${closed} open item${closed === 1 ? '' : 's'} closed` : ''}`);
+        const sum = await saveIndex(b.id);
+        return res.status(200).json(Object.assign({}, sum, { closed }));
       }
       case 'saveVerify': {
         // Result of "Verify on live site": which closed items are really gone from the published site

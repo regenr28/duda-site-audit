@@ -64,11 +64,11 @@ export async function crossCheck(findings, dudaSiteId) {
       const [conv, over] = await redis(['HGETALL', P + 'conv:' + dudaSiteId], ['HGETALL', P + 'cmtwho']);
       const overrides = {};
       for (let i = 0; over && i < over.length; i += 2) overrides[over[i]] = over[i + 1];
-      const authors = [];
-      threads.forEach((t) => (t.comments || []).forEach((c) => { if (c.by) authors.push(c.by); }));
-      const isClient = sideTest(await listUsers(), overrides, await slackRoster(), await dudaTypes(authors, 6));
       const threads = [];
       for (let i = 1; conv && i < conv.length; i += 2) { const c = jparse(conv[i]); if (c) threads.push(c); }
+      const authors = [];
+      threads.forEach((t) => (t.comments || []).forEach((c) => { if (c.by && !authors.includes(c.by)) authors.push(c.by); }));
+      const isClient = sideTest(await listUsers(), overrides, await slackRoster(), await dudaTypes(authors, 6));
       threads.forEach((t) => {
         (t.comments || []).filter((c) => !c.deleted).forEach((c) => {
           const text = unescapeHtml(c.text || '');
