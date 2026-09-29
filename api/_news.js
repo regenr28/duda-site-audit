@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-29-form-required', date: '2026-09-29', audience: 'all', tag: 'Audits',
+    title: 'Fixed: "Phone field is not required" on forms where it was',
+    what: 'Reported by <b>Chris Barnett</b>, and the first fix to come straight out of a False alarm report. Ticking <b>Required</b> in the Duda form editor does <i>not</i> add a required attribute to the field — Duda marks the <b>row</b> around it (<span class="mono">class="dmforminput … required"</span>), validates in its own code, and puts a star on the label. The check was only looking at the field itself, so it called <b>every</b> Duda form field optional, including the ones that had been required all along. It now reads the row, the star on the label or placeholder, and Duda’s hidden label field — any one of them is enough — and still catches a phone field that genuinely is optional.',
+    where: ['Websites already scanned show <b>⚠ A check was corrected — rescan</b> and the affected items are marked, so nobody keeps chasing it.', 'Rescan and the false ones go. A form where the phone field really is optional is still flagged.', 'This is what the False alarm queue is for — if a check looks wrong to you, mark the item <b>False alarm</b> and say why.'],
+    link: '#/help/suggest', linkText: 'How reports work',
+  },
+  {
     id: '2026-09-29-fa-reports', date: '2026-09-29', audience: 'all', tag: 'Audits',
     title: 'A False alarm is now a bug report you can follow',
     what: 'Marking an item <b>False alarm</b> is you telling the app that one of its checks got it wrong — which is the most useful thing it ever learns about itself. That used to vanish into an admin-only list you never saw again. Now it is a report with your name on it. Your reason is posted as a <b>comment on the audit item</b>, so the next person to open it reads why it was dismissed instead of arguing with it again. The item itself shows <b>you reported this as a false alarm</b> with where it has got to, and the audit list carries a small <b>Reported:</b> chip. When an admin moves it you are <b>told — with their note</b>, not just a status — on the bell, on your desktop, in Slack and by email. And you can <b>answer back</b> on your own report: if you think the verdict is wrong, say so, and the admins hear it. The statuses now say what happened to the <i>check</i>: <b>New</b>, <b>Checking</b>, <b>Audit Adjusted</b>, <b>True False Alarm</b>, <b>Won’t change</b>. Admins are asked for a note on every move, because “True False Alarm” with no explanation tells you nothing.',

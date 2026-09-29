@@ -113,6 +113,18 @@
         'An audit item names the family ("Title in Magistral"), so approving a font covers every weight of it at once',
       ],
     },
+    {
+      v: 8,
+      date: '2026-09-29',
+      title: 'Required form fields are recognised the way Duda marks them',
+      fixes: ['FORM_PHONE_OPTIONAL'],
+      fixedWhat: 'Ticking "Required" in the Duda form editor does not put a required attribute on the field \u2014 it marks the row around it and stars the label. The check only looked at the field, so it called every Duda form field optional, including the ones that were required all along.',
+      items: [
+        'A phone field is read as required if the Duda row is marked required, if its label or placeholder ends in a star, or if the field carries the plain HTML required attribute',
+        'Hand-built forms that use required or aria-required on the field itself still work as before',
+        'A genuinely optional phone field is still flagged \u2014 only the false ones go',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -909,6 +921,41 @@
     }
 
     // --- Contact form ---
+    /**
+     * Is this field required?
+     *
+     * Duda does NOT put `required` on the input. Ticking "Required" in the form editor marks the
+     * WRAPPER — `<div class="dmforminput … required">` — validates in its own JavaScript, and adds a
+     * star to the field's label. So looking only at the input's attribute called every Duda form
+     * field optional, including ones that really were required, which is the wrong answer every time.
+     *
+     * Four signals, any one of which means required:
+     *  1. the input's own `required` / `aria-required` (a hand-built form, or a non-Duda one)
+     *  2. `class="… required"` on an ancestor inside the form — how Duda actually marks it
+     *  3. a trailing star on the placeholder or aria-label — "Phone*"
+     *  4. a trailing star on the field's label, which Duda keeps in two places: a `<label for="…">`
+     *     matching the input's NAME (not its id — Duda's own quirk), and a hidden
+     *     `<input name="label-<name>">` carrying the same text.
+     */
+    function fieldRequired(form, i) {
+      if (i.hasAttribute('required') || String(i.getAttribute('aria-required')).toLowerCase() === 'true') return true;
+      for (let el = i.parentElement, n = 0; el && n < 4 && el !== form; el = el.parentElement, n++) {
+        if (/(^|\s)required(\s|$)/i.test(el.getAttribute('class') || '')) return true;
+      }
+      const star = (v) => /\*\s*$/.test(String(v == null ? '' : v));
+      if (star(i.getAttribute('placeholder')) || star(i.getAttribute('data-placeholder-original')) || star(i.getAttribute('aria-label'))) return true;
+      const name = i.getAttribute('name') || '';
+      if (name) {
+        const hidden = form.querySelector(`input[type="hidden"][name="label-${(window.CSS && CSS.escape ? CSS.escape(name) : name.replace(/["\\]/g, '\\$&'))}"]`);
+        if (hidden && star(hidden.getAttribute('value'))) return true;
+      }
+      const forId = i.getAttribute('id') || '';
+      for (const lab of form.querySelectorAll('label[for]')) {
+        const f = lab.getAttribute('for');
+        if ((f === name || f === forId) && star(lab.textContent)) return true;
+      }
+      return false;
+    }
     const realForms = [...doc.querySelectorAll('form')].filter((f) => f.querySelector('textarea, input[type="email" i], input[name*="email" i]'));
     if (realForms.length > 1) {
       add(realForms[1], { code: 'FORM_MULTIPLE', severity: 'warning', category: 'Content', message: `${realForms.length} contact forms on this page — there should be one, on the contact page`, found: `${realForms.length} forms` });
@@ -917,7 +964,7 @@
       f.querySelectorAll('input').forEach((i) => {
         const hay = [i.getAttribute('type'), i.getAttribute('name'), i.getAttribute('id'), i.getAttribute('placeholder'), i.getAttribute('aria-label')].join(' ').toLowerCase();
         const isPhone = /\btel\b|phone|mobile|cell/.test(hay);
-        if (isPhone && !i.hasAttribute('required') && String(i.getAttribute('aria-required')) !== 'true') {
+        if (isPhone && !fieldRequired(f, i)) {
           add(i, { code: 'FORM_PHONE_OPTIONAL', severity: 'warning', category: 'Content', message: 'Phone field on the contact form is not required', found: i.getAttribute('placeholder') || i.getAttribute('name') || 'phone field' });
         }
       });
