@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-29-map-locale', date: '2026-09-29', audience: 'all', tag: 'Audits',
+    title: 'Fixed: map embeds reported as pointing at a business called "ph"',
+    what: 'Also reported by <b>Chris Barnett</b>. A Google Map embed URL is mostly coordinates and ids, and it ends with the language and region it was made in — <span class="mono">!3m2!1sen!2sph</span>. The check was reading that region code as the name of the business the map points at, so a correct map came back as <b>Google Map embed points to ANOTHER business — Found: ph</b>, at <b>critical</b>. Any embed made by dropping a pin or typing an address carries no business name at all, and every one of those was being flagged. The check now ignores the locale, ids and coordinates; if the embed genuinely has no business name in it, <b>nothing is said</b> — and a map that really does point at a different business, or a different street address, is still critical.',
+    where: ['Websites already scanned show <b>⚠ A check was corrected — rescan</b>, with the affected items marked.', 'Rescan and the false ones go.', 'Google Business links carrying only a place ID behave as before — they compare IDs and, failing that, ask you to check by hand rather than accusing anyone.'],
+    link: '#/help/suggest', linkText: 'How reports work',
+  },
+  {
     id: '2026-09-29-form-required', date: '2026-09-29', audience: 'all', tag: 'Audits',
     title: 'Fixed: "Phone field is not required" on forms where it was',
     what: 'Reported by <b>Chris Barnett</b>, and the first fix to come straight out of a False alarm report. Ticking <b>Required</b> in the Duda form editor does <i>not</i> add a required attribute to the field — Duda marks the <b>row</b> around it (<span class="mono">class="dmforminput … required"</span>), validates in its own code, and puts a star on the label. The check was only looking at the field itself, so it called <b>every</b> Duda form field optional, including the ones that had been required all along. It now reads the row, the star on the label or placeholder, and Duda’s hidden label field — any one of them is enough — and still catches a phone field that genuinely is optional.',

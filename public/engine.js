@@ -125,6 +125,19 @@
         'A genuinely optional phone field is still flagged \u2014 only the false ones go',
       ],
     },
+    {
+      v: 9,
+      date: '2026-09-29',
+      title: 'Map embeds are no longer read as pointing at a business called "ph"',
+      fixes: ['MAP_OTHER_BUSINESS', 'MAP_ADDRESS'],
+      fixedWhat: 'A Google Map embed URL ends with a language and region code \u2014 en, ph \u2014 and the check was reading that region as the name of the business the map points at. Any embed made by dropping a pin or typing an address, which carries no business name at all, was reported as pointing at another business.',
+      items: [
+        'The language and region codes at the end of a map embed are no longer mistaken for a business name',
+        'An embed with no business name in it is left alone instead of being called another business',
+        'A map that really does point at a different business, or a different street address, is still critical',
+        'Google Business links with only a place ID still fall back to comparing IDs, as before',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -303,11 +316,48 @@
     const m = h.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i) || h.match(/[?&](?:ftid|cid|place_id)=([^&]+)/i) || h.match(/!1s([A-Za-z0-9_-]{10,})/);
     return m ? m[1].toLowerCase() : '';
   }
+  /** Coordinates, not a name: "45.52,-122.60", "@45.52,-122.60,15z". */
+  const COORDS = /^@?[-+]?\d{1,3}(\.\d+)?\s*,\s*[-+]?\d{1,3}(\.\d+)?/;
+  /**
+   * The business name a Google Maps URL points at, or '' when it carries none.
+   *
+   * The `pb=` blob in an embed iframe is mostly coordinates, zoom levels and feature ids, written as
+   * `!<n><type><value>` segments. It ALWAYS ends with a locale pair — `!3m2!1sen!2sph` is language
+   * "en", region "ph" — and reading the first `!2s…` as a name turns that region code into a
+   * business called "ph", which is how a perfectly correct map came to be reported as pointing at
+   * another business. So the locale pair is skipped, along with ids, numbers and anything too short
+   * to be a name, and the best remaining candidate wins. Plenty of embeds are generated from a
+   * dropped pin or an address and carry no name at all — for those the honest answer is '', and
+   * nothing is flagged.
+   */
   function placeNameFromUrl(href) {
-    const m = String(href).match(/\/maps\/place\/([^/@?]+)/i) || String(href).match(/!2s([^!]+)/);
+    const s = String(href || '');
+    const path = s.match(/\/maps\/place\/([^/@?]+)/i);
     // "place/data=!4m2!…" and "place/@lat,lng" are IDs and coordinates, not names
-    if (m && !/^(data=|@|[-\d.,+]+$)/i.test(m[1])) return safeDecode(m[1].replace(/\+/g, ' ')).trim();
-    try { const u = new URL(href); const q = u.searchParams.get('q') || u.searchParams.get('query'); if (q) return q; } catch (e) { /* ignore */ }
+    if (path && !/^(data=|@)/i.test(path[1]) && !COORDS.test(path[1])) {
+      const v = safeDecode(path[1].replace(/\+/g, ' ')).trim();
+      if (v) return v;
+    }
+    const cands = [];
+    const re = /!2s([^!]*)/g;
+    let x;
+    while ((x = re.exec(s)) !== null) {
+      // `!1s<lang>!2s<region>` — the locale pair, never a place.
+      if (/!1s[a-z]{2,3}$/i.test(s.slice(Math.max(0, x.index - 8), x.index))) continue;
+      const v = safeDecode(x[1].replace(/\+/g, ' ')).trim();
+      if (v.length < 4) continue;                    // "ph", "en", and other codes
+      if (/^0x[0-9a-f]+/i.test(v)) continue;         // feature ids
+      if (COORDS.test(v) || !/[A-Za-z]{2}/.test(v)) continue;
+      cands.push(v);
+    }
+    // A real name usually has a space in it; failing that, the longest candidate.
+    cands.sort((a, c) => (/\s/.test(c) ? 1 : 0) - (/\s/.test(a) ? 1 : 0) || c.length - a.length);
+    if (cands.length) return cands[0];
+    try {
+      const u = new URL(href);
+      const q = (u.searchParams.get('q') || u.searchParams.get('query') || '').trim();
+      if (q && !COORDS.test(q) && /[A-Za-z]{2}/.test(q)) return q;
+    } catch (e) { /* ignore */ }
     return '';
   }
 
