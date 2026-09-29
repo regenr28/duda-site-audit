@@ -2939,7 +2939,7 @@
     bindComments(body, s, siteComposer);
   }
 
-  const ACT_ICON = { slack: '💬', bi: '🏷', verify: '🌐', rename: '✏️', disable: '🚫', enable: '✅', allow: '👍', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑' };
+  const ACT_ICON = { slack: '💬', bi: '🏷', verify: '🌐', rename: '✏️', disable: '🚫', enable: '✅', allow: '👍', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑', 'fa-status': '🐞', 'fa-note': '🐞' };
   function renderActivityTab(body, s) {
     const act = s.activity || [];
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {
@@ -3716,6 +3716,7 @@
     { v: 'adjusted', label: 'Audit Adjusted', hint: 'The check was wrong and has been fixed — every website scanned before now is flagged for a rescan' },
     { v: 'true', label: 'True False Alarm', hint: 'The check was right to look, but this website is a legitimate exception. The check stays as it is' },
     { v: 'wont', label: "Won't change", hint: 'Noted, and deliberately leaving the check alone' },
+    { v: 'notfa', label: 'Not a false alarm', hint: 'The check was right and this is real work — the audit item goes back to Open' },
   ];
   const FAL = Object.fromEntries(FA.map((x) => [x.v, x.label]));
   // Records written before these statuses existed are read through this, so nothing had to be migrated.
@@ -3801,7 +3802,9 @@
             // list is reloaded now rather than on the next poll — the person who just did it is
             // usually the one about to go and look.
             if (status === 'adjusted') { state.sitesVer = ''; await loadSites().catch(() => {}); }
-            toast(`${FAL[status]} — ${rec0.markedByName || 'the reporter'} has been told`);
+            // Reopening changes the audit itself, so its counts are stale from this moment.
+            if (status === 'notfa') { state.sitesVer = ''; await loadSites().catch(() => {}); }
+            toast(status === 'notfa' ? `#${rec0.num} is Open again — ${rec0.markedByName || 'the reporter'} has been told why` : `${FAL[status]} — ${rec0.markedByName || 'the reporter'} has been told`);
             draw();
           } catch (e) { toast(e.message); sel.value = was; }
         };
@@ -3811,8 +3814,13 @@
             <div class="small muted" style="margin-bottom:8px">${esc(meta.hint || '')}</div>
             <div class="small" style="margin-bottom:10px"><b>${esc(rec0.siteName || '')}</b> · #${esc(String(rec0.num || ''))} · <span class="mono faint">${esc(rec0.code || '')}</span><div class="small muted">${esc(rec0.message || '')}</div></div>
             <div class="k">What should ${esc(rec0.markedByName || 'the reporter')} know?</div>
-            <textarea id="faVerdict" rows="3" placeholder="${status === 'adjusted' ? 'e.g. The check was matching the wrong phone field. Fixed — rescan and it goes.' : status === 'true' ? 'e.g. You were right, it isn\u2019t a problem. The check stays as it is because it catches real ones elsewhere.' : 'e.g. Leaving this one \u2014 changing the check would hide genuine issues.'}"></textarea>
+            <textarea id="faVerdict" rows="3" placeholder="${status === 'adjusted' ? 'e.g. The check was matching the wrong phone field. Fixed — rescan and it goes.'
+              : status === 'true' ? 'e.g. You were right, it isn\u2019t a problem. The check stays as it is because it catches real ones elsewhere.'
+              : status === 'notfa' ? 'e.g. The link really does go to youtube.com with no channel on the end \u2014 this one needs fixing on the website.'
+              : status === 'checking' ? 'e.g. Looking at this now \u2014 what made you think the check was wrong?'
+              : 'e.g. Leaving this one \u2014 changing the check would hide genuine issues.'}"></textarea>
             ${status === 'adjusted' ? `<div class="note fixed-checks" style="margin-top:10px"><div class="small">Every website scanned before now that carries <span class="mono">${esc(rec0.code || '')}</span> items will show <b>\u26a0 A check was corrected \u2014 rescan</b>, and those items will be marked. Nothing is deleted.</div></div>` : ''}
+            ${status === 'notfa' ? `<div class="note fixed-checks" style="margin-top:10px"><div class="small">Audit item <b>#${esc(String(rec0.num || ''))}</b> goes back to <b>Open</b> on ${esc(rec0.siteName || 'that website')}, and ${esc((rec0.markedByName || 'they').split(' ')[0])} is told why. Your note is written on the item, so nobody re-closes it for the same reason.</div></div>` : ''}
           </div>
           <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn primary" id="faVerdictGo">Save and tell ${esc((rec0.markedByName || 'them').split(' ')[0])}</button></footer>`);
         $$('[data-close]', $('.modal')).forEach((b) => b.addEventListener('click', () => { sel.value = was; }));

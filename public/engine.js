@@ -138,6 +138,19 @@
         'Google Business links with only a place ID still fall back to comparing IDs, as before',
       ],
     },
+    {
+      v: 10,
+      date: '2026-09-29',
+      title: 'The hamburger and the X that closes the menu are not broken buttons',
+      fixes: ['BUTTON_NO_LINK'],
+      fixedWhat: 'Duda builds a hamburger menu as a link with no address and an icon inside, which is how it is supposed to work \u2014 the menu opens by script. The check counted every one of those as a button that goes nowhere, on every page of every website.',
+      items: [
+        'A control with nothing to read on it \u2014 a hamburger, the X that closes a menu, a slider arrow \u2014 is no longer reported as a button with no link',
+        'Neither is anything Duda itself names as a menu or slider widget, or any link with no address attribute at all',
+        'A control word like "Menu" or "Next" is left alone inside a menu or slider, and still reported anywhere else',
+        'A real button that goes nowhere is still reported, including one sitting in the header navigation, and the item now names the button instead of saying "(no text)"',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -154,6 +167,28 @@
     'oil lube tech technology fleet vehicle vehicles').split(' '));
 
   const EDITOR_HOSTS = /(^|\.)(responsivesiteeditor\.com|multiscreensite\.com|dudaone\.com|dudamobile\.com|mobilesitesonline\.com|dudasites\.com)$/i;
+
+  // The words a menu or slider control has on it, and the places those controls live. Used to tell
+  // "Get a quote, and nothing happens" from "the X that closes the menu", which has no link by design.
+  const CONTROL_WORD = /^(menu|close|open|toggle|search|back|next|prev(ious)?|more|skip|expand|collapse|[×✕✖x+]|[«»‹›←→])$/i;
+  // Duda writes these names in camelCase ("hamburgerButton", "dmNavIcon"), so the token is matched
+  // wherever it sits in the word rather than only between separators.
+  const MENU_WORDS = '(nav|navigation|navbar|menu|hamburger|burger|toggle|close|drawer|offcanvas|overlay|slider|carousel|swiper|arrow|prev|next|pagination|search)';
+  const MENU_ISH = new RegExp(`(^|[\\s_-]|[a-z])${MENU_WORDS}([\\s_-]|[A-Z]|$)`, 'i');
+  /** A Duda widget is what it says it is: dmle_widget="hamburgerButton" is not a call-to-action. */
+  const widgetName = (el) => (el.getAttribute && (el.getAttribute('dmle_widget') || el.getAttribute('data-element-type'))) || '';
+  /** Is this link a menu, slider or other control whose behaviour is wired up by script? */
+  function inMenu(a) {
+    for (let el = a, n = 0; el && n < 5; el = el.parentElement, n++) {
+      if (el.tagName === 'NAV') return true;
+      if (MENU_ISH.test(widgetName(el))) return true;
+      const c = el.getAttribute ? (el.getAttribute('class') || '') : '';
+      if (MENU_ISH.test(c)) return true;
+      const role = el.getAttribute ? (el.getAttribute('role') || '') : '';
+      if (/^(navigation|menu|menubar|toolbar)$/i.test(role)) return true;
+    }
+    return false;
+  }
 
   const SOCIAL_HOSTS = [
     { net: 'facebook', re: /(^|\.)(facebook\.com|fb\.com|fb\.me)$/i },
@@ -1119,7 +1154,21 @@
       const isButton = /\bdmButtonLink\b/.test(cls(a)) || /(^|[\s_-])(btn|button)([\s_-]|$)/i.test(cls(a)) || a.getAttribute('role') === 'button';
       const hasPopup = Array.prototype.some.call(a.attributes, (x) => /popup/i.test(x.name) || /popup/i.test(x.value) && x.name !== 'class');
       if (raw == null || raw.trim() === '' || raw.trim() === '#' || /^javascript:/i.test(raw.trim())) {
-        if (isButton && !hasPopup) add(a, { code: 'BUTTON_NO_LINK', severity: 'warning', category: 'Links', message: 'Button has no link (href is empty, # or javascript:)', found: text || '(no text)' });
+        // This check is about a button a visitor clicks expecting to GO somewhere, and finds nothing.
+        // A hamburger, the X that closes the menu, a slider arrow — those are anchors JavaScript wires
+        // up, and an empty href is how Duda builds them, not a mistake. Two things separate them from
+        // a real dead button: there is nothing to read on them, or what there is to read is the name
+        // of a control and they live inside a menu.
+        const alt = clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' '));
+        const label = text || alt || clean(a.getAttribute('aria-label') || a.getAttribute('title') || '');
+        const control = !label
+          // No href attribute at all: it was never a link. Duda's hamburger is exactly this —
+          // <a role="button" class="hamburgerButton" dmle_widget="hamburgerButton"> wrapping an SVG.
+          || raw == null
+          || MENU_ISH.test(widgetName(a)) || MENU_ISH.test(cls(a))
+          || a.hasAttribute('aria-expanded') || a.hasAttribute('aria-controls') || a.hasAttribute('data-toggle')
+          || (CONTROL_WORD.test(label) && inMenu(a));
+        if (isButton && !hasPopup && !control) add(a, { code: 'BUTTON_NO_LINK', severity: 'warning', category: 'Links', message: 'Button has no link (href is empty, # or javascript:)', found: label });
         return;
       }
       const href = raw.trim();

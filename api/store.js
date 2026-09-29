@@ -100,8 +100,8 @@ const notify = (email, n) => notifyUser(email, n);
 // person who raised it with the reason in plain words, and the whole exchange is written onto the
 // audit item itself, where anybody looking at it will actually read it.
 // ---------------------------------------------------------------------------
-const FA_STATUS = ['new', 'checking', 'adjusted', 'true', 'wont'];
-const FA_LABEL = { new: 'New', checking: 'Checking', adjusted: 'Audit Adjusted', true: 'True False Alarm', wont: "Won't change" };
+const FA_STATUS = ['new', 'checking', 'adjusted', 'true', 'wont', 'notfa'];
+const FA_LABEL = { new: 'New', checking: 'Checking', adjusted: 'Audit Adjusted', true: 'True False Alarm', wont: "Won't change", notfa: 'Not a false alarm' };
 // The first version of this list was new / ongoing / done / skip. Records written then are read
 // through this, so nothing in the queue has to be migrated or thrown away.
 const FA_OLD = { ongoing: 'checking', done: 'adjusted', skip: 'wont' };
@@ -121,6 +121,16 @@ async function itemComment(siteId, actor, findingId, findingNum, text) {
  * Going down: the admins triaged it → the reporter hears. Going up: the reporter answered → the
  * admins hear. Either way the audit item carries the text, so it is not buried in a queue.
  */
+/** Put the audit item back to Open after a false alarm turns out to have been a real finding. */
+async function faReopen(me, rec, note) {
+  const l = await loadSite(rec.siteId); if (!l) return;
+  const f = (l.site.findings || []).find((x) => x.id === rec.findingId);
+  if (!f || f.status !== 'false') return;
+  await redis(['HSET', P + 'fstate:' + rec.siteId, f.id, JSON.stringify({ status: 'open', assignee: f.assignee, updatedAt: now(), updatedBy: me.email })]);
+  await log(rec.siteId, me, 'item-status', `reopened #${f.num} — not a false alarm after all${note ? ` (${note.slice(0, 120)})` : ''}`, { findingId: f.id, findingNum: f.num, siteName: l.site.businessName || l.site.siteId });
+  await saveIndex(rec.siteId);
+}
+
 async function faTell(req, me, rec, ev) {
   const users = await listUsers();
   const reporter = normEmail(rec.markedBy || '');
@@ -129,7 +139,13 @@ async function faTell(req, me, rec, ev) {
   const line = ev.kind === 'status'
     ? `**False alarm → ${label}**${ev.note ? ` — ${ev.note}` : ''}`
     : `**On the false alarm report** — ${ev.note}`;
-  try { await itemComment(rec.siteId, me, rec.findingId, rec.num, line); await saveIndex(rec.siteId); } catch (e) { /* the notice matters more than the copy */ }
+  try {
+    await itemComment(rec.siteId, me, rec.findingId, rec.num, line);
+    await log(rec.siteId, me, ev.kind === 'status' ? 'fa-status' : 'fa-note',
+      ev.kind === 'status' ? `set the false alarm on #${rec.num} to "${label}"${ev.note ? ` (${String(ev.note).slice(0, 120)})` : ''}` : `wrote on the false alarm report for #${rec.num}`,
+      { findingId: rec.findingId, findingNum: rec.num, siteName: rec.siteName || rec.siteRef || '' });
+    await saveIndex(rec.siteId);
+  } catch (e) { /* the notice matters more than the copy */ }
 
   // Everyone in the conversation except whoever just spoke.
   const tell = new Set();
@@ -483,6 +499,9 @@ export default async function handler(req, res) {
           if (from !== b.status) (rec.history = rec.history || []).push({ by: me.name, byEmail: me.email, at: now(), from, to: b.status, note });
           rec.status = b.status; rec.updatedAt = now(); rec.updatedBy = me.name; rec.updatedByEmail = me.email;
           if (note) rec.verdict = { note, by: me.name, byEmail: me.email, at: now(), status: b.status };
+          // "Not a false alarm": the check was right and the item is real work again. The audit item
+          // itself is put back to Open, because leaving it closed is the whole problem being fixed.
+          if (b.status === 'notfa') { rec.active = false; rec.reopened = now(); await faReopen(me, rec, note); }
           // "Audit Adjusted" means the CHECK was wrong and has been fixed. Every website scanned
           // before this moment is still carrying items from the old check, so they are flagged for
           // a rescan — no release needed, the queue itself is what says the check moved.

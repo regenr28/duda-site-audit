@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-09-29-hamburger', date: '2026-09-29', audience: 'all', tag: 'Audits',
+    title: 'Fixed: the hamburger menu reported as a button with no link',
+    what: 'Reported by <b>Serena Stewart</b>. Duda builds the mobile menu button as <span class="mono">&lt;a role="button" class="hamburgerButton"&gt;</span> wrapping an icon, with <b>no address at all</b> — the menu opens by script, which is exactly how it is meant to work. The check counted that as <b>Button has no link</b>, on every page of every website, and the X that closes the menu and slider arrows with it. Now: a control with nothing to read on it is not a button, and neither is anything Duda itself names as a menu or slider widget, or any link with no address attribute. A word like <b>Menu</b> or <b>Next</b> is left alone inside a menu or slider and still reported anywhere else. A genuinely dead <b>Get a quote</b> is still reported — including one in the header navigation, which is the expensive one — and the item now names the button instead of saying "(no text)".',
+    where: ['Websites already scanned show <b>⚠ A check was corrected — rescan</b>, with the affected items marked.', 'Rescan and the menu controls go. Anything that really does go nowhere stays.', 'Third fix in a day to come out of a False alarm report — if a check looks wrong to you, mark the item <b>False alarm</b> and say why.'],
+    link: '#/help/suggest', linkText: 'How reports work',
+  },
+  {
+    id: '2026-09-29-notfa', date: '2026-09-29', audience: 'all', tag: 'Audits',
+    title: 'When a real item was closed as a False alarm',
+    what: 'The queue could say the check was wrong. It had no way to say the <b>reporter</b> was — and that is the case that actually costs you, because a genuine problem sits closed and nobody looks at it again. There is now a <b>Not a false alarm</b> status. Setting it puts the audit item <b>back to Open</b>, writes your reason onto the item so nobody re-closes it for the same reason, and tells the person who reported it what you found. A reversal with a record attached, rather than a silent one. Everything the triage does — every status change and every note, from either side — now also lands in the website’s <b>Activity log</b>, so it is part of that website’s history rather than something that happened in a queue somewhere.',
+    where: ['Admins: <b>💡 → False alarms</b> → set the report to <b>Not a false alarm</b>. It tells you which item it is about to reopen before you save.', 'You can still just set the item back to <b>Open</b> yourself from the item — the report is then marked as changed back.', 'The reason lands on the audit item as a comment, and the reporter gets it on the bell, on their desktop, in Slack and by email.', 'A website’s <b>Activity log</b> now shows the false alarm triage alongside scans, statuses and comments.'],
+    link: '#/help/suggest', linkText: 'How reports work',
+  },
+  {
     id: '2026-09-29-map-locale', date: '2026-09-29', audience: 'all', tag: 'Audits',
     title: 'Fixed: map embeds reported as pointing at a business called "ph"',
     what: 'Also reported by <b>Chris Barnett</b>. A Google Map embed URL is mostly coordinates and ids, and it ends with the language and region it was made in — <span class="mono">!3m2!1sen!2sph</span>. The check was reading that region code as the name of the business the map points at, so a correct map came back as <b>Google Map embed points to ANOTHER business — Found: ph</b>, at <b>critical</b>. Any embed made by dropping a pin or typing an address carries no business name at all, and every one of those was being flagged. The check now ignores the locale, ids and coordinates; if the embed genuinely has no business name in it, <b>nothing is said</b> — and a map that really does point at a different business, or a different street address, is still critical.',

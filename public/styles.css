@@ -489,6 +489,7 @@ body.drawer-open { overflow: hidden; }
 .pill.fa-adjusted { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .pill.fa-true { background: var(--info-soft); color: var(--info); border-color: transparent; }
 .pill.fa-wont { background: var(--hold-soft); color: var(--hold); border-color: transparent; }
+.pill.fa-notfa { background: var(--crit-soft); color: var(--crit); border-color: transparent; }
 span.pill { display: inline-block; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 /* The admins' verdict, on the report and on the audit item: the reason, not just the label. */
 .fa-verdict { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--ok); background: var(--ok-soft); border-radius: 0 8px 8px 0; font-size: 13px; }

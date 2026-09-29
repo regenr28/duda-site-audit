@@ -202,7 +202,7 @@ export const HELP_SECTIONS = [
 <li>Paste screenshots with <b>Cmd/Ctrl+V</b> or click <b>Image</b>. Images are resized automatically.</li>
 <li>Click <b>Reply</b> to quote someone. <b>Cmd/Ctrl+Enter</b> sends.</li>
 <li>Each website has an assignee (the "site default"). Each item can be assigned to someone else; they're notified.</li>
-<li>Each website's <b>Activity log</b> records scans, rescans, status changes, comments and live checks with date, time and who did it.</li>
+<li>Each website's <b>Activity log</b> records scans, rescans, status changes, comments, live checks and False alarm triage (who set a report to what, and their note) with date, time and who did it.</li>
 </ul>`,
   },
   {
@@ -495,6 +495,7 @@ export const HELP_SECTIONS = [
 <tr><td><b>Audit Adjusted</b></td><td>The check really was wrong and has been fixed. <b>Every website scanned before that moment</b> is flagged for a rescan and its affected items are marked — see <a href="#/help/scan">Scanning and rescanning</a>.</td></tr>
 <tr><td><b>True False Alarm</b></td><td>You were right that it isn't a problem here, but the check was right to look — it catches real ones elsewhere, so it stays as it is.</td></tr>
 <tr><td><b>Won't change</b></td><td>Noted, and the check is deliberately being left alone. The note says why.</td></tr>
+<tr><td><b>Not a false alarm</b></td><td>The other direction: the check was right and the item is real work. <b>The audit item goes back to Open</b>, the reason is written on it so nobody re-closes it for the same reason, and the person who reported it is told why.</td></tr>
 </tbody></table>
 <p class="small muted">Admins are asked for a note on every move except back to New, because "True False Alarm" with no explanation tells the person who reported it nothing.</p>
 <h3>For admins</h3>
@@ -502,7 +503,11 @@ export const HELP_SECTIONS = [
 <li><b>False alarms</b> in the light-bulb menu is the full queue. It opens on <b>New + Checking</b>.</li>
 <li><b>Most reported checks</b> at the top groups the open reports by check, so the one worth fixing next is the one at the front.</li>
 <li><b>📋 Copy open items as text</b> exports them, reasons and notes included.</li>
-</ul>`,
+<li>Anyone in the thread can write on a report — you, the person who reported it, and anyone who has already written on it. Each note reaches the others and is copied onto the audit item.</li>
+<li>Every move and every note is written to the website's <b>Activity log</b>, so the triage is part of the website's history rather than something that happened somewhere else.</li>
+</ul>
+<h3>Somebody closed a real item as a False alarm</h3>
+<p>It happens. Open the item, read the reason, and if you disagree, set the report to <b>Not a false alarm</b> with a note saying what you found. The audit item goes back to <b>Open</b>, your note is on it, and they are told — so it is a conversation with a record, not a silent reversal. You can also simply set the item's status back to <b>Open</b> yourself from the item; the report is then marked as changed back.</p>`,
   },
   {
     id: 'admin-tools', group: 'More', title: 'Admin tools', audience: 'admin',
