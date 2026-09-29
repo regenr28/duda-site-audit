@@ -120,7 +120,7 @@ export const HELP_SECTIONS = [
 <li>To find them all: on <b>Audits</b>, the toolbar button <b>✨ Scanned before the newest checks</b> filters the list to them, and each one is flagged in the <b>Scan</b> column. Filter first, then <b>Rescan all shown</b> if you want the lot done at once.</li>
 </ul>
 <h3>When a check is corrected</h3>
-<p>Sometimes a check was <b>wrong</b>, not just missing — it flagged things that were never a problem. The items it already produced are still sitting on websites, looking exactly like work. Those are not quietly deleted (an item may have your comments, a status, a number somebody quoted in Slack), so they are <b>marked</b> instead.</p>
+<p>Sometimes a check was <b>wrong</b>, not just missing — it flagged things that were never a problem. That usually starts with somebody marking an item <b>False alarm</b> and an admin agreeing (<a href="#/help/suggest">how that works</a>); the moment they set it to <b>Audit Adjusted</b>, everything below happens on its own, with no update needed.</p><p> The items it already produced are still sitting on websites, looking exactly like work. Those are not quietly deleted (an item may have your comments, a status, a number somebody quoted in Slack), so they are <b>marked</b> instead.</p>
 <ul>
 <li>The website shows an <b>orange note</b> at the top of its Audit items: how many items came from the corrected check, what was wrong with it, and <b>Rescan to clear them</b>.</li>
 <li>Each affected item carries <b>⚠ This check was corrected — rescan</b> next to its finding, and says the same thing when you open it. <b>Don't work through them.</b></li>
@@ -164,7 +164,7 @@ export const HELP_SECTIONS = [
 <tr><td><b>For clarification</b></td><td>"I have a question before I can fix this." Picking it <b>asks you what the question is</b> and who can answer — see below.</td></tr>
 <tr><td><b>Done</b></td><td>Fixed in the Duda editor. Confirm later with <b>Verify on live site</b>.</td></tr>
 <tr><td><b>On hold</b></td><td>"We know what to do, but it can't be done yet." Waiting on someone outside the team. Leaves the default list.</td></tr>
-<tr><td><b>False alarm</b></td><td>Not actually a problem. You're asked why, and can approve the value so it's never flagged again.</td></tr>
+<tr><td><b>False alarm</b></td><td>Not actually a problem. You're asked why — that reason becomes a comment on the item and a <a href="#/help/suggest">report against the check</a> you can follow. You can also approve the value so it's never flagged again.</td></tr>
 </tbody></table>
 <p class="small muted">Rule of thumb: someone <i>inside</i> the team can answer → For clarification. Waiting on someone <i>outside</i> → On hold. Only Done and False alarm count as cleared.</p>
 <h3>Asking for clarification</h3>
@@ -222,7 +222,7 @@ export const HELP_SECTIONS = [
 <li><b>Duda comments</b> — a client has been waiting for an answer. The one to check first.</li>
 <li><b>Mentions & replies</b> — someone tagged you, replied to you, or assigned you an item.</li>
 <li><b>Scans</b> — a scan or rescan finished.</li>
-<li><b>Audits</b> — a website assigned to you, taken off you, reopened or removed, and False alarms.</li>
+<li><b>Audits</b> — a website assigned to you, taken off you, reopened or removed, False alarms, and what an admin decided about a false alarm you reported.</li>
 <li><b>Admin</b> — sign-ups waiting for approval, and feature suggestions.</li>
 </ul>`,
   },
@@ -478,9 +478,30 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'suggest', group: 'More', title: 'Suggestions and False alarms', audience: 'all',
-    html: `<ul>
-<li><b>Suggest a feature</b> (in the light-bulb menu, top left, and on About) sends an idea to the app owner. You can follow what happens to it under <b>My suggestions</b>.</li>
-<li>When you mark an item <b>False alarm</b>, you can add a reason. It helps improve the checks.</li>
+    html: `<p><b>Suggest a feature</b> (in the light-bulb menu, top left, and on About) sends an idea to the app owner. You can follow what happens to it under <b>My suggestions</b>.</p>
+<h3>A False alarm is a bug report against a check</h3>
+<p>When you mark an item <b>False alarm</b>, the reason you type is not filed away somewhere — it is a report saying <i>this check got it wrong</i>, and it is the most useful thing the app ever learns about itself. So it is treated like a task, and you stay part of it.</p>
+<ul>
+<li>Your reason is posted as a <b>comment on the audit item</b>, so the next person to open it reads why it was dismissed.</li>
+<li>The item shows <b>you reported this as a false alarm</b> with its current status, and the audit list carries a small <b>Reported:</b> chip, so nobody re-does the argument.</li>
+<li><b>My false alarms</b> (in the light-bulb menu) lists everything you have reported and where each one got to.</li>
+<li>When an admin moves it you are <b>told</b> — bell, desktop, Slack and email — <b>with their note</b>, not just a status.</li>
+<li>You can <b>reply</b> on your own report. If you think the verdict is wrong, say so; the admins are told.</li>
+</ul>
+<h3>The statuses</h3>
+<table class="help-table"><tbody>
+<tr><td><b>New</b></td><td>Nobody has looked at it yet.</td></tr>
+<tr><td><b>Checking</b></td><td>An admin is investigating.</td></tr>
+<tr><td><b>Audit Adjusted</b></td><td>The check really was wrong and has been fixed. <b>Every website scanned before that moment</b> is flagged for a rescan and its affected items are marked — see <a href="#/help/scan">Scanning and rescanning</a>.</td></tr>
+<tr><td><b>True False Alarm</b></td><td>You were right that it isn't a problem here, but the check was right to look — it catches real ones elsewhere, so it stays as it is.</td></tr>
+<tr><td><b>Won't change</b></td><td>Noted, and the check is deliberately being left alone. The note says why.</td></tr>
+</tbody></table>
+<p class="small muted">Admins are asked for a note on every move except back to New, because "True False Alarm" with no explanation tells the person who reported it nothing.</p>
+<h3>For admins</h3>
+<ul>
+<li><b>False alarms</b> in the light-bulb menu is the full queue. It opens on <b>New + Checking</b>.</li>
+<li><b>Most reported checks</b> at the top groups the open reports by check, so the one worth fixing next is the one at the front.</li>
+<li><b>📋 Copy open items as text</b> exports them, reasons and notes included.</li>
 </ul>`,
   },
   {

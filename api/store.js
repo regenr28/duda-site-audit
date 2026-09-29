@@ -5,7 +5,7 @@
 // Keys:  site:<id> (scan results + meta)   index (hash id → summary)   fstate:<id> (hash findingId → {status, assignee})
 //        fnum:<id> (hash findingId → #)   seq:<id>   cmt:<id> (hash commentId → comment)   act:<id> (list)
 //        notif:<email> (list)   notifseen:<email>
-import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, plainMentions } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, plainMentions, normEmail } from './_lib.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 
@@ -90,6 +90,68 @@ async function log(siteId, me, type, text, extra = {}) {
     ['LPUSH', P + 'uact:' + me.email, JSON.stringify(Object.assign({ siteKey: siteId, siteName: extra.siteName || '' }, e))], ['LTRIM', P + 'uact:' + me.email, 0, 299]);
 }
 const notify = (email, n) => notifyUser(email, n);
+
+// ---------------------------------------------------------------------------
+// FALSE ALARMS — a bug report against a check, not a cleanup list.
+//
+// Somebody marks an audit item False alarm because the check got it wrong. That is the most useful
+// signal the app produces about itself, and it used to land in an admin-only list the reporter
+// never saw again. So: the admins triage it through the statuses below, every move is told to the
+// person who raised it with the reason in plain words, and the whole exchange is written onto the
+// audit item itself, where anybody looking at it will actually read it.
+// ---------------------------------------------------------------------------
+const FA_STATUS = ['new', 'checking', 'adjusted', 'true', 'wont'];
+const FA_LABEL = { new: 'New', checking: 'Checking', adjusted: 'Audit Adjusted', true: 'True False Alarm', wont: "Won't change" };
+// The first version of this list was new / ongoing / done / skip. Records written then are read
+// through this, so nothing in the queue has to be migrated or thrown away.
+const FA_OLD = { ongoing: 'checking', done: 'adjusted', skip: 'wont' };
+const faStatus = (s) => { const v = FA_OLD[s] || s; return FA_STATUS.includes(v) ? v : 'new'; };
+
+/** Write a line onto the audit item's own comment thread, from a person, without notifying anyone. */
+async function itemComment(siteId, actor, findingId, findingNum, text) {
+  if (!siteId || !findingId) return null;
+  const c = { id: newId(8), siteId, target: findingId, findingNum: findingNum || null, by: actor.email, byName: actor.name,
+    text: String(text || '').slice(0, 3000), images: [], mentions: [], replyTo: null, createdAt: now(), fromFalseAlarm: true };
+  await redis(['HSET', P + 'cmt:' + siteId, c.id, JSON.stringify(c)]);
+  return c;
+}
+
+/**
+ * Tell the people who care that a false alarm moved, and put it on the audit item.
+ * Going down: the admins triaged it → the reporter hears. Going up: the reporter answered → the
+ * admins hear. Either way the audit item carries the text, so it is not buried in a queue.
+ */
+async function faTell(req, me, rec, ev) {
+  const users = await listUsers();
+  const reporter = normEmail(rec.markedBy || '');
+  const byMe = normEmail(me.email);
+  const label = FA_LABEL[rec.status] || rec.status;
+  const line = ev.kind === 'status'
+    ? `**False alarm → ${label}**${ev.note ? ` — ${ev.note}` : ''}`
+    : `**On the false alarm report** — ${ev.note}`;
+  try { await itemComment(rec.siteId, me, rec.findingId, rec.num, line); await saveIndex(rec.siteId); } catch (e) { /* the notice matters more than the copy */ }
+
+  // Everyone in the conversation except whoever just spoke.
+  const tell = new Set();
+  if (reporter && reporter !== byMe) tell.add(reporter);
+  (rec.comments || []).forEach((c) => { const e = normEmail(c.by); if (e && e !== byMe) tell.add(e); });
+  if (reporter === byMe) users.filter((u) => u.role === 'admin' && u.status === 'active' && normEmail(u.email) !== byMe).forEach((u) => tell.add(normEmail(u.email)));
+  const siteName = rec.siteName || rec.siteRef || '';
+  const link = `${appUrl(req)}/#/site/${rec.siteId}/item/${rec.num || ''}`;
+  for (const email of tell) {
+    await notify(email, { by: me.email, byName: me.name, siteId: rec.siteId, siteName, findingNum: rec.num || null,
+      kind: ev.kind === 'status' ? 'fa-status' : 'fa-note', faStatus: rec.status, faLabel: label,
+      text: ev.kind === 'status' ? `${label}${ev.note ? ' · ' + ev.note : ''} · ${String(rec.message || '').slice(0, 120)}` : String(ev.note || '').slice(0, 200) });
+  }
+  // The verdict on your own report is worth an email; a passing note is not.
+  if (ev.kind === 'status' && reporter && reporter !== byMe) {
+    await sendEmail(reporter, `Your false alarm report is now "${label}" — ${siteName} #${rec.num || ''}`,
+      emailShell(`Your report: ${esc(label)}`, `<p style="color:#5d6572">${esc(siteName)} · item #${esc(String(rec.num || ''))}</p>
+        <blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(String(rec.message || ''))}</blockquote>
+        ${ev.note ? `<p><b>${esc(me.name)}:</b> ${esc(ev.note)}</p>` : ''}
+        <p><a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none">Open in Duda Site Auditor</a></p>`)).catch(() => {});
+  }
+}
 /** The record of removed audits is a keepsake, not a backup: keep the newest 400 and let the rest go. */
 async function trimRemoved() {
   try {
@@ -116,8 +178,10 @@ export default async function handler(req, res) {
       if (op === 'list') {
         // Scan claims (who has a website queued or scanning) ride along with every poll; the list is tiny
         if (req.query.since) { const [v, cl] = await redis(['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims']); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claims: await freshClaims(cl) }); }
-        const [idx, v, cl] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims']);
-        return res.status(200).json({ mode: 'kv', sites: Object.values(pairs(idx, true)), ver: String(v || 0), claims: await freshClaims(cl) });
+        const [idx, v, cl, fx] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims'], ['HGETALL', P + 'fixedchecks']);
+        // Checks that were corrected after somebody reported them: a website scanned before one of
+        // these is carrying items the corrected check would no longer raise, and says so on its page.
+        return res.status(200).json({ mode: 'kv', sites: Object.values(pairs(idx, true)), ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true) });
       }
       if (op === 'site') {
         if (req.query.since) { const [v, cr] = await redis(['GET', P + 'ver:s:' + req.query.id], ['HGET', P + 'scanclaims', req.query.id]); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claim: liveClaim(cr) }); }
@@ -142,6 +206,19 @@ export default async function handler(req, res) {
           const cc = await crossCheck(l.site.findings, l.site.siteId);
           (l.site.findings || []).forEach((f) => { const k = cc.byFinding[f.id]; if (k && (k.comments.length || k.falseAlarms.length)) f.known = k; });
         } catch (e) { /* context is a bonus */ }
+        // A false alarm reported on THIS item: its status and the admins' verdict ride along, so
+        // whoever raised it can follow it from the item itself rather than going hunting.
+        try {
+          const keys = (l.site.findings || []).map((f) => req.query.id + ':' + f.id);
+          if (keys.length) {
+            const [recs] = await redis(['HMGET', P + 'fa', ...keys]);
+            (l.site.findings || []).forEach((f, k) => {
+              const r = jparse((recs || [])[k]); if (!r) return;
+              f.report = { key: r.key, status: faStatus(r.status), reason: r.reason || '', by: r.markedBy || '', byName: r.markedByName || '', at: r.markedAt || '',
+                active: r.active !== false, verdict: r.verdict || null, notes: (r.comments || []).length, history: (r.history || []).slice(-6) };
+            });
+          }
+        } catch (e) { /* likewise */ }
         (l.site.allow || []).forEach((a) => {
           const list = l.site.retired[retiredOf[a.type]] || [];
           const norm = (v) => (a.type === 'phone' ? String(v).replace(/\D/g, '').slice(-10) : String(v).trim().toLowerCase());
@@ -213,10 +290,12 @@ export default async function handler(req, res) {
         return res.status(200).json({ items: items.slice(0, 150), recent, counts, lastItem });
       }
       if (op === 'falseAlarms') {
-        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        // Admins triage everything; everybody else follows the reports they raised themselves.
         const [all] = await redis(['HGETALL', P + 'fa']);
-        const items = Object.values(pairs(all, true)).sort((a, c) => String(c.markedAt || c.createdAt).localeCompare(String(a.markedAt || a.createdAt)));
-        return res.status(200).json({ items });
+        let items = Object.values(pairs(all, true)).sort((a, c) => String(c.markedAt || c.createdAt).localeCompare(String(a.markedAt || a.createdAt)));
+        items.forEach((i) => { i.status = faStatus(i.status); });
+        if (me.role !== 'admin') items = items.filter((i) => normEmail(i.markedBy || '') === normEmail(me.email));
+        return res.status(200).json({ items, mine: me.role !== 'admin' });
       }
       if (op === 'notifs') {
         const [list, seen] = await redis(['LRANGE', P + 'notif:' + me.email, 0, 49], ['GET', P + 'notifseen:' + me.email]);
@@ -389,13 +468,28 @@ export default async function handler(req, res) {
         return res.status(200).json(out);
       }
       case 'faUpdate': case 'faComment': {
-        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
         const [raw] = await redis(['HGET', P + 'fa', String(b.key || '')]);
         const rec = jparse(raw); if (!rec) return res.status(404).json({ error: 'Not found' });
+        rec.status = faStatus(rec.status);
+        // A false alarm is a bug report against a check. The admins triage it, but the person who
+        // raised it is a participant, not a bystander: they can read it and answer back on it.
+        const mine = normEmail(rec.markedBy || '') === normEmail(me.email);
+        if (me.role !== 'admin' && !mine) return res.status(403).json({ error: 'Not yours' });
+        const note = String(b.note || '').trim().slice(0, 1000);
         if (b.op === 'faUpdate') {
-          if (!['new', 'ongoing', 'done', 'skip'].includes(b.status)) return res.status(400).json({ error: 'Bad status' });
-          if (rec.status !== b.status) (rec.history = rec.history || []).push({ by: me.name, at: now(), from: rec.status, to: b.status });
-          rec.status = b.status; rec.updatedAt = now(); rec.updatedBy = me.name;
+          if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+          if (!FA_STATUS.includes(b.status)) return res.status(400).json({ error: 'Bad status' });
+          const from = rec.status;
+          if (from !== b.status) (rec.history = rec.history || []).push({ by: me.name, byEmail: me.email, at: now(), from, to: b.status, note });
+          rec.status = b.status; rec.updatedAt = now(); rec.updatedBy = me.name; rec.updatedByEmail = me.email;
+          if (note) rec.verdict = { note, by: me.name, byEmail: me.email, at: now(), status: b.status };
+          // "Audit Adjusted" means the CHECK was wrong and has been fixed. Every website scanned
+          // before this moment is still carrying items from the old check, so they are flagged for
+          // a rescan — no release needed, the queue itself is what says the check moved.
+          if (b.status === 'adjusted' && rec.code) {
+            await redis(['HSET', P + 'fixedchecks', rec.code, JSON.stringify({ code: rec.code, at: now(), by: me.name, note: note || rec.reason || '', faKey: rec.key })],
+              ['INCR', P + 'ver:index']);
+          }
         } else {
           const text = String(b.text || '').trim().slice(0, 3000);
           if (!text) return res.status(400).json({ error: 'Write something' });
@@ -403,6 +497,7 @@ export default async function handler(req, res) {
         }
         if (rec.history) rec.history = rec.history.slice(-30);
         await redis(['HSET', P + 'fa', rec.key, JSON.stringify(rec)]);
+        await faTell(req, me, rec, b.op === 'faUpdate' ? { kind: 'status', note } : { kind: 'note', note: String(b.text || '').trim() });
         return res.status(200).json(rec);
       }
       case 'faDelete': {
@@ -629,6 +724,9 @@ export default async function handler(req, res) {
           for (const a of users.filter((u) => u.role === 'admin' && u.status === 'active' && u.email !== me.email)) {
             await notify(a.email, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: marked[0].f.num, kind: 'false-alarm', text: (note ? note + ' · ' : '') + marked[0].f.message });
           }
+          // The reason belongs on the item, not only in the admins' queue: the next person to open
+          // #42 should read why it was dismissed without going looking for it.
+          if (note) for (const t of marked) await itemComment(b.siteId, me, t.f.id, t.f.num, `**Marked False alarm** — ${note}`);
         }
         // Per-person counters (Done / False alarm / On hold / For clarification), for the team stats
         const FIELD = { done: 'itemsDone', false: 'itemsFalse', hold: 'itemsHold', clarification: 'itemsClarify', open: 'itemsReopen' };

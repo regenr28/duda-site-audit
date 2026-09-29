@@ -24,6 +24,7 @@
     filters: { q: '', status: '', assignee: '', oldChecks: false, clar: false },
     ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' },
     refTab: 'info',
+    fixedChecks: {},
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
   };
 
@@ -194,7 +195,9 @@
     const r = await api('/api/store?op=list' + (onlyIfChanged && state.sitesVer ? '&since=' + encodeURIComponent(state.sitesVer) : ''));
     const claimsChanged = setClaims(r.claims);
     if (r.unchanged) return claimsChanged;
-    state.sites = r.sites || []; state.sitesVer = r.ver || ''; return true;
+    state.sites = r.sites || []; state.sitesVer = r.ver || '';
+    state.fixedChecks = r.fixedChecks || {};
+    return true;
   }
   async function refreshSite(id) {
     const v = state.current && state.current.id === id ? state.current.ver : '';
@@ -382,11 +385,13 @@
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
   }
-  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion' };
+  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
     if (n.kind === 'false-alarm') return '#/suggestions/false-alarms';
+    // A verdict is about a specific audit item, so it opens the item, not the queue.
+    if (/^fa-/.test(n.kind)) return n.siteId && n.findingNum ? `#/site/${encodeURIComponent(n.siteId)}/item/${n.findingNum}` : '#/suggestions/false-alarms';
     if (n.kind === 'site-removed') return '#/removed';
     if (n.kind === 'comment-waiting') return '#/comments';
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
@@ -400,7 +405,7 @@
     { key: 'duda', label: 'Duda comments', has: (n) => n.kind === 'comment-waiting' },
     { key: 'talk', label: 'Mentions & replies', has: (n) => ['mention', 'reply', 'assign'].includes(n.kind) },
     { key: 'scans', label: 'Scans', has: (n) => ['scan-done', 'rescan-done'].includes(n.kind) },
-    { key: 'audits', label: 'Audits', has: (n) => ['site-assign', 'site-unassign', 'site-reopen', 'site-removed', 'false-alarm'].includes(n.kind) },
+    { key: 'audits', label: 'Audits', has: (n) => ['site-assign', 'site-unassign', 'site-reopen', 'site-removed', 'false-alarm', 'fa-status', 'fa-note'].includes(n.kind) },
     { key: 'admin', label: 'Admin', has: (n) => n.kind === 'signup' || /^suggestion/.test(n.kind) },
   ];
   let notifTab = 'all';
@@ -1951,6 +1956,9 @@
       const f = site && (site.findings || []).find((x) => x.num === Number(n));
       return f ? `${pre}<a class="item-ref" href="#/site/${esc(site.id)}/item/${n}" title="${esc(f.message)}">#${n}</a>` : m;
     });
+    // The app writes a few comments itself — a false alarm reason, an admin's verdict — and they
+    // lead with a bold label so they read as a record rather than as somebody talking.
+    h = h.replace(/\*\*([^*\n]{1,120})\*\*/g, '<b>$1</b>');
     return h.replace(/\n/g, '<br>');
   }
 
@@ -2435,7 +2443,26 @@
    * Nothing is deleted behind anyone's back (an item may carry comments, a status, a number someone
    * quoted in Slack), so instead the items are marked and the website says how many it is carrying.
    */
-  const fixedCodes = (s) => (newChecksFor(s).length ? A.fixedSince((s.scan || {}).cv) : new Set());
+  /**
+   * The checks whose past results this website can no longer be trusted on. Two sources, and they
+   * mean the same thing: a release that declared it corrected something, and a false alarm somebody
+   * reported that an admin has since marked "Audit Adjusted". The second needs no release at all —
+   * the queue is what says the check moved — so a fix reaches all 800 audits the moment it is triaged.
+   */
+  function fixedCodes(s) {
+    const sc = s.scan || {};
+    if (sc.state !== 'complete' || !sc.finishedAt) return new Set();
+    const out = newChecksFor(s).length ? new Set(A.fixedSince(sc.cv)) : new Set();
+    Object.values(state.fixedChecks || {}).forEach((x) => { if (x && x.code && x.at > sc.finishedAt) out.add(x.code); });
+    return out;
+  }
+  /** Why a check is considered corrected, for the note at the top of the audit. */
+  const fixedWhy = (s) => {
+    const codes = fixedCodes(s);
+    const out = newChecksFor(s).filter((r) => (r.fixes || []).some((c) => codes.has(c))).map((r) => r.fixedWhat || r.title);
+    Object.values(state.fixedChecks || {}).forEach((x) => { if (x && codes.has(x.code) && x.at > ((s.scan || {}).finishedAt || '')) out.push(`${x.note || 'The ' + x.code + ' check was corrected'}${x.by ? ` (${x.by})` : ''}`); });
+    return [...new Set(out)];
+  };
   /** Items on this website that came from a check that has since been corrected, and still look like work. */
   function correctedItems(s) {
     const codes = fixedCodes(s);
@@ -2448,16 +2475,17 @@
 
   function newChecksBanner(s) {
     const rel = newChecksFor(s);
-    if (!rel.length || ckHidden(s)) return '';
+    const bad = correctedItems(s);
+    // A correction can arrive without a release: an admin marking a reported false alarm
+    // "Audit Adjusted" is enough, so the note shows for that alone.
+    if ((!rel.length && !bad.length) || (ckHidden(s) && !bad.length)) return '';
     const sc = s.scan || {};
     const n = rel.reduce((a, r) => a + r.items.length, 0);
-    const bad = correctedItems(s);
-    const fixes = rel.filter((r) => r.fixes && r.fixes.length);
     // A corrected check leads, because it is the difference between "you're missing something" and
     // "what you're looking at is wrong". The additions stay below it.
     const head = bad.length
       ? `<b>⚠ ${bad.length} item${bad.length === 1 ? '' : 's'} on this website came from a check that has since been corrected.</b>
-         <div class="small" style="margin-top:3px">${fixes.map((r) => esc(r.fixedWhat || r.title)).join(' ')}
+         <div class="small" style="margin-top:3px">${fixedWhy(s).map(esc).join(' ')}
          <b>Don't work through them</b> — rescan and they go, along with anything else the correction affects. The rescan keeps everything you have already marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b>, with its number and its comments.</div>
          ${n ? `<div class="small" style="margin-top:6px">The same rescan also picks up <b>${n} new check${n === 1 ? '' : 's'}</b> added since ${esc(fmtFull(sc.finishedAt))}.</div>` : ''}`
       : `<b>✨ ${n} new audit check${n === 1 ? '' : 's'} ${n === 1 ? 'has' : 'have'} been added since this website was scanned.</b>
@@ -2468,10 +2496,10 @@
         <div class="grow">${head}</div>
         <div style="white-space:nowrap"><button class="btn sm primary" id="ckRescan" ${state.scanning[s.id] || otherClaim(s.id) ? 'disabled' : ''}>${bad.length ? 'Rescan to clear them' : 'Rescan now'}</button>${bad.length ? '' : ` <button class="btn sm ghost" id="ckLater" title="Hide this note on this website, for you">Not now</button>`}</div>
       </div>
-      <details style="margin-top:8px"><summary class="small">${bad.length ? 'What changed' : 'See what was added'}</summary>
+      ${rel.length ? `<details style="margin-top:8px"><summary class="small">${bad.length ? 'What changed' : 'See what was added'}</summary>
         ${rel.map((r) => `<div class="small" style="margin-top:8px"><b>${esc(r.title)}</b> <span class="faint">· ${r.fixes && r.fixes.length ? 'corrected' : 'added'} ${esc(fmtDate(r.date))}</span>
           <ul class="ck-list">${r.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}
-      </details></div>`;
+      </details>` : ''}</div>`;
   }
   function bindNewChecks(body, s) {
     const later = $('#ckLater', body); const go = $('#ckRescan', body);
@@ -2794,7 +2822,7 @@
               <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
                 <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
-              <td style="min-width:240px">${correctedBadge(s, f)}<div class="finding-msg">${esc(f.message)}</div>
+              <td style="min-width:240px">${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
                 ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
@@ -2940,6 +2968,29 @@
   const autoNote = (f) => (f.auto && f.auto.why === 'reference-changed' && f.auto.note
     ? `<div class="note known-note"><div class="small">${esc(f.auto.note)}. The item is kept so it can be reopened if that turns out to be wrong.</div></div>` : '');
 
+  /**
+   * "You reported this as a false alarm — here is where it got to."
+   * The triage used to happen in an admin-only queue the reporter never saw, so a check they knew
+   * was wrong either got fixed silently or didn't, and they never found out which.
+   */
+  function reportNote(f) {
+    const r = f.report; if (!r) return '';
+    const meta = FA.find((x) => x.v === r.status) || {};
+    const mine = r.by === state.me.email;
+    return `<div class="note report-note">
+      <div class="row-between" style="align-items:center;gap:8px">
+        <div class="small"><b>${mine ? 'You reported this as a false alarm' : `${esc(r.byName || 'Someone')} reported this as a false alarm`}</b>${r.at ? ` <span class="faint">· ${esc(ago(r.at))}</span>` : ''}${r.active ? '' : ' <span class="faint">· since changed back</span>'}</div>
+        <span class="pill fa-${esc(r.status)}" title="${esc(meta.hint || '')}">${esc(FAL[r.status] || r.status)}</span>
+      </div>
+      ${r.reason ? `<div class="small" style="margin-top:6px">“${esc(r.reason)}”</div>` : ''}
+      ${r.verdict ? `<div class="fa-verdict"><b>${esc(FAL[r.verdict.status] || '')}</b> — ${esc(r.verdict.note)} <span class="faint small">— ${esc(r.verdict.by)}, ${esc(ago(r.verdict.at))}</span></div>`
+        : `<div class="small faint" style="margin-top:6px">${r.status === 'new' ? 'Waiting for an admin to look at it.' : 'No note from the admins yet.'}</div>`}
+      ${mine || state.me.role === 'admin' ? `<div class="small" style="margin-top:6px"><a href="#/suggestions/false-alarms">${state.me.role === 'admin' ? 'Open in False alarms' : 'See all my reports'} ↗</a>${r.notes ? ` <span class="faint">· ${r.notes} note${r.notes === 1 ? '' : 's'}</span>` : ''}</div>` : ''}
+    </div>`;
+  }
+  const reportChip = (f) => (f.report
+    ? `<div style="margin-bottom:4px"><span class="badge fa-chip fa-${esc(f.report.status)}" title="${esc((FA.find((x) => x.v === f.report.status) || {}).hint || '')}${f.report.verdict ? ' — ' + esc(f.report.verdict.note) : ''}">Reported: ${esc(FAL[f.report.status] || f.report.status)}</span></div>` : '');
+
   function knownNote(f, s) {
     const k = f.known;
     const auto = f.auto && f.auto.why === 'client-comment';
@@ -2989,7 +3040,7 @@
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
         ${isCorrected(s, f) ? `<div class="note fixed-checks" style="margin-top:10px"><b>⚠ The check that produced this item has since been corrected.</b>
           <div class="small" style="margin-top:3px">It may not be a real problem at all. Don't spend time on it — <b>rescan the website</b> and it is replaced with what the corrected check finds. Your Done, False alarm and On hold items are untouched by a rescan.</div></div>` : ''}
-        ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${knownNote(f, s)}
+        ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${reportNote(f)}${knownNote(f, s)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}</div>
@@ -3658,29 +3709,47 @@
       onPosted: async () => { closeModal(); toast('Thanks! Your suggestion was sent.'); if (route().name === 'suggestions') renderSuggestions(); } });
   }
   // ---------- False alarms (admin only): audit items the team marked as wrong, to improve the checks ----------
-  const FA = [{ v: 'new', label: 'New' }, { v: 'ongoing', label: 'Ongoing' }, { v: 'done', label: 'Done' }, { v: 'skip', label: 'Skip' }];
+  // A false alarm is a bug report against a check, so the statuses say what happened to the CHECK.
+  const FA = [
+    { v: 'new', label: 'New', hint: 'Nobody has looked at this yet' },
+    { v: 'checking', label: 'Checking', hint: 'Being investigated right now' },
+    { v: 'adjusted', label: 'Audit Adjusted', hint: 'The check was wrong and has been fixed — every website scanned before now is flagged for a rescan' },
+    { v: 'true', label: 'True False Alarm', hint: 'The check was right to look, but this website is a legitimate exception. The check stays as it is' },
+    { v: 'wont', label: "Won't change", hint: 'Noted, and deliberately leaving the check alone' },
+  ];
   const FAL = Object.fromEntries(FA.map((x) => [x.v, x.label]));
-  const fa = { filter: 'open', code: '', q: '' };
+  // Records written before these statuses existed are read through this, so nothing had to be migrated.
+  const FA_OLD = { ongoing: 'checking', done: 'adjusted', skip: 'wont' };
+  const faSt = (v) => { const x = FA_OLD[v] || v; return FAL[x] ? x : 'new'; };
+  const faOpen = (i) => ['new', 'checking'].includes(faSt(i.status));
+  // The admins want the untriaged ones; the person who reported them wants all of theirs, and
+  // especially the ones that have been answered.
+  const fa = { filter: '', code: '', q: '' };
   async function renderFalseAlarms() {
     $('#view').innerHTML = sugTabs('fa', state.faNew) + '<div class="empty">Loading…</div>';
     let items = [];
     try { items = (await api('/api/store?op=falseAlarms')).items || []; } catch (e) { $('#view').innerHTML = sugTabs('fa') + `<div class="empty">${esc(e.message)}</div>`; return; }
-    state.faNew = items.filter((i) => i.status === 'new' && i.active !== false).length;
+    items.forEach((i) => { i.status = faSt(i.status); });
+    const mine = state.me.role !== 'admin';
+    if (!fa.filter) fa.filter = mine ? 'all' : 'open';
+    state.faNew = state.me.role === 'admin' ? items.filter((i) => i.status === 'new' && i.active !== false).length : 0;
     const draw = () => {
       const count = (v) => items.filter((i) => i.status === v).length;
-      const openItems = items.filter((i) => ['new', 'ongoing'].includes(i.status));
+      const openItems = items.filter(faOpen);
       const byCode = {}; openItems.forEach((i) => { byCode[i.code] = (byCode[i.code] || 0) + 1; });
       const codes = Object.keys(byCode).sort((a, b) => byCode[b] - byCode[a]);
       const q = fa.q.trim().toLowerCase();
-      const list = items.filter((i) => (fa.filter === 'all' || (fa.filter === 'open' ? ['new', 'ongoing'].includes(i.status) : i.status === fa.filter))
+      const list = items.filter((i) => (fa.filter === 'all' || (fa.filter === 'open' ? faOpen(i) : i.status === fa.filter))
         && (!fa.code || i.code === fa.code) && (!q || [i.siteName, i.siteRef, i.message, i.found, i.reason, i.code].some((v) => String(v || '').toLowerCase().includes(q))));
-      $('#view').innerHTML = sugTabs('fa', state.faNew) + `<div class="page-head"><div><h1>False alarms</h1>
-          <div class="muted">Audit items the team marked <b>False alarm</b>. Only admins see this. Use them to fine-tune the checks, then mark them Done.</div></div>
-          <button class="btn" id="faCopy" title="Copies the open false alarms as plain text, ready to paste to whoever updates the app">📋 Copy open items as text</button></div>
+      $('#view').innerHTML = sugTabs('fa', state.faNew) + `<div class="page-head"><div><h1>${mine ? 'My false alarm reports' : 'False alarms'}</h1>
+          <div class="muted">${mine
+            ? 'Audit items you marked <b>False alarm</b>, and what the admins decided about each one. You\u2019ll be told when one moves \u2014 and you can answer back on any of them.'
+            : 'Audit items the team marked <b>False alarm</b>. Each one is a bug report against a check: work out whether the check was wrong, say so in the note, and the person who reported it is told. <b>Audit Adjusted</b> flags every website scanned before now for a rescan.'}</div></div>
+          ${mine ? '' : '<button class="btn" id="faCopy" title="Copies the open false alarms as plain text, ready to paste to whoever updates the app">\u{1F4CB} Copy open items as text</button>'}</div>
         ${codes.length ? `<div class="panel panel-pad" style="margin-bottom:12px"><div class="k">Most reported checks (open)</div><div class="chips" style="margin-top:6px">${codes.slice(0, 12).map((c) => `<button class="chipbtn ${fa.code === c ? 'active' : ''}" data-facode="${esc(c)}"><span class="mono">${esc(c)}</span> <span class="faint">${byCode[c]}</span></button>`).join('')}${fa.code ? '<button class="chipbtn" data-facode="">Clear</button>' : ''}</div></div>` : ''}
         <div class="panel"><div class="toolbar"><span class="chips">
-          <button class="chipbtn ${fa.filter === 'open' ? 'active' : ''}" data-faf="open">New + Ongoing ${count('new') + count('ongoing')}</button>
-          ${FA.map((x) => `<button class="chipbtn ${fa.filter === x.v ? 'active' : ''}" data-faf="${x.v}">${x.label} ${count(x.v)}</button>`).join('')}
+          <button class="chipbtn ${fa.filter === 'open' ? 'active' : ''}" data-faf="open">New + Checking ${count('new') + count('checking')}</button>
+          ${FA.map((x) => `<button class="chipbtn ${fa.filter === x.v ? 'active' : ''}" data-faf="${x.v}" title="${esc(x.hint)}">${x.label} ${count(x.v)}</button>`).join('')}
           <button class="chipbtn ${fa.filter === 'all' ? 'active' : ''}" data-faf="all">All ${items.length}</button></span>
           <input type="search" id="faQ" placeholder="Search website, finding or reason…" value="${esc(fa.q)}" style="flex:1;min-width:200px"></div>
         <div class="sg-list">${list.length ? list.map((i) => `<div class="sg-card fa-card" id="fa-${esc(i.key)}">
@@ -3688,19 +3757,22 @@
             <div class="small"><span class="badge sev-${esc(i.severity || 'info')}">${esc(i.severity || '')}</span> <span class="mono faint">${esc(i.code || '')}</span> · ${esc(i.category || '')}</div>
             <div class="sg-title" style="margin-top:4px">${esc(i.message || '')}</div>
             <div class="small muted"><b>${esc(i.siteName || i.siteRef)}</b> · #${esc(String(i.num || ''))} · <span class="mono">${esc(i.path || '')}</span>${i.location ? ' · ' + esc(i.location) : ''}</div></div>
-            <select class="pill fa-${esc(i.status)}" data-fast="${esc(i.key)}">${FA.map((x) => `<option value="${x.v}" ${x.v === i.status ? 'selected' : ''}>${x.label}</option>`).join('')}</select></div>
+            ${mine ? `<span class="pill fa-${esc(i.status)}" title="${esc((FA.find((x) => x.v === i.status) || {}).hint || '')}">${esc(FAL[i.status] || i.status)}</span>`
+              : `<select class="pill fa-${esc(i.status)}" data-fast="${esc(i.key)}">${FA.map((x) => `<option value="${x.v}" ${x.v === i.status ? 'selected' : ''}>${x.label}</option>`).join('')}</select>`}</div>
           ${i.found ? `<div class="kv" style="margin-top:8px"><b>Found:</b> ${esc(i.found)}</div>` : ''}${i.expected ? `<div class="kv"><b>Expected:</b> ${esc(i.expected)}</div>` : ''}
           ${i.ai ? `<div class="small muted">✨ AI said: ${esc(AI_LABEL[i.ai.verdict] || i.ai.verdict)}${i.ai.reason ? ' · ' + esc(i.ai.reason) : ''}</div>` : ''}
           ${i.reason ? `<div class="fa-reason">“${esc(i.reason)}”</div>` : ''}
-          <div class="small faint" style="margin-top:6px">Marked False alarm by ${esc(i.markedByName || '')} · ${esc(fmtFull(i.markedAt))}${i.active === false ? ` · <span class="badge">Changed back by ${esc(i.unmarkedBy || '')}</span>` : ''}${(i.history || []).length ? ` · last update: ${esc(i.history[i.history.length - 1].by)} → ${esc(FAL[i.history[i.history.length - 1].to])}` : ''}</div>
-          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><a class="btn sm primary" href="#/site/${encodeURIComponent(i.siteId)}/item/${esc(String(i.num || ''))}">Open audit item ↗</a><button class="btn sm ghost" data-fadel="${esc(i.key)}" title="Remove from this list">Remove</button></div>
+          ${i.verdict ? `<div class="fa-verdict"><b>${esc(FAL[i.verdict.status] || i.verdict.status)}</b> — ${esc(i.verdict.note)} <span class="faint small">\u2014 ${esc(i.verdict.by)}, ${esc(ago(i.verdict.at))}</span></div>` : ''}
+          <div class="small faint" style="margin-top:6px">Marked False alarm by ${esc(i.markedByName || '')} · ${esc(fmtFull(i.markedAt))}${i.active === false ? ` · <span class="badge">Changed back by ${esc(i.unmarkedBy || '')}</span>` : ''}${(i.history || []).length ? ` · last update: ${esc(i.history[i.history.length - 1].by)} \u2192 ${esc(FAL[faSt(i.history[i.history.length - 1].to)] || '')}` : ''}</div>
+          ${(i.history || []).length ? `<details class="small" style="margin-top:4px"><summary class="muted">History (${i.history.length})</summary>${i.history.map((h) => `<div class="small faint">${esc(fmtFull(h.at))} \u00b7 ${esc(h.by)}: ${esc(FAL[faSt(h.from)] || h.from)} \u2192 <b>${esc(FAL[faSt(h.to)] || h.to)}</b>${h.note ? ` \u2014 ${esc(h.note)}` : ''}</div>`).join('')}</details>` : ''}
+          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><a class="btn sm primary" href="#/site/${encodeURIComponent(i.siteId)}/item/${esc(String(i.num || ''))}">Open audit item \u2197</a>${mine ? '' : `<button class="btn sm ghost" data-fadel="${esc(i.key)}" title="Remove from this list">Remove</button>`}</div>
           <details class="sg-disc" ${(i.comments || []).length ? 'open' : ''}><summary class="small">Notes (${(i.comments || []).length})</summary>
             <div class="c-list">${(i.comments || []).map((c) => `<div class="comment"><div class="c-head">${avatar(c.by, 22)} <b>${esc(c.byName)}</b> <span class="small faint">${esc(fmtFull(c.at))}</span></div><div class="c-body">${esc(c.text)}</div></div>`).join('')}</div>
-            <div class="fa-add"><textarea rows="2" placeholder="e.g. Fixed: brand logos in a logo row are no longer flagged" data-fatext="${esc(i.key)}"></textarea><button class="btn sm" data-facmt="${esc(i.key)}">Add note</button></div></details>
-        </div>`).join('') : `<div class="empty">${items.length ? 'Nothing with this filter.' : 'No false alarms yet. When someone marks an audit item as False alarm, it shows up here.'}</div>`}</div></div>`;
+            <div class="fa-add"><textarea rows="2" placeholder="${mine ? 'Answer back \u2014 the admins are told' : 'e.g. Fixed: brand logos in a logo row are no longer flagged'}" data-fatext="${esc(i.key)}"></textarea><button class="btn sm" data-facmt="${esc(i.key)}">${mine ? 'Reply' : 'Add note'}</button></div></details>
+        </div>`).join('') : `<div class="empty">${items.length ? 'Nothing with this filter.' : (mine ? 'You haven\u2019t reported any false alarms. When you mark an audit item as False alarm, it shows up here with what the admins decided.' : 'No false alarms yet. When someone marks an audit item as False alarm, it shows up here.')}</div>`}</div></div>`;
       $$('[data-faf]').forEach((b) => (b.onclick = () => { fa.filter = b.dataset.faf; draw(); }));
-      $('#faCopy').onclick = () => {
-        const open = items.filter((i) => ['new', 'ongoing'].includes(i.status));
+      if ($('#faCopy')) $('#faCopy').onclick = () => {
+        const open = items.filter(faOpen);
         if (!open.length) return toast('No open false alarms');
         const txt = `False alarms to fix (${open.length}), exported ${new Date().toLocaleString()}\n\n` + open.map((i, k) => [
           `${k + 1}. [${i.code}] ${i.message}`, `   Website: ${i.siteName} (${i.siteRef}) · item #${i.num} · page ${i.path} · ${i.location || ''}`,
@@ -3711,8 +3783,45 @@
       };
       $$('[data-facode]').forEach((b) => (b.onclick = () => { fa.code = b.dataset.facode; draw(); }));
       const qi = $('#faQ'); qi.oninput = (e) => { fa.q = e.target.value; const pos = e.target.selectionStart; draw(); const n = $('#faQ'); n.focus(); n.setSelectionRange(pos, pos); };
+      // A verdict with no reason is the thing this whole feature exists to stop: the person who
+      // reported it hears "True False Alarm" and learns nothing. So the note is asked for here, and
+      // it goes to them, onto the audit item, and into the history.
       $$('[data-fast]').forEach((sel) => (sel.onchange = async () => {
-        try { const rec = await store({ op: 'faUpdate', key: sel.dataset.fast, status: sel.value }); Object.assign(items.find((x) => x.key === rec.key), rec); state.faNew = items.filter((x) => x.status === 'new' && x.active !== false).length; toast('Marked ' + FAL[sel.value]); draw(); } catch (e) { toast(e.message); }
+        const key = sel.dataset.fast; const status = sel.value;
+        const rec0 = items.find((x) => x.key === key) || {};
+        const was = rec0.status;
+        const meta = FA.find((x) => x.v === status) || {};
+        const save = async (note) => {
+          try {
+            const rec = await store({ op: 'faUpdate', key, status, note });
+            rec.status = faSt(rec.status);
+            Object.assign(items.find((x) => x.key === rec.key), rec);
+            state.faNew = items.filter((x) => x.status === 'new' && x.active !== false).length;
+            // Audit Adjusted changes what every OTHER website should be saying about itself, so the
+            // list is reloaded now rather than on the next poll — the person who just did it is
+            // usually the one about to go and look.
+            if (status === 'adjusted') { state.sitesVer = ''; await loadSites().catch(() => {}); }
+            toast(`${FAL[status]} — ${rec0.markedByName || 'the reporter'} has been told`);
+            draw();
+          } catch (e) { toast(e.message); sel.value = was; }
+        };
+        if (status === 'new') return save('');
+        modal(`<header><h2>${esc(FAL[status])}</h2><button class="btn ghost" data-close>✕</button></header>
+          <div class="body">
+            <div class="small muted" style="margin-bottom:8px">${esc(meta.hint || '')}</div>
+            <div class="small" style="margin-bottom:10px"><b>${esc(rec0.siteName || '')}</b> · #${esc(String(rec0.num || ''))} · <span class="mono faint">${esc(rec0.code || '')}</span><div class="small muted">${esc(rec0.message || '')}</div></div>
+            <div class="k">What should ${esc(rec0.markedByName || 'the reporter')} know?</div>
+            <textarea id="faVerdict" rows="3" placeholder="${status === 'adjusted' ? 'e.g. The check was matching the wrong phone field. Fixed — rescan and it goes.' : status === 'true' ? 'e.g. You were right, it isn\u2019t a problem. The check stays as it is because it catches real ones elsewhere.' : 'e.g. Leaving this one \u2014 changing the check would hide genuine issues.'}"></textarea>
+            ${status === 'adjusted' ? `<div class="note fixed-checks" style="margin-top:10px"><div class="small">Every website scanned before now that carries <span class="mono">${esc(rec0.code || '')}</span> items will show <b>\u26a0 A check was corrected \u2014 rescan</b>, and those items will be marked. Nothing is deleted.</div></div>` : ''}
+          </div>
+          <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn primary" id="faVerdictGo">Save and tell ${esc((rec0.markedByName || 'them').split(' ')[0])}</button></footer>`);
+        $$('[data-close]', $('.modal')).forEach((b) => b.addEventListener('click', () => { sel.value = was; }));
+        setTimeout(() => { const t = $('#faVerdict'); if (t) t.focus(); }, 50);
+        $('#faVerdictGo').onclick = async () => {
+          const note = $('#faVerdict').value.trim();
+          if (!note) return toast('Write what they should know');
+          closeModal(); await save(note);
+        };
       }));
       $$('[data-facmt]').forEach((b) => (b.onclick = async () => {
         const ta = $(`[data-fatext="${CSS.escape(b.dataset.facmt)}"]`); const text = ta.value.trim(); if (!text) return;
@@ -3725,9 +3834,10 @@
     };
     draw();
   }
-  const sugTabs = (active, faNew) => state.me.role === 'admin' ? `<div class="tabs" style="margin-bottom:14px"><a href="#/suggestions" class="${active === 'ideas' ? 'on' : ''}">Feature suggestions</a><a href="#/suggestions/false-alarms" class="${active === 'fa' ? 'on' : ''}">False alarms${faNew ? ` <span class="badge sev-warning">${faNew} new</span>` : ''}</a></div>` : '';
+  // Everyone gets the two tabs now: admins triage every false alarm, everyone else follows their own.
+  const sugTabs = (active, faNew) => `<div class="tabs" style="margin-bottom:14px"><a href="#/suggestions" class="${active === 'ideas' ? 'on' : ''}">${state.me.role === 'admin' ? 'Feature suggestions' : 'My suggestions'}</a><a href="#/suggestions/false-alarms" class="${active === 'fa' ? 'on' : ''}">${state.me.role === 'admin' ? 'False alarms' : 'My false alarms'}${faNew ? ` <span class="badge sev-warning">${faNew} new</span>` : ''}</a></div>`;
   async function renderSuggestions() {
-    if (route().tab === 'fa' && state.me.role === 'admin') return renderFalseAlarms();
+    if (route().tab === 'fa') return renderFalseAlarms();
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
     let data;
     try { data = await api('/api/suggest'); } catch (e) { $('#view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
@@ -3850,6 +3960,7 @@
         <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the top menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
         <li class="panel"><h3>Details change — the audit keeps up</h3><p>Every scan records what Business Info said and what changed since last time. A website still showing an old phone number or email reads <b>"Still using the old …"</b> with the date it changed, at an <b>Outdated</b> severity of its own rather than looking like a detail nobody recognises. Approvals retire themselves once Duda catches up. The dates are under <b>Reference data → Business Info history</b>.</p></li>
+        <li class="panel"><h3>Tell it when it's wrong</h3><p>Marking an item <b>False alarm</b> is a bug report against the check that raised it. Your reason lands on the item as a comment, you can follow the report under <b>My false alarms</b>, and you're told — with their note — when an admin decides. If they agree the check was wrong, every website scanned with the old version flags itself for a rescan.</p></li>
         <li class="panel"><h3>Keep up as the checks grow</h3><p>New checks get added over time. A finished audit is never changed behind your back — it keeps its items until somebody rescans it. Instead, a website scanned before the newest checks shows a note at the top of its <b>Audit items</b> saying what was added, so you can decide whether it's worth a rescan. Rescanning keeps everything you've already marked and only adds new Open items.</p></li>
         <li class="panel"><h3>Your work stays yours</h3><p>Finish a website and it shows <b>✓ Marked Complete by you</b>. If anyone rescans, reopens or reassigns it, you're told what happened and who did it — and they're asked for a reason first. <b>Members → 📊 Team stats</b> shows what each person has closed. Taking an audit off the list also asks for a reason and keeps a card under <b>Removed from Audits</b> — the website itself is never touched in Duda.</p></li>
       </ol>

@@ -133,6 +133,8 @@ tr.done .finding-msg { text-decoration: line-through; }
 .note.known-note { border-color: var(--info); background: var(--info-soft); padding: 9px 11px; margin: 10px 0; }
 .known-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--border); }
 .known-row:first-of-type { border-top: 0; }
+.note.report-note { border-color: var(--border-strong); background: var(--panel-2, var(--info-soft)); padding: 9px 11px; margin: 10px 0; }
+.badge.fa-chip { border: 1px solid currentColor; }
 .bi-log { list-style: none; margin: 14px 0 0; padding: 0; }
 .bi-log > li { border-left: 2px solid var(--border-strong); padding: 0 0 12px 12px; margin-left: 4px; }
 .bi-log > li:last-child { padding-bottom: 0; }
@@ -482,10 +484,14 @@ body.drawer-open { overflow: hidden; }
 @media (max-width: 640px) { .live-pull { text-align: left; } }
 
 /* ---------- v17: False alarms (admin) ---------- */
-select.pill.fa-new { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
-select.pill.fa-ongoing { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
-select.pill.fa-done { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
-select.pill.fa-skip { background: var(--hold-soft); color: var(--hold); border-color: transparent; }
+.pill.fa-new { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.pill.fa-checking { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.pill.fa-adjusted { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.pill.fa-true { background: var(--info-soft); color: var(--info); border-color: transparent; }
+.pill.fa-wont { background: var(--hold-soft); color: var(--hold); border-color: transparent; }
+span.pill { display: inline-block; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+/* The admins' verdict, on the report and on the audit item: the reason, not just the label. */
+.fa-verdict { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--ok); background: var(--ok-soft); border-radius: 0 8px 8px 0; font-size: 13px; }
 .fa-reason { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--warn); background: var(--panel-2); border-radius: 0 6px 6px 0; font-size: 13px; font-style: italic; }
 .fa-add { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }
 .fa-add textarea { flex: 1; }
