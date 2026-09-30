@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-30-map-renamed', date: '2026-09-30', audience: 'all', tag: 'Audits',
+    title: 'Fixed: a client who renamed their Google listing looked like another business',
+    what: 'A Google Map embed link does not look the business up — it carries a <b>place ID</b>, which is what Google uses to draw the pin, plus the name that place had <b>on the day somebody generated the link</b>. So when a client renames their Google listing, the map on the page shows the new name while the link still carries the old one, and the audit read the old one and called it another business. At <b>critical</b>. One real example: a link saved in <b>August 2022</b> still says "AMDetails – Elgin, Moray" for a shop now called Spotless Detailing Elgin — same place, same pin, new name.<br><br>When the map is pinned by a place ID <i>and</i> the saved name still names the client’s own town, the item now reads <b>"carries an old business name — the pin itself is probably right"</b>, as a warning, and tells you when the link was saved and to regenerate the embed so it says the right name. A map whose saved name belongs to a business in a different town is still critical, and so is one with no place ID behind it.',
+    where: ['Websites already scanned show <b>⚠ A check was corrected — rescan</b>, with the affected items marked.', 'The item now carries the explanation, including the date the embed link was saved.', 'Worth doing anyway: regenerating the embed in Duda gets rid of the stale name for good.'],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
     id: '2026-09-30-dup-photos', date: '2026-09-30', audience: 'all', tag: 'Audits',
     title: 'The same photo used in three places is now an audit item',
     what: 'A website where one shot carries the hero, a service page and the footer reads as thrown together, and it was the kind of thing only a careful pair of eyes caught. Every picture on a website — in an <b>image tag and as a CSS background</b>, which is how most Duda heroes and banners are built — is now <b>fingerprinted from its own pixels</b>. That means the same photo <b>uploaded twice under different names</b> is caught too, and so is one saved at another size. A repeat becomes <b>one audit item naming every place it is used</b>, each one openable on its own element and page.<br><br>The careful part is what it leaves alone. Patterns, icons, logos, vector graphics, tiled backgrounds, anything under 150px, anything mostly transparent and anything too flat to be a photograph are all set aside — and you don’t have to take that on trust: <b>Reference data → Pictures on the website</b> lists every picture that was skipped and exactly why.',

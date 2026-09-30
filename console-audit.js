@@ -162,6 +162,18 @@
         'A photo that is meant to repeat can be approved under Business Info \u2192 Add or exclude a value \u2192 Picture, and stops being flagged on that website',
       ],
     },
+    {
+      v: 12,
+      date: '2026-09-30',
+      title: 'A business renamed on Google is no longer called another business',
+      fixes: ['MAP_OTHER_BUSINESS'],
+      fixedWhat: 'The name in a Google Map embed link is a snapshot taken on the day somebody made the link, not a live lookup \u2014 Google draws the pin from a place ID and shows whatever that place is called today. A client who has since renamed their Google listing was therefore reported, at critical, as pointing at another business, when the map on the page was perfectly correct.',
+      items: [
+        'When a map is pinned by a Google place ID and the saved name still names the client\u2019s own town, it now reads "carries an old business name \u2014 the pin itself is probably right", as a warning, saying when the link was saved and to regenerate it',
+        'A map whose saved name belongs to a business somewhere else entirely is still critical, and so is one with no place ID behind it',
+        'Google place IDs are read correctly out of embed links for the first time \u2014 the colon in them arrives encoded, so every embed had been reading as having no place ID at all',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -358,7 +370,9 @@
 
   /** Google Maps links often carry only an ID (data=!4m2!3m1!1s0x…:0x…, cid=, place_id=, ftid=) and no business name. */
   function placeIdFromUrl(href) {
-    const h = String(href || '');
+    // In an embed the colon arrives encoded — !1s0x0%3A0xfc49… — so decode before looking, or every
+    // embed reads as having no place ID at all.
+    const h = String(href || '').replace(/%3a/gi, ':');
     const m = h.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i) || h.match(/[?&](?:ftid|cid|place_id)=([^&]+)/i) || h.match(/!1s([A-Za-z0-9_-]{10,})/);
     return m ? m[1].toLowerCase() : '';
   }
@@ -1682,7 +1696,27 @@
             const num = (place.match(/^\d+/) || [''])[0];
             if (num && truth.addresses.length && !truth.addresses.some((x) => x.street && x.street.startsWith(num))) add(f, { code: 'MAP_ADDRESS', severity: 'critical', category: 'Contact info', message: 'Google Map embed shows a different address', found: place, expected: truth.addresses.map((x) => x.street).join(' | ') });
           } else if (!matchesBusiness(place, truth)) {
-            add(f, { code: 'MAP_OTHER_BUSINESS', severity: 'critical', category: 'Contact info', message: 'Google Map embed points to ANOTHER business', found: place, expected: truth.businessName, foreignName: place });
+            // The name in an embed link is a SNAPSHOT, not a lookup. Google draws the pin from the
+            // place id, and the "!2s" label is whatever that place was called on the day somebody
+            // generated the link — so a business that has since been renamed on Google shows its
+            // current name on the map while the link still carries the old one. When the pin is
+            // identified by an id AND the saved label names the client's own town, that is a rename,
+            // not somebody else's shop, and calling it critical sends people chasing nothing.
+            const cid = placeIdFromUrl(src);
+            const towns = [].concat(...(truth.addresses || []).map((a) => [a.city, a.region])).filter((t) => t && String(t).length > 2);
+            const sameTown = towns.some((t) => compact(place).includes(compact(t)));
+            const madeAt = /[!&]4v(\d{10,13})/.exec(src);
+            const when = madeAt ? new Date(Number(madeAt[1])) : null;
+            const saved = when && !isNaN(when) ? ` The link was saved ${when.toLocaleString('en-GB', { month: 'short', year: 'numeric' })}.` : '';
+            if (cid && sameTown) {
+              add(f, { code: 'MAP_LABEL_OLD', severity: 'warning', category: 'Contact info',
+                message: 'Google Map embed carries an old business name — the pin itself is probably right',
+                found: place,
+                expected: truth.businessName,
+                snippet: `The map is pinned by a Google place ID, and the name saved in the link is from when it was made.${saved} The address in it is still ${towns[0]}, so this is most likely the same place renamed on Google. Open the map to confirm, then regenerate the embed so the link says the right name.` });
+            } else {
+              add(f, { code: 'MAP_OTHER_BUSINESS', severity: 'critical', category: 'Contact info', message: 'Google Map embed points to ANOTHER business', found: place, expected: truth.businessName, foreignName: place });
+            }
           }
         }
       }
@@ -1720,7 +1754,7 @@
     email: ['EMAIL_MISMATCH', 'MAILTO_MISMATCH', 'MAILTO_TEXT_MISMATCH', 'SCHEMA_EMAIL'],
     phone: ['PHONE_MISMATCH', 'TEL_MISMATCH', 'TEL_TEXT_MISMATCH', 'SMS_MISMATCH', 'SCHEMA_PHONE'],
     social: ['SOCIAL_OTHER_BUSINESS', 'SOCIAL_MISMATCH', 'GMB_ID_MISMATCH', 'GMB_ID_ONLY'],
-    name: ['TEXT_OTHER_BUSINESS', 'COPYRIGHT_NAME', 'SCHEMA_NAME', 'MAP_OTHER_BUSINESS'],
+    name: ['TEXT_OTHER_BUSINESS', 'COPYRIGHT_NAME', 'SCHEMA_NAME', 'MAP_OTHER_BUSINESS', 'MAP_LABEL_OLD'],
     font: ['FONT_OFF_SYSTEM', 'FONT_OFF_SYSTEM_MORE', 'FONT_NOT_LOADED', 'FONT_SOURCE_ODD'],
     image: ['IMAGE_DUPLICATE'],
   };
