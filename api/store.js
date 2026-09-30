@@ -349,7 +349,7 @@ export default async function handler(req, res) {
         const [raw, fnum, seqRaw] = await redis(['GET', P + 'site:' + b.id], ['HGETALL', P + 'fnum:' + b.id], ['GET', P + 'seq:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
         const r = b.result || {};
-        ['host', 'editorUrl', 'businessName', 'truth', 'profiles', 'pages', 'scan', 'fonts'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
+        ['host', 'editorUrl', 'businessName', 'truth', 'profiles', 'pages', 'scan', 'fonts', 'photos'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
         if (site.scan && Array.isArray(site.scan.log)) site.scan.log = site.scan.log.slice(0, 40).map((l) => String(l).slice(0, 300));
         site.findings = (r.findings || []).map((f) => { const c = Object.assign({}, f); ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done'].forEach((k) => delete c[k]); return c; });
         // Stable ID numbers: the same issue keeps its # across rescans; new issues get the next number
@@ -560,7 +560,7 @@ export default async function handler(req, res) {
           return res.status(200).json(await saveIndex(b.id));
         }
 
-        const type = ['email', 'phone', 'social', 'name', 'font'].includes(b.type) ? b.type : '';
+        const type = ['email', 'phone', 'social', 'name', 'font', 'image'].includes(b.type) ? b.type : '';
         const value = String(b.value || '').trim().slice(0, 300);
         const key = String(b.key || '').slice(0, 300);
         const mode = b.mode === 'deny' ? 'deny' : 'allow';

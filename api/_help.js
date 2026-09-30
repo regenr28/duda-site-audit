@@ -396,6 +396,29 @@ export const HELP_SECTIONS = [
 <p class="small muted">A website with no global font settings to read (rare) falls back to the home page: its H1 sets the font for titles, its paragraphs set the font for body text. The tab says which of the two it used.</p>`,
   },
   {
+    id: 'photos', group: 'Checks', title: 'Pictures used more than once', audience: 'all',
+    html: `<p>A website where the same photo turns up in the hero, on a service page and again in the footer looks thrown together. So every picture is fingerprinted and a photo used in more than one place becomes a single audit item that names <b>every place it is used</b>.</p>
+<h4>What counts as the same photo</h4>
+<ul>
+<li>The fingerprint comes from the <b>pixels</b>, not the file name — so the same photo <b>uploaded twice under different names</b> is caught, and so is the same photo saved at a different size or quality.</li>
+<li>Both <b>&lt;img&gt; images and CSS background images</b> are read. On a Duda site most heroes and section banners are backgrounds, so an image-tag-only check would miss most of the photos.</li>
+<li>"Place" means the <b>element</b>, not the number of times it was seen. A header photo appears on every page and on three devices; that is one place.</li>
+</ul>
+<h4>What is deliberately left alone</h4>
+<p>Design elements are supposed to repeat. A picture is set aside when it is:</p>
+<ul>
+<li>a <b>vector graphic</b> (.svg), or named like a design element — icon, logo, pattern, texture, divider, badge, arrow and so on;</li>
+<li>a <b>tiled background</b>, which is a pattern by definition;</li>
+<li><b>smaller than 150px</b> on either side;</li>
+<li><b>mostly transparent</b>, which is how logos and cut-out graphics are saved;</li>
+<li><b>too flat</b> — a photograph has thousands of slightly different colours and plenty of edges, a graphic has a handful of flat ones.</li>
+</ul>
+<p>None of those is a guess you have to take on trust: open <b>Reference data → Pictures on the website</b> and every picture set aside is listed with the reason. If something there looks wrong, mark an item <b>False alarm</b> and say so — that is exactly what the report queue is for.</p>
+<h4>When the repeat is on purpose</h4>
+<p>Plenty of clients have one signature shot they want everywhere. Approve it under <b>Business Info → ＋ Add or exclude a value → Picture</b>, by file name or full address, and it stops being flagged on that website. Approving one name covers the photo however many times it was uploaded.</p>
+<p class="small muted">Pictures are fingerprinted once and remembered, so a rescan downloads nothing, and a stock photo already seen on another website is recognised immediately.</p>`,
+  },
+  {
     id: 'verify', group: 'Checks', title: 'Verify on live site', audience: 'all',
     html: `<p>Scans read the editor's <b>preview</b>. Fixes only reach the real website when it's <b>published</b> in Duda. The <b>Live site check</b> box on a website's page confirms that.</p>
 <h4>What it checks</h4>

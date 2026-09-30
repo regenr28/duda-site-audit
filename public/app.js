@@ -1053,6 +1053,9 @@
           }
         },
         checkUrls: (urls) => post('/api/check', { urls }),
+        // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
+        imageHashes: (urls) => post('/api/imghash', { urls }).then((r) => r.hashes || {}),
+        saveImageHashes: (rows) => post('/api/imghash', { save: rows }),
         onProgress: (p) => { state.scanning[id] = p; renderProgress(id); },
       });
       log.push(...res.log);
@@ -1076,7 +1079,7 @@
       res.counts = { critical: 0, outdated: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
       const profiles = await checkProfiles(res.truth);
       const sum = await store({ op: 'saveScan', id, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
-        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null,
+        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
         scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
       upsertSummary(sum);
@@ -2310,6 +2313,9 @@
           }
         },
         checkUrls: (urls) => post('/api/check', { urls }),
+        // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
+        imageHashes: (urls) => post('/api/imghash', { urls }).then((r) => r.hashes || {}),
+        saveImageHashes: (rows) => post('/api/imghash', { save: rows }),
         onProgress: (p) => { state.scanning[s.id] = Object.assign({}, p, { message: 'Live site · ' + p.message }); renderProgress(s.id); },
       });
       res.aiSkip = new Set();
@@ -2473,6 +2479,22 @@
     return (s.findings || []).filter((f) => codes.has(f.code) && !['done', 'false'].includes(f.status));
   }
   const isCorrected = (s, f) => fixedCodes(s).has(f.code) && !['done', 'false'].includes(f.status);
+  /**
+   * Where a repeated photo actually is. The item names the picture; this names each place, so the
+   * fix is "open these four elements" rather than "go and find them".
+   */
+  function dupPlaces(f) {
+    const list = f.dupPlaces || [];
+    if (list.length < 2) return '';
+    return `<div class="note known-note"><div class="k">Where this photo is used (${list.length})</div>
+      ${list.map((x) => `<div class="known-row">
+        <span class="badge subtle">${esc(x.location || '')}</span>
+        <code class="sel">${esc(x.selector)}</code>
+        <span class="faint small">${x.how === 'background' ? 'background image' : 'image'}${x.paths && x.paths.length ? ' · ' + x.paths.slice(0, 4).map(esc).join(', ') + (x.paths.length > 4 ? ` +${x.paths.length - 4}` : '') : ''}</span>
+        <button class="linkbtn" data-dupsel="${esc(x.selector)}" data-duppath="${esc((x.paths || ['/'])[0])}">👁 Show on page</button>
+      </div>`).join('')}</div>`;
+  }
+
   const correctedBadge = (s, f) => (isCorrected(s, f)
     ? `<div style="margin-bottom:4px"><span class="badge ck-fixed" title="The check that produced this item has since been corrected, so it may not be a real problem. Rescan the website to replace it.">⚠ This check was corrected — rescan</span></div>` : '');
 
@@ -2516,6 +2538,39 @@
   // that ended up in something else is an audit item, not a line in here.
   // =====================================================================
   const FONT_LEVELS = [['body', 'Body text'], ['h1', 'Heading 1'], ['h2', 'Heading 2'], ['h3', 'Heading 3'], ['h4', 'Heading 4'], ['h5', 'Heading 5'], ['h6', 'Heading 6']];
+  /**
+   * What the picture check looked at, and what it deliberately left alone.
+   *
+   * The hard part of this check is not finding repeats, it is not shouting about patterns, icons and
+   * logos. So the reasoning is shown rather than hidden: every picture set aside is listed with why.
+   * If something here looks wrong, that is a False alarm report waiting to be filed.
+   */
+  const photoCount = (s) => (s.findings || []).filter((f) => f.code === 'IMAGE_DUPLICATE' && !['done', 'false'].includes(f.status)).length;
+  function photosReference(s) {
+    const ph = s.photos;
+    if (!ph) return `<div class="panel panel-pad"><h2>Pictures on the website</h2><p class="muted small">Read on the next scan of this website.</p></div>`;
+    const dup = photoCount(s);
+    const skipped = ph.skipped || [];
+    const byWhy = {};
+    skipped.forEach((x) => { (byWhy[x.why] = byWhy[x.why] || []).push(x); });
+    const name = (u) => { try { return decodeURIComponent(String(u).split('?')[0].split('/').pop() || u); } catch (e) { return u; } };
+    return `<div class="panel panel-pad">
+      <div><h2 style="margin:0">Pictures on the website</h2>
+        <div class="small muted">Every picture is fingerprinted from its own pixels, so the same photo counts as the same photo even when it was uploaded twice under different names. Design elements are deliberately left out — here is what was set aside and why.</div></div>
+      <div class="chips" style="margin-top:12px">
+        <span class="chipbtn"><b>${ph.total}</b> pictures</span>
+        <span class="chipbtn"><b>${ph.photos}</b> judged photographs</span>
+        <span class="chipbtn"><b>${skipped.length}</b> left alone</span>
+        ${dup ? `<span class="chipbtn"><b>${dup}</b> used more than once</span>` : ''}
+      </div>
+      ${Object.keys(byWhy).length ? Object.entries(byWhy).map(([why, list]) => `<div style="margin-top:14px"><div class="k">Left alone — ${esc(why)} <span class="faint">(${list.length})</span></div>
+        <div class="small muted">${list.slice(0, 14).map((x) => `<span class="mono">${esc(name(x.url))}</span>`).join(' · ')}${list.length > 14 ? ` <span class="faint">…and ${list.length - 14} more</span>` : ''}</div></div>`).join('')
+        : '<p class="small muted" style="margin-top:12px">Nothing was set aside — every picture on this website reads as a photograph.</p>'}
+      <p class="small" style="margin:12px 0 0">${dup ? `<b>${dup} audit item${dup === 1 ? '' : 's'}</b> name the photos used in more than one place, and every place they are used. ` : 'No photo is used in more than one place. '}<button class="linkbtn" id="photoToItems">Show them in Audit items ↓</button></p>
+      <p class="small muted" style="margin:8px 0 0">A photo that is <i>meant</i> to repeat can be approved under <b>Business Info → ＋ Add or exclude a value → Picture</b>, and it stops being flagged on this website.</p>
+    </div>`;
+  }
+
   const offFonts = (s) => ((s.fonts && s.fonts.all) || []).filter((x) => !x.theme);
   const fontCount = (s) => (s.findings || []).filter((f) => /^FONT_/.test(f.code) && !['done', 'false'].includes(f.status)).length;
 
@@ -2591,6 +2646,7 @@
     { v: 'name', label: 'Business name', ph: 'Shore Detailing LLC' },
     { v: 'social', label: 'Social link', ph: 'https://facebook.com/theirpage' },
     { v: 'font', label: 'Typeface', ph: 'Magistral-Medium' },
+    { v: 'image', label: 'Picture (meant to repeat)', ph: 'workshop-front.jpg' },
   ];
   const typeLabel = (t) => (ALLOW_TYPES.find((x) => x.v === t) || {}).label || t;
   const denied = (s, type, value) => (s.allow || []).find((a) => a.mode === 'deny' && a.type === type && a.key === A.allowKey(type, value));
@@ -2762,6 +2818,7 @@
         <div class="ref-tabs"><span class="chips">
           <button class="chipbtn ${state.refTab === 'info' || !state.refTab ? 'active' : ''}" data-ref="info">Business Info</button>
           <button class="chipbtn ${state.refTab === 'fonts' ? 'active' : ''}" data-ref="fonts">Fonts used on the website${s.fonts && fontCount(s) ? ` <span class="tcount">${fontCount(s)}</span>` : ''}</button>
+          ${s.photos ? `<button class="chipbtn ${state.refTab === 'photos' ? 'active' : ''}" data-ref="photos">Pictures on the website${photoCount(s) ? ` <span class="tcount">${photoCount(s)}</span>` : ''}</button>` : ''}
           ${(s.biHistory || []).length ? `<button class="chipbtn ${state.refTab === 'history' ? 'active' : ''}" data-ref="history">Business Info history${biChanges(s) ? ` <span class="tcount">${biChanges(s)}</span>` : ''}</button>` : ''}
         </span></div>
         <div class="grid-2" ${state.refTab === 'info' || !state.refTab ? '' : 'hidden'}>
@@ -2784,6 +2841,7 @@
           </div>
         </div>
         <div ${state.refTab === 'fonts' ? '' : 'hidden'}>${fontsReference(s)}</div>
+        <div ${state.refTab === 'photos' ? '' : 'hidden'}>${photosReference(s)}</div>
         <div ${state.refTab === 'history' ? '' : 'hidden'}>${biReference(s)}</div>
       </details>
       <div class="panel">
@@ -2848,6 +2906,7 @@
     bindNewChecks(body, s);
     $$('[data-ref]', body).forEach((b) => (b.onclick = () => { state.refTab = b.dataset.ref; renderSite(); }));
     if ($('#fontToItems', body)) $('#fontToItems', body).onclick = () => { state.ff.cat = 'Design'; state.ff.q = ''; state.ff.sev = ''; renderSite(); };
+    if ($('#photoToItems', body)) $('#photoToItems', body).onclick = () => { state.ff.cat = 'Images / Alt'; state.ff.q = ''; state.ff.sev = ''; renderSite(); };
     $$('[data-unallow]', body).forEach((b) => (b.onclick = async () => {
       const a = (s.allow || []).find((x) => x.key === b.dataset.unallow) || {};
       if (!confirm(`Remove this ${a.mode === 'deny' ? 'exception' : 'approval'} for ${a.value}?\n\nIt goes back to being checked normally from the next scan.`)) return;
@@ -3043,7 +3102,7 @@
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
         ${isCorrected(s, f) ? `<div class="note fixed-checks" style="margin-top:10px"><b>⚠ The check that produced this item has since been corrected.</b>
           <div class="small" style="margin-top:3px">It may not be a real problem at all. Don't spend time on it — <b>rescan the website</b> and it is replaced with what the corrected check finds. Your Done, False alarm and On hold items are untouched by a rescan.</div></div>` : ''}
-        ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${reportNote(f)}${knownNote(f, s)}
+        ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${dupPlaces(f)}${reportNote(f)}${knownNote(f, s)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}</div>
@@ -3071,6 +3130,11 @@
     ['#drInspect', '#drInspect2'].forEach((sel) => { const b = $(sel, d); if (b) b.onclick = () => openInspector(s, f); });
     bindSelLinks(d, s, [f]);
     $$('[data-pshow]', d).forEach((b) => (b.onclick = () => { const x = f.aiPending.items[Number(b.dataset.pshow)]; openInspector(s, Object.assign({}, f, { selector: x.selector, path: (x.pages || [f.path])[0], pages: x.pages || [f.path], devices: x.devices || f.devices, visibleOn: x.visibleOn || f.visibleOn, location: x.location })); }));
+    // Each place a repeated photo turns up opens on its own element and its own page.
+    $$('[data-dupsel]', d).forEach((b) => (b.onclick = () => {
+      const place = (f.dupPlaces || []).find((x) => x.selector === b.dataset.dupsel) || {};
+      openInspector(s, Object.assign({}, f, { selector: b.dataset.dupsel, path: b.dataset.duppath, pages: place.paths || [b.dataset.duppath], location: place.location || f.location }));
+    }));
     if ($('#drAiNow')) $('#drAiNow').onclick = () => aiResume(s.id, true);
     if ($('#drSnip')) $('#drSnip').onclick = () => {
       const snip = `(s=>{const e=document.querySelector(s);if(!e)return console.warn('Not found on this device view:',s);let p=e;while(p){if(p.id==='hamburger-drawer'){console.log('This element is inside the side panel (hamburger menu), so open it to see.');}p=p.parentElement;}e.scrollIntoView({block:'center'});e.style.outline='4px solid #e11d48';e.style.outlineOffset='2px';console.log(e);})(${JSON.stringify(f.selector)})`;
@@ -3993,6 +4057,7 @@
           <li><b>Links and images:</b> broken pages, broken links and images, alt text</li>
           <li><b>SEO basics:</b> titles, descriptions, H1s, noindex, placeholder text</li>
           <li><b>Design:</b> text set in a typeface that isn't one of the website's own fonts — read from the design settings, and counting every weight of a font as the same font</li>
+          <li><b>Pictures:</b> the same photo used in more than one place, matched on its pixels so a re-upload counts too — patterns, icons and logos are left alone</li>
         </ul></div>
       <ol class="steps" style="margin-top:14px">
         <li class="panel"><h3>Add websites</h3><p>Click <b>+ Add website</b>, paste editor links (one per line) and assign someone. Keep the tab open while it scans.</p></li>

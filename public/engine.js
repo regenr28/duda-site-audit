@@ -151,6 +151,17 @@
         'A real button that goes nowhere is still reported, including one sitting in the header navigation, and the item now names the button instead of saying "(no text)"',
       ],
     },
+    {
+      v: 11,
+      date: '2026-09-30',
+      title: 'The same photo used in more than one place',
+      items: [
+        'Every picture on the website \u2014 in an image tag and as a CSS background \u2014 is fingerprinted from its own pixels, so the same photo counts as the same photo even when it was uploaded twice under different names or served at a different size',
+        'A photo used in more than one place is one audit item that names every place it is used, each one openable on its own element and page',
+        'Patterns, icons, logos, vector graphics, tiled backgrounds and anything too small or too flat to be a photograph are deliberately left alone \u2014 Reference data \u2192 Pictures on the website lists what was set aside and why',
+        'A photo that is meant to repeat can be approved under Business Info \u2192 Add or exclude a value \u2192 Picture, and stops being flagged on that website',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -711,6 +722,330 @@
    * appears once every page has been read — so the rows go back to runScan, which works out the
    * website's typefaces and then flags the text that doesn't use them.
    */
+  // ---------------------------------------------------------------------------
+  // EVERY PICTURE ON A PAGE, AND WHERE IT IS
+  //
+  // Not the same thing as the image list the link checker uses. That one keeps a single entry per
+  // address, because it only asks "does this load". Finding a photo used twice means keeping EVERY
+  // occurrence, and it means CSS backgrounds too — on a Duda site the hero, most section banners and
+  // half the cards are background images, so an <img>-only sweep would miss most of the photos.
+  // ---------------------------------------------------------------------------
+  const IMG_EXT = /\.(jpe?g|png|webp|avif|gif|svg)(\?|#|$)/i;
+  /** The widest candidate in a srcset, which is the one worth fingerprinting. */
+  function fromSrcset(v) {
+    let best = ''; let bestW = -1;
+    String(v || '').split(',').forEach((part) => {
+      const bits = part.trim().split(/\s+/);
+      if (!bits[0]) return;
+      const w = /^(\d+)w$/.exec(bits[1] || '') ? Number(RegExp.$1) : /^([\d.]+)x$/.exec(bits[1] || '') ? Number(RegExp.$1) * 1000 : 0;
+      if (w >= bestW) { bestW = w; best = bits[0]; }
+    });
+    return best;
+  }
+  const urlsInCss = (v) => (String(v || '').match(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi) || [])
+    .map((u) => (/url\(\s*(['"]?)([^'")]+)\1\s*\)/i.exec(u) || [])[2] || '').filter(Boolean);
+  /**
+   * Does this CSS tile the image? A tiled background is a pattern by definition, never a photograph.
+   * "no-repeat" must not count: the hyphen is a word boundary, so a plain \brepeat\b matches inside
+   * it and would call every cover photo on the website a pattern.
+   */
+  const TILED = /(^|[\s,/(])(repeat|repeat-x|repeat-y|round|space)([\s,;)]|$)/i;
+  const tiledFrom = (css) => {
+    const c = String(css || '');
+    const explicit = /background-repeat\s*:\s*([^;]+)/i.exec(c);
+    if (explicit) return TILED.test(explicit[1]);
+    const short = /background\s*:\s*([^;]+)/i.exec(c);
+    return short ? TILED.test(short[1].replace(/url\([^)]*\)/gi, ' ')) : false;
+  };
+
+  function photosUsed(doc, ctx, device) {
+    const out = [];
+    const abs = (u) => { try { return new URL(u, ctx.pageUrl).href; } catch (e) { return ''; } };
+    const push = (el, url, how, extra) => {
+      if (!url || /^data:/i.test(url)) return;
+      const a = abs(url);
+      if (!a || !/^https?:/i.test(a)) return;
+      if (/\/blank(-\d+w)?\.(webp|png|gif|jpe?g)$/i.test(a.split('?')[0])) return;   // Duda's spacer
+      out.push(Object.assign({
+        url: a, how, selector: uniqueSelector(el), block: blockOf(uniqueSelector(el)),
+        location: locationOf(el), hiddenBy: hiddenReason(el, device) || '',
+      }, extra || {}));
+    };
+
+    doc.querySelectorAll('img').forEach((img) => {
+      if (img.closest('noscript')) return;
+      const w = img.getAttribute('width'); const h = img.getAttribute('height');
+      if (w === '1' || w === '0' || h === '1' || h === '0') return;                    // tracking pixels
+      const src = img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('data-dm-image-path') || fromSrcset(img.getAttribute('srcset'));
+      push(img, src, 'img', { alt: img.getAttribute('alt') || '', w: Number(w) || 0, h: Number(h) || 0 });
+    });
+    doc.querySelectorAll('picture source[srcset], source[srcset]').forEach((sc) => {
+      const holder = sc.parentElement && sc.parentElement.querySelector('img');
+      push(holder || sc, fromSrcset(sc.getAttribute('srcset')), 'img', {});
+    });
+    // Inline backgrounds, which is how Duda writes most hero and section images.
+    doc.querySelectorAll('[style*="url(" i]').forEach((el) => {
+      const st = el.getAttribute('style') || '';
+      if (!/background/i.test(st)) return;
+      const tiled = tiledFrom(st);
+      urlsInCss(st).forEach((u) => push(el, u, 'background', { tiled }));
+    });
+    doc.querySelectorAll('[data-background-image], [data-bg], [data-src-background]').forEach((el) => {
+      push(el, el.getAttribute('data-background-image') || el.getAttribute('data-bg') || el.getAttribute('data-src-background'), 'background', {});
+    });
+    // …and backgrounds set in a stylesheet, matched to the elements they actually dress.
+    doc.querySelectorAll('style').forEach((st) => {
+      const css = (st.textContent || '').replace(/@font-face\s*\{[^}]*\}/gi, ' ');
+      let m; const rule = /([^{}]+)\{([^{}]*)\}/g;
+      while ((m = rule.exec(css))) {
+        if (!/background/i.test(m[2]) || !/url\(/i.test(m[2])) continue;
+        const urls = urlsInCss(m[2]);
+        if (!urls.length) continue;
+        const tiled = tiledFrom(m[2]);
+        m[1].split(',').forEach((raw) => {
+          const sel = raw.replace(/::?[a-z-]+(\([^)]*\))?/gi, '').trim();
+          if (!sel || /^@/.test(sel)) return;
+          let hits = [];
+          try { hits = doc.querySelectorAll(sel); } catch (e) { return; }
+          Array.prototype.slice.call(hits, 0, 40).forEach((el) => urls.forEach((u) => push(el, u, 'background', { tiled })));
+        });
+      }
+    });
+    // One entry per element per picture: a rule and an inline style naming the same file on the
+    // same element is one picture in one place, not two.
+    const seenHere = new Set();
+    return out.filter((x) => {
+      if (!IMG_EXT.test(x.url) && !/\/dms3rep\/|cdn-website|multiscreensite/i.test(x.url)) return false;
+      const k = x.selector + '|' + x.url;
+      if (seenHere.has(k)) return false;
+      seenHere.add(k);
+      return true;
+    }).slice(0, 400);
+  }
+
+  // ---------------------------------------------------------------------------
+  // IS IT A PHOTOGRAPH, AND IS IT THE SAME ONE TWICE?
+  //
+  // Two questions, one look at the pixels.
+  //
+  // "The same one" is a perceptual hash, not a file comparison: a 8×8 grey thumbnail turned into 64
+  // bits by asking, for each pixel, whether it is brighter than the one to its right. Re-saving,
+  // resizing or re-compressing a photo barely moves those bits, so the same picture uploaded twice
+  // under different names still matches — which is the whole point of doing this by pixel.
+  //
+  // "Is it a photograph" is the harder half, and it is what keeps patterns, icons and logos out of
+  // the report. A photograph has thousands of slightly different colours and almost no transparency;
+  // a design element has a handful of flat colours, usually transparency around it, often tiles, and
+  // is usually small. None of those on its own is proof, so they are counted together.
+  // ---------------------------------------------------------------------------
+  const HASH_N = 8;              // 8×8 → 64 bits
+  const PROBE_N = 32;            // the sample the photo/graphic tests are measured on
+  const GRAPHIC_NAME = /(^|[\W_])(icon|icons|logo|logos|favicon|sprite|pattern|texture|bg-?pattern|divider|shape|blob|swirl|badge|ribbon|arrow|bullet|placeholder|spacer|overlay|gradient|frame|border|watermark|stripe|dots?|noise|grain)([\W_]|$)/i;
+
+  /** Read a picture into a small canvas and measure it. Returns null when it can't be read. */
+  function measureImage(img) {
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    if (!w || !h) return null;
+    const cv = document.createElement('canvas');
+    cv.width = PROBE_N; cv.height = PROBE_N;
+    const cx = cv.getContext('2d', { willReadFrequently: true });
+    if (!cx) return null;
+    cx.drawImage(img, 0, 0, PROBE_N, PROBE_N);
+    let px;
+    try { px = cx.getImageData(0, 0, PROBE_N, PROBE_N).data; } catch (e) { return null; }  // tainted
+
+    // Colour variety, on a coarse grid so compression noise doesn't count as variety.
+    const buckets = new Set();
+    let clear = 0; let edge = 0; let last = -1;
+    const grey = new Float64Array(PROBE_N * PROBE_N);
+    for (let i = 0, n = 0; i < px.length; i += 4, n++) {
+      const a = px[i + 3];
+      if (a < 200) clear++;
+      const g = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+      grey[n] = g;
+      buckets.add(((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4));
+      if (last >= 0 && Math.abs(g - last) > 8) edge++;
+      last = g;
+    }
+    const total = PROBE_N * PROBE_N;
+
+    // The hash. Shrinking a large photo straight down to nine pixels wide leaves the answer at the
+    // mercy of whatever the browser's sampler happens to pick up, and two copies of one photo saved
+    // at different sizes then disagree. Going through an intermediate size averages first, so the
+    // same picture re-uploaded lands on the same bits.
+    const mid = document.createElement('canvas');
+    mid.width = 64; mid.height = 64;
+    const mcx = mid.getContext('2d', { willReadFrequently: true });
+    if (!mcx) return null;
+    mcx.imageSmoothingEnabled = true; mcx.imageSmoothingQuality = 'high';
+    mcx.drawImage(img, 0, 0, 64, 64);
+    cv.width = HASH_N + 1; cv.height = HASH_N;
+    cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high';
+    cx.drawImage(mid, 0, 0, HASH_N + 1, HASH_N);
+    let bits = '';
+    try {
+      const hp = cx.getImageData(0, 0, HASH_N + 1, HASH_N).data;
+      for (let y = 0; y < HASH_N; y++) {
+        for (let x = 0; x < HASH_N; x++) {
+          const at = (i) => 0.299 * hp[i * 4] + 0.587 * hp[i * 4 + 1] + 0.114 * hp[i * 4 + 2];
+          bits += at(y * (HASH_N + 1) + x) > at(y * (HASH_N + 1) + x + 1) ? '1' : '0';
+        }
+      }
+    } catch (e) { return null; }
+
+    return { w, h, hash: bits, colors: buckets.size, alpha: Math.round((clear / total) * 100), edges: Math.round((edge / total) * 100) };
+  }
+
+  /**
+   * Photograph, or design element? Returns '' for a photograph, otherwise why it was set aside —
+   * the reason is worth keeping so the Fonts-style reference panel can show what was skipped.
+   */
+  function graphicReason(m, hint) {
+    hint = hint || {};
+    if (/\.svg(\?|#|$)/i.test(hint.url || '')) return 'a vector graphic';
+    if (GRAPHIC_NAME.test(String(hint.url || '').split('/').pop() || '')) return 'named like a design element';
+    if (hint.tiled) return 'a tiled background pattern';
+    if (!m) return '';
+    if (m.w < 150 || m.h < 150) return 'too small to be a photo';
+    if (m.alpha > 15) return 'mostly transparent, so a graphic';
+    if (m.colors < 40) return 'too few colours to be a photo';
+    if (m.colors < 90 && m.edges < 12) return 'flat colour, so a graphic';
+    return '';
+  }
+
+  /** How many of the 64 bits differ. 0 is the same picture; up to ~6 is the same picture re-saved. */
+  function hamming(a, b) {
+    if (!a || !b || a.length !== b.length) return 99;
+    let d = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++;
+    return d;
+  }
+  /** A picture with almost no detail at all hashes to nearly all one bit, and would match anything. */
+  const flatHash = (h) => { let ones = 0; for (let i = 0; i < h.length; i++) if (h[i] === '1') ones++; return ones < 6 || ones > h.length - 6; };
+
+  /**
+   * The same picture served at a dozen sizes is one picture: Duda writes the width into the file
+   * name and repeats it in the query, so both go before anything is compared. Kept in step with
+   * imgKey on the server, which uses this same shape for the fingerprint cache.
+   */
+  function imageKey(raw) {
+    let u;
+    try { u = new URL(String(raw || ''), 'https://x.invalid'); } catch (e) { return String(raw || '').toLowerCase().trim(); }
+    const path = u.pathname
+      .replace(/-\d{2,5}w(?=\.[a-z0-9]+$)/i, '')
+      .replace(/_\d{2,5}x\d{2,5}(?=\.[a-z0-9]+$)/i, '')
+      .replace(/\/(?:opt|resize|fit|crop)\/(?=[^/]+$)/i, '/');
+    return (u.origin + path).toLowerCase();
+  }
+
+  /** Load one picture through the app's own address, so the canvas can be read. */
+  function loadImage(url, timeoutMs) {
+    return new Promise((done) => {
+      const img = new Image();
+      let settled = false;
+      const finish = (v) => { if (!settled) { settled = true; clearTimeout(t); done(v); } };
+      const t = setTimeout(() => finish(null), timeoutMs || 12000);
+      img.onload = () => finish(img);
+      img.onerror = () => finish(null);
+      img.src = '/api/imghash?url=' + encodeURIComponent(url);
+    });
+  }
+
+  /**
+   * Fingerprint every distinct picture on the website.
+   *
+   * Anything already fingerprinted — on an earlier scan, or on another website using the same stock
+   * photo — comes back from the cache and is never downloaded again, which is what makes this
+   * affordable across hundreds of sites.
+   */
+  async function fingerprintPhotos(photos, opts) {
+    const byKey = new Map();
+    photos.forEach((ph) => {
+      const k = imageKey(ph.url);
+      if (!byKey.has(k)) byKey.set(k, { key: k, url: ph.url, tiled: !!ph.tiled, places: [] });
+      const e = byKey.get(k);
+      if (ph.tiled) e.tiled = true;
+      e.places.push(ph);
+    });
+    const list = [...byKey.values()];
+    if (!list.length || !opts.imageHashes) return byKey;
+
+    let known = {};
+    try { known = (await opts.imageHashes(list.map((x) => x.url))) || {}; } catch (e) { /* cache is a bonus */ }
+    const fresh = [];
+    let done = 0;
+    for (const e of list) {
+      if (opts.shouldStop && opts.shouldStop()) break;
+      const cached = known[e.url];
+      if (cached && cached.h) { e.m = { hash: cached.h, w: cached.w, h: cached.h2, colors: cached.colors, alpha: cached.alpha }; e.why = cached.photo ? '' : (cached.why || 'a design element'); continue; }
+      if (opts.onProgress) opts.onProgress({ done: ++done, total: list.length, message: `Fingerprinting pictures ${done}/${list.length}` });
+      const img = await loadImage(e.url);
+      const m = img ? measureImage(img) : null;
+      if (!m) { e.why = 'could not be read'; continue; }
+      e.m = m;
+      e.why = graphicReason(m, { url: e.url, tiled: e.tiled });
+      fresh.push({ url: e.url, h: m.hash, photo: !e.why, why: e.why, w: m.w, h2: m.h, colors: m.colors, alpha: m.alpha });
+    }
+    if (fresh.length && opts.saveImageHashes) { try { await opts.saveImageHashes(fresh); } catch (e) { /* likewise */ } }
+    return byKey;
+  }
+
+  /**
+   * The audit items: one per photograph that turns up in more than one place.
+   *
+   * "Place" is the element it sits in, not the number of times it was seen — a header photo appears
+   * on all fifteen pages and on three devices, and that is one place, not forty-five. Header and
+   * footer are counted once for the whole website for the same reason.
+   */
+  const PHOTO_ITEM_CAP = 12;
+  /** Has the team said this picture is meant to repeat? By full address, or by the file name on the item. */
+  const imageApproved = (ok, e) => ok.has('image:' + e.key)
+    || ok.has('image:' + safeDecode(String(e.url).split('?')[0].split('/').pop() || '').toLowerCase());
+  function duplicatePhotoFindings(byKey, allow) {
+    const out = [];
+    const ok = allow || new Set();
+    const shots = [...byKey.values()].filter((e) => e.m && e.m.hash && !e.why && !flatHash(e.m.hash)
+      && !imageApproved(ok, e));
+
+    // Group by fingerprint: the same file, and the same picture uploaded twice under other names.
+    const groups = [];
+    shots.forEach((e) => {
+      const g = groups.find((x) => x.key === e.key || hamming(x.hash, e.m.hash) <= 6);
+      if (g) { g.members.push(e); } else groups.push({ key: e.key, hash: e.m.hash, members: [e] });
+    });
+
+    groups.forEach((g) => {
+      // Where it is: one row per element, with the pages that element appears on gathered behind it.
+      const spots = new Map();
+      g.members.forEach((e) => e.places.forEach((ph) => {
+        const k = [ph.block || ph.selector, ph.location].join('|');
+        const sp = spots.get(k) || { block: ph.block || ph.selector, selector: ph.selector, location: ph.location, how: ph.how, paths: new Set(), hiddenBy: ph.hiddenBy, first: ph };
+        sp.paths.add(ph.path || '/');
+        if (!spots.has(k)) spots.set(k, sp);
+      }));
+      const places = [...spots.values()];
+      if (places.length < 2) return;
+      const names = [...new Set(g.members.map((e) => safeDecode(String(e.url).split('?')[0].split('/').pop() || '')))];
+      // Approving covers the whole group, however many names the one picture was uploaded under.
+      const allowValue = names[0];
+      const reupload = names.length > 1;
+      const where = places.slice(0, 6).map((sp) => `${sp.location}${sp.paths.size ? ' (' + [...sp.paths].slice(0, 3).join(', ') + (sp.paths.size > 3 ? ', …' : '') + ')' : ''}`);
+      const one = places[0].first;
+      out.push({
+        code: 'IMAGE_DUPLICATE', severity: 'warning', category: 'Images / Alt',
+        message: `Same photo used in ${places.length} places${reupload ? ' — and uploaded more than once' : ''}`,
+        found: names.slice(0, 3).join(' · ') + (names.length > 3 ? ` · …and ${names.length - 3} more` : ''),
+        expected: 'A different photo in each place',
+        path: one.path, device: one.device, selector: places[0].block, location: places[0].location,
+        visible: !one.hiddenBy, hiddenBy: one.hiddenBy || '', snippet: where.join(' · ') + (places.length > 6 ? ` · …and ${places.length - 6} more` : ''),
+        allowValue,
+        dupPlaces: places.slice(0, PHOTO_ITEM_CAP).map((sp) => ({ selector: sp.block, location: sp.location, how: sp.how, paths: [...sp.paths].slice(0, 8) })),
+      });
+    });
+    return out;
+  }
+
   function fontsUsed(doc, device) {
     const resolve = varResolver(doc);
     const familyOf = fontMap(doc, resolve);
@@ -1356,6 +1691,7 @@
     return {
       notFound: false,
       findings: collapseContact(findings),
+      photos: photosUsed(doc, ctx, device),
       internal: Array.from(internal),
       external: Array.from(external.keys()).map((url) => ({ url, selector: uniqueSelector(external.get(url).el), location: locationOf(external.get(url).el), hiddenBy: hiddenReason(external.get(url).el, device) || '' })),
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
@@ -1386,6 +1722,7 @@
     social: ['SOCIAL_OTHER_BUSINESS', 'SOCIAL_MISMATCH', 'GMB_ID_MISMATCH', 'GMB_ID_ONLY'],
     name: ['TEXT_OTHER_BUSINESS', 'COPYRIGHT_NAME', 'SCHEMA_NAME', 'MAP_OTHER_BUSINESS'],
     font: ['FONT_OFF_SYSTEM', 'FONT_OFF_SYSTEM_MORE', 'FONT_NOT_LOADED', 'FONT_SOURCE_ODD'],
+    image: ['IMAGE_DUPLICATE'],
   };
   /** Normalised key for an approved value, e.g. "email:sales@x.com", "phone:2625550147", "social:facebook:joesdetail", "name:joesdetailing". */
   function allowKey(type, value) {
@@ -1396,12 +1733,18 @@
     if (type === 'social') { const net = socialNetOf(/^https?:/i.test(v) ? v : 'https://' + v.replace(/^\/+/, '')); const h = net ? compact(socialHandle(net, v)) : compact(v); return h ? 'social:' + (net || 'any') + ':' + h : ''; }
     if (type === 'name') { const c = compact(v); return c.length >= 3 ? 'name:' + c : ''; }
     if (type === 'font') { const c = fontBase(v).toLowerCase().replace(/\s+/g, ' ').trim(); return c ? 'font:' + c : ''; }
+    // A picture may be approved by its full address or just by its file name, because that is what
+    // somebody reads off the audit item and types in.
+    if (type === 'image') { const c = /^https?:/i.test(v) ? imageKey(v) : v.toLowerCase().trim(); return c ? 'image:' + c : ''; }
     return '';
   }
   /** Which value of a finding could be approved as correct for the website: { type, value, key } or null. */
   function allowValueOf(f) {
     if (!f) return null;
     if (/^FONT_/.test(f.code || '')) { const fam = fontOf(f); const key = allowKey('font', fam); return key ? { type: 'font', value: fam, key } : null; }
+    // A duplicate-photo item names several files, so it says outright which one to approve rather
+    // than leaving "hero.png · hero-2.png" to be parsed back out of the message.
+    if (f.code === 'IMAGE_DUPLICATE') { const v = f.allowValue || String(f.found || '').split(' · ')[0]; const key = allowKey('image', v); return key ? { type: 'image', value: v, key } : null; }
     for (const [type, codes] of Object.entries(ALLOW_CODES)) {
       if (!codes.includes(f.code)) continue;
       const value = type === 'name' ? (f.foreignName || f.found) : f.found;
@@ -1465,6 +1808,9 @@
 
   /** Typefaces a team has said are fine on this website, however far off the design they look. */
   const allowedFonts = (allow) => new Set((allow || []).filter((a) => a.type === 'font' && a.mode !== 'deny').map((a) => fontBase(a.value).toLowerCase()));
+  /** Pictures the team has said are meant to repeat here — by address or by file name. */
+  const allowedImages = (allow) => new Set((allow || []).filter((a) => a.type === 'image' && a.mode !== 'deny')
+    .map((a) => allowKey('image', a.value)).filter(Boolean));
   // ---------- Which page text is worth sending to the AI ----------
   // Brands, platforms and suppliers that are fine to mention (never "another business")
   const SAFE_BRANDS = /\b(ceramic pro|xpel|suntek|llumar|gtechniq|gyeon|igl|meguiar'?s?|chemical guys|koch[- ]?chemie|opti-?coat|modesta|cquartz|system ?x|stek|fuel off[- ]?road|kmc|black rhino|toyo|nitto|bfgoodrich|falken|rough country|3m|google|yelp|facebook|instagram|youtube|tiktok|urable|square|paypal|visa|mastercard|bmw|tesla|audi|mercedes|porsche|toyota|honda|ford|chevrolet|chevy|jeep|dodge|ram|nissan|subaru|lexus|mazda|kia|hyundai|volkswagen|volvo|cadillac|gmc|corvette|mustang|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|june|july|august|september|october|november|december)\b/i;
@@ -1701,6 +2047,7 @@
     const pageInfo = {};
     const external = new Map();
     const images = new Map();
+    const photoRows = [];
     const altMap = new Map();
     const textIdx = [];
     const fontRows = [];          // every piece of text on the website, with the typeface it ends up in
@@ -1751,6 +2098,9 @@
           r.internal.forEach((p) => { if (!queued.has(p)) enqueue(p, path); (pageInfo[p] || {}).linkedFrom = (pageInfo[p] || {}).linkedFrom || { path, device }; });
           r.external.forEach((x) => { if (!external.has(x.url)) external.set(x.url, Object.assign({ path, device }, x)); });
           r.images.forEach((x) => { if (!images.has(x.url)) images.set(x.url, Object.assign({ path, device }, x)); });
+          // Every occurrence, not one per address: counting how many places use a photo is the point.
+          // Desktop only — the same hero read three times over is one place, not three.
+          if (device === devices[0] && photoRows.length < 3000) (r.photos || []).forEach((x) => photoRows.push(Object.assign({ path, device }, x)));
           (r.alts || []).forEach((x) => {
             let m = altMap.get(x.alt);
             if (!m) { if (altMap.size >= 400) return; m = { alt: x.alt, file: x.file, src: x.src, selector: x.selector, location: x.location, linksHome: x.linksHome, isLogo: x.isLogo, brandLogo: x.brandLogo, logoRow: x.logoRow, rowImgs: x.rowImgs, pages: [], devices: [], visibleOn: [], hiddenOn: [] }; altMap.set(x.alt, m); }
@@ -1809,6 +2159,21 @@
       fontFindings(fontRows, fontLoaded, fontSys).forEach((f) => raw.push(f));
     }
 
+    // The same photograph in more than one place. Patterns, icons and logos are measured and set
+    // aside rather than guessed at — see graphicReason.
+    let photoSys = null;
+    if (photoRows.length && opts.imageHashes) {
+      try {
+        const byKey = await fingerprintPhotos(photoRows, opts);
+        duplicatePhotoFindings(byKey, allowedImages(opts.allow)).forEach((f) => raw.push(f));
+        photoSys = {
+          total: byKey.size,
+          photos: [...byKey.values()].filter((e) => !e.why && e.m).length,
+          skipped: [...byKey.values()].filter((e) => e.why).map((e) => ({ url: e.url, why: e.why, n: e.places.length })).slice(0, 60),
+        };
+      } catch (e) { log.push('Picture fingerprinting failed: ' + e); }
+    }
+
     // External link + image checks
     if (opts.checkUrls) {
       const urls = Array.from(external.keys()).concat(Array.from(images.keys()));
@@ -1865,6 +2230,7 @@
       truth,
       checks: CHECKS_VERSION,
       fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 14) } : null,
+      photos: photoSys,
       findings: merged,
       pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
       externalLinks: external.size,
@@ -1962,6 +2328,6 @@
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

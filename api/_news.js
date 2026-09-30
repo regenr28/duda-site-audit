@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-30-dup-photos', date: '2026-09-30', audience: 'all', tag: 'Audits',
+    title: 'The same photo used in three places is now an audit item',
+    what: 'A website where one shot carries the hero, a service page and the footer reads as thrown together, and it was the kind of thing only a careful pair of eyes caught. Every picture on a website — in an <b>image tag and as a CSS background</b>, which is how most Duda heroes and banners are built — is now <b>fingerprinted from its own pixels</b>. That means the same photo <b>uploaded twice under different names</b> is caught too, and so is one saved at another size. A repeat becomes <b>one audit item naming every place it is used</b>, each one openable on its own element and page.<br><br>The careful part is what it leaves alone. Patterns, icons, logos, vector graphics, tiled backgrounds, anything under 150px, anything mostly transparent and anything too flat to be a photograph are all set aside — and you don’t have to take that on trust: <b>Reference data → Pictures on the website</b> lists every picture that was skipped and exactly why.',
+    where: ['On a website: the items sit under <b>Images / Alt</b>, and open with a <b>Where this photo is used</b> list — one <b>👁 Show on page</b> per place.', '<b>Reference data → Pictures on the website</b>: how many pictures, how many read as photographs, and what was set aside with the reason.', 'A repeat that is on purpose: <b>Business Info → ＋ Add or exclude a value → Picture</b>, by file name or address. One approval covers the photo however many times it was uploaded.', 'Already scanned websites show <b>✨ New checks available</b> — rescan to pick this up.'],
+    link: '#/help/photos', linkText: 'How the picture check works',
+  },
+  {
     id: '2026-09-30-fa-deeplink', date: '2026-09-30', audience: 'admin', tag: 'Audits',
     title: 'False alarm notifications open the actual report',
     what: 'Five notifications in a row that all read <b>marked an audit item as False alarm</b>, and every one of them dropped you at the top of the same queue — leaving you to work out which of forty cards it meant. A False alarm notification now opens the queue <b>on that report</b>: scrolled to, outlined for a moment, with its notes already open so the reason is there without another click. If the filter you had set would have hidden it, the filter gives way rather than handing you an empty list.',
