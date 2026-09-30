@@ -492,6 +492,20 @@ body.drawer-open { overflow: hidden; }
 .pill.fa-notfa { background: var(--crit-soft); color: var(--crit); border-color: transparent; }
 span.pill { display: inline-block; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 /* The admins' verdict, on the report and on the audit item: the reason, not just the label. */
+/* "This is the control that did it" — shown for a couple of seconds after a click elsewhere set a
+   filter or a view for you, so the next time you can reach for it yourself. */
+.filter-line { margin: 2px 0 10px; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; }
+.hint-flash { animation: hint-pulse 2.4s ease-out 1; border-radius: 10px; }
+@keyframes hint-pulse {
+  0%, 70% { box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 4px var(--accent); }
+  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .filter-line { margin: 2px 0 10px; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; }
+.hint-flash { animation: none; box-shadow: 0 0 0 2px var(--accent); } }
+/* A count that is also a button: reads as a badge, behaves as a control. */
+.badge.badge-btn { border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; }
+.badge.badge-btn:hover { outline: 1px solid var(--accent); }
+
 /* The one report a notification sent you to, among forty that look alike. */
 .sg-card.fa-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); animation: fa-flash 1.6s ease-out 1; }
 @keyframes fa-flash { 0%, 40% { background: var(--accent-soft); } 100% { background: transparent; } }

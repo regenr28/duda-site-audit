@@ -22,7 +22,7 @@
     config: {}, me: null, users: [], sites: [], current: null,
     scanning: {}, queue: [], running: 0, skipAI: {}, aiAbort: {}, claims: {},
     filters: { q: '', status: '', assignee: '', oldChecks: false, clar: false },
-    ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' },
+    ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '', cmt: false },
     refTab: 'info',
     fixedChecks: {},
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
@@ -212,6 +212,26 @@
     if (state.build === r.build || state.stale) return;
     state.stale = true;
     setTimeout(() => { try { render(); } catch (e) { /* the next render will carry it */ } }, 0);
+  }
+  /**
+   * Point at the control that produced what you are looking at.
+   *
+   * When a click somewhere else sets a filter for you, the result is a list you didn't choose and
+   * can't obviously undo. Flashing the control that did it answers "where did this come from" and
+   * shows where to reach for it next time, without a tour or a tooltip nobody reads.
+   */
+  let pendingHint = '';
+  const hintNext = (sel) => { pendingHint = sel; };
+  function runHint() {
+    if (!pendingHint) return;
+    const sel = pendingHint; pendingHint = '';
+    setTimeout(() => {
+      const el = $(sel);
+      if (!el) return;
+      el.classList.add('hint-flash');
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      setTimeout(() => el.classList.remove('hint-flash'), 2600);
+    }, 120);
   }
   const bindStale = (root) => { const b = $('#staleReload', root || document); if (b) b.onclick = () => location.reload(); };
   /** A scan the person asked for just before reloading, resumed once the new checks are loaded. */
@@ -1897,16 +1917,31 @@
     });
   }, 1000);
   document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-skipai]'); if (b) { e.preventDefault(); e.stopPropagation(); skipAI(b.dataset.skipai); b.remove(); } });
-  function issueChips(c, done) {
+  /**
+   * The counts on an Audits row, each one a way into exactly what it counts.
+   *
+   * These numbers are the reason somebody opens a website in the first place — "24 warning" is a
+   * question, and the answer is a filtered list one click away. The severity counts are worked out
+   * with the same rule as the default view (open and for-clarification, never closed or on hold), so
+   * clicking "24 warning" lands on exactly twenty-four rows. A count that opened a list of a
+   * different size would be worse than no link at all.
+   */
+  function issueChips(c, done, siteId) {
     c = c || {};
     const chips = [];
-    if (c.critical) chips.push(`<span class="badge sev-critical">${c.critical} critical</span>`);
-    if (c.outdated) chips.push(`<span class="badge sev-outdated" title="Still showing something that used to be in Business Info">${c.outdated} outdated</span>`);
-    if (c.warning) chips.push(`<span class="badge sev-warning">${c.warning} warning</span>`);
-    if (c.info) chips.push(`<span class="badge sev-info">${c.info} info</span>`);
-    if (c.clarification) chips.push(`<span class="badge fs-clarification">${c.clarification} for clarification</span>`);
-    if (c.hold) chips.push(`<span class="badge fs-hold">${c.hold} on hold</span>`);
-    if (c.comments) chips.push(`<span class="badge subtle">💬 ${c.comments}</span>`);
+    const go = (kind, value, cls, label, title) => chips.push(siteId
+      ? `<button class="badge ${cls} badge-btn" data-gofilter="${esc(siteId)}" data-fkind="${kind}" data-fvalue="${esc(value)}" title="${esc(title)}">${label}</button>`
+      : `<span class="badge ${cls}">${label}</span>`);
+    if (c.critical) go('sev', 'critical', 'sev-critical', `${c.critical} critical`, `Open this website showing only its ${c.critical} critical item${c.critical === 1 ? '' : 's'}`);
+    if (c.outdated) go('sev', 'outdated', 'sev-outdated', `${c.outdated} outdated`, `Still showing something that used to be in Business Info — open the ${c.outdated} of them`);
+    if (c.warning) go('sev', 'warning', 'sev-warning', `${c.warning} warning`, `Open this website showing only its ${c.warning} warning${c.warning === 1 ? '' : 's'}`);
+    if (c.info) go('sev', 'info', 'sev-info', `${c.info} info`, `Open this website showing only its ${c.info} note${c.info === 1 ? '' : 's'}`);
+    if (c.clarification) go('st', 'clarification', 'fs-clarification', `${c.clarification} for clarification`, `Open the ${c.clarification} item${c.clarification === 1 ? '' : 's'} waiting on an answer`);
+    if (c.hold) go('st', 'hold', 'fs-hold', `${c.hold} on hold`, `Open the ${c.hold} item${c.hold === 1 ? '' : 's'} waiting on somebody outside the team`);
+    // A count you can't act on is a puzzle. This one opens the discussion it is counting.
+    if (c.comments) chips.push(siteId
+      ? `<button class="badge subtle badge-btn" data-gocmt="${esc(siteId)}" title="Open the discussion on this website — ${c.comments} comment${c.comments === 1 ? '' : 's'}, including any left on individual audit items">💬 ${c.comments}</button>`
+      : `<span class="badge subtle">💬 ${c.comments}</span>`);
     if (!chips.length && done) chips.push('<span class="badge scan-complete">No open issues</span>');
     return `<span class="chips">${chips.join('')}</span>`;
   }
@@ -1985,7 +2020,7 @@
               <td>${scanBadge(s)}${fixedCodes(s).size
                 ? `<div style="margin-top:4px"><span class="badge ck-fixed" title="A check that produced items on this website has since been corrected. Those items may not be real — open the website and rescan to replace them.">⚠ A check was corrected — rescan</span></div>`
                 : newChecksFor(s).length ? `<div style="margin-top:4px"><span class="badge ck-new" title="New audit checks were added after this scan. The items here are unchanged — rescan to add what the new checks find.">✨ New checks available</span></div>` : ''}</td>
-              <td>${issueChips(c, s.scan && s.scan.state === 'complete')}</td>
+              <td>${issueChips(c, s.scan && s.scan.state === 'complete', s.id)}</td>
               <td style="min-width:110px"><div class="small">${c.closed || 0}/${c.total || 0}</div><div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div></td>
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
                 ${state.me.role === 'admin' || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Remove this audit from the list (the website itself is untouched)">✕</button>` : ''}</td>
@@ -2005,7 +2040,24 @@
       if (!todo.length) { toast('Every website shown is already queued or scanning.'); return; }
       if (confirm(`Rescan ${todo.length} website(s)?${busy ? `\n\n${busy} already queued or scanning will be skipped.` : ''}`)) requestScan(todo.map((s) => s.id));
     };
-    $$('[data-open]', v).forEach((tr) => tr.addEventListener('click', (e) => { if (!e.target.closest('[data-stop]')) location.hash = '#/site/' + tr.dataset.open; }));
+    // The comment count opens the discussion it counts, with item comments included — otherwise a
+    // count of 3 can lead to a page showing none of them.
+    $$('[data-gocmt]', v).forEach((btn) => btn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      state.commentScope = 'all';
+      hintNext('#cmtScope');
+      location.hash = '#/site/' + btn.dataset.gocmt + '/comments';
+    }));
+    // Severity and status counts: open the website already showing what the number counted.
+    $$('[data-gofilter]', v).forEach((btn) => btn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const kind = btn.dataset.fkind; const value = btn.dataset.fvalue;
+      Object.assign(state.ff, FF_DEFAULTS);
+      if (kind === 'sev') { state.ff.sev = value; hintNext('#ffSev'); } else { state.ff.st = value; hintNext('#ffst'); }
+      ffSite = btn.dataset.gofilter;
+      location.hash = '#/site/' + btn.dataset.gofilter;
+    }));
+    $$('[data-open]', v).forEach((tr) => tr.addEventListener('click', (e) => { if (!e.target.closest('[data-stop]') && !e.target.closest('[data-gocmt]') && !e.target.closest('[data-gofilter]')) location.hash = '#/site/' + tr.dataset.open; }));
     $$('[data-assign]', v).forEach((sel) => (sel.onchange = async () => { const site = state.sites.find((x) => x.id === sel.dataset.assign); await changeSite(site, { assignee: sel.value }, () => renderSites()); }));
     $$('[data-status]', v).forEach((sel) => (sel.onchange = async () => { const site = state.sites.find((x) => x.id === sel.dataset.status); await changeSite(site, { status: sel.value }, () => renderSites()); }));
     $$('[data-rescan]', v).forEach((b) => (b.onclick = () => requestScan([b.dataset.rescan])));
@@ -2283,7 +2335,7 @@
 
   /** `skip` leaves one filter out, so the severity chips can count what clicking them would give. */
   function filteredFindings(s, skip) {
-    const ff = skip ? Object.assign({}, state.ff, { [skip]: skip === 'st' ? 'active' : '' }) : state.ff;
+    const ff = skip ? Object.assign({}, state.ff, { [skip]: skip === 'st' ? 'active' : skip === 'cmt' ? false : '' }) : state.ff;
     return (s.findings || []).filter((f) => {
       if (ff.st === 'active' && !['open', 'clarification'].includes(f.status)) return false;
       if (ff.st !== 'active' && ff.st !== 'all' && f.status !== ff.st) return false;
@@ -2294,6 +2346,7 @@
       if (ff.dev && ff.dev !== 'hidden' && !(f.visibleOn || []).includes(ff.dev)) return false;
       if (ff.who && (ff.who === '_none' ? effWho(f, s) : ff.who === '_mine' ? effWho(f, s) !== state.me.email : effWho(f, s) !== ff.who)) return false;
       if (ff.q) { const q = ff.q.replace(/^#/, ''); if (!(String(f.num) === q || [f.message, f.found, f.expected, f.path, f.selector, f.location].join(' ').toLowerCase().includes(ff.q.toLowerCase()))) return false; }
+      if (ff.cmt && !f.comments) return false;
       return true;
     }).sort((a, b) => (a.num || 0) - (b.num || 0));
   }
@@ -2687,7 +2740,7 @@
     </div>`;
   }
 
-  const FF_DEFAULTS = { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '' };
+  const FF_DEFAULTS = { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '', cmt: false };
   /** The filters currently narrowing the list, named the way the person chose them. */
   function activeFilters(ff) {
     const on = [];
@@ -2698,6 +2751,7 @@
     if (ff.dev) on.push(ff.dev === 'hidden' ? 'Hidden on all devices' : 'Visible on ' + A.DEVICE_LABEL[ff.dev]);
     if (ff.who) on.push(ff.who === '_mine' ? 'Assigned to me' : ff.who === '_none' ? 'Unassigned' : nameOf(ff.who));
     if (ff.q) on.push(`"${ff.q}"`);
+    if (ff.cmt) on.push('Discussed only');
     return on;
   }
   const clearFilters = () => { Object.assign(state.ff, FF_DEFAULTS); };
@@ -2923,12 +2977,14 @@
       </details>
       <div class="panel">
         <div class="toolbar">
-          <span class="chips">
+          <span class="chips" id="ffSev">
             <button class="chipbtn ${ff.sev === '' ? 'active' : ''}" data-sev="">All ${activeCount.length}</button>
             <button class="chipbtn ${ff.sev === 'critical' ? 'active' : ''}" data-sev="critical">Critical ${sevCount('critical')}</button>
             ${sevCount('outdated') || ff.sev === 'outdated' ? `<button class="chipbtn ${ff.sev === 'outdated' ? 'active' : ''}" data-sev="outdated" title="The website is still showing something that used to be in Business Info">Outdated ${sevCount('outdated')}</button>` : ''}
             <button class="chipbtn ${ff.sev === 'warning' ? 'active' : ''}" data-sev="warning">Warning ${sevCount('warning')}</button>
             <button class="chipbtn ${ff.sev === 'info' ? 'active' : ''}" data-sev="info">Info ${sevCount('info')}</button>
+            ${(() => { const n = filteredFindings(s, 'cmt').filter((f) => f.comments).length; return n || ff.cmt
+              ? `<button class="chipbtn ${ff.cmt ? 'active' : ''}" id="ffCmt" title="Only the audit items somebody has commented on">💬 Discussed ${n}</button>` : ''; })()}
           </span>
           <select id="ffst">
             <option value="active" ${ff.st === 'active' ? 'selected' : ''}>Open + for clarification (${cnt('open') + cnt('clarification')})</option>
@@ -2941,6 +2997,7 @@
           <select id="ffdev"><option value="">All devices</option>${A.DEVICES.map((d) => `<option value="${d}" ${ff.dev === d ? 'selected' : ''}>Visible on ${A.DEVICE_LABEL[d]}</option>`).join('')}<option value="hidden" ${ff.dev === 'hidden' ? 'selected' : ''}>Hidden on all devices</option></select>
           <select id="ffwho"><option value="">Anyone</option><option value="_mine" ${ff.who === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${ff.who === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${ff.who === u.email ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
         </div>
+        ${shown.length && activeFilters(ff).length ? `<div class="small muted filter-line">Showing <b>${shown.length}</b> of ${findings.length} audit item${findings.length === 1 ? '' : 's'} · filtered by <b>${esc(activeFilters(ff).join(', '))}</b> <button class="linkbtn" id="ffClear2">Clear filters</button></div>` : ''}
         ${!findings.length ? `<div class="empty">${sc.state === 'complete' ? 'No issues found.' : live ? 'Scanning… results appear here when it finishes.' : 'Not scanned yet.'}</div>` : !shown.length ? `<div class="empty">
           <div><b>No audit items match these filters.</b></div>
           <div class="small muted" style="margin:6px 0 10px">This website has ${findings.length} audit item${findings.length === 1 ? '' : 's'}${activeFilters(ff).length ? `, hidden by: <b>${esc(activeFilters(ff).join(', '))}</b>` : ''}.</div>
@@ -2974,6 +3031,8 @@
         </tbody></table></div></details>` : ''}`;
 
     $$('[data-sev]', body).forEach((b) => (b.onclick = () => { ff.sev = b.dataset.sev; renderSite(); }));
+    if ($('#ffCmt', body)) $('#ffCmt', body).onclick = () => { ff.cmt = !ff.cmt; renderSite(); };
+    runHint();
     $('#ffq') && ($('#ffq').oninput = (e) => { ff.q = e.target.value; const p = e.target.selectionStart; renderSite(); const i = $('#ffq'); i.focus(); i.setSelectionRange(p, p); });
     [['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
     $$('[data-copy]', body).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
@@ -2995,6 +3054,9 @@
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
     if ($('#ffClear', body)) $('#ffClear', body).onclick = () => { clearFilters(); renderSite(); };
+    // A filtered list that doesn't say it is filtered is how "critical is empty, but there's 5"
+    // happens. Now it says so whether the result is empty or not.
+    if ($('#ffClear2', body)) $('#ffClear2', body).onclick = () => { clearFilters(); renderSite(); };
     // A filter that is on should look on, so an empty list is never a mystery.
     [['#ffcat', ff.cat], ['#ffloc', ff.loc], ['#ffdev', ff.dev], ['#ffwho', ff.who], ['#ffst', ff.st !== 'active' ? ff.st : '']]
       .forEach(([sel, on]) => { const el = $(sel, body); if (el) el.classList.toggle('filter-on', !!on); });
@@ -3070,10 +3132,21 @@
     const list = (s.comments || []).filter((c) => scope === 'all' || c.target === 'site');
     body.innerHTML = `<div class="panel panel-pad comments-panel">
       <div class="row-between" style="margin-bottom:10px"><h2 style="margin:0">Discussion</h2>
-        <span class="chips"><button class="chipbtn ${scope === 'general' ? 'active' : ''}" data-scope="general">General</button><button class="chipbtn ${scope === 'all' ? 'active' : ''}" data-scope="all">Include audit-item comments</button></span></div>
+        <span class="chips" id="cmtScope"><button class="chipbtn ${scope === 'general' ? 'active' : ''}" data-scope="general">General ${(s.comments || []).filter((c) => c.target === 'site' && !c.deleted).length}</button><button class="chipbtn ${scope === 'all' ? 'active' : ''}" data-scope="all">Include audit-item comments ${(s.comments || []).filter((c) => !c.deleted).length}</button></span></div>
+      ${(() => { const n = (s.findings || []).filter((f) => f.comments).length; return n
+        ? `<p class="small muted" style="margin:-2px 0 10px">${n} audit item${n === 1 ? ' has' : 's have'} their own discussion. <button class="linkbtn" id="cmtToItems">Show the discussed audit items ↓</button></p>` : ''; })()}
       <div class="c-list">${list.length ? list.map((c) => renderComment(c, s, { showTarget: true })).join('') : '<div class="empty small">No comments yet. Start the discussion below. Tip: type #12 to link audit item 12.</div>'}</div>
       <div id="siteComposer"></div></div>`;
     $$('[data-scope]', body).forEach((b) => (b.onclick = () => { state.commentScope = b.dataset.scope; renderSite(); }));
+    // The other direction: from the discussion to the items being discussed, flagging the filter
+    // that does it so it can be reached straight from the list next time.
+    if ($('#cmtToItems', body)) $('#cmtToItems', body).onclick = () => {
+      Object.assign(state.ff, { cmt: true, sev: '', q: '', cat: '', st: 'all' });
+      ffSite = s.id; hintNext('#ffCmt');
+      location.hash = '#/site/' + s.id;
+    };
+    runHint();
+    if (pendingHint === '#cmtScope') setTimeout(() => { const l = $$('.c-list .comment'); if (l.length) l[l.length - 1].scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 260);
     siteComposer = composer($('#siteComposer'), { site: s, target: 'site', onPosted: async () => { await loadSite(s.id); renderSite(); setTimeout(() => { const l = $$('.c-list .comment'); if (l.length) l[l.length - 1].scrollIntoView({ block: 'center' }); }, 50); } });
     bindComments(body, s, siteComposer);
   }

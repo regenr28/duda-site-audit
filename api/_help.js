@@ -208,6 +208,10 @@ export const HELP_SECTIONS = [
 <li>Paste screenshots with <b>Cmd/Ctrl+V</b> or click <b>Image</b>. Images are resized automatically.</li>
 <li>Click <b>Reply</b> to quote someone. <b>Cmd/Ctrl+Enter</b> sends.</li>
 <li>Each website has an assignee (the "site default"). Each item can be assigned to someone else; they're notified.</li>
+<li><b>Every count on an Audits row is a way in.</b> Click <b>24 warning</b> and the website opens showing exactly those twenty-four — same for critical, outdated, info, for clarification and on hold. The numbers are worked out the same way the audit list filters, so the count and the list always agree.</li>
+<li>The <b>💬 count</b> on the Audits list is every comment on that website, including the ones left on individual audit items. <b>Click it</b> and it opens the discussion with those included, on the newest one — and flashes the control that did it, so you can get there yourself next time.</li>
+<li>From the discussion, <b>Show the discussed audit items</b> filters the audit list to just the items somebody has commented on. The same filter is the <b>💬 Discussed</b> chip beside Critical / Warning / Info.</li>
+<li>Whenever the audit list is filtered it says so above the table — <b>Showing 2 of 38 · filtered by …</b> — with a <b>Clear filters</b> link, so a short list is never a mystery.</li>
 <li>Each website's <b>Activity log</b> records scans, rescans, status changes, comments, live checks and False alarm triage (who set a report to what, and their note) with date, time and who did it.</li>
 </ul>`,
   },
