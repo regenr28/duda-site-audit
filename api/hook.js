@@ -150,9 +150,13 @@ export default async function handler(req, res) {
 
       cmds.push(['HSET', P + 'conv:' + siteId, cu, JSON.stringify(conv)]);
       // A small index row per conversation, so one read answers "what is waiting, across every site".
+      // A short tail of "when, and who from", so the lists can count the individual comments somebody
+      // hasn't seen and say how many came from the client and how many from us. Kept tiny on purpose:
+      // the last few only, seconds in base 36, because this index is read whole on every page load.
+      const tl = live.slice(-10).map((c) => Math.floor(Date.parse(c.at || conv.last) / 1000).toString(36) + '|' + String(c.by || '').slice(0, 60)).join(',');
       cmds.push(['HSET', P + 'convidx', cu, JSON.stringify({
         s: siteId, n: conv.num || 0, d: conv.device || '', st: conv.status, pt: conv.partial ? 1 : 0,
-        live: live.length,
+        live: live.length, tl,
         la: conv.last, lb: conv.lastBy || '', tx: unescapeHtml(tail && tail.text).slice(0, 160),
       })]);
       const [rawW] = await redis(['HGET', P + 'watch', siteId]);

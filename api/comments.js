@@ -121,6 +121,43 @@ export function sideTest(users, overrides, roster, dudaType) {
  * predate it are judged by whether the last comment left any text behind.
  */
 const hasContent = (r) => (r && r.live !== undefined ? r.live > 0 : !!String((r && r.tx) || '').trim());
+/**
+ * Is this conversation just a note the team left itself?
+ *
+ * A thread nobody on the client side has ever spoken in is an internal note — "2 new location pages
+ * added by SEO team" — and Duda leaves it unresolved forever because nobody resolves their own
+ * notes. Those were pulling attention that belongs to clients who are actually waiting.
+ *
+ * Deliberately cautious: the index keeps the last ten comments, so a longer thread cannot be judged
+ * from it and is NOT called a note. Quietening something that turns out to matter is the expensive
+ * mistake; leaving a note in the list is the cheap one.
+ */
+export function isTeamNote(r, isClient) {
+  if (!r || r.pt) return false;                       // a partial thread has history we never saw
+  const tail = tailOf(r);
+  if (tail.length) {
+    if ((r.live || 0) > tail.length) return false;    // older comments we cannot see
+    return tail.every((t) => t.by && isClient(t.by) !== 'client');
+  }
+  // Rows indexed before the tail existed: only a single-comment thread can be judged at all.
+  return (r.live || 0) === 1 && !!r.lb && isClient(r.lb) !== 'client';
+}
+
+/**
+ * The "when, and who from" tail of a conversation index row, unpacked.
+ * Empty for conversations indexed before the tail existed — those fall back to counting the
+ * conversation rather than its comments, which is what the number meant before anyway.
+ */
+export function tailOf(r) {
+  if (!r || !r.tl) return [];
+  return String(r.tl).split(',').map((piece) => {
+    const cut = piece.indexOf('|');
+    if (cut < 1) return null;
+    const secs = parseInt(piece.slice(0, cut), 36);
+    if (!secs) return null;
+    return { at: new Date(secs * 1000).toISOString(), by: piece.slice(cut + 1) };
+  }).filter(Boolean);
+}
 
 /** 24 hours from the comment, but never landing on a Saturday or Sunday when nobody is there. */
 function answerDueAt(atISO, hours = WAIT_HOURS) {
@@ -250,7 +287,12 @@ export default async function handler(req, res) {
         const mySeen = pairs(seen); const nameMap = pairs(names);
         // Who last spoke on each website decides whether anyone is waiting, so those are the
         // addresses worth asking Duda about.
-        const lastBys = Object.values(rows).map((r) => r && r.lb).filter(Boolean);
+        // Everyone who has spoken recently, not only whoever spoke last: the unseen counts are split
+        // per comment now, so each of those authors has to be placed as client or team.
+        const lastBys = [...new Set([].concat(
+          Object.values(rows).map((r) => r && r.lb).filter(Boolean),
+          ...Object.values(rows).map((r) => tailOf(r).map((t) => t.by)),
+        ).filter(Boolean))];
         const isClient = sideTest(await listUsers(), pairs(over), await slackRoster(), await dudaTypes(lastBys));
         const nameOf = (id) => (sites[id] && sites[id].name) || cachedName(nameMap[id]);
 
@@ -277,12 +319,26 @@ export default async function handler(req, res) {
         await alertStale(rows, isClient, nameOf);
 
         const per = {};
+        const ZERO = { total: 0, open: 0, openReal: 0, notes: 0, unread: 0, newClient: 0, newTeam: 0, waiting: 0, last: '', oldest: '' };
         Object.values(rows).forEach((r) => {
           if (!r || !r.s || !hasContent(r)) return;    // an empty conversation is not a conversation
-          const p = per[r.s] || (per[r.s] = { total: 0, open: 0, unread: 0, waiting: 0, last: '', oldest: '' });
+          const p = per[r.s] || (per[r.s] = Object.assign({}, ZERO));
+          const note = isTeamNote(r, isClient);
           p.total++;
-          if (r.st !== 'resolved') p.open++;
+          if (r.st !== 'resolved') { p.open++; if (note) p.notes++; else p.openReal++; }
           if (r.la > (mySeen[r.s] || '')) p.unread++;
+          // …and how many of the unseen COMMENTS came from each side. Conversations indexed before
+          // the tail existed fall back to counting the conversation, credited to whoever spoke last,
+          // which is what the number used to mean anyway.
+          const tail = tailOf(r);
+          if (tail.length) {
+            tail.forEach((t) => {
+              if (t.at <= (mySeen[r.s] || '')) return;
+              if (isClient(t.by) === 'client') p.newClient++; else p.newTeam++;
+            });
+          } else if (r.la > (mySeen[r.s] || '')) {
+            if (isClient(r.lb) === 'client') p.newClient++; else p.newTeam++;
+          }
           if (r.st !== 'resolved' && r.lb && isClient(r.lb) === 'client' && Date.now() > answerDueAt(r.la)) {
             p.waiting++;
             // The oldest unanswered client comment is what decides where this website sits in the
@@ -296,7 +352,7 @@ export default async function handler(req, res) {
         const out = Object.values(sites).map((w) => Object.assign({
           id: w.id, name: nameOf(w.id), published: w.published || '', domain: w.domain || '',
           firstSeen: w.firstSeen || '', lastEvent: w.lastEvent || '', gone: !!w.gone,
-        }, per[w.id] || { total: 0, open: 0, unread: 0, waiting: 0, last: '', oldest: '' }));
+        }, per[w.id] || Object.assign({}, ZERO)));
         // Anybody waiting comes first, longest wait at the top. Everything else by what moved last.
         out.sort((a, b) => (b.waiting ? 1 : 0) - (a.waiting ? 1 : 0)
           || (a.waiting && b.waiting ? String(a.oldest).localeCompare(String(b.oldest)) : 0)
@@ -347,6 +403,10 @@ export default async function handler(req, res) {
             // weekends don't count and "70h" on its own reads like nobody has looked at it.
             since: owed ? lastAt : '',
             dueAt: owed ? new Date(answerDueAt(lastAt)).toISOString() : '',
+            // A thread nobody on the client side has ever spoken in is a note the team left itself,
+            // and Duda will leave it unresolved forever because nobody resolves their own notes.
+            // Here the whole thread is in hand, so this is certain rather than inferred.
+            note: !t.partial && live.length > 0 && live.every((c) => c.by && isClient(c.by) !== 'client'),
             comments: live.map((c) => ({ text: unescapeHtml(c.text), by: c.by, at: c.at, side: isClient(c.by), edited: c.edited || '' })),
           };
         }).filter(Boolean)

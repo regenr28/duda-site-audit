@@ -1504,12 +1504,29 @@
   }
   /** Comment counts for a Duda site, from whatever the Duda comments page has already loaded. */
   const cmtFor = (id) => (cmt.sites || []).find((x) => String(x.id) === String(id));
+  /**
+   * "New" split by who it came from, because the two mean different things: a client comment you
+   * haven't read is somebody waiting on you, and one of ours is a colleague keeping you posted.
+   * The word "new" is dropped — the colour and the place already say that — so the space goes on
+   * the part that is actually news. A side with nothing in it shows no chip at all.
+   */
+  function newChips(c) {
+    if (!c) return [];
+    const out = [];
+    const cl = c.newClient || 0; const tm = c.newTeam || 0;
+    // Older conversations have no per-comment history, so their unread count can't be split. Rather
+    // than guess, the total is shown unlabelled until the next comment on that website arrives.
+    if (!cl && !tm) return c.unread ? [`<span class="badge sev-warning" title="${c.unread} unread — from before comments were split by who sent them">${c.unread} new</span>`] : [];
+    if (cl) out.push(`<span class="badge sev-warning" title="${cl} comment${cl === 1 ? '' : 's'} from the client that you haven't read">${cl} client</span>`);
+    if (tm) out.push(`<span class="badge subtle" title="${tm} comment${tm === 1 ? '' : 's'} from the team that you haven't read">${tm} team</span>`);
+    return out;
+  }
   function cmtCell(id) {
     const c = cmtFor(id);
     if (!c || !c.total) return '<span class="faint small">—</span>';
     const bits = [];
     if (c.waiting) bits.push(`<span class="badge sev-critical" title="A client is waiting for an answer">${c.waiting} waiting</span>`);
-    if (c.unread) bits.push(`<span class="badge sev-warning">${c.unread} new</span>`);
+    newChips(c).forEach((x) => bits.push(x));
     if (!bits.length) bits.push(c.open ? `<span class="small muted">${c.open} open</span>` : `<span class="small faint">${c.total} resolved</span>`);
     return `<a href="#/comments/${encodeURIComponent(id)}" title="Read these comments">${bits.join(' ')}</a>`;
   }
@@ -1615,6 +1632,8 @@
     $$('[data-ltab]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = a.dataset.ltab; live.page = 0; location.hash = a.dataset.ltab === 'unpublished' ? '#/live/unpublished' : '#/live'; }));
   }
 
+  /** A date as an ISO string, or '' — a missing or malformed one must never take a whole page down. */
+  const isoOf = (v) => { const d = new Date(v); return isNaN(d.getTime()) ? '' : d.toISOString(); };
   function renderLive() {
     const d = live.data;
     if (!d && !live.loading && !live.error) { loadLive(false); }
@@ -1636,7 +1655,7 @@
     const host = editorHostOr();
     if (live.tab === 'unpublished') return renderDrafts();
     $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
-        <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(new Date(d.at).toISOString()))}</b> <span class="faint">(${esc(ago(new Date(d.at).toISOString()))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div><button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div></div>
+        <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div><button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div></div>
       ${liveTabs('published')}
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
 
@@ -3505,7 +3524,9 @@
     }
   }
   let cmtFlashTimer = null;
-  const cmtUnread = () => (cmt.sites || []).reduce((a, s) => a + (s.unread || 0), 0);
+  // The dot in the top bar follows the same rule as the list: a note the team left itself is not a
+  // reason to make the navigation shout.
+  const cmtUnread = () => (cmt.sites || []).reduce((a, s) => a + (s.newClient !== undefined || s.newTeam !== undefined ? (s.newClient || 0) : (s.unread || 0)), 0);
   const cmtWaiting = () => (cmt.sites || []).reduce((a, s) => a + (s.waiting || 0), 0);
 
 
@@ -3695,9 +3716,12 @@
     if (!cmt.sites && !cmt.loading && !cmt.error) { loadCommentSites(true); }
     const q = cmt.q.trim().toLowerCase();
     let list = (cmt.sites || []).filter((s) => !q || [s.name, s.id, s.domain].some((v) => String(v || '').toLowerCase().includes(q)));
-    if (cmt.filter === 'unread') list = list.filter((s) => s.unread);
+    // "New to you" means a CLIENT said something you haven't read. A note the team left itself is
+    // not news you have to act on, and burying 128 of them in this number is what made it useless.
+    if (cmt.filter === 'unread') list = list.filter((s) => s.newClient || (!s.newClient && !s.newTeam && s.unread));
     if (cmt.filter === 'waiting') list = list.filter((s) => s.waiting);
-    if (cmt.filter === 'open') list = list.filter((s) => s.open);
+    if (cmt.filter === 'open') list = list.filter((s) => (s.openReal === undefined ? s.open : s.openReal));
+    if (cmt.filter === 'notes') list = list.filter((s) => s.notes);
     // Duda tells us about publishes and new sites too, so most websites here have no comments at
     // all. They are only worth showing when somebody deliberately asks for everything.
     if (cmt.filter === 'has') list = list.filter((s) => s.total);
@@ -3734,8 +3758,14 @@
             <input type="search" id="cmtQ" placeholder="Search website or site ID…" value="${esc(cmt.q)}" style="flex:1;min-width:150px">
           </div>
           <div class="chips" style="padding:0 12px 10px">
-            ${[['unread', 'New to you', all.filter((s) => s.unread).length], ['waiting', 'Waiting on us', all.filter((s) => s.waiting).length], ['open', 'Unresolved', all.filter((s) => s.open).length], ['has', 'With comments', all.filter((s) => s.total).length], ['all', 'Every website', all.length]]
-              .map(([k, lbl, n]) => `<button class="chipbtn ${cmt.filter === k ? 'active' : ''}" data-cf="${k}">${lbl} <span class="faint">${n}</span></button>`).join('')}
+            ${[
+                ['unread', 'New to you', all.filter((s) => s.newClient || (!s.newClient && !s.newTeam && s.unread)).length, 'Websites with client comments you have not read'],
+                ['waiting', 'Waiting on us', all.filter((s) => s.waiting).length, 'A client has been waiting longer than a working day'],
+                ['open', 'Unresolved', all.filter((s) => (s.openReal === undefined ? s.open : s.openReal)).length, 'Unresolved conversations that a client is part of — notes the team left itself are counted separately'],
+                ['notes', 'Team notes', all.filter((s) => s.notes).length, 'Conversations nobody on the client side has ever commented in. Duda leaves these unresolved because nobody resolves their own notes'],
+                ['has', 'With comments', all.filter((s) => s.total).length, 'Every website that has any comment at all'],
+                ['all', 'Every website', all.length, 'Every website in the Duda account'],
+              ].map(([k, lbl, n, tip]) => `<button class="chipbtn ${cmt.filter === k ? 'active' : ''}" data-cf="${k}" title="${esc(tip)}">${lbl} <span class="faint">${n}</span></button>`).join('')}
           </div>
           ${list.length ? `<ul class="cmt-list">${list.map((s) => { const a = auditOf(s.id); return `
             <li><button class="cmt-site ${cmt.site === s.id ? 'active' : ''}" data-cs="${esc(s.id)}">
@@ -3746,7 +3776,7 @@
               </span>
               <span class="cmt-counts">
                 ${s.waiting ? `<span class="badge ${waitClass(s.oldest)}" title="Longest unanswered client comment: ${esc(fmtFull(s.oldest))}">${s.waiting} waiting · ${esc(waitAge(s.oldest))}</span>` : ''}
-                ${s.unread ? `<span class="badge sev-warning">${s.unread} new</span>` : s.open ? `<span class="small muted">${s.open} open</span>` : s.total ? `<span class="small faint">${s.total} resolved</span>` : '<span class="small faint">no comments</span>'}
+                ${newChips(s).length ? newChips(s).join(' ') : (s.openReal === undefined ? s.open : s.openReal) ? `<span class="small muted">${s.openReal === undefined ? s.open : s.openReal} open</span>` : s.notes ? `<span class="small faint" title="Conversations nobody on the client side has commented in">${s.notes} team note${s.notes === 1 ? '' : 's'}</span>` : s.total ? `<span class="small faint">${s.total} resolved</span>` : '<span class="small faint">no comments</span>'}
               </span>
             </button></li>`; }).join('')}</ul>` : `<div class="empty small">${cmt.loading ? 'Loading…' : 'Nothing matches.'}</div>`}
           <div class="small faint" style="padding:10px 12px;border-top:1px solid var(--border)">Counted from the day this was switched on.</div>
@@ -3792,7 +3822,7 @@
                     <span class="spacer"></span>
                     ${t.waiting ? `<span class="badge ${waitClass(t.since)}" title="No reply since ${esc(fmtFull(t.since))}">waiting on us · ${esc(waitAge(t.since))}</span>`
                       : t.since ? `<span class="badge subtle" title="${esc(dueTitle(t))}">ours to answer · ${esc(dueIn(t.dueAt))}</span>` : ''}
-                    <span class="badge ${t.status === 'resolved' ? 'sev-ok' : 'sev-warning'}">${t.status === 'resolved' ? 'resolved' : 'unresolved'}</span>
+                    <span class="badge ${t.status === 'resolved' ? 'sev-ok' : t.note ? 'subtle' : 'sev-warning'}" ${t.note && t.status !== 'resolved' ? 'title="Nobody on the client side has commented here, so this is a note the team left itself. Duda leaves those unresolved because nobody resolves their own notes."' : ''}>${t.status === 'resolved' ? 'resolved' : t.note ? 'team note' : 'unresolved'}</span>
                   </div>
                   ${t.partial ? '<div class="cmt-partial small">This conversation started before comments were connected, so only what was said since then is here. Open it in the Duda editor to read the whole thread.</div>' : ''}
                   ${open ? `<div class="cmt-msg cmt-open">${who(open)}${body(open)}</div>` : ''}
