@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-30-stale-tab', date: '2026-09-30', audience: 'all', tag: 'Audits',
+    title: 'A tab left open across an update no longer scans with the old checks',
+    what: 'The scan runs <b>in your own browser tab</b>, using the checks that tab loaded when you opened it. So a tab that has been open since before an update is still running the <b>old</b> checks — and a rescan from it hands back the old answers, which looks exactly like a fix that didn’t work. It has caught people out more than once. The app now watches for it: when the app is updated, an orange note appears on <b>Audits</b> and on each website, and starting a scan from a stale tab <b>stops and offers “Reload and scan”</b> — which reloads and then runs the scan you asked for, so nothing is lost. The check is made at the moment you click, not on a timer, because that is the one moment it matters.',
+    where: ['Nothing to set up. If you see the orange note, reload — it takes a second and loses nothing.', 'Click <b>Scan</b> or <b>Rescan</b> from a stale tab and the app asks first, then carries on for you after the reload.', 'If in doubt on a day the app has been updated: reload first.'],
+    link: '#/help/scan', linkText: 'Scanning and rescanning',
+  },
+  {
     id: '2026-09-30-map-renamed', date: '2026-09-30', audience: 'all', tag: 'Audits',
     title: 'Fixed: a client who renamed their Google listing looked like another business',
     what: 'A Google Map embed link does not look the business up — it carries a <b>place ID</b>, which is what Google uses to draw the pin, plus the name that place had <b>on the day somebody generated the link</b>. So when a client renames their Google listing, the map on the page shows the new name while the link still carries the old one, and the audit read the old one and called it another business. At <b>critical</b>. One real example: a link saved in <b>August 2022</b> still says "AMDetails – Elgin, Moray" for a shop now called Spotless Detailing Elgin — same place, same pin, new name.<br><br>When the map is pinned by a place ID <i>and</i> the saved name still names the client’s own town, the item now reads <b>"carries an old business name — the pin itself is probably right"</b>, as a warning, and tells you when the link was saved and to regenerate the embed so it says the right name. A map whose saved name belongs to a business in a different town is still critical, and so is one with no place ID behind it.',

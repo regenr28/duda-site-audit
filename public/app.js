@@ -194,11 +194,38 @@
   async function loadSites(onlyIfChanged) {
     const r = await api('/api/store?op=list' + (onlyIfChanged && state.sitesVer ? '&since=' + encodeURIComponent(state.sitesVer) : ''));
     const claimsChanged = setClaims(r.claims);
+    noteBuild(r);
     if (r.unchanged) return claimsChanged;
     state.sites = r.sites || []; state.sitesVer = r.ver || '';
     state.fixedChecks = r.fixedChecks || {};
     return true;
   }
+  /**
+   * The scan runs in THIS tab, using the checks this tab loaded. So a tab left open across an update
+   * is still running the old ones, and a rescan quietly produces the old answer — which reads as
+   * "I rescanned and the item is still there". The app notices and says so, rather than leaving it
+   * to a line in the Guide that nobody reads on the day it matters.
+   */
+  function noteBuild(r) {
+    if (!r || !r.build) return;
+    if (!state.build) { state.build = r.build; return; }
+    if (state.build === r.build || state.stale) return;
+    state.stale = true;
+    setTimeout(() => { try { render(); } catch (e) { /* the next render will carry it */ } }, 0);
+  }
+  const bindStale = (root) => { const b = $('#staleReload', root || document); if (b) b.onclick = () => location.reload(); };
+  /** A scan the person asked for just before reloading, resumed once the new checks are loaded. */
+  function resumeAfterReload() {
+    let ids = [];
+    try { ids = JSON.parse(sessionStorage.getItem('dsa:scanAfterReload') || '[]'); sessionStorage.removeItem('dsa:scanAfterReload'); } catch (e) { return; }
+    if (Array.isArray(ids) && ids.length) setTimeout(() => requestScan(ids), 400);
+  }
+  const staleBanner = () => (state.stale ? `<div class="note fixed-checks" id="staleNote">
+      <div class="row-between" style="align-items:center;gap:12px">
+        <div class="grow"><b>⚠ The app has been updated since you opened this tab.</b>
+          <div class="small" style="margin-top:3px">Scans run in your own browser, so this tab is still using the checks it loaded when you opened it. <b>Reload before you scan or rescan</b>, or you'll get the old answers back.</div></div>
+        <div style="white-space:nowrap"><button class="btn sm primary" id="staleReload">Reload now</button></div>
+      </div></div>` : '');
   async function refreshSite(id) {
     const v = state.current && state.current.id === id ? state.current.ver : '';
     const r = await api('/api/store?op=site&id=' + encodeURIComponent(id) + (v ? '&since=' + encodeURIComponent(v) : ''));
@@ -968,9 +995,27 @@
   async function requestScan(ids) {
     ids = [...new Set(ids)].filter((id) => !state.scanning[id] && !state.queue.includes(id));
     if (!ids.length) return;
-    const batch = ids.length > 1;
-    ids.forEach((id) => { state.scanning[id] = { done: 0, total: 0, message: 'Queued', queued: true, bulk: batch }; });
+    const batch0 = ids.length > 1;
+    // Show the click landing BEFORE anything is awaited: the previous "Scan complete" has to leave
+    // the screen the moment the button is pressed, or the page looks like it ignored you.
+    ids.forEach((id) => { state.scanning[id] = { done: 0, total: 0, message: 'Queued', queued: true, bulk: batch0 }; });
     render();
+    // Asked right here rather than waiting for the next poll: this is the one moment where running
+    // the old checks actually costs something, and the question is one tiny read.
+    if (!state.stale) { try { await loadSites(true); } catch (e) { /* offline is not stale */ } }
+    // Scanning from a tab that predates an update runs the OLD checks and hands back the old
+    // answers, which is indistinguishable from "the fix didn't work". Stop before that happens.
+    if (state.stale) {
+      ids.forEach((id) => delete state.scanning[id]);
+      render();
+      modal(`<header><h2>Reload before scanning</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body"><p>The app has been updated since you opened this tab, and the scan runs <b>here, in your browser</b> — so this tab would scan with the old checks and give you the old answers back.</p>
+        <p class="small muted">Reloading takes a second and loses nothing.</p></div>
+        <footer><button class="btn" data-close>Not now</button><span class="spacer"></span><button class="btn primary" id="staleGo">Reload and scan</button></footer>`);
+      $('#staleGo').onclick = () => { try { sessionStorage.setItem('dsa:scanAfterReload', JSON.stringify(ids)); } catch (e) { /* private window */ } location.reload(); };
+      return;
+    }
+    const batch = batch0;
     let r;
     try { r = await store({ op: 'scanClaim', ids, cid: CID, state: 'queued' }); }
     catch (e) { ids.forEach((id) => delete state.scanning[id]); render(); toast("Couldn't start the scan: " + e.message); return; }
@@ -1878,7 +1923,7 @@
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0 };
     state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
-    $('#view').innerHTML = `
+    $('#view').innerHTML = staleBanner() + `
       <div class="page-head"><div><h1>Audits</h1><div class="muted">Audit Duda sites against their Business Info on every device. <a href="#/live">Browse Live DR Sites</a> to add more, or see what was <a href="#/removed">removed from Audits</a>.</div></div></div>
       <div class="stats">
         <div class="panel stat"><div class="n">${state.sites.length}</div><div class="l">Audits</div></div>
@@ -2527,6 +2572,7 @@
       </details>` : ''}</div>`;
   }
   function bindNewChecks(body, s) {
+    bindStale(body);
     const later = $('#ckLater', body); const go = $('#ckRescan', body);
     if (later) later.onclick = () => { try { localStorage.setItem(ckKey(s), '1'); } catch (e) { /* private window */ } const b = $('#ckBanner', body); if (b) b.remove(); };
     if (go) go.onclick = () => requestScan([s.id]);
@@ -2799,7 +2845,7 @@
     body.innerHTML = `
       ${(() => { const lx = liveDR.data && liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(s.siteId).toLowerCase()); if (liveDR.data && !lx) return `<div class="note unk dom-banner"><b>This site is no longer live in Duda</b> (unpublished or deleted since the last pull). The audit is kept for reference.</div>`;
         return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
-      ${newChecksBanner(s)}
+      ${staleBanner()}${newChecksBanner(s)}
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}${state.scanning[s.id] || otherClaim(s.id) ? `<div class="small muted" style="margin-top:6px">${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to.</div>` : ''}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
@@ -4100,6 +4146,7 @@
     pulse();
     render();
     setTimeout(roomTick, 1500);
+    resumeAfterReload();
     listenPersonal();
     setTimeout(offerDesktop, 4000);
   }

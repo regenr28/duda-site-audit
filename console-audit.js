@@ -174,6 +174,18 @@
         'Google place IDs are read correctly out of embed links for the first time \u2014 the colon in them arrives encoded, so every embed had been reading as having no place ID at all',
       ],
     },
+    {
+      v: 13,
+      date: '2026-09-30',
+      title: 'A map pinned by a place ID is never called another business',
+      fixes: ['MAP_OTHER_BUSINESS'],
+      fixedWhat: 'The first go at this only spared a renamed listing when Business Info had a town to compare against \u2014 so a mobile detailer with no address on file was still told, at critical, that their own map belonged to somebody else. A map pinned by a Google place ID cannot be judged from its link at all: the name in it is only a snapshot of what that place was called on the day the link was made.',
+      items: [
+        'A map with a Google place ID behind it now always reads as something to open and check, never as an accusation \u2014 whether or not there is an address in Business Info to compare with',
+        'When the saved name still names the client\u2019s own town it says so outright: the pin is probably right and only the name is out of date',
+        'A map with no place ID is still critical, because there the saved name is the only thing choosing the pin',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1708,14 +1720,23 @@
             const madeAt = /[!&]4v(\d{10,13})/.exec(src);
             const when = madeAt ? new Date(Number(madeAt[1])) : null;
             const saved = when && !isNaN(when) ? ` The link was saved ${when.toLocaleString('en-GB', { month: 'short', year: 'numeric' })}.` : '';
-            if (cid && sameTown) {
+            if (!cid) {
+              // Nothing but the name identifies this pin, so a name that isn't the client's really
+              // does mean the map is showing somebody else.
+              add(f, { code: 'MAP_OTHER_BUSINESS', severity: 'critical', category: 'Contact info', message: 'Google Map embed points to ANOTHER business', found: place, expected: truth.businessName, foreignName: place });
+            } else if (sameTown) {
               add(f, { code: 'MAP_LABEL_OLD', severity: 'warning', category: 'Contact info',
                 message: 'Google Map embed carries an old business name — the pin itself is probably right',
-                found: place,
-                expected: truth.businessName,
+                found: place, expected: truth.businessName,
                 snippet: `The map is pinned by a Google place ID, and the name saved in the link is from when it was made.${saved} The address in it is still ${towns[0]}, so this is most likely the same place renamed on Google. Open the map to confirm, then regenerate the embed so the link says the right name.` });
             } else {
-              add(f, { code: 'MAP_OTHER_BUSINESS', severity: 'critical', category: 'Contact info', message: 'Google Map embed points to ANOTHER business', found: place, expected: truth.businessName, foreignName: place });
+              // A place id decides the pin and the name is only a snapshot, so the link genuinely
+              // cannot say whether this is the wrong business or the right one under an old name.
+              // Saying "ANOTHER business" at critical asserts more than the page actually knows.
+              add(f, { code: 'MAP_LABEL_OLD', severity: 'warning', category: 'Contact info',
+                message: 'Google Map embed has a different business name saved in it — open it to check',
+                found: place, expected: truth.businessName,
+                snippet: `The map is pinned by a Google place ID, and the name in the link is only what that place was called when the link was made.${saved} It is either the wrong map, or the right one under a name the client has since changed on Google — the link cannot say which. Open it, and if the pin is right, regenerate the embed so the name matches.` });
             }
           }
         }

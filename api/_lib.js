@@ -34,6 +34,15 @@ export const normEmail = (e) => String(e || '').trim().toLowerCase();
 export const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
 export const newId = (n = 12) => crypto.randomBytes(n).toString('base64url');
 export const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+/**
+ * An opaque id for the version of the app that is live.
+ *
+ * The scan itself runs in the browser tab, so a tab that has been open since before an update is
+ * still running the OLD checks — which looks exactly like "I rescanned and the item is still there".
+ * The app compares this against the id it started with and tells the person to reload.
+ * Hashed, so nothing about how or where this is hosted leaks into the page.
+ */
+export const buildId = () => sha(process.env.VERCEL_DEPLOYMENT_ID || process.env.VERCEL_GIT_COMMIT_SHA || process.env.BUILD_ID || process.env.npm_package_version || 'dev').slice(0, 12);
 export const now = () => new Date().toISOString();
 
 /**

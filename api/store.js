@@ -5,7 +5,7 @@
 // Keys:  site:<id> (scan results + meta)   index (hash id → summary)   fstate:<id> (hash findingId → {status, assignee})
 //        fnum:<id> (hash findingId → #)   seq:<id>   cmt:<id> (hash commentId → comment)   act:<id> (list)
 //        notif:<email> (list)   notifseen:<email>
-import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, plainMentions, normEmail } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, plainMentions, normEmail, buildId } from './_lib.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 
@@ -193,11 +193,11 @@ export default async function handler(req, res) {
       const op = req.query.op || 'list';
       if (op === 'list') {
         // Scan claims (who has a website queued or scanning) ride along with every poll; the list is tiny
-        if (req.query.since) { const [v, cl] = await redis(['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims']); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claims: await freshClaims(cl) }); }
+        if (req.query.since) { const [v, cl] = await redis(['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims']); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claims: await freshClaims(cl), build: buildId() }); }
         const [idx, v, cl, fx] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims'], ['HGETALL', P + 'fixedchecks']);
         // Checks that were corrected after somebody reported them: a website scanned before one of
         // these is carrying items the corrected check would no longer raise, and says so on its page.
-        return res.status(200).json({ mode: 'kv', sites: Object.values(pairs(idx, true)), ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true) });
+        return res.status(200).json({ mode: 'kv', sites: Object.values(pairs(idx, true)), ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true), build: buildId() });
       }
       if (op === 'site') {
         if (req.query.since) { const [v, cr] = await redis(['GET', P + 'ver:s:' + req.query.id], ['HGET', P + 'scanclaims', req.query.id]); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claim: liveClaim(cr) }); }

@@ -129,7 +129,13 @@ export const HELP_SECTIONS = [
 <li>Items you already marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> are left alone and not marked — you've already made your decision about them.</li>
 <li>Rescanning replaces them with whatever the corrected check finds. If something was a real problem all along, it comes straight back, with its number.</li>
 </ul>
-<p class="small muted">One thing to know on an update day: the scan runs in your browser tab, so a tab that's been open since before the update is still running the old checks. Reload the page once and you're on the new ones.</p>`,
+<h3>On an update day</h3>
+<p>The scan runs <b>in your browser tab</b>, using the checks that tab loaded when you opened it. So a tab left open across an update is still running the <b>old</b> checks, and a rescan from it quietly hands back the old answers — which looks exactly like "the fix didn't work".</p>
+<ul>
+<li>The app watches for this. When it spots an update it shows an orange note on <b>Audits</b> and on each website: <b>The app has been updated since you opened this tab</b>.</li>
+<li>If you start a scan or rescan from a stale tab it <b>stops you</b> and offers <b>Reload and scan</b> — which reloads and then starts the scan you asked for, so nothing is lost.</li>
+<li>Reloading takes a second and loses nothing. If in doubt on an update day, reload first.</li>
+</ul>`,
   },
   {
     id: 'removed', group: 'Audits', title: 'Removing an audit (and finding it again)', audience: 'all',
