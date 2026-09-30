@@ -505,6 +505,7 @@ export const HELP_SECTIONS = [
 <li><b>📋 Copy open items as text</b> exports them, reasons and notes included.</li>
 <li>Anyone in the thread can write on a report — you, the person who reported it, and anyone who has already written on it. Each note reaches the others and is copied onto the audit item.</li>
 <li>Every move and every note is written to the website's <b>Activity log</b>, so the triage is part of the website's history rather than something that happened somewhere else.</li>
+<li>Clicking a <b>False alarm</b> notification opens the queue <b>on that report</b> — it is scrolled to, outlined, and its notes are already open. If a filter would have hidden it, the filter gives way rather than showing you an empty list.</li>
 </ul>
 <h3>Somebody closed a real item as a False alarm</h3>
 <p>It happens. Open the item, read the reason, and if you disagree, set the report to <b>Not a false alarm</b> with a note saying what you found. The audit item goes back to <b>Open</b>, your note is on it, and they are told — so it is a conversation with a record, not a silent reversal. You can also simply set the item's status back to <b>Open</b> yourself from the item; the report is then marked as changed back.</p>`,

@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-30-fa-deeplink', date: '2026-09-30', audience: 'admin', tag: 'Audits',
+    title: 'False alarm notifications open the actual report',
+    what: 'Five notifications in a row that all read <b>marked an audit item as False alarm</b>, and every one of them dropped you at the top of the same queue — leaving you to work out which of forty cards it meant. A False alarm notification now opens the queue <b>on that report</b>: scrolled to, outlined for a moment, with its notes already open so the reason is there without another click. If the filter you had set would have hidden it, the filter gives way rather than handing you an empty list.',
+    where: ['Click any <b>False alarm</b> notification on the bell, in Slack or in an email.', 'Notifications sent before today have no report attached, so they still open the queue at the top.', 'Verdict notifications are unchanged — those open the audit item itself, which is where the work is.'],
+    link: '#/help/suggest', linkText: 'How reports work',
+  },
+  {
     id: '2026-09-29-hamburger', date: '2026-09-29', audience: 'all', tag: 'Audits',
     title: 'Fixed: the hamburger menu reported as a button with no link',
     what: 'Reported by <b>Serena Stewart</b>. Duda builds the mobile menu button as <span class="mono">&lt;a role="button" class="hamburgerButton"&gt;</span> wrapping an icon, with <b>no address at all</b> — the menu opens by script, which is exactly how it is meant to work. The check counted that as <b>Button has no link</b>, on every page of every website, and the X that closes the menu and slider arrows with it. Now: a control with nothing to read on it is not a button, and neither is anything Duda itself names as a menu or slider widget, or any link with no address attribute. A word like <b>Menu</b> or <b>Next</b> is left alone inside a menu or slider and still reported anywhere else. A genuinely dead <b>Get a quote</b> is still reported — including one in the header navigation, which is the expensive one — and the item now names the button instead of saying "(no text)".',

@@ -339,7 +339,7 @@ function notifLink(n) {
   const base = appUrl();
   if (!base) return '';
   if (n.kind === 'signup') return base + '/#/?members=1';
-  if (n.kind === 'false-alarm') return base + '/#/suggestions/false-alarms';
+  if (n.kind === 'false-alarm') return base + '/#/suggestions/false-alarms' + (n.faKey ? '/' + encodeURIComponent(n.faKey) : '');
   if (/^fa-/.test(n.kind)) return n.siteId && n.findingNum ? `${base}/#/site/${encodeURIComponent(n.siteId)}/item/${n.findingNum}` : base + '/#/suggestions/false-alarms';
   if (/^suggestion/.test(n.kind || '')) return base + '/#/suggestions';
   if (n.kind === 'comment-waiting' && n.dudaSite) return `${base}/#/comments/${encodeURIComponent(n.dudaSite)}`;

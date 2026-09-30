@@ -492,6 +492,10 @@ body.drawer-open { overflow: hidden; }
 .pill.fa-notfa { background: var(--crit-soft); color: var(--crit); border-color: transparent; }
 span.pill { display: inline-block; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 /* The admins' verdict, on the report and on the audit item: the reason, not just the label. */
+/* The one report a notification sent you to, among forty that look alike. */
+.sg-card.fa-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); animation: fa-flash 1.6s ease-out 1; }
+@keyframes fa-flash { 0%, 40% { background: var(--accent-soft); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .sg-card.fa-target { animation: none; } }
 .fa-verdict { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--ok); background: var(--ok-soft); border-radius: 0 8px 8px 0; font-size: 13px; }
 .fa-reason { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--warn); background: var(--panel-2); border-radius: 0 6px 6px 0; font-size: 13px; font-style: italic; }
 .fa-add { display: flex; gap: 8px; align-items: flex-end; margin-top: 8px; }

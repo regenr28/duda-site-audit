@@ -741,7 +741,8 @@ export default async function handler(req, res) {
         const marked = touched.filter((t) => t.kind === 'status' && t.to === 'false');
         if (marked.length) {
           for (const a of users.filter((u) => u.role === 'admin' && u.status === 'active' && u.email !== me.email)) {
-            await notify(a.email, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: marked[0].f.num, kind: 'false-alarm', text: (note ? note + ' · ' : '') + marked[0].f.message });
+            await notify(a.email, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: marked[0].f.num,
+              kind: 'false-alarm', faKey: b.siteId + ':' + marked[0].f.id, text: (note ? note + ' · ' : '') + marked[0].f.message });
           }
           // The reason belongs on the item, not only in the admins' queue: the next person to open
           // #42 should read why it was dismissed without going looking for it.

@@ -389,7 +389,9 @@
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
-    if (n.kind === 'false-alarm') return '#/suggestions/false-alarms';
+    // The report itself, not the top of the queue. Older notifications have no key, so they fall
+    // back to matching on the website and item number, which is enough to find the one card.
+    if (n.kind === 'false-alarm') return '#/suggestions/false-alarms' + (n.faKey ? '/' + encodeURIComponent(n.faKey) : n.siteId && n.findingNum ? '/' + encodeURIComponent(n.siteId + '#' + n.findingNum) : '');
     // A verdict is about a specific audit item, so it opens the item, not the queue.
     if (/^fa-/.test(n.kind)) return n.siteId && n.findingNum ? `#/site/${encodeURIComponent(n.siteId)}/item/${n.findingNum}` : '#/suggestions/false-alarms';
     if (n.kind === 'site-removed') return '#/removed';
@@ -1740,7 +1742,8 @@
     if (parts[0] === 'comments') return { name: 'comments', site: parts[1] ? decodeURIComponent(parts[1]) : '' };
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : 'published' };
-    if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas' };
+    // …/false-alarms/<key> comes from a notification: open the queue ON that report, not at the top of a list of 40.
+    if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas', key: parts[1] === 'false-alarms' && parts[2] ? decodeURIComponent(parts.slice(2).join('/')) : '' };
     return { name: 'sites' };
   }
   let lastSiteId = null;
@@ -3733,6 +3736,26 @@
     items.forEach((i) => { i.status = faSt(i.status); });
     const mine = state.me.role !== 'admin';
     if (!fa.filter) fa.filter = mine ? 'all' : 'open';
+    // Arriving from a notification: find the one report it is about. The key is normally the
+    // record's own key; older notifications carry "<siteId>#<item number>" instead.
+    const want = route().key || '';
+    let target = '';
+    if (want) {
+      const hash = want.indexOf('#');
+      const found = hash > 0
+        ? items.find((i) => i.siteId === want.slice(0, hash) && String(i.num) === want.slice(hash + 1))
+        : items.find((i) => i.key === want);
+      if (found) {
+        target = found.key;
+        // A filter that hides the report you were sent to is worse than no filter at all.
+        const visible = fa.filter === 'all' || (fa.filter === 'open' ? faOpen(found) : fa.filter === found.status);
+        if (!visible) fa.filter = 'all';
+        if (fa.code && fa.code !== found.code) fa.code = '';
+        if (fa.q) fa.q = '';
+      } else {
+        toast('That false alarm is no longer in the list');
+      }
+    }
     state.faNew = state.me.role === 'admin' ? items.filter((i) => i.status === 'new' && i.active !== false).length : 0;
     const draw = () => {
       const count = (v) => items.filter((i) => i.status === v).length;
@@ -3839,6 +3862,16 @@
         if (!confirm('Remove this from the False alarms list? (The audit item itself is not changed.)')) return;
         try { await store({ op: 'faDelete', key: b.dataset.fadel }); items = items.filter((x) => x.key !== b.dataset.fadel); draw(); } catch (e) { toast(e.message); }
       }));
+      if (target) {
+        const card = $(`#fa-${CSS.escape(target)}`);
+        if (card) {
+          card.classList.add('fa-target');
+          card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          const d = $('details.sg-disc', card); if (d) d.open = true;
+        }
+        // Once only: changing a filter afterwards should not yank the page back.
+        target = '';
+      }
     };
     draw();
   }
