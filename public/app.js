@@ -1475,6 +1475,9 @@
     live.loading = true; live.error = ''; if (route().name === 'live') renderLive();
     try { const [d] = await Promise.all([api('/api/dudasites' + (refresh ? '?refresh=1' : '')), loadSites().catch(() => {})]); live.data = d; }
     catch (e) { live.error = e.message; }
+    // The published list alone cannot tell "not launched yet" from "gone", and getting that wrong
+    // puts an alarming badge on every pre-launch audit. So the draft list is read too, quietly.
+    try { if (!live.un && !live.unLoading) await loadDrafts(refresh); } catch (e) { /* secondary: never fails the page */ }
     live.loading = false; if (route().name === 'live') renderLive();
     if (live.data && route().name === 'live') { live.bgStarted = true; fillNames().then(() => checkDomains(false)); }
     if (!cmt.sites && !cmt.loading) loadCommentSites(true).then(() => { if (route().name === 'live') renderLive(); }).catch(() => {});
@@ -1908,6 +1911,24 @@
     return `<span class="chips">${chips.join('')}</span>`;
   }
   /** Is this audited site still published in Duda? (null = unknown, list not loaded yet) */
+  /**
+   * Where a website stands in Duda: published, not published yet, or not there at all.
+   *
+   * The published list is only the PUBLISHED sites, so "not in it" used to be read as "gone" — and
+   * every website audited BEFORE launch, which is most of them, was labelled as no longer live. The
+   * unpublished list is the other half of the answer and the app already fetches it, so both are
+   * asked before anything is called missing.
+   *
+   * Returns 'live' | 'draft' | 'gone' | '' (not known yet).
+   */
+  function dudaState(siteId) {
+    const id = String(siteId).toLowerCase();
+    if (!liveDR.data) return '';
+    if (liveDR.data.sites.some((y) => String(y.id).toLowerCase() === id)) return 'live';
+    if (!liveDR.un) return '';                       // the draft list hasn't been read yet — say nothing
+    if ((liveDR.un.sites || []).some((y) => String(y.id).toLowerCase() === id)) return 'draft';
+    return 'gone';
+  }
   function liveOf(siteId) {
     if (!liveDR.data) return null;
     return liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(siteId).toLowerCase()) || false;
@@ -1917,7 +1938,7 @@
     const f = state.filters;
     const list = state.sites.filter((s) => (!f.status || s.status === f.status) && (!f.assignee || (f.assignee === '_none' ? !s.assignee : f.assignee === '_mine' ? s.assignee === state.me.email : s.assignee === f.assignee)) &&
       (!f.q || (s.businessName + ' ' + s.siteId + ' ' + s.editorUrl + ' ' + (s.addedByName || '')).toLowerCase().includes(f.q.toLowerCase())) &&
-      (!f.live || (f.live === 'gone' ? liveOf(s.siteId) === false : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)) &&
+      (!f.live || (f.live === 'gone' || f.live === 'draft' ? dudaState(s.siteId) === f.live : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)) &&
       (!f.oldChecks || newChecksFor(s).length) &&
       (!f.clar || ((s.counts || {}).clarification || 0) > 0))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -1937,7 +1958,7 @@
           <input type="search" id="fq" placeholder="Search business name, site ID or who added it…" value="${esc(f.q)}">
           <select id="fstatus"><option value="">All statuses</option>${SITE_STATUSES.map((s) => `<option ${s === f.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
           <select id="fwho"><option value="">Everyone</option><option value="_mine" ${f.assignee === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${f.assignee === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${u.email === f.assignee ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
-          ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>No longer live in Duda (${state.sites.filter((x) => liveOf(x.siteId) === false).length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${state.sites.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
+          ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="draft" ${f.live === 'draft' ? 'selected' : ''}>Not published yet (${state.sites.filter((x) => dudaState(x.siteId) === 'draft').length})</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>Not found in Duda (${state.sites.filter((x) => dudaState(x.siteId) === 'gone').length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${state.sites.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
           ${tot.oldChecks ? `<button class="btn sm ${f.oldChecks ? 'primary' : ''}" id="foldck" title="These were scanned before the newest checks existed. Their items are unchanged — a rescan is what adds the new ones.">✨ Scanned before the newest checks (${tot.oldChecks})</button>` : ''}
           <span class="spacer"></span>
           <button class="btn sm" id="rescanAll">Rescan all shown</button>
@@ -1949,7 +1970,13 @@
             const pct = c.total ? Math.round(((c.closed || 0) / c.total) * 100) : 0;
             return `<tr class="row-link" data-open="${esc(s.id)}">
               <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
-                ${liveOf(s.siteId) === false ? `<div><span class="badge sev-warning" title="This site is no longer in the published list from Duda (unpublished or deleted). The audit is kept.">No longer live in Duda</span></div>` : liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom) ? `<div><span class="badge sev-critical" title="${esc(liveOf(s.siteId).dom.detail || '')}">🌐 ${esc(liveOf(s.siteId).dom.label)}</span></div>` : ''}
+                ${(() => {
+                  const st = dudaState(s.siteId);
+                  if (st === 'draft') return `<div><span class="badge subtle" title="This website is in Duda but hasn't been published yet — normal for an audit done before launch. Live site checks need it published first.">Not published yet</span></div>`;
+                  if (st === 'gone') return `<div><span class="badge sev-warning" title="Duda lists this website neither as published nor as a draft, so it looks deleted or moved to another account. The audit is kept.">Not found in Duda</span></div>`;
+                  const lx = liveOf(s.siteId);
+                  return lx && domProblem(lx.dom) ? `<div><span class="badge sev-critical" title="${esc(lx.dom.detail || '')}">🌐 ${esc(lx.dom.label)}</span></div>` : '';
+                })()}
                 ${(s.counts || {}).clarification ? `<div><span class="badge fs-clarification" title="Someone asked a question and is waiting for an answer">❓ ${s.counts.clarification} waiting on an answer</span></div>` : ''}
                 <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtDate(s.createdAt)) : ''}</div></td>
               <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}">${userOptions(s.assignee)}</select></span></td>
@@ -2843,7 +2870,11 @@
     const activeCount = filteredFindings(s, 'sev');
     const sevCount = (sev) => activeCount.filter((f) => f.severity === sev).length;
     body.innerHTML = `
-      ${(() => { const lx = liveDR.data && liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(s.siteId).toLowerCase()); if (liveDR.data && !lx) return `<div class="note unk dom-banner"><b>This site is no longer live in Duda</b> (unpublished or deleted since the last pull). The audit is kept for reference.</div>`;
+      ${(() => {
+        const st = dudaState(s.siteId);
+        if (st === 'draft') return `<div class="note dom-banner"><b>Not published yet.</b> This website is in Duda as a draft, which is normal when the audit is being done before launch. Everything on this page works as usual; only <b>Verify on live site</b> needs it published first.</div>`;
+        if (st === 'gone') return `<div class="note unk dom-banner"><b>Not found in Duda.</b> Duda lists this website neither as published nor as a draft, so it looks deleted or moved to another account. The audit is kept for reference.</div>`;
+        const lx = liveOf(s.siteId);
         return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
       ${staleBanner()}${newChecksBanner(s)}
       ${sc.state === 'complete' ? verifyPanel(s) : ''}

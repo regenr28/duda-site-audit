@@ -494,7 +494,14 @@ export const HELP_SECTIONS = [
 <li><b>404 Not found</b>, <b>Not responding</b>, <b>Connection refused</b>, <b>SSL certificate problem</b>, <b>Could not open</b>: the domain has a technical problem.</li>
 <li><b>No custom domain</b>: the site only has its Duda address.</li>
 </ul>
-<p>An audited website that's no longer in the published list shows <b>No longer live in Duda</b> (unpublished or deleted). The audit is kept for reference.</p>`,
+<h4>Published, not yet, or gone</h4>
+<p>Duda keeps two lists — the websites that are <b>published</b> and the ones still <b>drafts</b> — and the Audits page reads both, because most audits happen <b>before</b> a website launches.</p>
+<ul>
+<li>In the published list — nothing is shown. Normal.</li>
+<li>In the draft list — <b>Not published yet</b>, in grey. That is the expected state for a pre-launch audit and is not a problem: every check works as usual, and only <b>Verify on live site</b> needs the website published first.</li>
+<li>In neither — <b>Not found in Duda</b>, in orange. It looks deleted or moved to another account. The audit is kept for reference.</li>
+</ul>
+<p>The <b>Live or not</b> filter on Audits has an entry for each, with a count.</p>`,
   },
   {
     id: 'whatsnew', group: 'More', title: "What's New", audience: 'all',

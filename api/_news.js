@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-09-30-not-published', date: '2026-09-30', audience: 'all', tag: 'Audits',
+    title: 'A website audited before launch is no longer labelled as gone',
+    what: 'Most audits happen <b>before</b> the website goes live — that is rather the point. But the Audits page was only reading Duda’s <b>published</b> list, so anything not in it was labelled <b>No longer live in Duda</b>, in orange, on exactly the websites that were doing nothing wrong. Duda also keeps a list of the ones still in draft, and the page now reads both. Three states instead of two: <b>nothing</b> when it is published, a quiet grey <b>Not published yet</b> when Duda has it as a draft — which is what a pre-launch audit is supposed to look like — and an orange <b>Not found in Duda</b> only when Duda has no record of it at all, which really does mean deleted or moved.',
+    where: ['On <b>Audits</b>, under the website name. Nothing to set up — the badges correct themselves on the next load.', 'On a website’s own page, a line explains which of the three it is and what follows from it.', 'The <b>Live or not</b> filter now offers <b>Not published yet</b> and <b>Not found in Duda</b> separately, each with a count.', 'A pre-launch website audits exactly as before — only <b>Verify on live site</b> needs it published, and it already said so.'],
+    link: '#/help/live', linkText: 'Live DR Sites',
+  },
+  {
     id: '2026-09-30-stale-tab', date: '2026-09-30', audience: 'all', tag: 'Audits',
     title: 'A tab left open across an update no longer scans with the old checks',
     what: 'The scan runs <b>in your own browser tab</b>, using the checks that tab loaded when you opened it. So a tab that has been open since before an update is still running the <b>old</b> checks — and a rescan from it hands back the old answers, which looks exactly like a fix that didn’t work. It has caught people out more than once. The app now watches for it: when the app is updated, an orange note appears on <b>Audits</b> and on each website, and starting a scan from a stale tab <b>stops and offers “Reload and scan”</b> — which reloads and then runs the scan you asked for, so nothing is lost. The check is made at the moment you click, not on a timer, because that is the one moment it matters.',
