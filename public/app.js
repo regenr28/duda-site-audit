@@ -597,7 +597,8 @@
     if (!state.notifKnown) { state.notifKnown = new Set(items.map((n) => n.id)); return; } // first load: don't replay old ones
     const fresh = items.filter((n) => !state.notifKnown.has(n.id));
     fresh.forEach((n) => state.notifKnown.add(n.id));
-    fresh.slice(0, 3).reverse().forEach((n) => {
+    // The bell still carries it; this is only whether it jumps onto the screen as well.
+    fresh.filter((n) => !popupMuted(n.kind)).slice(0, 3).reverse().forEach((n) => {
       const title = n.self ? `Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished` : `${n.byName || 'Someone'} ${NOTIF_TEXT[n.kind] || 'notified you'}`;
       const body = [n.siteName, n.findingNum ? '#' + n.findingNum : '', n.text].filter(Boolean).join(' · ');
       alertUser({ email: n.by, title, deskBody: body || 'Open the app to see details.', body: esc(body || 'Open the bell to see details.') + ` <a href="${esc(notifLink(n))}">Open</a>`, tag: n.id, link: notifLink(n), at: n.at });
@@ -839,6 +840,54 @@
   async function slackTest() {
     try { const r = await post('/api/users', { op: 'slackTest' }); toast(r.message); } catch (e) { toast(e.message); }
   }
+  const CHANNEL_LABEL = { bell: 'Bell', popup: 'Pop-up', slack: 'Slack', email: 'Email' };
+  const CHANNEL_HINT = { bell: 'The list behind the 🔔 in the top bar', popup: 'The card on screen, or a desktop alert when the app is minimized', slack: 'A direct message from Site Auditor', email: 'An email to your inbox' };
+  /** The groups this person is offered: admin-only ones stay hidden, as does Email with no mail set up. */
+  function myNotifyGroups() {
+    const all = (state.config && state.config.notifyGroups) || [];
+    const mailOn = !!(state.config && state.config.emailEnabled);
+    const slackOn = !!(state.config && state.config.slackDM);
+    return all.filter((g) => !g.admin || state.me.role === 'admin')
+      .map((g) => Object.assign({}, g, { channels: g.channels.filter((c) => (c !== 'email' || mailOn) && (c !== 'slack' || slackOn)) }))
+      .filter((g) => g.channels.length);
+  }
+  /** Is this notification kind switched off for the on-screen pop-up? Decided here, in the browser. */
+  function popupMuted(kind) {
+    const off = (state.me && state.me.notifyOff) || [];
+    const g = ((state.config && state.config.notifyGroups) || []).find((x) => (x.kinds || []).includes(kind));
+    return !!(g && off.includes(g.key + ':popup'));
+  }
+  /**
+   * One row per kind of notification, one column per way it can reach you.
+   *
+   * Switches that are OFF are what gets stored, so anything added later starts out reaching
+   * everybody — a new notification going silently to nobody is the worse failure.
+   */
+  function notifyGrid() {
+    const groups = myNotifyGroups();
+    if (!groups.length) return '';
+    const cols = ['bell', 'popup', 'slack', 'email'].filter((c) => groups.some((g) => g.channels.includes(c)));
+    const off = new Set((state.me.notifyOff || []));
+    return `<div class="k" style="margin-top:14px">What you get told about</div>
+      <div class="small muted" style="margin-bottom:6px">Everything is on unless you turn it off. This only changes what reaches <b>you</b> — nobody else's notifications change.</div>
+      <div class="notif-grid-wrap"><table class="notif-grid"><thead><tr><th></th>
+        ${cols.map((c) => `<th title="${esc(CHANNEL_HINT[c])}">${esc(CHANNEL_LABEL[c])}</th>`).join('')}</tr></thead><tbody>
+        ${groups.map((g) => `<tr><th scope="row"><b>${esc(g.label)}</b><div class="small faint">${esc(g.desc || '')}</div>
+          ${g.lockNote ? `<div class="small faint lock-note">🔒 ${esc(g.lockNote)}</div>` : ''}</th>
+          ${cols.map((c) => {
+            if (!g.channels.includes(c)) return '<td class="na" title="This notification never uses this">—</td>';
+            const key = g.key + ':' + c;
+            // A locked channel shows as a word, not a greyed checkbox: a disabled tick box reads as
+            // "off" at a glance, which is the opposite of what this one means.
+            if ((g.locked || []).includes(c)) return `<td><span class="ng-always" title="${esc(g.lockNote || 'Always on')}">Always</span></td>`;
+            return `<td><label class="ng-cell" title="${esc(g.label)} · ${esc(CHANNEL_LABEL[c])}">
+              <input type="checkbox" data-ng="${esc(key)}" ${!off.has(key) ? 'checked' : ''}></label></td>`;
+          }).join('')}</tr>`).join('')}
+      </tbody></table></div>`;
+  }
+  /** What the Save button sends: every unticked switch, which is what gets stored. */
+  const readNotifyGrid = () => $$('[data-ng]').filter((i) => !i.checked).map((i) => i.dataset.ng);
+
   function openMe() {
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.me.role === 'admin' ? ' · admin' : ''}</div></div></div>
@@ -852,7 +901,8 @@
       ${!(state.config && state.config.slackDM) && state.superAdmin ? `<div class="small muted">Slack messages are not switched on yet. Once the Slack connection is added, a Slack option appears here for everyone.</div>` : ''}
       ${state.config && state.config.slackDM ? `<label class="check-row slack-row"><input type="checkbox" id="meSlack" ${state.me.slackDM !== false ? 'checked' : ''}><span>Also message me on Slack (from <b>Site Auditor</b>) when someone mentions me, replies, or assigns me an item${state.me.role === 'admin' ? ', and when someone signs up' : ''}.</span></label>
         <div class="small muted" style="margin-top:-4px">Uses your Slack account with the same email as here: <b>${esc(state.me.email)}</b>.</div>
-        <button class="btn sm" id="meSlackTest" type="button" style="justify-self:start">Send a Slack test message</button>` : ''}</div>
+        <button class="btn sm" id="meSlackTest" type="button" style="justify-self:start">Send a Slack test message</button>` : ''}
+      ${notifyGrid()}</div>
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
     // The test shows the pop-up and, when Slack messages are switched on here, also sends a Slack test message
@@ -861,7 +911,15 @@
       if ($('#meSlack') && $('#meSlack').checked) slackTest();
     };
     if ($('#meSlackTest')) $('#meSlackTest').onclick = () => slackTest();
-    $('#meSave').onclick = async () => { try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); } };
+    // The master Slack switch greys its column, so the two can't disagree on screen.
+    const syncSlackCol = () => { const on = !$('#meSlack') || $('#meSlack').checked; $$('[data-ng$=":slack"]').forEach((i) => { i.disabled = !on; i.closest('.ng-cell').classList.toggle('off', !on); }); };
+    if ($('#meSlack')) { $('#meSlack').addEventListener('change', syncSlackCol); syncSlackCol(); }
+    $('#meSave').onclick = async () => {
+      // Read the grid BEFORE the modal closes, and keep any switch the master Slack toggle disabled.
+      const shown = new Set($$('[data-ng]').map((i) => i.dataset.ng));
+      const notifyOff = [...new Set(readNotifyGrid().concat((state.me.notifyOff || []).filter((k) => !shown.has(k))))];
+      try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value, notifyOff }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); }
+    };
   }
 
   // =====================================================================

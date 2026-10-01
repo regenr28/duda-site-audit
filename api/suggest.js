@@ -2,7 +2,7 @@
 // Everyone else only sees the suggestions they submitted themselves (so they can read the owner's replies).
 // GET  /api/suggest                      → { owner: bool, items }
 // POST /api/suggest { op: create | status | comment, ... }
-import { redis, P, readBody, requireUser, jparse, newId, now, sendEmail, emailShell, esc, appUrl, notifyUser, OWNER_EMAIL, plainMentions } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, newId, now, sendEmail, emailShell, esc, appUrl, notifyUser, wantsEmail, OWNER_EMAIL, plainMentions } from './_lib.js';
 
 const STATUSES = ['new', 'ongoing', 'done', 'nope'];
 const LABEL = { new: 'New', ongoing: 'On going', done: 'Done', nope: 'Nope' };
@@ -31,7 +31,7 @@ export default async function handler(req, res) {
       await redis(['HSET', P + 'sugg', s.id, JSON.stringify(s)]);
       if (me.email !== OWNER_EMAIL) {
         await notifyUser(OWNER_EMAIL, { by: me.email, byName: me.name, kind: 'suggestion', text: title }).catch(() => {});
-        await sendEmail(OWNER_EMAIL, `💡 New feature suggestion from ${me.name}: ${title}`, emailShell('New feature suggestion', `
+        if (await wantsEmail(OWNER_EMAIL, 'suggestion')) await sendEmail(OWNER_EMAIL, `💡 New feature suggestion from ${me.name}: ${title}`, emailShell('New feature suggestion', `
           <p><b>${esc(me.name)}</b> (${esc(me.email)}) suggested:</p>
           <p style="font-size:16px;font-weight:700;margin:6px 0">${esc(title)}</p>
           ${text ? `<blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(text).replace(/\n/g, '<br>')}</blockquote>` : ''}
@@ -52,7 +52,7 @@ export default async function handler(req, res) {
         await redis(['HSET', P + 'sugg', s.id, JSON.stringify(s)]);
         if (s.by !== me.email) {
           await notifyUser(s.by, { by: me.email, byName: me.name, kind: 'suggestion-status', text: `"${s.title}" is now ${LABEL[s.status]}` }).catch(() => {});
-          await sendEmail(s.by, `Your suggestion is now "${LABEL[s.status]}": ${s.title}`, emailShell(`Suggestion update: ${LABEL[s.status]}`, `<p>${esc(me.name)} marked your suggestion <b>${esc(s.title)}</b> as <b>${LABEL[s.status]}</b>.</p><p><a href="${link}">See details and comments</a></p>`)).catch(() => {});
+          if (await wantsEmail(s.by, 'suggestion-status')) await sendEmail(s.by, `Your suggestion is now "${LABEL[s.status]}": ${s.title}`, emailShell(`Suggestion update: ${LABEL[s.status]}`, `<p>${esc(me.name)} marked your suggestion <b>${esc(s.title)}</b> as <b>${LABEL[s.status]}</b>.</p><p><a href="${link}">See details and comments</a></p>`)).catch(() => {});
         }
       }
       return res.status(200).json(s);
@@ -68,7 +68,7 @@ export default async function handler(req, res) {
       const to = me.email === s.by ? OWNER_EMAIL : s.by;
       if (to !== me.email) {
         await notifyUser(to, { by: me.email, byName: me.name, kind: 'suggestion-comment', text: `On "${s.title}": ${plainMentions(text).slice(0, 150)}` }).catch(() => {});
-        await sendEmail(to, `${me.name} commented on the suggestion: ${s.title}`, emailShell('New comment on a suggestion', `<p><b>${esc(me.name)}</b> on <b>${esc(s.title)}</b>:</p><blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(text.slice(0, 600)).replace(/\n/g, '<br>')}</blockquote><p><a href="${link}">Open suggestions</a></p>`)).catch(() => {});
+        if (await wantsEmail(to, 'suggestion-comment')) await sendEmail(to, `${me.name} commented on the suggestion: ${s.title}`, emailShell('New comment on a suggestion', `<p><b>${esc(me.name)}</b> on <b>${esc(s.title)}</b>:</p><blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(text.slice(0, 600)).replace(/\n/g, '<br>')}</blockquote><p><a href="${link}">Open suggestions</a></p>`)).catch(() => {});
       }
       return res.status(200).json(s);
     }

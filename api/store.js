@@ -5,7 +5,7 @@
 // Keys:  site:<id> (scan results + meta)   index (hash id → summary)   fstate:<id> (hash findingId → {status, assignee})
 //        fnum:<id> (hash findingId → #)   seq:<id>   cmt:<id> (hash commentId → comment)   act:<id> (list)
 //        notif:<email> (list)   notifseen:<email>
-import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, plainMentions, normEmail, buildId } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, wantsEmail, plainMentions, normEmail, buildId } from './_lib.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 
@@ -159,8 +159,9 @@ async function faTell(req, me, rec, ev) {
       kind: ev.kind === 'status' ? 'fa-status' : 'fa-note', faStatus: rec.status, faLabel: label,
       text: ev.kind === 'status' ? `${label}${ev.note ? ' · ' + ev.note : ''} · ${String(rec.message || '').slice(0, 120)}` : String(ev.note || '').slice(0, 200) });
   }
-  // The verdict on your own report is worth an email; a passing note is not.
-  if (ev.kind === 'status' && reporter && reporter !== byMe) {
+  // The verdict on your own report is worth an email; a passing note is not — and not at all if
+  // this person has switched false alarm emails off in Your account.
+  if (ev.kind === 'status' && reporter && reporter !== byMe && await wantsEmail(reporter, 'fa-status')) {
     await sendEmail(reporter, `Your false alarm report is now "${label}" — ${siteName} #${rec.num || ''}`,
       emailShell(`Your report: ${esc(label)}`, `<p style="color:#5d6572">${esc(siteName)} · item #${esc(String(rec.num || ''))}</p>
         <blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(String(rec.message || ''))}</blockquote>
@@ -796,6 +797,7 @@ export default async function handler(req, res) {
         for (const [email, kind] of recipients) {
           if (email === me.email) continue;
           await notify(email, { by: me.email, byName: me.name, siteId: b.siteId, siteName, commentId: c.id, findingNum: finding ? finding.num : null, kind, text: plainMentions(text).slice(0, 200) });
+          if (!(await wantsEmail(email, kind))) continue;
           await sendEmail(email, `${me.name} ${kind === 'mention' ? 'mentioned you' : 'replied to you'} on ${siteName}${where}`,
             emailShell(`${esc(me.name)} ${kind === 'mention' ? 'mentioned you' : 'replied to you'}`, `<p style="color:#5d6572">${esc(siteName)}${esc(where)}</p>
               <blockquote style="border-left:3px solid #2563eb;margin:0;padding:8px 12px;background:#f1f3f6">${esc(plainMentions(text).slice(0, 600)).replace(/\n/g, '<br>')}</blockquote>

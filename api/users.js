@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -32,6 +32,9 @@ export default async function handler(req, res) {
       // How long pop-up notifications stay on screen (seconds; 0 = until closed)
       if (b.notifySecs !== undefined) { const n = Number(b.notifySecs); if (Number.isFinite(n) && n >= 0 && n <= 600) me.notifySecs = Math.round(n); }
       if (b.slackDM !== undefined) me.slackDM = !!b.slackDM;
+      // Which notifications this person has switched off, as "group:channel". Only the switches the
+      // app actually offers are stored, so a stale or invented key can never quietly mute anything.
+      if (Array.isArray(b.notifyOff)) me.notifyOff = [...new Set(b.notifyOff.map(String))].filter((k) => NOTIFY_KEYS.includes(k));
       // Which editor address this member opens: the white-label one or my.duda.co
       if (b.editorEnv !== undefined) me.editorEnv = b.editorEnv === 'duda' ? 'duda' : 'white';
       // Which "What's New" note this person has seen (so the light bulb stops glowing)

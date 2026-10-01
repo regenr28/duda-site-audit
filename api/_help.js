@@ -227,6 +227,21 @@ export const HELP_SECTIONS = [
 <li><b>Slack</b> (when connected): the same updates as a Slack message from <b>Site Auditor</b>. Turn it on or off in your account settings.</li>
 <li><b>Someone is on this website</b>: when you open a website a teammate is working on (or they open yours), a pop-up tells you, and the bar under the title shows "… is also here" and which item they're on. Talk to them so you don't fix the same item twice.</li>
 </ul>
+<h3>Choosing what you get told about</h3>
+<p>Open the avatar at the top right → <b>Your account</b>, and scroll to <b>What you get told about</b>. It's a small grid: the kinds of notification down the side, the ways they can reach you across the top.</p>
+<ul>
+<li><b>Mentions and replies</b> — someone types @your name, or replies to one of yours.</li>
+<li><b>Work assigned to you</b> — an audit item or a whole website given to you, taken off you, or reopened.</li>
+<li><b>Duda comments waiting</b> — clients have left comments nobody has answered.</li>
+<li><b>Scans finishing</b> — a scan you started, or a rescan of a website you completed.</li>
+<li><b>False alarm reports</b> — somebody reports an item, or answers a report you made.</li>
+<li><b>Feature suggestions</b> — a suggestion is sent, answered or commented on.</li>
+<li><b>Accounts and admin</b> (admins only) — someone signs up and needs approving, or an audit is removed.</li>
+</ul>
+<p>The columns are <b>Bell</b>, <b>Pop-up</b> (the card on screen, or a desktop alert when the app is minimized), <b>Slack</b> and <b>Email</b>. A dash means that notification has never used that channel and never will, so there's nothing to switch.</p>
+<p><b>Everything is on unless you turn it off</b>, and anything added to the app later starts out reaching everybody — a new notification going quietly to nobody is the worse mistake. Your choices only change what reaches <b>you</b>; nobody else's notifications are affected, and nobody is told what you switched off.</p>
+<p>One exception: <b>a mention always reaches your bell</b>. You can stop the Slack message, the pop-up and the email for mentions, but the bell row is always written — so a teammate who tags you and waits is never waiting on somebody who switched themselves off. That row reads <b>Always</b> instead of a tick box.</p>
+<p>The <b>Also message me on Slack</b> checkbox above the grid is the master switch for Slack. Turn it off and the whole Slack column greys out; turn it back on and your per-notification choices are exactly as you left them. Sign-in codes and “your account is approved” are not notifications and always arrive.</p>
 <h3>Finding one thing in the bell</h3>
 <p>Everything lands in one list, which gets hard to read once there's a lot in it. The bell is split into tabs, and a tab only appears when there's something in it:</p>
 <ul>

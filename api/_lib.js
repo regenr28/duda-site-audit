@@ -157,7 +157,8 @@ export async function nameTaken(name, exceptEmail) {
 export const plainMentions = (text) => String(text == null ? '' : text)
   .replace(/@\[([^\]\n|]{1,60})(?:\|[^\]\n]{1,80})?\]/g, '@$1');
 
-export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white' });
+export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white',
+  notifyOff: Array.isArray(u.notifyOff) ? u.notifyOff : [] });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
@@ -251,14 +252,72 @@ export async function slack(text) {
   } catch (e) { return { sent: false, error: e.message }; }
 }
 
+// ---------- what each person wants to be told about ----------
+/**
+ * Every notification the app sends, gathered into the handful of groups a person actually thinks in,
+ * with the ways it can reach them.
+ *
+ * This table is the single source of truth: the settings screen is rendered from it, and every
+ * place that sends anything asks `wants()` before sending. A new notification kind that isn't
+ * listed here is always delivered — silence should never be the accident of a forgotten entry.
+ *
+ * Channels: bell (the list in the app), popup (the on-screen card / desktop alert, decided in the
+ * browser), slack (a direct message), email. A group only lists the channels it really uses, so
+ * nobody is offered an email switch for something that has never sent an email.
+ */
+export const NOTIFY_GROUPS = [
+  { key: 'mentions', label: 'Mentions and replies', kinds: ['mention', 'reply'], channels: ['bell', 'popup', 'slack', 'email'], locked: ['bell'],
+    desc: 'Someone types @your name in a comment, or replies to one of yours.',
+    lockNote: 'Always reaches your bell, so nothing addressed to you can go unseen.' },
+  { key: 'assigned', label: 'Work assigned to you', kinds: ['assign', 'site-assign', 'site-unassign', 'site-reopen'], channels: ['bell', 'popup', 'slack'],
+    desc: 'An audit item or a whole website is given to you, taken off you, or reopened.' },
+  { key: 'comments', label: 'Duda comments waiting', kinds: ['comment-waiting'], channels: ['bell', 'popup', 'slack'],
+    desc: 'Clients have left comments in Duda that nobody has answered yet.' },
+  { key: 'scans', label: 'Scans finishing', kinds: ['scan-done', 'rescan-done'], channels: ['bell', 'popup', 'slack'],
+    desc: 'A scan you started has finished, or a website you completed was rescanned.' },
+  { key: 'falsealarms', label: 'False alarm reports', kinds: ['false-alarm', 'fa-status', 'fa-note'], channels: ['bell', 'popup', 'slack', 'email'],
+    desc: 'Somebody reports an audit item as a false alarm, or answers a report you made.' },
+  { key: 'suggestions', label: 'Feature suggestions', kinds: ['suggestion', 'suggestion-status', 'suggestion-comment'], channels: ['bell', 'popup', 'slack', 'email'],
+    desc: 'A suggestion is sent, answered, or commented on.' },
+  { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
+    desc: 'Someone signs up and needs approving, or an audit is removed from the list.' },
+];
+const GROUP_OF = {};
+NOTIFY_GROUPS.forEach((g) => g.kinds.forEach((k) => { GROUP_OF[k] = g; }));
+/** Every switch that may legitimately be turned off, as "group:channel". */
+export const NOTIFY_KEYS = NOTIFY_GROUPS.flatMap((g) => g.channels.filter((c) => !(g.locked || []).includes(c)).map((c) => g.key + ':' + c));
+/**
+ * Does this person want this kind of notification on this channel?
+ *
+ * Off switches are stored, not on ones, so everything is on by default and a group added later
+ * starts out reaching everybody rather than silently reaching nobody.
+ */
+export function wants(user, kind, channel) {
+  if (kind === 'test') return true;                       // a test must always arrive, or it tests nothing
+  const g = GROUP_OF[kind];
+  if (!g) return true;                                    // unlisted kind: deliver it
+  if ((g.locked || []).includes(channel)) return true;
+  if (channel === 'slack' && user && user.slackDM === false) return false;  // the master Slack switch
+  return !(user && Array.isArray(user.notifyOff) && user.notifyOff.includes(g.key + ':' + channel));
+}
+
 // ---------- in-app notifications + global (admin) activity log ----------
 export async function notifyUser(email, n) {
   const item = { id: newId(6), at: now(), ...n };
-  await redis(['LPUSH', P + 'notif:' + email, JSON.stringify(item)], ['LTRIM', P + 'notif:' + email, 0, 99]);
-  // Nudge that person's open app right away (no database involved), so desktop notifications are instant
-  await ablyPublish(userChannel(email), 'notif', { id: item.id });
+  // Read once and decide every channel from it, rather than each sender asking again.
+  const u = await getUser(email).catch(() => null);
+  if (wants(u, n.kind, 'bell')) {
+    await redis(['LPUSH', P + 'notif:' + email, JSON.stringify(item)], ['LTRIM', P + 'notif:' + email, 0, 99]);
+    // Nudge that person's open app right away (no database involved), so desktop notifications are instant
+    await ablyPublish(userChannel(email), 'notif', { id: item.id });
+  }
   // …and a direct message from the "Site Auditor" Slack bot, if their app email is also their Slack email
-  await slackDM(email, item);
+  if (wants(u, n.kind, 'slack')) await slackDM(email, item, u);
+}
+/** Would an email of this kind reach this person? Senders call this before building the message. */
+export async function wantsEmail(email, kind) {
+  const u = await getUser(email).catch(() => null);
+  return wants(u, kind, 'email');
 }
 
 // ---------- Slack direct messages ----------
@@ -356,10 +415,10 @@ function notifLink(n) {
   return base;
 }
 /** Sends a Slack DM for an app notification. Returns { sent, reason }. Never throws. */
-export async function slackDM(email, n) {
+export async function slackDM(email, n, known) {
   if (!slackBotEnabled()) return { sent: false, reason: 'not_configured' };
   try {
-    const user = await getUser(email);
+    const user = known || await getUser(email);
     if (user && user.slackDM === false && n.kind !== 'test') return { sent: false, reason: 'turned_off' };
     const id = await slackUserId(email);
     if (!id) return { sent: false, reason: 'not_in_slack' };
@@ -412,6 +471,7 @@ export async function announceSignup(user, req) {
   const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
   for (const a of admins) {
     await notifyUser(a.email, { by: user.email, byName: user.name, kind: 'signup', text: `${user.name} (${user.email}) is waiting for approval` }).catch(() => {});
+    if (!wants(a, 'signup', 'email')) continue;
     await sendEmail(a.email, `New account waiting for approval: ${user.name}`, emailShell('Someone wants to join Duda Site Auditor', `
       <p><b>${esc(user.name)}</b> (${esc(user.email)}) just created an account${user.google ? ' with Google' : ''}.</p>
       <p><a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none">Review in Members</a></p>`)).catch(() => {});

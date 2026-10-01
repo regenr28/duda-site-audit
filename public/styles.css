@@ -661,3 +661,20 @@ span.pill { display: inline-block; padding: 5px 10px; border-radius: 999px; font
 @media (prefers-reduced-motion: reduce) {
   .cmt-card.isnew { animation: none; box-shadow: 0 0 0 2px var(--warn); }
 }
+
+/* What you get told about — one row per kind of notification, one column per channel */
+.notif-grid-wrap { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.notif-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+.notif-grid th, .notif-grid td { padding: 8px 10px; text-align: center; border-top: 1px solid var(--border); }
+.notif-grid thead th { border-top: 0; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.notif-grid tbody th[scope="row"] { text-align: left; font-weight: 400; max-width: 320px; }
+.notif-grid td.na { color: var(--muted); opacity: .45; }
+.notif-grid .lock-note { margin-top: 2px; }
+.ng-cell { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 4px; margin: -4px; }
+.ng-cell input { width: 17px; height: 17px; cursor: pointer; }
+.ng-always { font-size: 11px; font-weight: 600; letter-spacing: .03em; color: var(--brand, #2563eb); background: color-mix(in srgb, var(--brand, #2563eb) 12%, transparent); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.ng-cell.off input { opacity: .35; }
+@media (max-width: 640px) {
+  .notif-grid th, .notif-grid td { padding: 6px 5px; }
+  .notif-grid tbody th[scope="row"] .small { display: none; }
+}
