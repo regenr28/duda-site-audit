@@ -133,6 +133,12 @@ tr.done .finding-msg { text-decoration: line-through; }
 .note.known-note { border-color: var(--info); background: var(--info-soft); padding: 9px 11px; margin: 10px 0; }
 .known-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--border); }
 .known-row:first-of-type { border-top: 0; }
+/* Where a repeated photo is, small enough to live on an audit row */
+.dup-where { margin-top: 6px; border-left: 2px solid var(--border); padding-left: 8px; }
+.dup-where .k { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+.dup-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; padding: 2px 0; }
+.dup-row code.sel { font-size: 11px; padding: 0 4px; }
+.dup-row .linkbtn { padding: 0; }
 .note.report-note { border-color: var(--border-strong); background: var(--panel-2, var(--info-soft)); padding: 9px 11px; margin: 10px 0; }
 .badge.fa-chip { border: 1px solid currentColor; }
 .bi-log { list-style: none; margin: 14px 0 0; padding: 0; }

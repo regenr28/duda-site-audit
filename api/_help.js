@@ -342,6 +342,7 @@ export const HELP_SECTIONS = [
   {
     id: 'ai', group: 'Checks', title: 'AI checks and "AI check pending"', audience: 'all',
     html: `<ul>
+<li><b>Location pages.</b> A page whose own address names a town — <span class="mono">/car-polishing-in-aberdeen</span> — is a location page built on purpose, so naming that town in its title, headings, copy and alt text is correct and is never reported. A <b>different</b> town on that page still is, and so is any town on a page whose address names none. Words in the address that are only the business name or the service being sold don't count as a place.</li>
 <li>Some things need judgement, so the <b>Site Auditor AI</b> reviews image <b>alt text</b> and <b>page text</b> for another business's name, a wrong city or placeholder text. Brand and partner logos (XPEL, Ceramic Pro, wheel brands…) are treated as correct.</li>
 <li>Answers are saved, so rescans don't re-check text that hasn't changed.</li>
 <li>Only text that could hide a problem is sent: a name that looks like another business, a place, contact details or filler text. Plain marketing prose is skipped, so a long blog doesn't use up the day's credits. The scan summary says how many blocks were read and how many were skipped.</li>
@@ -361,13 +362,13 @@ export const HELP_SECTIONS = [
 <li><b>Analytics</b>: no Google Analytics or Tag Manager tag on the home page, or an old UA- tag that no longer collects anything.</li>
 <li><b>Contact form</b>: more than one form on a page, and a phone field that isn't required.</li>
 <li><b>Buttons that go nowhere</b>: a button whose link is empty, "#" or javascript:.</li>
-<li><b>Favicon</b> and <b>home screen icon</b> missing.</li>
+<li><b>Favicon</b> and <b>home screen icon</b> missing. Both are settings for the <b>whole website</b>, so they're judged once: if any page on any device carries one, nothing is reported, and when there genuinely isn't one you get a single item rather than one per page. (Duda serves the mobile version as separate HTML that usually leaves the favicon link out, which is why this has to be settled across the whole website rather than page by page.)</li>
 <li><b>Mixed content</b>: images, scripts or stylesheets loaded over http:// on an https:// website.</li>
-<li><b>Contact info</b>: phone numbers and click-to-call links (including buttons that show one number but dial another), email links, addresses, Google Map embeds pointing to another business.</li>
+<li><b>Contact info</b>: phone numbers and click-to-call links (including buttons that show one number but dial another), email links, addresses, Google Map embeds pointing to another business. <b>A map embed is judged by its place ID, not by the name in the link</b>: Google draws the pin and its current name from that ID, and the name sitting in the link is only a label from the day somebody made it, never shown to visitors. So a pin in the client's own town under an old name is <b>info</b> — a renamed Google listing, nothing to fix, and you can mark the old name correct for the website so it never returns. A pin in a different town is a <b>warning</b> to open and check. A map with no place ID at all is <b>critical</b>, because there the name really is what chooses the pin.</li>
 <li><b>Business name</b>: another shop's name left over from a template, name written differently.</li>
 <li><b>Social</b>: links to another business's profiles, generic links that don't point to a profile. A Google Maps link that carries only a place ID (<code>data=!4m2!…</code>) can't be read by name, so it's only a note asking you to open it, or a warning when it's a different place than Business Info — never "another business". "Share this page" buttons on blog posts are ignored.</li>
 <li><b>Links</b>: broken internal pages, broken external links, insecure http:// links, links with no readable text.</li>
-<li><b>Images / Alt</b>: missing or placeholder alt text, alt text naming another business, broken images. The site's own logo is checked; brand/partner logos are accepted.</li>
+<li><b>Images / Alt</b>: missing or placeholder alt text, alt text naming another business, broken images. The site's own logo is checked; brand/partner logos are accepted. <b>Our own footer badge is skipped entirely</b> — an image inside <span class="mono">id="footer-logo"</span> (or <span class="mono">agency-logo</span> / <span class="mono">credit-logo</span>) is the agency's logo, not the client's image, so it raises no alt item, isn't sent to the AI, and isn't counted as a repeated photo.</li>
 <li><b>Meta / SEO</b>: missing or too long/short titles and descriptions, missing H1, social share image, canonical pointing elsewhere.</li>
 <li><b>noindex</b>: normal pages set to "noindex" are <b>critical</b>. <b>Thank-you / confirmation pages must be noindex</b>; one that isn't is <b>critical</b>.</li>
 <li><b>Schema</b>: structured data that doesn't match Business Info.</li>
@@ -415,6 +416,7 @@ export const HELP_SECTIONS = [
 <li>The fingerprint comes from the <b>pixels</b>, not the file name — so the same photo <b>uploaded twice under different names</b> is caught, and so is the same photo saved at a different size or quality.</li>
 <li>Both <b>&lt;img&gt; images and CSS background images</b> are read. On a Duda site most heroes and section banners are backgrounds, so an image-tag-only check would miss most of the photos.</li>
 <li>"Place" means the <b>element</b>, not the number of times it was seen. A header photo appears on every page and on three devices; that is one place.</li>
+<li><b>The item lists every place it found the photo</b> — the part of the page, the element, and the pages that element is on — right on the audit row, each with its own <b>👁 Show on page</b>. Open the item to see them all when there are more than four.</li>
 </ul>
 <h4>What is deliberately left alone</h4>
 <p>Design elements are supposed to repeat. A picture is set aside when it is:</p>

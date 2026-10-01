@@ -2639,6 +2639,22 @@
       </div>`).join('')}</div>`;
   }
 
+  /**
+   * The same thing, compact enough to sit on an audit row. "Same photo used in 3 places" raises
+   * exactly one question — which three — and until now the answer was only inside the item.
+   */
+  function dupWhereRow(f) {
+    const list = f.dupPlaces || [];
+    if (list.length < 2) return '';
+    const show = list.slice(0, 4);
+    return `<div class="dup-where"><div class="k">Used here</div>${show.map((x) => `<div class="dup-row">
+      <button class="linkbtn" data-dupsel="${esc(x.selector)}" data-dupfid="${esc(f.id)}" data-duppath="${esc((x.paths || ['/'])[0])}" title="Open the page with this one highlighted">👁</button>
+      <span class="faint small">${esc(x.location || '')}${x.how === 'background' ? ' background' : ''}</span>
+      <code class="sel">${esc(x.selector)}</code>
+      <span class="mono small">${(x.paths || []).slice(0, 3).map(esc).join(', ')}${(x.paths || []).length > 3 ? ` +${x.paths.length - 3}` : ''}</span>
+    </div>`).join('')}${list.length > show.length ? `<div class="faint small">…and ${list.length - show.length} more — open the item to see them all</div>` : ''}</div>`;
+  }
+
   const correctedBadge = (s, f) => (isCorrected(s, f)
     ? `<div style="margin-bottom:4px"><span class="badge ck-fixed" title="The check that produced this item has since been corrected, so it may not be a real problem. Rescan the website to replace it.">⚠ This check was corrected — rescan</span></div>` : '');
 
@@ -3038,7 +3054,7 @@
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
               <td style="min-width:240px">${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
-                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}</td>
+                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
               <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
             </tr>`;
@@ -3056,6 +3072,13 @@
     [['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
     $$('[data-copy]', body).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
     $$('[data-inspect]', body).forEach((c) => (c.onclick = () => { const f = s.findings.find((x) => x.id === c.dataset.inspect); if (f) openInspector(s, f); }));
+    // Each place a repeated photo turns up opens on its own element and its own page, from the row.
+    $$('[data-dupsel]', body).forEach((b) => (b.onclick = (e) => {
+      e.stopPropagation();
+      const f = s.findings.find((x) => x.id === b.dataset.dupfid); if (!f) return;
+      const place = (f.dupPlaces || []).find((x) => x.selector === b.dataset.dupsel) || {};
+      openInspector(s, Object.assign({}, f, { selector: b.dataset.dupsel, path: b.dataset.duppath, pages: place.paths || [b.dataset.duppath], location: place.location || f.location }));
+    }));
     bindSelLinks(body, s);
     bindVerify(body, s);
     bindNewChecks(body, s);

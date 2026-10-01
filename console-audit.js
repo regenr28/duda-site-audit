@@ -186,6 +186,48 @@
         'A map with no place ID is still critical, because there the saved name is the only thing choosing the pin',
       ],
     },
+    {
+      v: 14,
+      date: '2026-09-30',
+      title: 'A location page is allowed to name its own location',
+      fixes: ['AI_TEXT_LOCATION', 'AI_ALT_LOCATION'],
+      fixedWhat: 'A page at /auto-detailing-located-in-aberdeen is a location page somebody built on purpose, so naming Aberdeen in its title, headings and alt text is the point of the page. The location check was comparing every mention against Business Info and reporting the whole set as critical.',
+      items: [
+        'A town named in the page\u2019s own address is accepted in that page\u2019s title, headings, copy and alt text',
+        'A DIFFERENT town on the same page is still reported, and so is any town on a page whose address does not name one',
+        'Words in the address that are just the business name or the service being sold no longer vouch for a place',
+        'Only location findings are affected \u2014 another business named on a location page is still critical',
+      ],
+    },
+    {
+      v: 15,
+      date: '2026-09-30',
+      title: 'The favicon is judged once for the website, and our own footer badge is left out of the alt checks',
+      // Only the two icon codes are declared corrected. The footer-badge change is a real fix too,
+      // but it affects at most one image per website — declaring ALT_MISSING or AI_ALT_OTHER_BUSINESS
+      // corrected would mark every alt item on every audit as unreliable to catch that one. Crying
+      // wolf across 800 websites is worse than the bug.
+      fixes: ['FAVICON_MISSING', 'HOMESCREEN_ICON_MISSING'],
+      fixedWhat: 'Two things were being reported that were never the client\u2019s to fix. A favicon is one setting for the whole website, but it was checked page by page and device by device \u2014 and because Duda serves the mobile version as separate HTML that usually leaves the link tag out, a website with a perfectly good favicon was told "no favicon" on Mobile across every page. Separately, our own agency badge in the footer was being audited like one of the client\u2019s images, so its alt text was read as a business name that doesn\u2019t match theirs.',
+      items: [
+        'The favicon and the home screen icon are settled once for the whole website: if any page on any device carries one, nothing is reported \u2014 and when there genuinely isn\u2019t one, it is a single item instead of one per page and device',
+        'The footer badge (id="footer-logo", and the same under agency-logo or credit-logo) is skipped by every alt text check and never sent to the AI \u2014 it is the agency\u2019s logo, not the client\u2019s image',
+        'Any website carrying the old favicon items says so on the audit, and a rescan clears them — the footer badge simply stops being reported on the next scan',
+      ],
+    },
+    {
+      v: 16,
+      date: '2026-10-01',
+      title: 'A renamed Google listing is a note, not work — and a repeated photo says where it is',
+      fixes: ['MAP_LABEL_OLD'],
+      fixedWhat: 'A map embed pinned by a Google place ID, in the client’s own town, under the listing’s old name, is not a problem at all: Google draws the pin and its CURRENT name from the place ID, and the name sitting in the link is never shown to anybody. It was still being raised as an amber warning, which reads as work, so the same item kept coming back after each rescan.',
+      items: [
+        'That case is now Info, and says outright that nothing on the page is wrong — regenerate the link if you want it tidy, or mark the old name correct for this website and it never returns',
+        'A map whose saved name belongs to a town that isn’t the client’s is still a warning to open and check, and one with no place ID behind it is still critical',
+        '"Same photo used in 3 places" now lists the three places on the audit row itself — the part of the page, the element and the pages — each with its own Show on page',
+        'The "A different photo in each place" line is gone, because it took the space where the places belonged',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -800,6 +842,7 @@
 
     doc.querySelectorAll('img').forEach((img) => {
       if (img.closest('noscript')) return;
+      if (isAgencyBadge(img)) return;                                                 // our own footer badge
       const w = img.getAttribute('width'); const h = img.getAttribute('height');
       if (w === '1' || w === '0' || h === '1' || h === '0') return;                    // tracking pixels
       const src = img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('data-dm-image-path') || fromSrcset(img.getAttribute('srcset'));
@@ -1062,7 +1105,9 @@
         code: 'IMAGE_DUPLICATE', severity: 'warning', category: 'Images / Alt',
         message: `Same photo used in ${places.length} places${reupload ? ' — and uploaded more than once' : ''}`,
         found: names.slice(0, 3).join(' · ') + (names.length > 3 ? ` · …and ${names.length - 3} more` : ''),
-        expected: 'A different photo in each place',
+        // No "Expected" here. "A different photo in each place" told nobody anything they didn't
+        // already know, and took the space where the places themselves belong — dupPlaces below is
+        // the answer to "where?", and the audit list now shows it on the row, not only in the item.
         path: one.path, device: one.device, selector: places[0].block, location: places[0].location,
         visible: !one.hiddenBy, hiddenBy: one.hiddenBy || '', snippet: where.join(' · ') + (places.length > 6 ? ` · …and ${places.length - 6} more` : ''),
         allowValue,
@@ -1136,6 +1181,24 @@
       if (st.includes('visibility:hidden')) return 'visibility:hidden';
     }
     return null;
+  }
+
+  /**
+   * The agency's own logo in the footer — the "website by us" badge every client site carries.
+   *
+   * It is our image, not the client's, and its alt text is ours to decide, so an audit of the
+   * CLIENT's website has no business reporting it. Duda's template gives it a fixed id, which is a
+   * far better signal than anything about the picture itself.
+   */
+  const AGENCY_BADGE_ID = /^(footer-logo|agency-logo|credit-logo|built-by-logo|designer-logo)$/i;
+  function isAgencyBadge(el) {
+    for (let x = el, n = 0; x && n < 3; x = x.parentElement, n++) {
+      const id = (x.getAttribute && x.getAttribute('id')) || '';
+      if (AGENCY_BADGE_ID.test(id)) return true;
+      const cls = (x.getAttribute && x.getAttribute('class')) || '';
+      if (/(^|\s)(footer-logo|agency-logo|credit-logo)(\s|$)/i.test(cls)) return true;
+    }
+    return false;
   }
 
   function locationOf(el) {
@@ -1422,8 +1485,14 @@
     const fonts = fontsUsed(doc, device);
 
     // --- Basics that are simply present or absent ---
-    if (!doc.querySelector('link[rel~="icon" i], link[rel="shortcut icon" i]')) add(titleEl, { code: 'FAVICON_MISSING', severity: 'warning', category: 'Meta / SEO', message: 'No favicon on this page — upload one in Duda SEO settings' });
-    if (ctx.path === '/' && !doc.querySelector('link[rel="apple-touch-icon" i]')) add(titleEl, { code: 'HOMESCREEN_ICON_MISSING', severity: 'info', category: 'Meta / SEO', message: 'No home screen icon (apple-touch-icon)' });
+    // A favicon is a setting for the whole WEBSITE, not a property of one page. Duda serves the
+    // mobile version as separate HTML that often leaves the link tag out, so judging page by page
+    // reported "no favicon" on Mobile for a website that plainly has one. These are raised here and
+    // then settled once, across every page and device, in runScan.
+    const hasFavicon = !!doc.querySelector('link[rel~="icon" i], link[rel="shortcut icon" i]');
+    const hasTouchIcon = !!doc.querySelector('link[rel="apple-touch-icon" i]');
+    if (!hasFavicon) add(titleEl, { code: 'FAVICON_MISSING', severity: 'warning', category: 'Meta / SEO', message: 'No favicon on this website — upload one in Duda SEO settings' });
+    if (ctx.path === '/' && !hasTouchIcon) add(titleEl, { code: 'HOMESCREEN_ICON_MISSING', severity: 'info', category: 'Meta / SEO', message: 'No home screen icon (apple-touch-icon) on this website' });
     doc.querySelectorAll('img[src^="http://"], script[src^="http://"], link[rel="stylesheet"][href^="http://"], iframe[src^="http://"]').forEach((el) => {
       add(el, { code: 'MIXED_CONTENT', severity: 'warning', category: 'Links', message: 'Loaded over http:// on an https:// site — browsers may block it or warn', found: cut(el.getAttribute('src') || el.getAttribute('href'), 120) });
     });
@@ -1603,7 +1672,7 @@
       if (net) { checkSocial(a, u.href, 'Link'); return; }
       if (u.protocol === 'http:') add(a, { code: 'LINK_HTTP', severity: 'info', category: 'Links', message: 'External link uses insecure http://', found: href });
       if (!external.has(u.href)) external.set(u.href, { el: a });
-      if (!text && !a.getAttribute('aria-label') && !a.querySelector('img[alt]:not([alt=""])')) add(a, { code: 'LINK_NO_TEXT', severity: 'info', category: 'Accessibility', message: 'Link has no readable text or aria-label', found: href });
+      if (!text && !a.getAttribute('aria-label') && !a.querySelector('img[alt]:not([alt=""])') && !isAgencyBadge(a)) add(a, { code: 'LINK_NO_TEXT', severity: 'info', category: 'Accessibility', message: 'Link has no readable text or aria-label', found: href });
     });
 
     function checkSocial(el, href, via) {
@@ -1649,6 +1718,7 @@
       const w = img.getAttribute('width'); if (w === '1' || w === '0') return;
       if (/\/blank(-\d+w)?\.(webp|png|gif|jpe?g)$/i.test(src.split('?')[0])) return; // Duda spacer image
       if (img.closest('noscript')) return;
+      if (isAgencyBadge(img)) return;   // our own badge in the footer, not the client's image
       let abs = src; try { abs = new URL(src, ctx.pageUrl).href; } catch (e) { /* ignore */ }
       if (!images.has(abs)) images.set(abs, { el: img });
       const alt = img.getAttribute('alt');
@@ -1719,16 +1789,22 @@
             const sameTown = towns.some((t) => compact(place).includes(compact(t)));
             const madeAt = /[!&]4v(\d{10,13})/.exec(src);
             const when = madeAt ? new Date(Number(madeAt[1])) : null;
-            const saved = when && !isNaN(when) ? ` The link was saved ${when.toLocaleString('en-GB', { month: 'short', year: 'numeric' })}.` : '';
+            const stamp = when && !isNaN(when) ? when.toLocaleString('en-GB', { month: 'short', year: 'numeric' }) : '';
+            const saved = stamp ? ` The link was saved ${stamp}.` : '';
+            const madeWhen = stamp ? ` (${stamp})` : '';
             if (!cid) {
               // Nothing but the name identifies this pin, so a name that isn't the client's really
               // does mean the map is showing somebody else.
               add(f, { code: 'MAP_OTHER_BUSINESS', severity: 'critical', category: 'Contact info', message: 'Google Map embed points to ANOTHER business', found: place, expected: truth.businessName, foreignName: place });
             } else if (sameTown) {
-              add(f, { code: 'MAP_LABEL_OLD', severity: 'warning', category: 'Contact info',
-                message: 'Google Map embed carries an old business name — the pin itself is probably right',
-                found: place, expected: truth.businessName,
-                snippet: `The map is pinned by a Google place ID, and the name saved in the link is from when it was made.${saved} The address in it is still ${towns[0]}, so this is most likely the same place renamed on Google. Open the map to confirm, then regenerate the embed so the link says the right name.` });
+              // Nothing a visitor sees is wrong here: Google renders the pin and its CURRENT name
+              // from the place id, and the text in the link is never shown to anybody. The pin is
+              // in the client's own town, so this is a renamed listing. It is a note about tidying
+              // the link, not work — which is what "info" means, and why it is not amber.
+              add(f, { code: 'MAP_LABEL_OLD', severity: 'info', category: 'Contact info',
+                message: 'Google Map embed link still has the listing’s old name in it — the map itself shows the right one',
+                found: place, expected: truth.businessName, allowValue: place,
+                snippet: `Nothing on the page is wrong: Google draws this map from a place ID and shows whatever that place is called today. The name in the link is only a label from the day the link was made${madeWhen}, it is never shown to visitors, and the pin is still in ${towns[0]}. Regenerate the embed if you want the link tidy — or mark this value correct for this website (Business Info → Add or exclude a value) and it will not come back.` });
             } else {
               // A place id decides the pin and the name is only a snapshot, so the link genuinely
               // cannot say whether this is the wrong business or the right one under an old name.
@@ -1753,7 +1829,7 @@
       alts: altList,
       textIndex: textIndex.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       fonts,
-      meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)) },
+      meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon },
       schema: schemas.map((s) => s.data),
     };
   }
@@ -2099,6 +2175,10 @@
     const pagesMeta = opts.pagesMeta || {};
     let truth = opts.truth;
     const raw = [];
+    // A favicon and a home screen icon are website-wide settings in Duda, not page settings —
+    // but Duda serves the mobile HTML separately and often leaves the <link> out of it. So we
+    // remember whether ANY page on ANY device carried one, and judge the website once (below).
+    const siteIcon = { favicon: false, touchIcon: false };
     const pageInfo = {};
     const external = new Map();
     const images = new Map();
@@ -2148,6 +2228,8 @@
           if (r.notFound) { info.notFound = true; break; }
           info.title = info.title || r.meta.title;
           info.description = info.description || r.meta.description;
+          if (r.meta.favicon) siteIcon.favicon = true;
+          if (r.meta.touchIcon) siteIcon.touchIcon = true;
           info.devices = (info.devices || []).concat(device);
           r.findings.forEach((f) => raw.push(f));
           r.internal.forEach((p) => { if (!queued.has(p)) enqueue(p, path); (pageInfo[p] || {}).linkedFrom = (pageInfo[p] || {}).linkedFrom || { path, device }; });
@@ -2278,6 +2360,15 @@
       return Array.from(map.values()).sort((a, b) => prio(a) - prio(b));
     }
 
+    // Judge the two website-wide icons once. If anything anywhere carried one, the setting is
+    // there and every row goes; if nothing did, one row for the whole website is enough.
+    const siteWide = [['FAVICON_MISSING', 'favicon'], ['HOMESCREEN_ICON_MISSING', 'touchIcon']];
+    siteWide.forEach(([code, flag]) => {
+      let keep = siteIcon[flag] ? -1 : raw.findIndex((f) => f.code === code && f.device === devices[0] && f.path === '/');
+      if (!siteIcon[flag] && keep < 0) keep = raw.findIndex((f) => f.code === code);
+      for (let i = raw.length - 1; i >= 0; i--) if (raw[i].code === code && i !== keep) raw.splice(i, 1);
+    });
+
     const merged = sortFindings(groupAcrossPages(mergeDevices(raw)));
     const counts = { critical: 0, outdated: 0, warning: 0, info: 0 };
     merged.forEach((f) => { counts[f.severity]++; });
@@ -2303,6 +2394,34 @@
    * - Confirms or softens the rule-based logo findings
    * - Adds new findings for alts the rules couldn't judge (another business, wrong city, placeholder text)
    */
+  /**
+   * A page whose own address names a place IS about that place.
+   *
+   * "/auto-detailing-located-in-aberdeen" is a location landing page somebody built on purpose, so
+   * the words "Aberdeen, Scotland" in its title, its headings and its alt text are the point of the
+   * page, not a mistake. The URL is the strongest statement of intent a page makes, and reading it
+   * is what stops a whole set of location pages coming back as critical.
+   *
+   * Only ever silences a LOCATION verdict. A page called /detailing-in-elgin that names a different
+   * town, and anything about another business, is still reported.
+   */
+  const PLACE_STOP = new Set(('in at on near located location locations serving service area areas around the and of for our us your ' +
+    'page home index best top new all more info about contact services').split(' '));
+  function placeWordsInPath(path) {
+    return String(path || '').toLowerCase().split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 4 && !GENERIC.has(w) && !PLACE_STOP.has(w));
+  }
+  function pathNamesPlace(paths, text, truth) {
+    const hay = compact(text);
+    if (!hay) return false;
+    // A word that is part of the business's own name proves nothing about place.
+    const own = compact([(truth && truth.businessName) || '', ...((truth && truth.names) || [])].join(' '));
+    return [].concat(paths || []).some((p) => placeWordsInPath(p).some((w) => {
+      const c = compact(w);
+      return c.length >= 4 && !own.includes(c) && hay.includes(c);
+    }));
+  }
+
   function applyAltVerdicts(findings, alts, verdicts, truth) {
     const byAlt = new Map();
     alts.forEach((a, i) => { if (verdicts[i]) byAlt.set(a.alt, { a, v: verdicts[i] }); });
@@ -2326,6 +2445,7 @@
     alts.forEach((a, i) => {
       const v = verdicts[i];
       if (!sure(v) || !RULES[v.verdict] || logoFlagged.has(a.alt)) return;
+      if (v.verdict === 'wrong_location' && pathNamesPlace(a.pages, a.alt, truth)) return;
       const [code, severity, category, message] = RULES[v.verdict];
       const pages = a.pages.slice().sort();
       const f = {
@@ -2351,6 +2471,10 @@
     issues.forEach((v) => {
       const blk = texts[v.i];
       if (!blk || !RULES[v.type] || Number(v.confidence) < 0.6) return;
+      // Matched against the flagged WORDS only — not the model's commentary, and not the whole page.
+      // A location page can still wrongly claim a different town somewhere in its copy, and that
+      // has to keep coming through.
+      if (v.type === 'wrong_location' && pathNamesPlace(blk.pages, v.quote || blk.text || '', truth)) return;
       const [code, severity, category, message] = RULES[v.type];
       // Already caught by a rule on the same element? Attach the AI opinion instead of duplicating
       const existing = findings.find((f) => f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)) && /OTHER_BUSINESS|COPYRIGHT_NAME/.test(f.code) && v.type === 'other_business');

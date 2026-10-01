@@ -321,7 +321,7 @@ Classify each alt text into exactly one verdict:
 - "this_business": names or clearly refers to THIS business, including abbreviations, LLC/Co. variations, "<name> logo".
 - "partner_logo": the logo or badge of a brand, manufacturer, product line, supplier, partner, dealer program, certification, warranty or association (e.g. "Fuel Off Road logo", "KMC wheels logo", "XPEL certified installer badge", "IDA member"). These are CORRECT: the alt should name that brand. Images marked "brand-logo" or shown in a row of several logos are almost always this.
 - "other_business": presents a DIFFERENT car-care shop as if it were THIS business: the site's own logo (marked "site-logo") naming another shop, or text like "at Smith's Detailing", "Joe's Auto Spa team". Never use this for brand, product, partner or certification logos.
-- "wrong_location": claims a city/state that conflicts with this business's location and service-area pages (only when clearly a location claim).
+- "wrong_location": claims a city/state that conflicts with this business's location and service-area pages (only when clearly a location claim). A page whose own URL names a town (e.g. /car-polishing-in-aberdeen) IS a page about that town, so naming it there is correct, never wrong_location.
 - "placeholder": template, stock or filler text ("stock photo", "placeholder", "image 12", "lorem ipsum", "your logo here").
 - "unclear": cannot tell.
 Be conservative: only use "other_business" or "wrong_location" when the text clearly names another shop or place. A brand logo is never "other_business".
@@ -330,7 +330,7 @@ Respond with JSON only: {"results":[{"i":<number>,"verdict":"<verdict>","confide
 const TEXT_SYSTEM = `You proofread WEBSITE TEXT for one business and report ONLY real problems about its business name and location. ${CONTEXT}
 Report these problem types:
 - "other_business": the text names a different business as if it were this one ("here at Smith's Detailing", "call Joe's Auto Spa today", "© 2023 Shine Pros LLC"). Usually leftover from a previous client.
-- "wrong_location": the text says this business is in, or serves, a city/state that conflicts with its location. Its own city, nearby towns in the same metro/state, and places that have their own service-area page on this site are fine. Be conservative; mentions of where a customer or car came from are fine.
+- "wrong_location": the text says this business is in, or serves, a city/state that conflicts with its location. Its own city, nearby towns in the same metro/state, and places that have their own service-area page on this site are fine. A page whose own URL names a town (e.g. /auto-detailing-located-in-aberdeen) IS a location page for that town, so its title, headings and copy are SUPPOSED to name it — never report that. Be conservative; mentions of where a customer or car came from are fine.
 - "name_variant": this business's own name written in a clearly different way (different or missing words, e.g. "Upscale Detailing Co" vs "Upscale Detail Co."). Ignore capitalization, punctuation, "&" vs "and", and adding/removing LLC/Inc/Co.
 Do not report spelling, grammar, style or anything else. Most blocks have no problem: return nothing for them.
 Respond with JSON only: {"results":[{"i":<block number>,"type":"<type>","quote":"<the exact words from the block, max 15 words>","confidence":<0..1>,"reason":"<max 20 words>","suggestion":"<corrected wording>"}]}. Use {"results":[]} if there are no problems.`;
@@ -343,9 +343,11 @@ Location: ${[b.street, b.city, b.region, b.zip].filter(Boolean).join(', ') || 'u
 Service-area / location pages on the site: ${(b.areaPages || []).slice(0, 40).join(', ') || 'none found'}
 ${b.foreignNames && b.foreignNames.length ? `Names already found on this site that belong to another business: ${b.foreignNames.slice(0, 10).join(', ')}\n` : ''}`;
 }
+// The page an alt text sits on matters as much as the words: on /detailing-in-aberdeen, "Aberdeen"
+// in the alt is the point of the page.
 const altPrompt = (b, items) => `${businessHeader(b)}
-ALT TEXTS (i | where | logo type | alt text | image file)
-${items.map((x) => `${x.i} | ${x.location || 'Body'} | ${x.isLogo ? 'site-logo' : x.brandLogo ? `brand-logo${x.logoRow >= 3 ? ` (in a row of ${x.logoRow} logos)` : ''}` : '-'} | ${String(x.alt).replace(/\s+/g, ' ').slice(0, 300)} | ${String(x.file || '').slice(0, 80)}`).join('\n')}`;
+ALT TEXTS (i | page | where | logo type | alt text | image file)
+${items.map((x) => `${x.i} | ${String((x.pages && x.pages[0]) || x.page || '/').slice(0, 80)} | ${x.location || 'Body'} | ${x.isLogo ? 'site-logo' : x.brandLogo ? `brand-logo${x.logoRow >= 3 ? ` (in a row of ${x.logoRow} logos)` : ''}` : '-'} | ${String(x.alt).replace(/\s+/g, ' ').slice(0, 300)} | ${String(x.file || '').slice(0, 80)}`).join('\n')}`;
 const textPrompt = (b, items) => `${businessHeader(b)}
 TEXT BLOCKS (each starts with [i] then where it appears)
 ${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n')}`;
