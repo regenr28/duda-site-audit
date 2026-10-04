@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -10,7 +10,8 @@ export default async function handler(req, res) {
   if (!me) return;
   try {
     if (req.method === 'GET') {
-      const all = await listUsers();
+      // Clients are not team members: they never appear in Members, in @mentions, or as an assignee.
+      const all = (await listUsers()).filter((u) => u.role !== 'client');
       const visible = me.role === 'admin' ? all : all.filter((u) => u.status === 'active' || u.status === 'disabled');
       // Members don't see who is an admin (avoids "why are they admin?" friction); admins see roles to manage them
       const shape = (u) => { const x = publicUser(u); if (me.role !== 'admin' && u.email !== me.email) delete x.role; else if (u.email === OWNER_EMAIL) { if (me.email === OWNER_EMAIL) x.superAdmin = true; else x.locked = true; } return x; };
@@ -61,6 +62,48 @@ export default async function handler(req, res) {
     // Admin actions always check the latest role (not the short session cache), so a just-demoted admin can't act
     const fresh = me.role === 'admin' ? await getUser(me.email) : null;
     if (!fresh || fresh.role !== 'admin' || fresh.status !== 'active') return res.status(403).json({ error: 'Admins only' });
+
+    // ---------- client accounts ----------
+    // A client is only ever created here, by an admin, with an explicit list of websites. Signing
+    // up can never produce one, and a client account can never be given a team role by this path.
+    if (b.op === 'clients') {
+      const all = await listUsers();
+      return res.status(200).json({ clients: all.filter((u) => u.role === 'client').map((u) => ({
+        email: u.email, name: u.name, company: u.company || '', sites: u.sites || [], dudaAccount: u.dudaAccount || '',
+        status: u.status, createdAt: u.createdAt, lastSeen: u.lastSeen || '' })).sort((a, c) => a.name.localeCompare(c.name)) });
+    }
+    if (b.op === 'clientSave') {
+      const email = normEmail(b.email);
+      if (!isEmail(email)) return res.status(400).json({ error: 'A valid email address is needed' });
+      const name = String(b.name || '').trim().slice(0, 60) || email.split('@')[0];
+      const sites = [...new Set([].concat(b.sites || []).map((x) => String(x).slice(0, 64)))].slice(0, 50);
+      let u = await getUser(email);
+      if (u && u.role !== 'client') return res.status(409).json({ error: `${u.name} is already on the team — a person can be one or the other, not both.` });
+      const isNew = !u;
+      u = u || { email, name, color: COLORS[Math.floor(Math.random() * COLORS.length)], createdAt: now() };
+      u.name = name; u.role = 'client'; u.status = 'active';
+      u.company = String(b.company || '').trim().slice(0, 80);
+      u.dudaAccount = String(b.dudaAccount || '').trim().slice(0, 120);
+      u.sites = sites;
+      await putUser(u);
+      await globalLog(me, 'client', `${isNew ? 'gave' : 'updated'} ${name} (${email}) access to ${sites.length} website${sites.length === 1 ? '' : 's'}`);
+      if (isNew) {
+        await sendEmail(email, 'Your website dashboard is ready', emailShell('Your website dashboard', `
+          <p>Hi ${esc(name)}, you can now see your website's enquiries, comments and performance in one place.</p>
+          <p>To set your password, open the link below and choose <b>Forgot password</b>.</p>
+          <p><a href="${appUrl(req)}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none">Open your dashboard</a></p>`)).catch(() => {});
+      }
+      return res.status(200).json({ ok: true, isNew });
+    }
+    if (b.op === 'clientRemove') {
+      const email = normEmail(b.email);
+      const u = await getUser(email);
+      if (!u || u.role !== 'client') return res.status(404).json({ error: 'No such client account' });
+      await forgetUser(email);
+      await globalLog(me, 'client', `removed the client account of ${u.name} (${email})`);
+      return res.status(200).json({ ok: true });
+    }
+
     const target = await getUser(b.email);
     if (!target) return res.status(404).json({ error: 'User not found' });
     const email = normEmail(b.email);

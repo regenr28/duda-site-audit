@@ -158,7 +158,9 @@ export const plainMentions = (text) => String(text == null ? '' : text)
   .replace(/@\[([^\]\n|]{1,60})(?:\|[^\]\n]{1,80})?\]/g, '@$1');
 
 export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white',
-  notifyOff: Array.isArray(u.notifyOff) ? u.notifyOff : [] });
+  notifyOff: Array.isArray(u.notifyOff) ? u.notifyOff : [],
+  // Client accounts: which websites they were granted, and the company they belong to.
+  sites: u.role === 'client' ? (u.sites || []).map(String) : undefined, clientId: u.clientId || undefined, company: u.company || undefined });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
@@ -210,7 +212,15 @@ export async function currentUser(req) {
 /** Drop cached sessions for someone whose role or account just changed (this server instance). */
 export function forgetUser(email) { for (const [k, v] of cache) if (v.user && v.user.email === email) cache.delete(k); }
 /** Require a signed-in, approved user. Sends 401/403 and returns null otherwise. */
-export async function requireUser(req, res, { admin = false } = {}) {
+/**
+ * Who is calling, and may they.
+ *
+ * Clients are rejected by DEFAULT. Every endpoint written before clients existed assumes everyone
+ * signed in is one of us, so the safe default is that a client account cannot reach any of them —
+ * an endpoint has to ask for `{ client: true }` on purpose. The client's own endpoints are the only
+ * ones that do, and each of them re-checks which websites that person was actually granted.
+ */
+export async function requireUser(req, res, { admin = false, client = false } = {}) {
   if (req.method !== 'GET' && req.headers.origin) {
     try { if (new URL(req.headers.origin).host !== (req.headers['x-forwarded-host'] || req.headers.host)) { res.status(403).json({ error: 'Bad origin' }); return null; } } catch (e) { /* ignore */ }
   }
@@ -220,8 +230,24 @@ export async function requireUser(req, res, { admin = false } = {}) {
   if (!u) { res.status(401).json({ error: 'Please sign in' }); return null; }
   if (u.status === 'disabled') { res.status(403).json({ error: 'This account has been switched off by an admin.', disabled: true }); return null; }
   if (u.status !== 'active') { res.status(403).json({ error: 'Your account is waiting for admin approval', pending: true }); return null; }
+  if (u.role === 'client' && !client) { res.status(403).json({ error: 'Not available on this account' }); return null; }
+  if (client && u.role !== 'client' && !viewingAsClient(req)) { res.status(403).json({ error: 'Client accounts only' }); return null; }
   if (admin && u.role !== 'admin') { res.status(403).json({ error: 'Admins only' }); return null; }
   return u;
+}
+/** An admin checking what a client sees sends this header; it grants no data by itself. */
+export const viewingAsClient = (req) => String(req.headers['x-view-as-client'] || '') === '1';
+/**
+ * The websites this caller may see through the client endpoints.
+ *
+ * A client's access is an explicit list on their own account — never inferred from a shared
+ * company, a domain or anything else. A team member previewing gets the one website they asked
+ * for, so "View as client" can never show more than a real client would.
+ */
+export function clientSites(user, req) {
+  if (user.role === 'client') return (user.sites || []).map(String);
+  if (viewingAsClient(req)) { const s = String(req.headers['x-view-site'] || '').slice(0, 64); return s ? [s] : []; }
+  return [];
 }
 
 // ---------- email (Resend) ----------

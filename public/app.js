@@ -26,6 +26,11 @@
     refTab: 'info',
     fixedChecks: {},
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
+    // The client side of the app. `viewAs` is set when one of us is previewing a website as its
+    // client — the server is told, and answers with exactly what a real client would get.
+    cl: { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {} },
+    leadSums: {}, clients: null,
+    viewAs: '',
   };
 
   // ---------- utils ----------
@@ -66,6 +71,12 @@
     return data;
   }
   const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
+  /** The client endpoints, called as a client — or, while previewing, as that one website's client. */
+  const clientHeaders = () => (state.viewAs ? { 'x-view-as-client': '1', 'x-view-site': state.viewAs } : {});
+  const capi = (path) => api(path, { headers: clientHeaders() });
+  const cpost = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body), headers: clientHeaders() });
+  /** True when the page should be the client's, either because they are one or we are previewing. */
+  const clientMode = () => !!(state.viewAs || (state.me && state.me.role === 'client'));
   const store = (body) => post('/api/store', body);
 
   // ---------- Modal / lightbox ----------
@@ -920,6 +931,324 @@
       const notifyOff = [...new Set(readNotifyGrid().concat((state.me.notifyOff || []).filter((k) => !shown.has(k))))];
       try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value, notifyOff }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); }
     };
+  }
+
+
+
+  // =====================================================================
+  // PROFILE — the website, as a whole, for us
+  // =====================================================================
+  const leadCount = (id) => ((state.leadSums && state.leadSums[id]) || {}).total || 0;
+  /** The small per-website lead counts, fetched once for the whole list. */
+  async function loadLeadSums(ids) {
+    if (!ids.length) return;
+    try { const r = await api('/api/leads?op=summary&ids=' + encodeURIComponent(ids.slice(0, 400).join(','))); state.leadSums = Object.assign(state.leadSums || {}, r.summaries || {}); }
+    catch (e) { /* the profile still works without the counts */ }
+  }
+
+  function renderProfileTab(body, s, { cnt, generalComments }) {
+    const sum = (state.leadSums && state.leadSums[s.id]) || {};
+    const t = s.truth || {};
+    const prevUrl = `https://${linkHost(s)}/site/${s.siteId}?preview=true&insitepreview=true&dm_device=desktop`;
+    const sc = s.scan || {};
+    const sev = (k, label) => `<button class="pf-count ${k}" data-gofilter="${k}">${cnt[k] || 0}<span>${label}</span></button>`;
+    body.innerHTML = `
+      <div class="pf">
+        <div class="pf-top">
+          <a class="pf-shot" href="${esc(prevUrl)}" target="_blank" rel="noopener" title="Open the desktop preview">
+            <iframe src="${esc(prevUrl)}" title="Preview of ${esc(s.businessName || s.siteId)}" loading="lazy" tabindex="-1"></iframe><span class="pf-shot-o">Open preview ↗</span></a>
+          <div class="pf-id">
+            <h2>${esc(s.businessName || s.siteId)}</h2>
+            <div class="pf-meta">
+              ${t.domain || s.host ? `<a href="https://${esc(t.domain || s.host)}" target="_blank" rel="noopener">${esc(t.domain || s.host)} ↗</a>` : '<span class="faint">No domain yet</span>'}
+              ${(t.addresses || [])[0] && t.addresses[0].city ? ` · ${esc(t.addresses[0].city)}` : ''}
+              ${sc.at ? ` · last scan ${esc(fmtWhen(Date.parse(sc.at)))}` : ' · never scanned'}
+            </div>
+            <div class="pf-owner">
+              <label>Client contact</label>
+              <div class="pf-owner-row" id="pfOwner">${clientsFor(s.id).length
+                ? clientsFor(s.id).map((c) => `<span class="pill">${esc(c.name)}<span class="faint small"> · ${esc(c.email)}</span></span>`).join('')
+                : '<span class="faint">Nobody yet</span>'}
+                ${state.me.role === 'admin' ? '<button class="linkbtn" id="pfClient">Manage client access</button>' : ''}</div>
+            </div>
+            <div class="pf-acts">
+              <button class="btn" id="pfView">👁 View as client</button>
+              <a class="btn ghost" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="pf-cards">
+          <div class="pf-card">
+            <div class="pf-card-h">Audit <a href="#/site/${esc(s.id)}">open ↗</a></div>
+            <div class="pf-counts">${sev('critical', 'critical')}${sev('outdated', 'outdated')}${sev('warning', 'warning')}${sev('info', 'info')}</div>
+            <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}</div>
+          </div>
+          <div class="pf-card">
+            <div class="pf-card-h">Form submissions <a href="#/site/${esc(s.id)}/leads">open ↗</a></div>
+            <div class="pf-big">${sum.total || 0}</div>
+            <div class="small faint">${sum.last ? `last one ${esc(fmtWhen(Date.parse(sum.last)))}` : 'none recorded yet'}</div>
+          </div>
+          <div class="pf-card">
+            <div class="pf-card-h">Comments <a href="#/site/${esc(s.id)}/comments">open ↗</a></div>
+            <div class="pf-big">${generalComments || 0}</div>
+            <div class="small faint">on this website</div>
+          </div>
+        </div>
+      </div>`;
+    $('#pfView').onclick = () => { state.viewAs = s.id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(s.id)}/dashboard`; };
+    // Who can see this website is only known once; after that the panel redraws from what we hold.
+    if (state.me.role === 'admin' && state.clients === null) {
+      state.clients = [];
+      post('/api/users', { op: 'clients' }).then((r) => { state.clients = r.clients || []; if (route().tab === 'profile') renderProfileTab(body, s, { cnt, generalComments }); }).catch(() => {});
+    }
+    if (!state.leadSums[s.id]) loadLeadSums([s.id]).then(() => { if (route().tab === 'profile') renderProfileTab(body, s, { cnt, generalComments }); });
+    if ($('#pfClient')) $('#pfClient').onclick = () => openClients(s);
+    $$('[data-gofilter]', body).forEach((b) => (b.onclick = () => { state.ff.sev = b.dataset.gofilter; location.hash = '#/site/' + encodeURIComponent(s.id); }));
+  }
+  const clientsFor = (siteId) => (state.clients || []).filter((c) => (c.sites || []).includes(siteId));
+
+  /** Who outside the team can see this website. Admin only. */
+  async function openClients(s) {
+    modal(`<header><h2>Client access — ${esc(s.businessName || s.siteId)}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body" id="clBody"><div class="empty">Loading…</div></div>`);
+    const draw = async () => {
+      try { const r = await post('/api/users', { op: 'clients' }); state.clients = r.clients || []; } catch (e) { toast(e.message); }
+      const here = clientsFor(s.id); const others = (state.clients || []).filter((c) => !(c.sites || []).includes(s.id));
+      $('#clBody').innerHTML = `
+        <p class="small muted">A client sees only the websites listed on their account: their enquiries, their comments, and a link into their own website. They never see audit items, false alarm reports or anything the team writes to itself.</p>
+        <div class="k">Can see this website</div>
+        ${here.length ? here.map((c) => `<div class="member-row"><div><b>${esc(c.name)}</b><div class="small muted">${esc(c.email)}${c.company ? ' · ' + esc(c.company) : ''} · ${c.sites.length} website${c.sites.length === 1 ? '' : 's'}</div></div>
+          <button class="btn sm ghost" data-cloff="${esc(c.email)}">Remove</button></div>`).join('') : '<div class="empty small">Nobody outside the team can see this website.</div>'}
+        <div class="k" style="margin-top:14px">Add somebody</div>
+        ${others.length ? `<div class="member-row"><select id="clPick">${others.map((c) => `<option value="${esc(c.email)}">${esc(c.name)} · ${esc(c.email)}</option>`).join('')}</select>
+          <button class="btn sm" id="clAddExisting">Give access</button></div>` : ''}
+        <div class="cl-new"><input id="clName" placeholder="Name" maxlength="60"><input id="clEmail" placeholder="email@theircompany.com" maxlength="160">
+          <input id="clCo" placeholder="Company (optional)" maxlength="80"><button class="btn primary" id="clAdd">Create and give access</button></div>
+        <div class="small faint" style="margin-top:6px">They get an email saying their dashboard is ready, and set their own password with <b>Forgot password</b>.</div>`;
+      $$('[data-cloff]').forEach((b) => (b.onclick = async () => {
+        const c = state.clients.find((x) => x.email === b.dataset.cloff); if (!c) return;
+        try { await post('/api/users', { op: 'clientSave', email: c.email, name: c.name, company: c.company, sites: c.sites.filter((x) => x !== s.id) }); toast('Access removed'); draw(); } catch (e) { toast(e.message); }
+      }));
+      if ($('#clAddExisting')) $('#clAddExisting').onclick = async () => {
+        const c = state.clients.find((x) => x.email === $('#clPick').value); if (!c) return;
+        try { await post('/api/users', { op: 'clientSave', email: c.email, name: c.name, company: c.company, sites: c.sites.concat([s.id]) }); toast('Access given'); draw(); } catch (e) { toast(e.message); }
+      };
+      $('#clAdd').onclick = async () => {
+        const email = $('#clEmail').value.trim(); if (!email) return toast('An email address is needed');
+        try { await post('/api/users', { op: 'clientSave', email, name: $('#clName').value.trim(), company: $('#clCo').value.trim(), sites: [s.id] }); toast('Client added'); draw(); renderSite(); } catch (e) { toast(e.message); }
+      };
+    };
+    draw();
+  }
+
+  // --- the team's own view of a website's form submissions ---
+  async function renderLeadsTab(body, s) {
+    body.innerHTML = '<div class="empty">Loading…</div>';
+    let d; try { d = await api(`/api/leads?op=list&id=${encodeURIComponent(s.id)}&months=12`); } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    state.leadSums = Object.assign(state.leadSums || {}, { [s.id]: d.summary || {} });
+    const g = d.groups || {};
+    body.innerHTML = `
+      <div class="note">${d.total
+        ? `<b>${d.total}</b> form submissions stored for this website over the last 12 months. ${d.summary && d.summary.d30 ? `<b>${d.summary.d30}</b> in the last 30 days.` : ''}`
+        : 'No form submissions stored yet. New ones arrive on their own once Duda is connected; use <b>Import history</b> to bring in what Duda already has.'}
+        ${state.me.role === 'admin' ? '<button class="btn sm" id="lbFill" style="margin-left:8px">Import history from Duda</button>' : ''}
+        <span id="lbNote" class="small faint"></span></div>
+      ${d.total ? `<div class="cl-two" style="margin-top:12px">
+        <div class="cl-card"><div class="cl-card-h">Each month</div>${barChart(d.series || [])}</div>
+        <div class="cl-card"><div class="cl-card-h">By page</div>${hBars(g.pages || [])}</div></div>
+      <div class="cl-card" style="margin-top:12px"><div class="cl-card-h">Recent</div>
+        <div class="cl-leadlist">${(d.leads || []).slice(0, 100).map((l) => `<div class="cl-lead">
+          <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${esc(l.pg || '/')}</div></div>
+          <div class="cl-l-who"><b>${esc(l.n || 'No name given')}</b><div class="small faint">${l.e ? esc(l.e) : ''}</div></div>
+          <div class="cl-l-what">${Object.entries(l.f || {}).slice(0, 3).map(([k, v]) => `<div><span class="faint">${esc(k)}:</span> ${esc(String(v).slice(0, 120))}</div>`).join('')}</div>
+          <div class="cl-l-src">${l.src ? `<span class="pill sm">${esc(l.src)}</span>` : ''}</div></div>`).join('')}</div></div>` : ''}`;
+    if ($('#lbFill')) $('#lbFill').onclick = async () => {
+      const note = $('#lbNote'); note.textContent = ' importing…'; $('#lbFill').disabled = true;
+      try { const r = await post('/api/leads', { op: 'backfill', id: s.id, months: 12 }); note.textContent = ` imported ${r.added}`; renderLeadsTab(body, s); }
+      catch (e) { note.textContent = ' ' + e.message; $('#lbFill').disabled = false; }
+    };
+  }
+
+  // =====================================================================
+  // THE CLIENT VIEW
+  //
+  // A different app, not the team's with pieces hidden. It reads only /api/client, which assembles
+  // its own answers — so there is no path by which an audit item, a false alarm report, a team note
+  // or another company's website can reach this screen, even if a template here were wrong.
+  // =====================================================================
+  const CL_SECTIONS = [
+    { k: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { k: 'leads', label: 'Form Submissions', icon: '✉️' },
+    { k: 'comments', label: 'Comments', icon: '💬' },
+    { k: 'access', label: 'Access website', icon: '↗' },
+  ];
+  const clRoute = () => {
+    const parts = location.hash.replace(/^#/, '').split('/').filter(Boolean);
+    if (parts[0] !== 'my') return { site: '', section: 'dashboard' };
+    return { site: parts[1] ? decodeURIComponent(parts[1]) : '', section: CL_SECTIONS.some((s) => s.k === parts[2]) ? parts[2] : 'dashboard' };
+  };
+  const clGo = (site, section) => { location.hash = `#/my/${encodeURIComponent(site)}/${section || 'dashboard'}`; };
+
+  async function clLoadSites() {
+    if (state.cl.sites || state.cl.loading) return;
+    state.cl.loading = true;
+    try { const r = await capi('/api/client?op=me'); state.cl.sites = r.sites || []; state.cl.who = r.me || {}; state.cl.error = ''; }
+    catch (e) { state.cl.error = e.message; state.cl.sites = []; }
+    state.cl.loading = false;
+  }
+
+  /** The whole page: our own chrome, so nothing of the team's can be on screen by accident. */
+  async function renderClient() {
+    document.body.classList.add('client-mode');
+    await clLoadSites();
+    const sites = state.cl.sites || [];
+    const r = clRoute();
+    const current = sites.find((s) => s.id === r.site) || sites[0];
+    if (!current) {
+      $('#view').innerHTML = `<div class="cl-shell"><div class="cl-main"><div class="empty">
+        ${state.cl.error ? esc(state.cl.error) : 'No websites have been shared with you yet. Your account manager can add them.'}</div></div></div>`;
+      return;
+    }
+    if (!r.site || r.site !== current.id) { clGo(current.id, r.section); return; }
+
+    $('#view').innerHTML = `${state.viewAs ? `<div class="cl-preview">👁 <b>Viewing as the client</b> — this is exactly what they see on <b>${esc(current.name)}</b>.
+        <button class="btn sm" id="clExit">Back to the team view</button></div>` : ''}
+      <div class="cl-shell">
+        <aside class="cl-side">
+          <div class="cl-brand">${esc((state.cl.who && state.cl.who.company) || (state.cl.who && state.cl.who.name) || 'Your websites')}</div>
+          <div class="cl-side-k">Websites</div>
+          ${sites.map((s) => `<div class="cl-site${s.id === current.id ? ' on' : ''}">
+            <button class="cl-sitebtn" data-clsite="${esc(s.id)}">${esc(s.name)}<div class="cl-dom">${esc(s.domain || '')}</div></button>
+            ${s.id === current.id ? `<nav class="cl-nav">${CL_SECTIONS.map((x) => `<a href="#/my/${encodeURIComponent(s.id)}/${x.k}" class="${r.section === x.k ? 'on' : ''}"><span class="cl-ic">${x.icon}</span>${esc(x.label)}</a>`).join('')}</nav>` : ''}
+          </div>`).join('')}
+        </aside>
+        <main class="cl-main" id="clMain"><div class="empty">Loading…</div></main>
+      </div>`;
+    $$('[data-clsite]').forEach((b) => (b.onclick = () => clGo(b.dataset.clsite, 'dashboard')));
+    if ($('#clExit')) $('#clExit').onclick = () => { state.viewAs = ''; state.cl = { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {} }; document.body.classList.remove('client-mode'); location.hash = '#/site/' + encodeURIComponent(current.id); };
+    clSection(current, r.section);
+  }
+
+  async function clSection(site, section) {
+    const el = $('#clMain'); if (!el) return;
+    if (section === 'access') return clAccess(el, site);
+    if (section === 'comments') return clComments(el, site);
+    if (section === 'leads' || section === 'dashboard') return clLeads(el, site, section);
+  }
+
+  function clHead(site, title, sub) {
+    return `<div class="cl-head"><div><h1>${esc(title)}</h1><div class="cl-sub">${esc(sub || '')}</div></div>
+      <a class="btn ghost" href="https://${esc(site.domain)}" target="_blank" rel="noopener">Open ${esc(site.domain || 'website')} ↗</a></div>`;
+  }
+
+  async function clAccess(el, site) {
+    el.innerHTML = `${clHead(site, 'Access your website', 'Open the editor without a separate login.')}
+      <div class="cl-card"><p>This opens <b>${esc(site.name)}</b> in the website editor, signed in as you. The link is made fresh each time you click and is only valid for a couple of minutes, so there is nothing to keep or share.</p>
+      <button class="btn primary" id="clOpen">Open my website editor ↗</button>
+      <div class="small muted" id="clOpenNote" style="margin-top:10px"></div></div>`;
+    $('#clOpen').onclick = async () => {
+      const note = $('#clOpenNote'); note.textContent = 'Preparing your link…';
+      try { const r = await cpost('/api/client', { op: 'access', id: site.id }); note.textContent = ''; window.open(r.url, '_blank', 'noopener'); }
+      catch (e) { note.textContent = e.message; }
+    };
+  }
+
+  async function clComments(el, site) {
+    el.innerHTML = `${clHead(site, 'Comments', 'Messages between you and the team about this website.')}<div class="empty">Loading…</div>`;
+    let d; try { d = await capi('/api/client?op=comments&id=' + encodeURIComponent(site.id)); } catch (e) { el.innerHTML = clHead(site, 'Comments', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
+    const list = d.comments || [];
+    el.innerHTML = `${clHead(site, 'Comments', `${list.length} message${list.length === 1 ? '' : 's'} on this website.`)}
+      ${list.length ? `<div class="cl-card cl-cmts">${list.map((c) => `<div class="cl-cmt${c.mine ? ' mine' : ''}">
+        <div class="cl-cmt-h"><b>${esc(c.by)}</b><span class="faint small">${esc(isoLabel(c.at))}</span></div>
+        <div class="cl-cmt-b">${esc(c.text).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>`
+      : '<div class="cl-card"><div class="empty">No comments yet. Anything your team posts about this website will appear here.</div></div>'}`;
+  }
+
+  const isoLabel = (v) => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  const dayLabel = (v) => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); };
+
+  async function clLeads(el, site, section) {
+    el.innerHTML = clHead(site, section === 'dashboard' ? 'Dashboard' : 'Form Submissions', '') + '<div class="empty">Loading…</div>';
+    const pick = state.cl.pick[site.id] || {};
+    const q = ['op=leads', 'id=' + encodeURIComponent(site.id), 'months=' + state.cl.months];
+    ['page', 'form', 'source'].forEach((k) => { if (pick[k]) q.push(k + '=' + encodeURIComponent(pick[k])); });
+    let d; try { d = await capi('/api/client?' + q.join('&')); } catch (e) { el.innerHTML = clHead(site, 'Form Submissions', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
+    state.cl.leads = d;
+    const rows = d.leads || [];
+    const sum = (n) => rows.length && n;
+    const last30 = (d.series || []).slice(-1)[0] || { n: 0 };
+    const prev30 = (d.series || []).slice(-2)[0] || { n: 0 };
+    const delta = prev30.n ? Math.round(((last30.n - prev30.n) / prev30.n) * 100) : 0;
+
+    const tiles = `<div class="cl-tiles">
+      <div class="cl-tile"><div class="cl-t-k">Enquiries this month</div><div class="cl-t-v">${last30.n}</div>
+        ${!prev30.n ? '<div class="cl-t-d faint">first month</div>'
+          : delta === 0 ? '<div class="cl-t-d faint">same as last month</div>'
+          : `<div class="cl-t-d ${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)}% vs last month</div>`}</div>
+      <div class="cl-tile"><div class="cl-t-k">All enquiries</div><div class="cl-t-v">${d.total}</div><div class="cl-t-d faint">in the last ${state.cl.months} months</div></div>
+      <div class="cl-tile"><div class="cl-t-k">Busiest page</div><div class="cl-t-v sm">${esc(((d.groups || {}).pages || [])[0] ? d.groups.pages[0].k : '—')}</div><div class="cl-t-d faint">${((d.groups || {}).pages || [])[0] ? d.groups.pages[0].n + ' enquiries' : ''}</div></div>
+      <div class="cl-tile"><div class="cl-t-k">Top source</div><div class="cl-t-v sm">${esc(((d.groups || {}).sources || [])[0] ? d.groups.sources[0].k : '—')}</div><div class="cl-t-d faint">${((d.groups || {}).sources || [])[0] ? d.groups.sources[0].n + ' enquiries' : ''}</div></div>
+    </div>`;
+
+    if (section === 'dashboard') {
+      el.innerHTML = clHead(site, 'Dashboard', `Where your enquiries come from, over the last ${state.cl.months} months.`) + tiles
+        + `<div class="cl-card"><div class="cl-card-h">Enquiries each month</div>${barChart(d.series || [])}</div>
+           <div class="cl-two">
+             <div class="cl-card"><div class="cl-card-h">By page</div>${hBars((d.groups || {}).pages || [])}</div>
+             <div class="cl-card"><div class="cl-card-h">By source</div>${hBars((d.groups || {}).sources || [])}</div>
+           </div>
+           <div class="cl-card"><div class="cl-card-h">When people get in touch</div>${dowChart((d.when || {}).dow || [])}</div>`;
+      return;
+    }
+
+    const groups = d.groups || {};
+    const chip = (k, g) => (g || []).slice(0, 8).map((x) => `<button class="pill${pick[k] === x.k ? ' on' : ''}" data-clf="${esc(k)}" data-clv="${esc(x.k)}">${esc(x.k)} <b>${x.n}</b></button>`).join('');
+    el.innerHTML = clHead(site, 'Form Submissions', `${d.matched} of ${d.total} enquiries.`) + tiles
+      + `<div class="cl-card">
+          <div class="cl-filters"><div class="cl-f-row"><span class="cl-f-k">Page</span>${chip('page', groups.pages)}</div>
+            ${(groups.forms || []).filter((f) => f.k !== '—').length ? `<div class="cl-f-row"><span class="cl-f-k">Form</span>${chip('form', groups.forms)}</div>` : ''}
+            ${(groups.sources || []).filter((f) => f.k !== '—').length ? `<div class="cl-f-row"><span class="cl-f-k">Source</span>${chip('source', groups.sources)}</div>` : ''}
+            ${Object.keys(pick).length ? '<button class="linkbtn" id="clClear">Clear filters</button>' : ''}</div>
+        </div>
+        ${rows.length ? `<div class="cl-card cl-leadlist">${rows.map((l) => `<div class="cl-lead">
+            <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${esc(l.pg || '/')}</div></div>
+            <div class="cl-l-who"><b>${esc(l.n || 'No name given')}</b>
+              <div class="small">${l.e ? `<a href="mailto:${esc(l.e)}">${esc(l.e)}</a>` : ''}${l.e && l.p ? ' · ' : ''}${l.p ? `<a href="tel:${esc(l.p.replace(/[^\d+]/g, ''))}">${esc(l.p)}</a>` : ''}</div></div>
+            <div class="cl-l-what">${Object.entries(l.f || {}).map(([k, v]) => `<div><span class="faint">${esc(k)}:</span> ${esc(v)}</div>`).join('') || '<span class="faint">—</span>'}</div>
+            <div class="cl-l-src">${l.src ? `<span class="pill sm">${esc(l.src)}</span>` : ''}</div>
+          </div>`).join('')}</div>`
+        : `<div class="cl-card"><div class="empty">${d.total ? 'Nothing matches those filters.' : 'No enquiries recorded yet for this website.'}</div></div>`}`;
+    $$('[data-clf]').forEach((b) => (b.onclick = () => {
+      const k = b.dataset.clf; const v = b.dataset.clv;
+      const p2 = Object.assign({}, state.cl.pick[site.id] || {});
+      if (p2[k] === v) delete p2[k]; else p2[k] = v;
+      state.cl.pick[site.id] = p2; clLeads(el, site, section);
+    }));
+    if ($('#clClear')) $('#clClear').onclick = () => { state.cl.pick[site.id] = {}; clLeads(el, site, section); };
+  }
+
+  // --- small charts, drawn with plain elements so nothing has to be loaded ---
+  function barChart(series) {
+    const max = Math.max(1, ...series.map((x) => x.n));
+    return `<div class="ch-bars">${series.map((x) => `<div class="ch-b" title="${esc(x.m)}: ${x.n}">
+      <div class="ch-b-v" style="height:${Math.round((x.n / max) * 100)}%"><span>${x.n || ''}</span></div>
+      <div class="ch-b-l">${esc(x.m.slice(5))}</div></div>`).join('')}</div>`;
+  }
+  function hBars(rows) {
+    const max = Math.max(1, ...rows.map((x) => x.n));
+    if (!rows.length) return '<div class="empty small">Nothing yet.</div>';
+    return `<div class="ch-h">${rows.slice(0, 8).map((x) => `<div class="ch-h-r">
+      <div class="ch-h-k" title="${esc(x.k)}">${esc(x.k)}</div>
+      <div class="ch-h-t"><div class="ch-h-f" style="width:${Math.round((x.n / max) * 100)}%"></div></div>
+      <div class="ch-h-n">${x.n}</div></div>`).join('')}</div>`;
+  }
+  function dowChart(dow) {
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const max = Math.max(1, ...dow);
+    return `<div class="ch-bars dow">${names.map((n, i) => `<div class="ch-b" title="${n}: ${dow[i] || 0}">
+      <div class="ch-b-v" style="height:${Math.round(((dow[i] || 0) / max) * 100)}%"><span>${dow[i] || ''}</span></div>
+      <div class="ch-b-l">${n}</div></div>`).join('')}</div>`;
   }
 
   // =====================================================================
@@ -1882,7 +2211,7 @@
   function route() {
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
-    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
+    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'activity') return { name: 'activity' };
@@ -1899,6 +2228,9 @@
   let lastView = '';
   async function render() {
     if (!state.me) return renderAuth();
+    // A client account, or one of us previewing one, gets a different app entirely.
+    if (clientMode()) return renderClient();
+    document.body.classList.remove('client-mode');
     const r = route();
     markNav();
     if (r.name === 'site') {
@@ -2458,7 +2790,9 @@
         </div>
       </div>
       <div class="tabs">
+        <a href="#/site/${esc(s.id)}/profile" class="${r.tab === 'profile' ? 'on' : ''}">Profile</a>
         <a href="#/site/${esc(s.id)}" class="${r.tab === 'findings' ? 'on' : ''}">Audit items <span class="tcount">${findings.length}</span></a>
+        <a href="#/site/${esc(s.id)}/leads" class="${r.tab === 'leads' ? 'on' : ''}">Form submissions${leadCount(s.id) ? ` <span class="tcount">${leadCount(s.id)}</span>` : ''}</a>
         <a href="#/site/${esc(s.id)}/comments" class="${r.tab === 'comments' ? 'on' : ''}">Comments <span class="tcount">${generalComments}</span></a>
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
       </div>
@@ -2472,6 +2806,8 @@
     state.renderedTab = r.tab;
     if (r.tab === 'comments') renderCommentsTab(body, s);
     else if (r.tab === 'activity') renderActivityTab(body, s);
+    else if (r.tab === 'profile') renderProfileTab(body, s, { cnt, generalComments });
+    else if (r.tab === 'leads') renderLeadsTab(body, s);
     else renderFindingsTab(body, s, { cnt, sc, live });
     window.scrollTo(0, scrollY);
     if (r.item) openDrawer(r.item); else closeDrawer(true);
@@ -4353,6 +4689,9 @@
   async function boot2() {
     document.body.classList.remove('auth-mode');
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
+    // A client account never loads any of the team's data — not the website list, not the members,
+    // not the AI status. Those endpoints would refuse it anyway; not calling them is the point.
+    if (state.me.role === 'client') { if (!location.hash.startsWith('#/my/')) location.hash = '#/my/'; return render(); }
     await Promise.all([loadUsers(), loadSites(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
     if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; } catch (e) { /* ignore */ } }
     renderTop();
@@ -4366,6 +4705,7 @@
     setTimeout(offerDesktop, 4000);
   }
   window.addEventListener('hashchange', () => {
+    if (state.me && clientMode()) return render();
     if (state.me && Date.now() - lastPulse > 5000) setTimeout(pulse, 1500);
     setTimeout(roomTick, 600);
     const r = route();

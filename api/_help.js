@@ -218,6 +218,34 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'profiles', group: 'Collaboration', title: 'Profiles, form submissions and client access', audience: 'all',
+    html: `<p>Every website in Audits has a <b>Profile</b> tab. It is the website as a whole rather than only its audit: a live preview, the domain, who outside the team can see it, and the three numbers that matter \u2014 open audit items, form submissions, comments \u2014 each one a link into the tab that explains it.</p>
+<p>Nothing was created to make this work. The Profile is the same website record the audit has always used, with more on it, so every website you have ever audited already has one.</p>
+<h3>Form submissions</h3>
+<ul>
+<li>New submissions arrive on their own once Duda's connection is switched on \u2014 the same connection that brings client comments in.</li>
+<li><b>Import history from Duda</b> (admins) brings in what Duda already holds for that website, a month at a time, up to a year. Running it twice is safe: anything already stored is skipped.</li>
+<li>They are grouped three ways, because they answer different questions: <b>by page</b> (which pages produce work), <b>by form</b> (one page can host more than one), and <b>by source</b> (which marketing actually produces enquiries, from the UTM tags on the link the visitor arrived by).</li>
+<li>Duda keeps its own copy of every submission, so nothing here is the only copy \u2014 an import can always be run again.</li>
+</ul>
+<h3>Client access</h3>
+<p>A client can be given their own sign-in that shows them their website and nothing else. On the Profile, use <b>Manage client access</b> (admins only): add a person by name and email, and they get an email saying their dashboard is ready. They set their own password with <b>Forgot password</b> \u2014 we never set one for them.</p>
+<p>A client account is <b>not</b> a team member. They never appear in Members, in @mentions or as an assignee, and the team's pages refuse their account outright rather than hiding things from it.</p>
+<p><b>One person, several websites:</b> a client's account lists the websites they may see. Give one person two websites and both appear in their sidebar, each with its own enquiries, comments and dashboard. Nothing else needs setting up.</p>
+<h3>What a client sees</h3>
+<p>Their own left-hand menu, one entry per website they were given:</p>
+<ul>
+<li><b>Dashboard</b> \u2014 enquiries this month against last, all enquiries, busiest page, top source, a bar per month, and breakdowns by page, by source and by day of the week.</li>
+<li><b>Form Submissions</b> \u2014 every enquiry, filterable by page, form and source, with the contact details clickable.</li>
+<li><b>Comments</b> \u2014 the conversation about their website.</li>
+<li><b>Access website</b> \u2014 opens their website's editor, signed in as them, without a Duda password. The link is made at the moment they click it and lasts about two minutes, so there is nothing to keep or share.</li>
+</ul>
+<p>They never see audit items, severities, false alarm reports, who marked what, anything the team writes to itself, or any other company's website.</p>
+<h3>Checking it yourself \u2014 View as client</h3>
+<p>On a Profile, <b>\ud83d\udc41 View as client</b> opens the real client view for that website, with a dark band across the top so nobody mistakes it for the team's pages. It is not a mock-up: it asks the server for exactly what a client would be given, so if something internal ever did leak, this is where you would see it. <b>Back to the team view</b> returns.</p>
+<p>It is worth a glance after any change that touches a website's page \u2014 it takes five seconds and it is the only way to be sure.</p>`,
+  },
+  {
     id: 'notifications', group: 'Collaboration', title: 'Notifications and "someone is on this website"', audience: 'all',
     html: `<ul>
 <li>You are told when <b>your own</b> scan finishes too, so you can start one and go and do something else — except on a <b>Rescan all shown</b>, which would ring dozens of times.</li>

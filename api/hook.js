@@ -22,6 +22,7 @@
 // somebody actually looks at the Comments page.
 import crypto from 'node:crypto';
 import { redis, P, now, newId, jparse, ablyPublish, commentsChannel, unescapeHtml } from './_lib.js';
+import { normalise, liveLeadCommands } from './_leads.js';
 
 const MAX_COMMENTS = 60;      // per conversation, oldest dropped
 
@@ -180,6 +181,19 @@ export default async function handler(req, res) {
       // Proof that a form really submitted — one of the QA checklist items.
       const f = d.form_data || d || {};
       cmds.push(['HSET', P + 'formhit:' + siteId, str(f.form_name || f.formName || 'form'), JSON.stringify({ at, page: str(f.page || f.url || '') })]);
+      // …and the submission itself. Duda keeps the original, so anything we fail to read here is
+      // recoverable by a backfill — which is why this never throws the delivery away.
+      try {
+        const fd = f.fieldsData || f.fields_data || f.fields || d.fieldsData || [];
+        const lead = normalise({
+          id: str(f.id || f.uuid || d.id || ''), at,
+          fields: [].concat(fd).map((x) => ({ label: x.field_label || x.label || x.name, value: x.field_value == null ? x.value : x.field_value })),
+          page: str(f.pageName || f.page_name || f.page || d.pageName || ''),
+          form: str(f.form_name || f.formName || ''),
+          source: [str(f.utm_source || d.utm_source || ''), str(f.utm_medium || d.utm_medium || '')].filter(Boolean).join('/'),
+        }, 'hook');
+        if (lead.n || lead.e || lead.p || Object.keys(lead.f).length) cmds.push(...liveLeadCommands(siteId, lead));
+      } catch (e) { /* a malformed payload must never cost us the rest of the delivery */ }
     }
     cmds.push(['LPUSH', P + 'sitefeed:' + siteId, JSON.stringify({ type, at, by })], ['LTRIM', P + 'sitefeed:' + siteId, 0, 99]);
   }
