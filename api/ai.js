@@ -462,11 +462,11 @@ export default async function handler(req, res) {
   const adminish = await can(me, 'app.adminnotes');
   // "What's New" notes, filtered by what this person may see
   if (req.method === 'GET' && req.query.op === 'news') {
-    return res.status(200).json({ items: newsFor(me.role, adminish), latest: latestNewsId(me.role, adminish), seen: me.newsSeen || '' });
+    return res.status(200).json({ items: newsFor(me.role, adminish, owner), latest: latestNewsId(me.role, adminish, owner), seen: me.newsSeen || '' });
   }
   // Help guide (the same text the Help assistant knows), filtered by role
   if (req.method === 'GET' && req.query.op === 'help') {
-    return res.status(200).json({ sections: helpFor(me.role, adminish).map(({ id, group, title, html }) => ({ id, group, title, html })), assistant: list.length > 0 });
+    return res.status(200).json({ sections: helpFor(me.role, adminish, owner).map(({ id, group, title, html }) => ({ id, group, title, html })), assistant: list.length > 0 });
   }
   if (req.method === 'POST' && readBody(req).op === 'help') return helpAnswer(req, res, me, list);
   if (req.method === 'GET') {
@@ -553,4 +553,15 @@ export default async function handler(req, res) {
     return res.status(e.status === 429 ? 429 : 500).json({ error: owner ? String(e.message || e) : 'The AI check failed. Please try again later.' });
   }
 }
+/**
+ * Ask whichever model is available, with the same failover and free-limit handling everything else
+ * here uses. Exposed so other parts of the app can ask a question without knowing any of that.
+ */
+export async function askAI(system, user) {
+  const list = providers();
+  if (!list.length) { const e = new Error('No AI is set up for this app yet.'); e.status = 503; throw e; }
+  const r = await callChain(list, system, user);
+  return (r && r.parsed) || {};
+}
+
 export const _test = { discoverModel, visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };

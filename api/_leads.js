@@ -14,6 +14,18 @@
 // compresses about nine-fold, because the field names, service names and email domains repeat.
 // Measured at ~36 bytes a lead packed, against ~325 raw.
 import { redis, P, packJSON, unpackJSON, jparse, newId, sha } from './_lib.js';
+import { sqlReady } from './_sql.js';
+import { addLeadsSql, leadsFor, summariesFor, seriesFor, whenFor, fromRow } from './_leadsql.js';
+
+// Where enquiries live.
+//
+// With the analysis database connected they are rows in SQL, because what the app asks of them —
+// group by page, by source, by month, which forms have gone quiet, what the busy websites do
+// differently — are queries. Without it they stay in the key-value store exactly as before, so an
+// installation that has not set it up still works and nothing here has to be decided twice.
+//
+// This module is still the ONLY place that knows which it is. Everything else just asks for leads.
+export const usingSql = () => sqlReady();
 
 export const monthOf = (iso) => String(iso || '').slice(0, 7) || new Date().toISOString().slice(0, 7);
 const listKey = (site, m) => P + 'lead:' + site + ':' + m;
@@ -66,6 +78,7 @@ export function normalise(raw, src) {
 /** Add submissions to a website, skipping any already stored. Returns how many were new. */
 export async function addLeads(siteId, leads) {
   if (!leads.length) return 0;
+  if (usingSql()) return addLeadsSql(siteId, leads);
   const byMonth = new Map();
   leads.forEach((l) => { const m = monthOf(l.at); if (!byMonth.has(m)) byMonth.set(m, []); byMonth.get(m).push(l); });
   let added = 0;
@@ -113,6 +126,7 @@ export async function compactOldMonths(siteId) {
 
 /** Leads for a website over the last `months`, newest first. */
 export async function readLeads(siteId, months = 12) {
+  if (usingSql()) return (await leadsFor(siteId, { months, limit: 1000 })).leads;
   const out = [];
   for (const m of monthsBack(months)) out.push(...await readMonth(siteId, m));
   return out.sort((a, b) => String(b.at).localeCompare(a.at));
@@ -137,11 +151,13 @@ export async function bumpSummary(siteId) {
   return s;
 }
 export async function getSummary(siteId) {
+  if (usingSql()) return (await summariesFor([siteId]))[siteId];
   const [raw] = await redis(['GET', sumKey(siteId)]);
   return jparse(raw) || { total: 0, d7: 0, d30: 0, d90: 0, last: '' };
 }
 export async function getSummaries(siteIds) {
   if (!siteIds.length) return {};
+  if (usingSql()) return summariesFor(siteIds);
   const [tot, last] = await redis(['HGETALL', TOT()], ['HGETALL', LAST()]);
   const t = pairs(tot); const l = pairs(last);
   const out = {};

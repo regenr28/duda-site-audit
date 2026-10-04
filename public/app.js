@@ -383,6 +383,7 @@
     const isOwner = !!state.superAdmin;
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
       ${can('live.view') ? '<a href="#/live" data-nav="live">Live DR Sites</a>' : ''}
+      ${can('leads.view') ? '<a href="#/analysis" data-nav="analysis">Lead analysis</a>' : ''}
       ${can('activity.view') ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
       <a href="#/comments" data-nav="comments">Duda comments${cmtWaiting() ? ` <span class="nav-dot bad" title="A client is waiting for an answer"></span>` : cmtUnread() ? ' <span class="nav-dot"></span>' : ''}</a>
       <a href="#/suggestions" data-nav="suggestions">${isOwner || can('fa.manage') ? 'Suggestions' : 'My suggestions'}</a>`;
@@ -951,6 +952,8 @@
   function openMe() {
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.myRole ? ' · ' + esc(state.myRole.name.toLowerCase()) : ''}</div></div></div>
+      ${state.superAdmin ? `<button class="btn sm" id="meHealth" type="button" style="justify-self:start">⚑ System health</button>
+        <div class="small muted" style="margin-top:-4px">Storage, allowances and whether everything is still arriving. Only you can open it.</div>` : ''}
       <label class="field">Display name<input type="text" id="meName" value="${esc(state.me.name)}"></label>
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -965,6 +968,7 @@
       ${notifyGrid()}</div>
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
+    if ($('#meHealth')) $('#meHealth').onclick = () => { closeModal(); location.hash = '#/health'; };
     // The test shows the pop-up and, when Slack messages are switched on here, also sends a Slack test message
     $('#meTest').onclick = () => {
       popNotify({ email: state.me.email, title: 'Test notification', body: 'This is how long pop-ups will stay on screen.' + ($('#meSlack') && $('#meSlack').checked ? ' A Slack test message is on its way too.' : ''), secs: Number($('#meSecs').value) });
@@ -983,6 +987,198 @@
   }
 
 
+
+
+
+  // =====================================================================
+  // SYSTEM HEALTH — is anything about to run out, and is anything not arriving
+  // =====================================================================
+  const bytes = (n) => {
+    if (!n) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB']; let i = 0; let v = n;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+  };
+  const STATE_WORD = { good: '✓', warning: '•', serious: '▲', critical: '▲' };
+  /**
+   * One thing measured against its limit.
+   *
+   * A number against a ceiling is not a chart — it is a value, a bar and a word. The word matters:
+   * a colour alone tells somebody who cannot see it nothing at all.
+   */
+  function meter({ title, value, of, pct, state, label, foot }) {
+    return `<div class="hx-tile">
+      <div class="hx-k">${esc(title)}</div>
+      <div class="hx-v">${esc(value)}<span class="hx-of"> of ${esc(of)}</span></div>
+      <div class="hx-bar" role="img" aria-label="${pct}% used"><div class="hx-fill hx-${state}" style="width:${Math.max(pct, 0.6)}%"></div></div>
+      <div class="hx-foot"><span class="hx-state hx-${state}">${STATE_WORD[state] || '•'} ${esc(label)}</span>
+        <span class="faint">${pct}% used</span></div>
+      ${foot ? `<div class="hx-note">${foot}</div>` : ''}
+    </div>`;
+  }
+
+  async function renderHealth() {
+    $('#view').innerHTML = `<div class="page-head"><div><h1>System health</h1>
+      <div class="muted">Where the app stands, and anything that needs attention.</div></div>
+      <button class="btn" id="hxMeasure" title="Walk the store and measure what it actually holds">⟳ Measure storage now</button></div>
+      <div id="hxBody"><div class="empty">Loading…</div></div>`;
+    $('#hxMeasure').onclick = async () => {
+      const b2 = $('#hxMeasure'); b2.disabled = true; b2.textContent = 'Measuring…';
+      try { await post('/api/health', { op: 'measure' }); toast('Measured'); } catch (e) { toast(e.message); }
+      renderHealth();
+    };
+    let d;
+    try { d = await api('/api/health'); } catch (e) { $('#hxBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+
+    const kvFoot = d.kv.measuredAt
+      ? `Measured ${esc(fmtWhen(Date.parse(d.kv.measuredAt)))} · ${d.kv.keys.toLocaleString()} keys`
+        + (d.kv.perDay > 0 ? ` · growing ${esc(bytes(d.kv.perDay))} a day` : '')
+        + (d.kv.daysLeft !== null && d.kv.daysLeft < 400 ? ` · <b>about ${d.kv.daysLeft} days</b> before it needs attention` : '')
+      : 'Never measured — press <b>Measure storage now</b>.';
+    const cmdFoot = `Day ${d.commands.dayOfMonth} of ${d.commands.daysInMonth} · on course for <b>${d.commands.projected.toLocaleString()}</b> this month`;
+
+    $('#hxBody').innerHTML = `
+      ${d.alerts.length ? `<div class="hx-alerts">${d.alerts.map((a) => `<div class="hx-alert hx-${a.level === 'info' ? 'good' : a.level}">
+        <span class="hx-mark" aria-hidden="true">${STATE_WORD[a.level] || '•'}</span><span>${a.text}</span></div>`).join('')}</div>`
+        : '<div class="hx-alerts"><div class="hx-alert hx-good"><span class="hx-mark" aria-hidden="true">✓</span><span>Nothing needs attention.</span></div></div>'}
+
+      <div class="k" style="margin-top:18px">Storage and allowances</div>
+      <div class="hx-tiles">
+        ${meter({ title: 'Main database', value: bytes(d.kv.used), of: bytes(d.kv.limit), pct: d.kv.pct, state: d.kv.state, label: d.kv.label, foot: kvFoot })}
+        ${meter({ title: 'Commands this month', value: d.commands.used.toLocaleString(), of: d.commands.limit.toLocaleString(), pct: d.commands.pct, state: d.commands.state, label: d.commands.label, foot: cmdFoot })}
+        ${d.sql && !d.sql.error ? meter({ title: 'Analysis database', value: bytes(d.sql.used), of: bytes(d.sql.limit), pct: d.sql.pct, state: d.sql.state, label: d.sql.label,
+          foot: `${d.sql.leads.toLocaleString()} enquiries across ${d.sql.sites} websites`
+            + (d.sql.monthsLeft !== null && d.sql.monthsLeft < 600 ? ` · <b>about ${d.sql.monthsLeft} months</b> at this rate` : '')
+            + (d.sql.sizeKnown === false ? ' · <b>size not reported</b> — the enquiry count is still right' : '') })
+          : `<div class="hx-tile"><div class="hx-k">Analysis database</div>
+             <div class="hx-v sm">${d.sql && d.sql.error ? 'Not answering' : 'Not connected'}</div>
+             <div class="hx-note">${d.sql && d.sql.error ? esc(d.sql.error) : 'Enquiries are stored in the main database instead. Nothing is being lost.'}</div></div>`}
+        ${d.sql && !d.sql.error ? meter({ title: 'Enquiries written this month', value: d.sql.writtenThisMonth.toLocaleString(), of: d.sql.writeLimit.toLocaleString(),
+          pct: Math.round((d.sql.writtenThisMonth / d.sql.writeLimit) * 1000) / 10, state: 'good', label: 'Healthy',
+          foot: 'Rows <i>read</i> are billed too, and are not visible from here — the provider’s own dashboard has that figure.' }) : ''}
+      </div>
+
+      ${d.kv.history && d.kv.history.length > 1 ? `<div class="cl-card" style="margin-top:14px"><div class="cl-card-h">Main database over time</div>
+        ${barChart(d.kv.history.map((h) => ({ m: String(h.at).slice(0, 10), n: Math.round(h.bytes / 1048576) })))}
+        <div class="small faint">Megabytes, one bar per measurement.</div></div>` : ''}
+
+      <div class="k" style="margin-top:18px">Is everything arriving</div>
+      <div class="hx-conn">${d.connections.map((c) => {
+        // Each row says its state in words. A mark and a colour alone leave a reader guessing
+        // whether a dot is "fine" or "off", which is the one thing this list exists to answer.
+        const st = !c.ok ? 'warning' : c.stale ? 'serious' : 'good';
+        const word = !c.ok ? 'Not set up' : c.stale ? 'Gone quiet' : 'Fine';
+        return `<div class="hx-row">
+          <span class="hx-state hx-${st}">${STATE_WORD[st]} ${word}</span>
+          <b>${esc(c.label)}</b>
+          <span class="small faint">${esc(c.note)}</span></div>`;
+      }).join('')}</div>
+
+      <div class="k" style="margin-top:18px">The app right now</div>
+      <div class="hx-tiles small-tiles">
+        ${[['Websites', d.app.websites], ['Scanned in 7 days', d.app.scanned7], ['Marked complete', d.app.complete],
+          ['Open critical items', d.app.openCritical], ['Team members', d.app.users], ['Client sign-ins', d.app.clients]]
+          .map(([k, v]) => `<div class="hx-tile"><div class="hx-k">${esc(k)}</div><div class="hx-v">${Number(v || 0).toLocaleString()}</div></div>`).join('')}
+      </div>`;
+  }
+
+  // =====================================================================
+  // LEAD ANALYSIS — what the enquiries say, once there are enough to ask
+  // =====================================================================
+  const AN_TABS = [
+    ['quiet', 'Forms gone quiet'],
+    ['benchmarks', 'Across all websites'],
+    ['junk', 'Junk and blasts'],
+  ];
+  async function renderAnalysis(tab) {
+    const t = AN_TABS.some(([k]) => k === tab) ? tab : 'quiet';
+    $('#view').innerHTML = `<div class="page-head"><div><h1>Lead analysis</h1>
+        <div class="muted">What the enquiries across every website add up to.</div></div>
+        ${can('leads.import') ? '<button class="btn" id="anMigrate" title="Copy enquiries already stored into the analysis database">⇪ Bring enquiries in</button>' : ''}</div>
+      <div class="tabs">${AN_TABS.map(([k, label]) => `<a href="#/analysis/${k}" class="${t === k ? 'on' : ''}">${esc(label)}</a>`).join('')}</div>
+      <div id="anBody"><div class="empty">Loading…</div></div>`;
+    if ($('#anMigrate')) $('#anMigrate').onclick = migrateLeads;
+    const body = $('#anBody');
+    let d;
+    try { d = await api(`/api/analysis?op=${t === 'junk' ? 'benchmarks' : t}`); }
+    catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    if (d.ready === false) {
+      body.innerHTML = `<div class="note"><b>The analysis database is not connected yet.</b>
+        <div class="small" style="margin-top:4px">Enquiries are still arriving and being stored — nothing is being lost. These pages fill in as soon as it is set up, and <b>Bring enquiries in</b> copies across everything already held.</div></div>`;
+      return;
+    }
+    if (t === 'quiet') return anQuiet(body, d);
+    if (t === 'benchmarks') return anBench(body, d);
+    return anJunk(body, d);
+  }
+
+  /** Websites that used to get enquiries and have stopped. The one worth money. */
+  function anQuiet(body, d) {
+    const list = d.sites || [];
+    body.innerHTML = `<p class="small muted">A form that quietly breaks looks like a slow month. These websites <b>used to get enquiries and have stopped</b> — counting real customers only, so a form still collecting junk still shows up here.</p>
+      ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Website</th><th>Quiet for</th><th>Usually</th><th>Last real enquiry</th><th></th></tr></thead><tbody>
+        ${list.map((r) => `<tr>
+          <td><b>${esc(r.name)}</b><div class="small faint mono">${esc(r.site)}</div></td>
+          <td><span class="badge ${r.quiet_days > 45 ? 'sev-critical' : 'sev-warning'}">${r.quiet_days} days</span></td>
+          <td>${r.per_month}/month <span class="faint small">over ${r.months} months</span></td>
+          <td class="small">${r.last_real ? esc(r.last_real) : '<span class="faint">never</span>'}</td>
+          <td>${r.auditId ? `<a class="btn sm" href="#/site/${esc(r.auditId)}/leads">Open</a>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>`
+      : '<div class="empty">Nothing has gone quiet. Every website with a history is still getting enquiries.</div>'}`;
+  }
+
+  /** What the busy websites do differently — counts only, nobody named. */
+  function anBench(body, d) {
+    const o = d.overall || {};
+    const pct = o.total ? Math.round((o.junk / o.total) * 100) : 0;
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dowList = days.map((n, i) => ({ k: n, n: ((d.dows || []).find((x) => x.dow === i) || {}).n || 0 }));
+    const hours = Array.from({ length: 24 }, (_, i) => ({ m: String(i).padStart(2, '0'), n: ((d.hours || []).find((x) => x.hour === i) || {}).n || 0 }));
+    body.innerHTML = `
+      <div class="cl-tiles">
+        <div class="cl-tile"><div class="cl-t-k">Websites with enquiries</div><div class="cl-t-v">${o.sites || 0}</div></div>
+        <div class="cl-tile"><div class="cl-t-k">Real enquiries</div><div class="cl-t-v">${o.real || 0}</div></div>
+        <div class="cl-tile"><div class="cl-t-k">Set aside as junk</div><div class="cl-t-v">${o.junk || 0}</div><div class="cl-t-d faint">${pct}% of everything</div></div>
+      </div>
+      <p class="small muted">Counts across every website, with none of them named. A row needs <b>at least three websites</b> behind it before it is shown — otherwise it is one shop's story dressed up as a pattern.</p>
+      <div class="cl-two">
+        <div class="cl-card"><div class="cl-card-h">Pages that produce enquiries</div>
+          <div class="small faint" style="margin:-6px 0 8px">Average per website that has one</div>
+          ${hBars((d.pages || []).map((p) => ({ k: p.page + ` · ${p.sites} sites`, n: p.per_site })))}</div>
+        <div class="cl-card"><div class="cl-card-h">Where enquiries come from</div>${hBars((d.sources || []).map((s) => ({ k: s.source, n: s.n })))}</div>
+      </div>
+      <div class="cl-two">
+        <div class="cl-card"><div class="cl-card-h">Which day people get in touch</div>${barChart(dowList.map((x) => ({ m: x.k, n: x.n })))}</div>
+        <div class="cl-card"><div class="cl-card-h">And what time</div>${barChart(hours)}</div>
+      </div>`;
+  }
+
+  /** The blasts: one message, several clients. */
+  function anJunk(body, d) {
+    const blasts = d.blasts || [];
+    body.innerHTML = `<p class="small muted">The same message sent to <b>more than one client</b>. Any one shop sees an odd email; across the whole list it is plainly a blast — which is why this can be seen here and nowhere else.</p>
+      ${blasts.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Websites</th><th>Copies</th><th>Last seen</th><th>The message</th></tr></thead><tbody>
+        ${blasts.map((b2) => `<tr><td><b>${b2.sites}</b></td><td>${b2.n}</td><td class="small">${esc(dayLabel(b2.last))}</td>
+          <td class="small">${esc(String(b2.sample || '').slice(0, 140))}…</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No message has been sent to more than one client yet.</div>'}`;
+  }
+
+  /** Copy what the key-value store holds into the analysis database, a few websites at a time. */
+  async function migrateLeads() {
+    const ids = [...new Set(state.sites.map((s) => s.siteId).filter(Boolean))];
+    if (!ids.length) return toast('No websites to bring in yet.');
+    if (!confirm(`Copy the enquiries held for ${ids.length} website${ids.length === 1 ? '' : 's'} into the analysis database?\n\nNothing is deleted — the existing copy stays exactly where it is.`)) return;
+    const btn = $('#anMigrate'); let done = 0; let added = 0;
+    for (let i = 0; i < ids.length; i += 5) {
+      if (btn) { btn.disabled = true; btn.textContent = `Bringing in ${done}/${ids.length}…`; }
+      try { const r = await post('/api/analysis', { op: 'migrate', ids: ids.slice(i, i + 5) }); (r.done || []).forEach((x) => { added += x.added; }); }
+      catch (e) { toast(e.message); break; }
+      done = Math.min(ids.length, i + 5);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '⇪ Bring enquiries in'; }
+    toast(`${added} enquir${added === 1 ? 'y' : 'ies'} brought in`);
+    renderAnalysis(route().tab);
+  }
 
   // =====================================================================
   // PROFILE — the website, as a whole, for us
@@ -2528,6 +2724,8 @@
     if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
+    if (parts[0] === 'health') return { name: 'health' };
+    if (parts[0] === 'analysis') return { name: 'analysis', tab: parts[1] || 'quiet' };
     if (parts[0] === 'activity') return { name: 'activity' };
     if (parts[0] === 'removed') return { name: 'removed' };
     if (parts[0] === 'comments') return { name: 'comments', site: parts[1] ? decodeURIComponent(parts[1]) : '' };
@@ -2572,6 +2770,8 @@
     if (r.name === 'live' && !can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; }
     if (r.name === 'about') return renderAbout();
     if (r.name === 'help') return renderHelp(r.section);
+    if (r.name === 'health') return state.superAdmin ? renderHealth() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
+    if (r.name === 'analysis') return can('leads.view') ? renderAnalysis(r.tab) : ($('#view').innerHTML = '<div class="empty">Your role does not include form submissions.</div>');
     if (r.name === 'activity') return renderGlobalActivity();
     if (r.name === 'removed') return renderRemoved();
     // Arriving on the page is an explicit "show me what's there now", so never trust a list that

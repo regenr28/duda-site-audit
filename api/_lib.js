@@ -16,8 +16,23 @@ const R_URL = findEnv(['KV_REST_API_URL', 'UPSTASH_REDIS_REST_URL']);
 const R_TOKEN = findEnv(['KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN']);
 export const hasRedis = () => !!(R_URL && R_TOKEN);
 
+/**
+ * How many commands this month, counted by the app itself.
+ *
+ * The allowance is the thing most likely to run out quietly, and the provider's own figure is not
+ * readable from here. So every pipeline carries one extra command that adds its own size to a
+ * monthly counter — including that extra command, so the number is the truth rather than an
+ * undercount. It costs about a quarter more commands to know exactly where we stand, which is a
+ * trade worth making for the one number that can stop the app writing.
+ */
+const usageKey = () => P + 'usage:cmd:' + new Date().toISOString().slice(0, 7);
+let counting = true;
+
 export async function redis(...cmds) {
   if (!hasRedis()) throw new Error('The database is not connected. Please contact the app owner.');
+  if (counting && cmds.length && !String(cmds[0][1] || '').startsWith(P + 'usage:')) {
+    cmds = cmds.concat([['INCRBY', usageKey(), String(cmds.length + 1)]]);
+  }
   const r = await fetch(`${R_URL}/pipeline`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${R_TOKEN}`, 'Content-Type': 'application/json' },
@@ -25,7 +40,15 @@ export async function redis(...cmds) {
   });
   if (!r.ok) throw new Error(`Redis ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const out = await r.json();
-  return out.map((x) => { if (x.error) throw new Error(x.error); return x.result; });
+  const mapped = out.map((x) => { if (x.error) throw new Error(x.error); return x.result; });
+  // The counter rode along on the end; the caller asked for what came before it.
+  return counting && mapped.length === cmds.length && cmds[cmds.length - 1][0] === 'INCRBY'
+    && String(cmds[cmds.length - 1][1] || '').startsWith(P + 'usage:') ? mapped.slice(0, -1) : mapped;
+}
+/** Count without counting the counting — used by the health page when it reads its own figures. */
+export async function redisRaw(...cmds) {
+  counting = false;
+  try { return await redis(...cmds); } finally { counting = true; }
 }
 export const jparse = (s, d = null) => { try { return s ? JSON.parse(s) : d; } catch (e) { return d; } };
 

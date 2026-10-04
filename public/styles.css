@@ -786,3 +786,36 @@ body.client-mode #view { max-width: none; padding: 0; }
 .ac-tag.ac-add { background: rgba(22,163,74,.16); color: #15803d; }
 .ac-tag.ac-rem { background: rgba(220,38,38,.16); color: #b91c1c; }
 #previewBar:empty { display: none; }
+
+/* ===================== System health ===================== */
+/* Four states, reusing the severity colours the rest of the app already speaks.
+   Every one of them ships with a mark and a word in the markup, so colour is never the only signal. */
+.hx-good { --hx: var(--ok); --hx-soft: var(--ok-soft); }
+.hx-warning { --hx: var(--warn); --hx-soft: var(--warn-soft); }
+.hx-serious { --hx: var(--stale); --hx-soft: var(--stale-soft); }
+.hx-critical { --hx: var(--crit); --hx-soft: var(--crit-soft); }
+
+.hx-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 8px; }
+.hx-tiles.small-tiles { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.hx-tile { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 13px 15px; box-shadow: var(--shadow); }
+.hx-k { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.hx-v { font-size: 25px; font-weight: 650; letter-spacing: -.02em; margin-top: 3px; line-height: 1.15; }
+.hx-v.sm { font-size: 17px; }
+.hx-of { font-size: 13px; font-weight: 400; color: var(--faint); letter-spacing: 0; }
+.hx-bar { background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; height: 8px; overflow: hidden; margin-top: 9px; }
+.hx-fill { height: 100%; border-radius: 999px; background: var(--hx, var(--accent)); }
+.hx-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 7px; font-size: 12px; }
+.hx-state { color: var(--hx, var(--muted)); font-weight: 600; white-space: nowrap; }
+.hx-note { font-size: 11.5px; color: var(--faint); margin-top: 7px; line-height: 1.4; }
+.hx-note b { color: var(--muted); }
+
+.hx-alerts { display: flex; flex-direction: column; gap: 7px; }
+.hx-alert { display: flex; gap: 9px; align-items: flex-start; background: var(--hx-soft, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--hx, var(--border)) 35%, transparent); border-radius: 9px; padding: 9px 12px; font-size: 13px; }
+.hx-alert b { font-weight: 650; }
+
+.hx-conn { display: grid; grid-template-columns: repeat(auto-fit, minmax(390px, 1fr)); gap: 2px 20px; margin-top: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 15px; }
+.hx-row { display: grid; grid-template-columns: 94px minmax(0, max-content) minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 6px 0; }
+.hx-row b { font-weight: 600; white-space: nowrap; }
+.hx-row .hx-state { font-size: 12px; }
+.hx-row .small { overflow: hidden; text-overflow: ellipsis; }
+.hx-mark { color: var(--hx, var(--muted)); font-weight: 700; flex: none; }

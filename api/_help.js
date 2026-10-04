@@ -258,6 +258,27 @@ export const HELP_SECTIONS = [
 <p>A change takes effect the next time that person loads the app.</p>`,
   },
   {
+    id: 'analysis', group: 'Collaboration', title: 'Lead analysis', audience: 'all',
+    html: `<p><b>Lead analysis</b> in the top bar is what the enquiries across every website add up to. It needs the analysis database connected; until then the pages explain that and nothing is lost \u2014 enquiries keep arriving and <b>Bring enquiries in</b> copies across everything already held.</p>
+<h3>Junk and real enquiries</h3>
+<p>Every enquiry is sorted as it arrives, in three steps, and most never reach the third:</p>
+<ul>
+<li><b>What the team has taught it</b> \u2014 a phrase, a sender or a message somebody has already ruled on.</li>
+<li><b>Rules</b> \u2014 this kind of pitch is formulaic: "I came across your website", "first page of Google", "link building", a URL in a message that asks for nothing. Against that, the words a real customer uses: quote, price, book, my car, tint, ceramic, this week.</li>
+<li><b>The AI</b>, only for what the rules could not settle \u2014 and one answer covers every copy of the same message, wherever else it landed.</li>
+</ul>
+<p>Nothing is ever deleted. A false negative wastes somebody a minute; a false positive loses a job the shop never hears about, so everything leans towards calling an enquiry real. <b>Mark as junk</b> or <b>Mark as real</b> on any enquiry overrules it, with your name against the decision, and you can teach it the phrase or the sender at the same time.</p>
+<p>One deliberate limit: the same message arriving on several websites is strong evidence of a blast \u2014 but it never convicts an enquiry that is plainly asking for work. Two customers can phrase a request identically; a blast cannot ask for a quote on its own car.</p>
+<h3>Forms gone quiet</h3>
+<p>A form that quietly breaks \u2014 the recipient changed, a redesign dropped the widget \u2014 looks exactly like a slow month, and nobody notices for weeks. This page lists websites that <b>used to get enquiries and have stopped</b>, with how long and how busy they usually are.</p>
+<p>It counts <b>real</b> enquiries only. On a website where a third of submissions are junk, a raw count hides the thing worth knowing: the spam carries on while the customers stop.</p>
+<h3>Across all websites</h3>
+<p>What the busy websites do differently: which kinds of page produce enquiries, where they come from, what day and hour people get in touch. Counts only, <b>nobody named</b>, and a row needs <b>at least three websites</b> behind it before it is shown \u2014 otherwise it is one shop's story dressed up as a pattern.</p>
+<p>No single client can see this. It is the one thing that comes from holding hundreds of websites rather than one.</p>
+<h3>Junk and blasts</h3>
+<p>The same message sent to more than one client. Any one shop sees an odd email; across the whole list it is plainly a blast.</p>`,
+  },
+  {
     id: 'profiles', group: 'Collaboration', title: 'Profiles, form submissions and client access', audience: 'all',
     html: `<p>Every website in Audits has a <b>Profile</b> tab. It is the website as a whole rather than only its audit: a live preview, the domain, who outside the team can see it, and the three numbers that matter \u2014 open audit items, form submissions, comments \u2014 each one a link into the tab that explains it.</p>
 <p>Nothing was created to make this work. The Profile is the same website record the audit has always used, with more on it, so every website you have ever audited already has one.</p>
@@ -648,6 +669,27 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    // Owner only. Nobody else is shown this page, and the Help assistant is not given it either.
+    id: 'health', group: 'More', title: 'System health', audience: 'owner',
+    html: `<p><b>Your account → ⚑ System health</b> answers three questions before any of them becomes a problem: is anything about to run out, is anything that should be arriving not arriving, and how long have you got.</p>
+<h3>Storage and allowances</h3>
+<p>Four meters, each a figure against its ceiling, with a word as well as a colour:</p>
+<ul>
+<li><b>Main database.</b> Everything the app holds except enquiries — websites, audits, comments, people, sessions. This is the one that matters: if it fills, <b>the whole app stops writing</b>, not one feature. Nothing can measure it in a single step, so it is measured when you ask: press <b>⟳ Measure storage now</b>. Each measurement is kept, which is what lets the page tell you how fast it is growing and roughly how many days are left.</li>
+<li><b>Commands this month.</b> Every read and write counted exactly, not estimated, and projected to month end from where the month is now. The projection is what to watch — being 40% through the allowance on day 10 is a problem the total alone does not show.</li>
+<li><b>Analysis database.</b> Where enquiries live. It measures itself exactly, every load, and estimates how many months it has at the rate enquiries are arriving.</li>
+<li><b>Enquiries written this month.</b> Against the monthly write allowance. One thing is <i>not</i> on this page and cannot be: enquiries <b>read</b> are charged too, and only the provider's own dashboard knows that figure. If anything ever runs out unexpectedly, that is where to look first.</li>
+</ul>
+<h3>Is everything arriving</h3>
+<p>One line per outside connection, each with a mark, a name and a plain note. A tick means set up and recent, a triangle means set up but nothing has come in for days, a dot means not set up at all.</p>
+<p>The one worth reading every time is the <b>Duda webhook</b>. A webhook that was never registered, or that quietly stopped, looks <i>exactly</i> like a slow week from inside the app: comments stop appearing and nothing anywhere says why. That is the whole reason this line exists.</p>
+<h3>What needs attention</h3>
+<p>The band at the top is the page in one glance. It is empty — "Nothing needs attention" — most of the time, and that is the point: anything there is worth acting on. A store past 70% full, a month projected to overrun its allowance, a connection that has gone quiet, or a pile of enquiries waiting to be sorted.</p>
+<h3>Reading the states</h3>
+<p><b>Healthy</b> under 50% · <b>Keep an eye on it</b> from 50% · <b>Watch closely</b> from 70% · <b>Act now</b> from 85%. Nothing breaks at 85% — it is deliberately early, so there is time to tidy up rather than a morning of the app refusing to save.</p>
+<p>This page is yours alone. It does not appear for anyone else, including other admins, and it is not part of what the Help assistant can read.</p>`,
+  },
+  {
     id: 'faq', group: 'More', title: 'Common questions', audience: 'all',
     html: `<h4>The Rescan button is greyed out</h4><p>A teammate has that website queued or is scanning it (hover to see who). It frees up when they finish.</p>
 <h4>A scan shows "Interrupted, rescan"</h4><p>The tab running it was closed. Click Rescan.</p>
@@ -664,9 +706,16 @@ export const HELP_SECTIONS = [
 ];
 
 /** `adminish` is now a permission, not a role name — any role granted it sees the admin pages. */
-export function helpFor(role, adminish) {
+/**
+ * The Guide, filtered to one person.
+ *
+ * Three audiences: everybody, admins, and the one account that runs the app. The last one is the
+ * reason `owner` is a separate flag rather than "is an admin" — an admin is not the owner, and a
+ * page written for the owner should not appear for anyone else, nor reach the Help assistant.
+ */
+export function helpFor(role, adminish, owner) {
   const ok = adminish === undefined ? role === 'admin' : !!adminish;
-  return HELP_SECTIONS.filter((s) => s.audience === 'all' || (s.audience === 'admin' && ok));
+  return HELP_SECTIONS.filter((s) => s.audience === 'all' || (s.audience === 'admin' && ok) || (s.audience === 'owner' && !!owner));
 }
 export function helpText(role) {
   return helpFor(role).map((s) => `## ${s.group} › ${s.title}\n` + s.html
