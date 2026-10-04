@@ -53,6 +53,9 @@ function summary(site, comments) {
     id: site.id, siteId: site.siteId, host: site.host, editorUrl: site.editorUrl, businessName: site.businessName || '',
     assignee: site.assignee || '', status: site.status || 'Not started', scan: slimScan(site.scan), addedBy: site.addedBy || '', addedByName: site.addedByName || '',
     createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c,
+    // Everyone this website has passed through, so the list can be narrowed to a person's own work
+    // without reading every full record.
+    people: site.people || [site.addedBy, site.assignee].filter(Boolean),
     ...(site.completedAt ? { completedBy: site.completedBy, completedByName: site.completedByName, completedAt: site.completedAt } : {}),
     ...(site.verify ? { verify: { at: site.verify.at, ok: site.verify.ok, still: site.verify.still } } : {}),
   };
@@ -67,6 +70,13 @@ function slimScan(sc) {
   if (o.error) o.error = String(o.error).slice(0, 200);
   return o;
 }
+/** Is this website one of theirs? True for everyone who may see every website. */
+async function canSeeSite(me, site) {
+  if (await can(me, 'site.viewall')) return true;
+  const mine = normEmail(me.email);
+  return [].concat(site.people || [], site.assignee || '', site.addedBy || '').some((e) => e && normEmail(e) === mine);
+}
+
 async function saveIndex(id) {
   const l = await loadSite(id);
   // Version counters let open browsers ask "anything new?" with one tiny read instead of reloading everything
@@ -198,12 +208,22 @@ export default async function handler(req, res) {
         const [idx, v, cl, fx] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims'], ['HGETALL', P + 'fixedchecks']);
         // Checks that were corrected after somebody reported them: a website scanned before one of
         // these is carrying items the corrected check would no longer raise, and says so on its page.
-        return res.status(200).json({ mode: 'kv', sites: Object.values(pairs(idx, true)), ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true), build: buildId() });
+        // Narrowed here, not in the page: somebody who may only see their own websites is never
+        // sent the others, whatever the browser asks for.
+        let sites = Object.values(pairs(idx, true));
+        const seeAll = await can(me, 'site.viewall');
+        if (!seeAll) {
+          const mine = normEmail(me.email);
+          sites = sites.filter((x) => [].concat(x.people || [], x.assignee || [], x.addedBy || []).some((e) => normEmail(e) === mine));
+        }
+        return res.status(200).json({ mode: 'kv', sites, scoped: !seeAll, ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true), build: buildId() });
       }
       if (op === 'site') {
         if (req.query.since) { const [v, cr] = await redis(['GET', P + 'ver:s:' + req.query.id], ['HGET', P + 'scanclaims', req.query.id]); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claim: liveClaim(cr) }); }
         const l = await loadSite(req.query.id);
         if (!l) return res.status(404).json({ error: 'Not found' });
+        // A website somebody has never worked on is not theirs to open by guessing the address.
+        if (!(await canSeeSite(me, l.site))) return res.status(404).json({ error: 'Not found' });
         const [act] = await redis(['LRANGE', P + 'act:' + req.query.id, 0, 299]);
         l.site.comments = l.comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         l.site.activity = (act || []).map((x) => jparse(x)).filter(Boolean);
@@ -326,11 +346,15 @@ export default async function handler(req, res) {
     const b = readBody(req);
     switch (b.op) {
       case 'create': {
+        if (await denyUnless(res, me, 'site.add', 'Your role does not allow adding websites.')) return;
         if (!b.siteId || !/^[A-Za-z0-9_-]{4,}$/.test(b.siteId)) return res.status(400).json({ error: 'Bad site id' });
         const [idx] = await redis(['HGETALL', P + 'index']);
         const dup = Object.values(pairs(idx, true)).find((s) => s.siteId === b.siteId);
         if (dup) return res.status(409).json({ error: 'Already in the list', id: dup.id });
         const site = { id: newId(8), siteId: b.siteId, host: b.host, editorUrl: b.editorUrl, businessName: '', assignee: b.assignee || '', status: 'Not started', addedBy: me.email, addedByName: me.name, createdAt: now(), updatedAt: now(), findings: [], scan: { state: 'queued' } };
+        // Everyone this website has passed through. A dev who had it first keeps seeing it after it
+        // moves to QA and then to the project manager — that is the whole point of the list.
+        site.people = [...new Set([me.email, b.assignee].filter(Boolean))];
         await redis(['SET', P + 'site:' + site.id, packJSON(site)]);
         await log(site.id, me, 'site', 'added this website');
         await globalLog(me, 'site-add', `added the website ${b.siteId}`, { siteId: site.id, siteRef: b.siteId, editorUrl: b.editorUrl });
@@ -687,6 +711,7 @@ export default async function handler(req, res) {
           site.status = ch.status;
         }
         if ('assignee' in ch && ch.assignee !== site.assignee) {
+          if (ch.assignee) site.people = [...new Set([...(site.people || []), ch.assignee])].slice(-40);
           const from = site.assignee, to = ch.assignee;
           const took = to === me.email && from && from !== me.email;
           await log(b.id, me, 'assign', to ? `${took ? 'took over this website from ' + nameOf(from) : 'assigned the website to ' + nameOf(to) + (from ? ' (was ' + nameOf(from) + ')' : '')}${reason ? ` · ${reason}` : ''}` : `removed the assignee (was ${nameOf(from)})`);

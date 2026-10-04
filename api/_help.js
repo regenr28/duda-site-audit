@@ -230,6 +230,24 @@ export const HELP_SECTIONS = [
 </ul>
 <h3>Removing a role people already have</h3>
 <p>Say five people are Project Managers and you remove that role. Nobody is left without a role, and nobody is quietly promoted \u2014 so the app <b>refuses until you say what those people become instead</b>. It tells you how many there are and names them, you pick the replacement role, and they are moved in the same step. Everything they have done is untouched; only what they are allowed to do changes.</p>
+<h3>Seeing only your own websites</h3>
+<p><b>See every website</b> is a permission like any other. Without it, somebody's Audits list holds only the websites they have been <b>assigned or added themselves</b> \u2014 and a website <b>stays on their list after it moves on</b>. A dev who had it, then handed it to QA, then to the project manager, still sees it: the app remembers everybody a website has passed through, not just whoever holds it now. Opening one that was never theirs, even by typing the address, comes back as not found \u2014 the list is narrowed on the server, not in the page.</p>
+<h3>Live DR Sites</h3>
+<p>The whole page is a permission, and so is each thing on it, so a role can be given the list without the buttons:</p>
+<ul>
+<li><b>See Live DR Sites</b> \u2014 without it the page is not in the top bar and the address is refused.</li>
+<li><b>Pull the list from Duda</b> and <b>Check domains</b> \u2014 the two buttons at the top right.</li>
+<li><b>See the audit column and start audits from there</b> \u2014 the Audit column and the "Audit this website" button. Usually QA rather than everybody.</li>
+</ul>
+<h3>One person, one exception</h3>
+<p>Sometimes one person needs something their role doesn't have. <b>Members \u2192 Access</b> (beside their name) opens the same permission grid for that person alone. Tick something the role doesn't have, or untick something it does, and they are badged <b>Custom access</b> in the list.</p>
+<p>Only the <b>difference</b> is stored, never a copy of the role. So when the role changes later, everybody on it moves with it and only the deliberate exceptions stay behind \u2014 and when an admin reviews it, the additions are highlighted green and the removals red, because those are exactly what was stored. <b>Put back to plain \u2039role\u203a</b> clears them.</p>
+<h3>Changing somebody's access while they are working</h3>
+<p>It takes effect <b>there and then</b>. Their page notices on its next request to the server (or within a couple of minutes if they are sitting completely idle), tells them their access has changed, and redraws itself. If they were on a website they can no longer see, they are taken back to the list with an explanation rather than dropped on an error. Nothing they have typed is lost.</p>
+<p>Before it saves, the app checks whether that person is <b>in the middle of something</b> \u2014 "Serena is working on Spotless Detailing right now (item #14). Change their role anyway?" \u2014 so nobody has the floor pulled out from under them without the person doing it knowing.</p>
+<h3>Looking through somebody else's eyes</h3>
+<p><b>Roles \u2192 \ud83d\udc41 View as</b> on any role, or <b>Members \u2192 Access \u2192 \ud83d\udc41 View as \u2039name\u203a</b> for one person including their exceptions. A dark band sits across the top until you leave.</p>
+<p>It is not a mock-up: <b>the server applies it too</b>, so while you are previewing you are refused exactly what they would be refused, admin or not. That is what makes it worth trusting. You are still yourself \u2014 anything you do is recorded under your own name.</p>
 <h3>A note on two permissions</h3>
 <ul>
 <li><b>Create and change roles</b> is the keys to the building: anyone who has it can grant themselves everything else. Give it out as carefully as Admin.</li>
@@ -246,6 +264,8 @@ export const HELP_SECTIONS = [
 <h3>Form submissions</h3>
 <ul>
 <li>New submissions arrive on their own once Duda's connection is switched on \u2014 the same connection that brings client comments in.</li>
+<li><b>Live DR Sites \u2192 \u2709\ufe0f Get form submissions</b> fetches them for <b>every website currently listed</b>, so the filters above the table decide the scope: search for a label, or pick "Not audited yet", and only those are fetched. It asks how many months back, then works through them a few at a time with a running count, and <b>Stop</b> ends it cleanly \u2014 whatever has been fetched is kept.</li>
+<li>The <b>Enquiries</b> column on that page shows how many are stored for each website and when the last one arrived. Click the number to open that website's submissions. A website that is not in Audits yet has no profile to open, so it offers to add it first \u2014 no scan is started, and the enquiries are already there waiting.</li>
 <li><b>Import history from Duda</b> (admins) brings in what Duda already holds for that website, a month at a time, up to a year. Running it twice is safe: anything already stored is skipped.</li>
 <li>They are grouped three ways, because they answer different questions: <b>by page</b> (which pages produce work), <b>by form</b> (one page can host more than one), and <b>by source</b> (which marketing actually produces enquiries, from the UTM tags on the link the visitor arrived by).</li>
 <li>Duda keeps its own copy of every submission, so nothing here is the only copy \u2014 an import can always be run again.</li>

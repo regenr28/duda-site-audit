@@ -776,3 +776,13 @@ body.client-mode #view { max-width: none; padding: 0; }
 .rl-p { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; cursor: pointer; font-size: 13px; }
 .rl-p.off { cursor: default; opacity: .7; }
 .rl-p input { margin-top: 2px; width: 16px; height: 16px; flex: none; }
+.lead-cell { font: inherit; }
+.lead-cell b { font-size: 14px; }
+.ac-add, .ac-rem { font-weight: 700; }
+.ac-add { color: #16a34a; } .ac-rem { color: #dc2626; }
+.rl-p.ac-add { background: rgba(22,163,74,.09); border-radius: 6px; }
+.rl-p.ac-rem { background: rgba(220,38,38,.09); border-radius: 6px; }
+.ac-tag { font-size: 10px; letter-spacing: .03em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; }
+.ac-tag.ac-add { background: rgba(22,163,74,.16); color: #15803d; }
+.ac-tag.ac-rem { background: rgba(220,38,38,.16); color: #b91c1c; }
+#previewBar:empty { display: none; }

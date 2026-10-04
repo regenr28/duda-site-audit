@@ -20,13 +20,15 @@ export default async function handler(req, res) {
     const cmds = [['HSET', P + 'presence', me.email, JSON.stringify({ seen: now(), active, name: me.name, where: where(b.where) })], ['HGETALL', P + 'presence'],
       // Rides along with the heartbeat: one number that changes whenever a Duda comment arrives,
       // so open browsers notice without anyone clicking Refresh and without an extra request.
-      ['GET', P + 'ver:cmt']];
+      ['GET', P + 'ver:cmt'],
+      // Changes what somebody may do. An open browser notices on the next beat rather than the next reload.
+      ['GET', P + 'ver:access']];
     if (wantNotifs) cmds.push(['LRANGE', P + 'notif:' + me.email, 0, 49], ['GET', P + 'notifseen:' + me.email]);
-    const [, pres, cmtVer, list, seen] = await redis(...cmds);
+    const [, pres, cmtVer, accessVer, list, seen] = await redis(...cmds);
     const presence = {};
     for (let i = 0; pres && i < pres.length; i += 2) presence[pres[i]] = jparse(pres[i + 1], {});
     const items = (list || []).map((x) => jparse(x)).filter(Boolean);
-    return res.status(200).json({ presence, serverTime: now(), cmtVer: String(cmtVer || 0), notifs: wantNotifs ? { items, unread: items.filter((n) => !seen || n.at > seen).length } : null });
+    return res.status(200).json({ presence, serverTime: now(), cmtVer: String(cmtVer || 0), accessVer: String(accessVer || 0), notifs: wantNotifs ? { items, unread: items.filter((n) => !seen || n.at > seen).length } : null });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }

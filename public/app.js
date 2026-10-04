@@ -29,7 +29,7 @@
     // The client side of the app. `viewAs` is set when one of us is previewing a website as its
     // client — the server is told, and answers with exactly what a real client would get.
     cl: { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {} },
-    leadSums: {}, clients: null, perms: [], roles: [], roleCounts: {},
+    leadSums: {}, clients: null, perms: [], roles: [], roleCounts: {}, accessVer: '', sitesScoped: false, viewRole: null, previewOf: null,
     viewAs: '',
   };
 
@@ -61,7 +61,11 @@
 
   // ---------- API ----------
   async function api(path, opts = {}) {
-    const r = await fetch(path, Object.assign({ credentials: 'same-origin' }, opts, { headers: Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}) }));
+    const r = await fetch(path, Object.assign({ credentials: 'same-origin' }, opts, { headers: Object.assign({ 'Content-Type': 'application/json' }, viewHeaders(), opts.headers || {}) }));
+    // The server tells every response what version of "who may do what" it answered with.
+    const av = r.headers.get('X-Access-Ver');
+    if (av && state.accessVer && av !== state.accessVer && !state.viewRole) { state.accessVer = av; setTimeout(accessChanged, 0); }
+    else if (av && !state.accessVer) state.accessVer = av;
     const ct = r.headers.get('content-type') || '';
     const data = ct.includes('json') ? await r.json() : await r.text();
     if (r.status === 401 && !path.startsWith('/api/auth')) { state.me = null; renderAuth(); throw new Error('Please sign in'); }
@@ -73,10 +77,38 @@
   const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
   /** The client endpoints, called as a client — or, while previewing, as that one website's client. */
   const clientHeaders = () => (state.viewAs ? { 'x-view-as-client': '1', 'x-view-site': state.viewAs } : {});
+  /** While previewing a role or a person, every request says so, so the server answers as they would be answered. */
+  const viewHeaders = () => (state.viewRole ? (state.viewRole.user ? { 'x-view-as-user': state.viewRole.user } : { 'x-view-as-role': state.viewRole.role }) : {});
   const capi = (path) => api(path, { headers: clientHeaders() });
   const cpost = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body), headers: clientHeaders() });
   /** True when the page should be the client's, either because they are one or we are previewing. */
   const clientMode = () => !!(state.viewAs || (state.me && state.me.role === 'client'));
+  /**
+   * What this person may do has changed while they were using the app.
+   *
+   * Their own permissions are re-read and the page is redrawn where they stand. Nothing is thrown
+   * away: a half-written comment is left alone, and if they are in the middle of a website they
+   * can no longer see, they are told rather than dropped on an error.
+   */
+  async function accessChanged() {
+    const before = (state.perms || []).slice().sort().join(',');
+    let m;
+    try { m = await api('/api/auth?op=me'); } catch (e) { return; }
+    state.perms = m.perms || []; state.myRole = m.role || null; state.me = m.user || state.me;
+    if ((state.perms || []).slice().sort().join(',') === before) return;
+    const r = route();
+    const lost = r.name === 'site' && state.current && !can('site.viewall')
+      && !((state.current.people || []).concat(state.current.assignee || '', state.current.addedBy || '').some((e) => String(e).toLowerCase() === String(state.me.email).toLowerCase()));
+    alertUser({ email: '', title: 'Your access has changed',
+      body: `You are now <b>${esc(state.myRole ? state.myRole.name : 'a team member')}</b>${lost ? '. This website is no longer one of yours, so the page has gone back to the list.' : '. The page has been updated.'}`,
+      deskBody: 'Your access in Duda Site Auditor has changed.' });
+    await loadSites(false).catch(() => {});
+    // The top bar carries half of what a permission controls — the nav links and Add website — so it
+    // has to be redrawn too, not just the page under it.
+    renderTop();
+    if (lost) location.hash = '#/';
+    else render();
+  }
   /**
    * May I? Only ever used to leave out what somebody cannot reach — every endpoint checks again
    * for itself, so a wrong answer here is untidy, never a way in.
@@ -168,7 +200,7 @@
       if (r.user) {
         state.me = r.user; document.body.classList.remove('auth-mode');
         // Signing in does not say what this role may do; ask before drawing anything.
-        try { const m = await api('/api/auth?op=me'); state.perms = m.perms || []; state.myRole = m.role || null; state.superAdmin = !!m.superAdmin; state.rtChannel = m.rtChannel || ''; } catch (e) { state.perms = []; }
+        try { const m = await api('/api/auth?op=me'); state.perms = m.perms || []; state.myRole = m.role || null; state.superAdmin = !!m.superAdmin; state.rtChannel = m.rtChannel || ''; state.previewOf = m.preview || null; state.accessVer = m.accessVer || ''; } catch (e) { state.perms = []; }
         await boot2(); return;
       }
       if (r.pending) { a.mode = 'pending'; renderAuth(); return; }
@@ -218,7 +250,7 @@
     const claimsChanged = setClaims(r.claims);
     noteBuild(r);
     if (r.unchanged) return claimsChanged;
-    state.sites = r.sites || []; state.sitesVer = r.ver || '';
+    state.sites = r.sites || []; state.sitesVer = r.ver || ''; state.sitesScoped = !!r.scoped;
     state.fixedChecks = r.fixedChecks || {};
     return true;
   }
@@ -346,9 +378,11 @@
   // TOP BAR
   // =====================================================================
   function renderTop() {
+    const pb = $('#previewBar');
+    if (pb) { pb.innerHTML = previewBanner(); const x = $('#pvExit'); if (x) x.onclick = exitViewAs; }
     const isOwner = !!state.superAdmin;
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
-      <a href="#/live" data-nav="live">Live DR Sites</a>
+      ${can('live.view') ? '<a href="#/live" data-nav="live">Live DR Sites</a>' : ''}
       ${can('activity.view') ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
       <a href="#/comments" data-nav="comments">Duda comments${cmtWaiting() ? ` <span class="nav-dot bad" title="A client is waiting for an answer"></span>` : cmtUnread() ? ' <span class="nav-dot"></span>' : ''}</a>
       <a href="#/suggestions" data-nav="suggestions">${isOwner || can('fa.manage') ? 'Suggestions' : 'My suggestions'}</a>`;
@@ -367,9 +401,9 @@
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
         <span class="bell-count" id="bellCount" hidden></span></button>
       <button class="btn ghost" id="btnMembers" type="button">Members${can('members.approve') && state.users.some((u) => u.status === 'pending') ? ` <span class="badge fs-clarification">${state.users.filter((u) => u.status === 'pending').length} for approval</span>` : ''}</button>
-      <button class="btn primary" id="btnAdd" type="button">+ Add website</button>
+      ${can('site.add') ? '<button class="btn primary" id="btnAdd" type="button">+ Add website</button>' : ''}
       <button class="btn ghost me-btn" id="btnMe" title="${esc(state.me.email)}">${avatar(state.me.email, 26)}</button>`;
-    $('#btnAdd').onclick = openAdd;
+    if ($('#btnAdd')) $('#btnAdd').onclick = openAdd;
     $('#btnMembers').onclick = openMembers;
     $('#btnBell').onclick = toggleNotifs;
     $('#btnMe').onclick = openMe;
@@ -539,6 +573,10 @@
       wantNotifs = false;
       const r = await post('/api/pulse', { lastActive: new Date(lastActive).toISOString(), where, notifs });
       serverSkew = Date.parse(r.serverTime) - Date.now();
+      // Somebody's role or exceptions changed. Pick it up now rather than at the next reload, and
+      // say so plainly — a page that quietly starts refusing things is worse than one that explains.
+      if (r.accessVer && state.accessVer && r.accessVer !== state.accessVer) { state.accessVer = r.accessVer; accessChanged(); }
+      else if (r.accessVer) state.accessVer = r.accessVer;
       state.presence = r.presence || {};
       const hadUnread = state.notifs.unread;
       if (r.notifs) state.notifs = r.notifs;
@@ -958,7 +996,7 @@
   }
 
   function renderProfileTab(body, s, { cnt, generalComments }) {
-    const sum = (state.leadSums && state.leadSums[s.id]) || {};
+    const sum = (state.leadSums && state.leadSums[s.siteId]) || {};
     const t = s.truth || {};
     const prevUrl = `https://${linkHost(s)}/site/${s.siteId}?preview=true&insitepreview=true&dm_device=desktop`;
     const sc = s.scan || {};
@@ -1013,7 +1051,7 @@
       state.clients = [];
       post('/api/users', { op: 'clients' }).then((r) => { state.clients = r.clients || []; if (route().tab === 'profile') renderProfileTab(body, s, { cnt, generalComments }); }).catch(() => {});
     }
-    if (!state.leadSums[s.id]) loadLeadSums([s.id]).then(() => { if (route().tab === 'profile') renderProfileTab(body, s, { cnt, generalComments }); });
+    if (!state.leadSums[s.siteId]) loadLeadSums([s.siteId]).then(() => { if (route().tab === 'profile') renderProfileTab(body, s, { cnt, generalComments }); });
     if ($('#pfClient')) $('#pfClient').onclick = () => openClients(s);
     $$('[data-gofilter]', body).forEach((b) => (b.onclick = () => { state.ff.sev = b.dataset.gofilter; location.hash = '#/site/' + encodeURIComponent(s.id); }));
   }
@@ -1056,8 +1094,8 @@
   // --- the team's own view of a website's form submissions ---
   async function renderLeadsTab(body, s) {
     body.innerHTML = '<div class="empty">Loading…</div>';
-    let d; try { d = await api(`/api/leads?op=list&id=${encodeURIComponent(s.id)}&months=12`); } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-    state.leadSums = Object.assign(state.leadSums || {}, { [s.id]: d.summary || {} });
+    let d; try { d = await api(`/api/leads?op=list&id=${encodeURIComponent(s.siteId)}&months=12`); } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    state.leadSums = Object.assign(state.leadSums || {}, { [s.siteId]: d.summary || {} });
     const g = d.groups || {};
     body.innerHTML = `
       <div class="note">${d.total
@@ -1076,7 +1114,7 @@
           <div class="cl-l-src">${l.src ? `<span class="pill sm">${esc(l.src)}</span>` : ''}</div></div>`).join('')}</div></div>` : ''}`;
     if ($('#lbFill')) $('#lbFill').onclick = async () => {
       const note = $('#lbNote'); note.textContent = ' importing…'; $('#lbFill').disabled = true;
-      try { const r = await post('/api/leads', { op: 'backfill', id: s.id, months: 12 }); note.textContent = ` imported ${r.added}`; renderLeadsTab(body, s); }
+      try { const r = await post('/api/leads', { op: 'backfill', id: s.siteId, months: 12 }); note.textContent = ` imported ${r.added}`; renderLeadsTab(body, s); }
       catch (e) { note.textContent = ' ' + e.message; $('#lbFill').disabled = false; }
     };
   }
@@ -1282,6 +1320,85 @@
     $$('[data-who]', el).forEach((b) => (b.onclick = () => openMemberActivity(b.dataset.who)));
   }
 
+
+  // --- one person's own exceptions, and looking through their eyes ----------
+  /**
+   * What this person may do, with anything that is not simply their role picked out.
+   *
+   * Only the difference is stored, so the highlight is not a guess: a ticked box outside the role is
+   * an addition somebody made on purpose, and an unticked box inside it is something taken away.
+   */
+  async function openAccess(u) {
+    await loadRoles();
+    const role = (state.roles || []).find((r) => r.id === u.role) || { name: u.role, perms: [] };
+    const base = new Set(role.perms || []);
+    const grant = new Set(u.grant || []); const revoke = new Set(u.revoke || []);
+    const now2 = new Set([...base, ...grant]); revoke.forEach((k) => now2.delete(k));
+    const label = (k) => { for (const g of state.permGroups || []) { const i = g.items.find((x) => x.key === k); if (i) return i.label; } return k; };
+    modal(`<header><h2>${esc(u.name)}</h2><span class="spacer"></span>
+        <button class="btn sm" id="acView">👁 View as ${esc(u.name)}</button><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <p class="small muted" style="margin:0 0 10px">Role: <b>${esc(role.name)}</b>. Ticking something this role doesn't have, or unticking something it does, gives this person <b>custom access</b> — it is stored as the difference, so if the role changes later they move with it and only these exceptions stay.</p>
+        ${grant.size || revoke.size ? `<div class="note"><b>Custom access</b>
+          ${grant.size ? `<div class="small" style="margin-top:4px"><span class="ac-add">+ extra</span> ${[...grant].map((k) => esc(label(k))).join(', ')}</div>` : ''}
+          ${revoke.size ? `<div class="small" style="margin-top:4px"><span class="ac-rem">− removed</span> ${[...revoke].map((k) => esc(label(k))).join(', ')}</div>` : ''}</div>` : ''}
+        <div class="rl-perms">${(state.permGroups || []).map((g) => `<div class="rl-g"><div class="rl-g-h">${esc(g.group)}</div>
+          ${g.items.map((i) => {
+            const on = now2.has(i.key); const diff = grant.has(i.key) ? 'add' : revoke.has(i.key) ? 'rem' : '';
+            return `<label class="rl-p ${diff ? 'ac-' + diff : ''}"><input type="checkbox" data-acp="${esc(i.key)}" ${on ? 'checked' : ''}>
+              <span><b>${esc(i.label)}</b>${diff ? ` <span class="ac-tag ac-${diff}">${diff === 'add' ? 'added for them' : 'removed for them'}</span>` : ''}
+              ${i.desc ? `<span class="small faint"> — ${esc(i.desc)}</span>` : ''}</span></label>`;
+          }).join('')}</div>`).join('')}</div>
+      </div>
+      <footer><button class="btn ghost" id="acReset">Put back to plain ${esc(role.name)}</button><span class="spacer"></span>
+        <button class="btn" data-close>Cancel</button><button class="btn primary" id="acSave">Save</button></footer>`, { wide: true });
+    $('#acView').onclick = () => { closeModal(); viewAs({ user: u.email, name: u.name }); };
+    $('#acReset').onclick = () => { $$('[data-acp]').forEach((i) => { i.checked = base.has(i.dataset.acp); }); };
+    $('#acSave').onclick = async () => {
+      const perms = $$('[data-acp]').filter((i) => i.checked).map((i) => i.dataset.acp);
+      try {
+        // Pulling access out from under somebody mid-audit is the thing to avoid, so check first.
+        const busy = await post('/api/users', { op: 'busy', email: u.email });
+        if (busy.online && busy.where && busy.where.name
+          && !confirm(`${u.name} is working on ${busy.where.name} right now${busy.where.item ? ` (item #${busy.where.item})` : ''}.\n\nTheir page will update as soon as you save, and they will be told what changed.\n\nSave anyway?`)) return;
+        await post('/api/users', { op: 'access', email: u.email, perms });
+        await loadUsers(); closeModal(); toast('Access updated');
+      } catch (e) { toast(e.message); }
+    };
+  }
+
+  /** Look at the app as a role, or as one person, sees it. The server applies it too. */
+  function viewAs(what) {
+    state.viewRole = what;
+    try { sessionStorage.setItem('dsa-viewas', JSON.stringify(what)); } catch (e) { /* ignore */ }
+    location.hash = '#/';
+    bootPreview();
+  }
+  async function bootPreview() {
+    try { const m = await api('/api/auth?op=me'); state.perms = m.perms || []; state.myRole = m.role || null; state.previewOf = m.preview || null; } catch (e) { /* ignore */ }
+    await loadSites(false).catch(() => {});
+    renderTop(); render();
+  }
+  /** Keep the band on screen whatever the page redraws. */
+  function renderTopPreview() {
+    const pb = $('#previewBar'); if (!pb) return;
+    const want = previewBanner();
+    if (pb.innerHTML !== want) { pb.innerHTML = want; const x = $('#pvExit'); if (x) x.onclick = exitViewAs; }
+  }
+  function exitViewAs() {
+    state.viewRole = null; state.previewOf = null;
+    try { sessionStorage.removeItem('dsa-viewas'); } catch (e) { /* ignore */ }
+    bootPreview();
+  }
+  /** The band across the top while previewing, so nobody mistakes it for their own account. */
+  function previewBanner() {
+    if (!state.viewRole) return '';
+    const p2 = state.previewOf || {};
+    const who = p2.name ? `${esc(p2.name)}${p2.custom ? ' <span class="badge subtle">custom access</span>' : ''}` : esc(p2.roleName || state.viewRole.role || '');
+    return `<div class="cl-preview">👁 <b>Viewing as ${who}</b> — buttons and pages you cannot see are the ones they cannot use, and the server refuses them too.
+      <button class="btn sm" id="pvExit">Back to my own view</button></div>`;
+  }
+
   // =====================================================================
   // ROLES — what each kind of teammate is allowed to do
   // =====================================================================
@@ -1308,11 +1425,13 @@
             <div class="grow"><b>${esc(r.name)}</b>${r.builtin ? ' <span class="badge subtle" title="Built in: it can be renamed and (except Admin) changed, but not removed">built in</span>' : ''}
               <div class="small muted">${esc(r.desc || '')}</div>
               <div class="small faint">${r.perms.includes('*') ? 'Everything' : `${r.perms.length} of ${permCount()} permissions`} · ${n} ${n === 1 ? 'person' : 'people'}</div></div>
+            ${r.id === 'admin' ? '' : `<button class="btn sm ghost" data-rlview="${esc(r.id)}" title="See the app as this role sees it">👁 View as</button>`}
             ${editable ? `<button class="btn sm" data-rledit="${esc(r.id)}">${r.locked ? 'Rename' : 'Edit'}</button>` : ''}
             ${editable && !r.builtin ? `<button class="btn sm ghost danger" data-rldel="${esc(r.id)}">Remove</button>` : ''}
           </div>`;
         }).join('')}</div>
         ${editable ? '<button class="btn primary" id="rlNew" style="margin-top:12px">+ Add a role</button>' : ''}`;
+      $$('[data-rlview]').forEach((b) => (b.onclick = () => { closeModal(); viewAs({ role: b.dataset.rlview }); }));
       $$('[data-rledit]').forEach((b) => (b.onclick = () => editRole(roles.find((r) => r.id === b.dataset.rledit), draw)));
       $$('[data-rldel]').forEach((b) => (b.onclick = () => removeRole(roles.find((r) => r.id === b.dataset.rldel), draw)));
       if ($('#rlNew')) $('#rlNew').onclick = () => editRole(null, draw);
@@ -1408,11 +1527,11 @@
           <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span><div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
           <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : ''}
         ${list.length ? list.map((u) => `<div class="member-row ${u.status === 'disabled' ? 'off' : ''}"><span class="pav">${avatar(u.email, 30)}${u.status === 'disabled' ? '' : pdot(u.email)}</span>
-          <div class="grow"><button type="button" class="whobtn" data-who="${esc(u.email)}"><b>${esc(u.name)}</b></button>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}${isAdmin && u.status !== 'disabled' ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : esc(roleName(u.role))}</span>` : ''}
+          <div class="grow"><button type="button" class="whobtn" data-who="${esc(u.email)}"><b>${esc(u.name)}</b></button>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}${isAdmin && u.status !== 'disabled' ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : esc(roleName(u.role))}</span>${u.custom ? ' <span class="badge sev-info" title="This person has access that is not simply their role">Custom access</span>' : ''}` : ''}
             <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(u.status === 'disabled' ? 'Can no longer sign in · past work kept' : presenceText(presenceOf(u.email)))}${isAdmin && slackWho && u.status !== 'disabled' ? (slackWho[u.email] ? ' · <span class="v-ok-t">Slack ✓</span>' : ' · <span class="v-still-t" title="No Slack account uses this email, so Slack messages can\'t reach them. They should register here with their Slack email.">No Slack match</span>') : ''}</div>
             ${(u.nameHistory || []).length ? `<div class="small faint">Renamed ${u.nameHistory.length}× · was ${esc([...new Set(u.nameHistory.map((h) => h.from).filter(Boolean))].slice(-3).join(', '))}</div>` : ''}</div>
           ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>${esc(roleName('admin'))}</option></select>` : isAdmin && u.status !== 'disabled' ? `<select data-role="${esc(u.email)}" class="sm-select">${(state.roles || []).map((r) => `<option value="${esc(r.id)}" ${u.role === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
-            ${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost" data-disable="${esc(u.email)}" title="Switch the account off: they can't sign in, but everything they did is kept">Switch off</button>` : ''}`
+            <button class="btn sm ghost" data-access="${esc(u.email)}" title="What this person can do, on top of their role">Access</button>${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost" data-disable="${esc(u.email)}" title="Switch the account off: they can't sign in, but everything they did is kept">Switch off</button>` : ''}`
             : isAdmin && u.status === 'disabled' ? `<button class="btn sm" data-enable="${esc(u.email)}">Switch back on</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Delete for good — their name disappears from old items">Delete</button>` : ''}</div>`).join('')
           : '<div class="empty small">Nobody matches.</div>'}`;
       const mq = $('#memQ'); mq.oninput = () => { memFilter.q = mq.value; const p = mq.selectionStart; draw(); const i2 = $('#memQ'); if (i2) { i2.focus(); i2.setSelectionRange(p, p); } };
@@ -1422,7 +1541,17 @@
       act('[data-remove]', async (b) => { if (!confirm('Delete this account for good? Their name will disappear from old audit items and comments. "Switch off" keeps the history.')) return; try { await post('/api/users', { op: 'remove', email: b.dataset.remove }); } catch (e) { toast(e.message); } await loadUsers(); draw(); renderTop(); });
       act('[data-disable]', async (b) => { if (!confirm('Switch this account off? They can no longer sign in, but everything they did stays on record and their name keeps showing.')) return; try { await post('/api/users', { op: 'disable', email: b.dataset.disable }); toast('Account switched off'); } catch (e) { toast(e.message); } await loadUsers(); draw(); });
       act('[data-enable]', async (b) => { try { await post('/api/users', { op: 'enable', email: b.dataset.enable }); toast('Account switched back on'); } catch (e) { toast(e.message); } await loadUsers(); draw(); });
-      act('[data-role]', async (b) => { try { await post('/api/users', { op: 'role', email: b.dataset.role, role: b.value }); await loadUsers(); toast('Role updated'); } catch (e) { toast(e.message); await loadUsers(); } draw(); });
+      act('[data-access]', (b) => { const u = state.users.find((x) => x.email === b.dataset.access); if (u) openAccess(u); });
+      act('[data-role]', async (b) => {
+        try {
+          const who = state.users.find((x) => x.email === b.dataset.role) || {};
+          const busy = await post('/api/users', { op: 'busy', email: b.dataset.role }).catch(() => ({}));
+          if (busy.online && busy.where && busy.where.name
+            && !confirm(`${who.name || 'They'} is working on ${busy.where.name} right now${busy.where.item ? ` (item #${busy.where.item})` : ''}.\n\nTheir page will update as soon as you save, and they will be told what changed.\n\nChange their role anyway?`)) { await loadUsers(); draw(); return; }
+          await post('/api/users', { op: 'role', email: b.dataset.role, role: b.value }); await loadUsers(); toast('Role updated');
+        } catch (e) { toast(e.message); await loadUsers(); }
+        draw();
+      });
       act('[data-reset]', async (b) => {
         if (!confirm('Create a temporary password for this member? Their current password stops working.')) return;
         const r = await post('/api/users', { op: 'resetPassword', email: b.dataset.reset });
@@ -1931,7 +2060,7 @@
   setTimeout(aiResumeTick, 8000);
 
   // ---------- Live DR Sites: every published site in the Duda account ----------
-  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'comments' };
+  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'comments', leadJob: null, leadsLoaded: false };
   const liveDR = live; // alias: some views use a local variable called `live` for scan progress
   const DOM_OK = ['ok'];
   const domProblem = (d) => d && !['ok', 'nodomain'].includes(d.status);
@@ -2138,10 +2267,67 @@
 
   /** A date as an ISO string, or '' — a missing or malformed one must never take a whole page down. */
   const isoOf = (v) => { const d = new Date(v); return isNaN(d.getTime()) ? '' : d.toISOString(); };
+
+  // --- Form submissions on Live DR Sites ---------------------------------
+  /**
+   * Pull enquiries for a list of websites, a few at a time.
+   *
+   * The loop lives in the browser, like a scan queue: each request covers a handful of websites, so
+   * nothing runs long enough to be cut off, a failure costs one chunk rather than the run, and
+   * closing the tab simply stops it.
+   */
+  async function pullLeads(ids, months) {
+    if (live.leadJob) return;
+    live.leadJob = { done: 0, total: ids.length, added: 0, failed: 0, stop: false };
+    renderLive();
+    for (let i = 0; i < ids.length && !live.leadJob.stop; i += 5) {
+      const chunk = ids.slice(i, i + 5);
+      try {
+        const r = await post('/api/leads', { op: 'fetch', ids: chunk, months });
+        (r.done || []).forEach((x) => { state.leadSums[x.id] = { total: x.total, last: x.last }; live.leadJob.added += x.added; });
+        live.leadJob.failed += (r.failed || []).length;
+      } catch (e) { live.leadJob.failed += chunk.length; if (/not set up|Admins|role does not allow/i.test(e.message)) { toast(e.message); break; } }
+      live.leadJob.done = Math.min(ids.length, i + chunk.length);
+      if (route().name === 'live') renderLive();
+    }
+    const n = live.leadJob.added; const bad = live.leadJob.failed;
+    live.leadJob = null;
+    toast(`${n} new form submission${n === 1 ? '' : 's'} stored${bad ? ` · ${bad} website${bad === 1 ? '' : 's'} could not be read` : ''}`);
+    if (route().name === 'live') renderLive();
+  }
+
+  /** The enquiries cell: a count worth clicking, or a reason it is empty. */
+  function leadCell(x) {
+    const s = state.leadSums[String(x.id)] || {};
+    const a = auditFor(x.id);
+    if (!s.total) return '<span class="faint small">—</span>';
+    const when = s.last ? ago(s.last) : '';
+    return `<button class="linkbtn lead-cell" data-goleads="${esc(x.id)}" title="${a ? 'Open this website’s form submissions' : 'This website is not in Audits yet'}">
+      <b>${s.total}</b> ${when ? `<span class="faint small">last ${esc(when)}</span>` : ''}</button>`;
+  }
+
+  /** Clicking the count. A website with no audit has no profile to open yet, so offer to make one. */
+  async function goLeads(siteId) {
+    const a = auditFor(siteId);
+    if (a) { location.hash = `#/site/${encodeURIComponent(a.id)}/leads`; return; }
+    const lx = (live.data && live.data.sites.find((y) => y.id === siteId)) || {};
+    if (!confirm(`${lx.name || siteId} isn't in Audits yet, so it has no profile to open.\n\nAdd it now? Its enquiries are already stored and will be waiting on the profile.`)) return;
+    const host = editorHostOr();
+    try {
+      // The same create the Audit button uses — but no scan is started: this is somebody wanting to
+      // see enquiries, not asking for the website to be checked.
+      const sum = await store({ op: 'create', siteId, host, editorUrl: `https://${host}/home/site/${siteId}/home`, assignee: state.me.email });
+      upsertSummary(sum);
+      location.hash = `#/site/${encodeURIComponent(sum.id)}/leads`;
+    } catch (e) { toast(e.message); }
+  }
+
   function renderLive() {
     const d = live.data;
     if (!d && !live.loading && !live.error) { loadLive(false); }
     else if (d && !live.bgStarted) { live.bgStarted = true; fillNames().then(() => checkDomains(false)); }
+    // Every website's enquiry count arrives in one small request, not one per row.
+    if (d && !live.leadsLoaded) { live.leadsLoaded = true; loadLeadSums(d.sites.map((x) => x.id)).then(() => { if (route().name === 'live') renderLive(); }); }
     const all = (d && d.sites) || [];
     const q = live.q.trim().toLowerCase();
     const audited = new Set(state.sites.map((x) => String(x.siteId || '').toLowerCase()));
@@ -2150,6 +2336,7 @@
     if (live.audit === 'no') list = list.filter((x) => !isAudited(x.id));
     if (live.audit === 'yes') list = list.filter((x) => isAudited(x.id));
     if (live.audit === 'issues') list = list.filter((x) => { const a = auditFor(x.id); return a && a.counts && (a.counts.critical || a.counts.warning); });
+    if (live.audit === 'leads') list = list.filter((x) => (state.leadSums[String(x.id)] || {}).total);
     if (live.dom === 'problem') list = list.filter((x) => domProblem(x.dom));
     if (live.dom === 'ok') list = list.filter((x) => x.dom && x.dom.status === 'ok');
     if (live.dom === 'none') list = list.filter((x) => !x.dom);
@@ -2159,27 +2346,29 @@
     const host = editorHostOr();
     if (live.tab === 'unpublished') return renderDrafts();
     $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
-        <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div><button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button></div></div>
+        <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div>${can('leads.import') ? `<button class="btn" id="liveLeads" ${live.leadJob || !d ? 'disabled' : ''} title="Fetch form submissions from Duda for the websites currently listed">${live.leadJob ? 'Fetching…' : '✉️ Get form submissions'}</button>` : ''}${can('live.domains') ? `<button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button>` : ''}${can('live.pull') ? `<button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button>` : ''}</div></div>
       ${liveTabs('published')}
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
 
       <div class="panel"><div class="toolbar">
         <input type="search" id="liveQ" placeholder="Search by name, site ID, domain or label…" value="${esc(live.q)}" style="flex:1;min-width:220px">
-        <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option></select>
+        <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option><option value="leads" ${live.audit === 'leads' ? 'selected' : ''}>With enquiries (${all.filter((x) => (state.leadSums[String(x.id)] || {}).total).length})</option></select>
         <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
         <select id="liveSort"><option value="published">Recently published first</option><option value="domain" ${live.sort === 'domain' ? 'selected' : ''}>Domain problems first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
       </div>
       ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}
+      ${live.leadJob ? `<div class="live-progress small muted"><span class="pulse-dot"></span> Fetching form submissions ${live.leadJob.done}/${live.leadJob.total} · <b>${live.leadJob.added}</b> new${live.leadJob.failed ? ` · ${live.leadJob.failed} could not be read` : ''} <button class="linkbtn" id="liveLeadStop">Stop</button></div>` : ''}
       ${!d ? `<div class="empty">${live.loading ? 'Loading published sites from Duda…' : 'No data yet.'}</div>` : !list.length ? '<div class="empty">No sites match.</div>' : `
-      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Comments</th><th>Audit</th><th></th></tr></thead><tbody>
+      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Enquiries</th><th>Comments</th>${can('live.audit') ? '<th>Audit</th>' : ''}<th></th></tr></thead><tbody>
       ${shown.map((x) => { const a = auditFor(x.id); const dom = x.domain || x.defaultDomain; return `<tr>
         <td><b>${x.name ? esc(x.name) : x.nameChecked ? `<span class="muted">${esc(dom || x.id)}</span>` : '<span class="faint">Loading name…</span>'}</b>${dom ? `<div class="small"><a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a></div>` : ''}${(x.labels || []).length ? `<div class="small faint">${x.labels.map(esc).join(' · ')}</div>` : ''}</td>
         <td class="mono small">${esc(x.id)} <button class="linkbtn" data-copy="${esc(x.id)}" title="Copy site ID">Copy</button></td>
         <td class="dom-cell">${domBadge(x.dom)}</td>
         <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
+        <td style="white-space:nowrap">${leadCell(x)}</td>
         <td style="white-space:nowrap">${cmtCell(x.id)}</td>
-        <td>${auditCell(x)}</td>
-        <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : `<button class="btn sm primary" data-audit="${esc(x.id)}">Audit this website</button>`}
+        ${can('live.audit') ? `<td>${auditCell(x)}</td>` : ''}
+        <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : can('live.audit') ? `<button class="btn sm primary" data-audit="${esc(x.id)}">Audit this website</button>` : ''}
           ${host ? `<a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(x.id)}/home" target="_blank" rel="noopener" title="Open in the Duda editor">Editor ↗</a>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div>
       ${pages > 1 ? `<div class="row-between" style="padding:10px 14px"><span class="small muted">${live.page * PER + 1}–${Math.min(list.length, live.page * PER + PER)} of ${list.length}</span><span><button class="btn sm" id="livePrev" ${live.page ? '' : 'disabled'}>← Prev</button> <button class="btn sm" id="liveNext" ${live.page < pages - 1 ? '' : 'disabled'}>Next →</button></span></div>` : ''}`}
@@ -2189,11 +2378,19 @@
     $('#liveSort').onchange = (e) => { live.sort = e.target.value; renderLive(); };
     $('#liveDom').onchange = (e) => { live.dom = e.target.value; live.page = 0; renderLive(); };
     const cd = $('#liveCheck'); if (cd) cd.onclick = () => checkDomains(true);
-    $('#liveRefresh').onclick = () => loadLive(true);
+    if ($('#liveRefresh')) $('#liveRefresh').onclick = () => loadLive(true);
     bindLiveTabs();
     if ($('#livePrev')) $('#livePrev').onclick = () => { live.page--; renderLive(); window.scrollTo(0, 0); };
     if ($('#liveNext')) $('#liveNext').onclick = () => { live.page++; renderLive(); window.scrollTo(0, 0); };
     $$('#view [data-copy]').forEach((b) => (b.onclick = () => copy(b.dataset.copy, 'Site ID copied')));
+    $$('[data-goleads]').forEach((b) => (b.onclick = () => goLeads(b.dataset.goleads)));
+    if ($('#liveLeadStop')) $('#liveLeadStop').onclick = () => { if (live.leadJob) live.leadJob.stop = true; };
+    if ($('#liveLeads')) $('#liveLeads').onclick = () => {
+      const ids = list.map((x) => x.id);
+      const months = Number(prompt(`Fetch form submissions for the ${ids.length} website${ids.length === 1 ? '' : 's'} listed here.\n\nHow many months back? (1–24)`, '3'));
+      if (!months || !Number.isFinite(months)) return;
+      pullLeads(ids, Math.min(Math.max(Math.round(months), 1), 24));
+    };
     $$('[data-audit]').forEach((b) => (b.onclick = async () => {
       const id = b.dataset.audit;
       const lx = live.data && live.data.sites.find((y) => y.id === id);
@@ -2345,6 +2542,7 @@
   let lastView = '';
   async function render() {
     if (!state.me) return renderAuth();
+    renderTopPreview();
     // A client account, or one of us previewing one, gets a different app entirely.
     if (clientMode()) return renderClient();
     document.body.classList.remove('client-mode');
@@ -2371,6 +2569,7 @@
       state.claimsAt = Date.now();
       loadSites(true).then((ch) => { if (ch && route().name === r.name) render(); }).catch(() => {});
     }
+    if (r.name === 'live' && !can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; }
     if (r.name === 'about') return renderAbout();
     if (r.name === 'help') return renderHelp(r.section);
     if (r.name === 'activity') return renderGlobalActivity();
@@ -2506,7 +2705,9 @@
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0 };
     state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
     $('#view').innerHTML = staleBanner() + `
-      <div class="page-head"><div><h1>Audits</h1><div class="muted">Audit Duda sites against their Business Info on every device. <a href="#/live">Browse Live DR Sites</a> to add more, or see what was <a href="#/removed">removed from Audits</a>.</div></div></div>
+      <div class="page-head"><div><h1>Audits</h1><div class="muted">${state.sitesScoped
+        ? 'The websites you have worked on. One stays here after it moves on to somebody else, so you can always find what you did.'
+        : `Audit Duda sites against their Business Info on every device. ${can('live.view') ? '<a href="#/live">Browse Live DR Sites</a> to add more, or see' : 'See'} what was <a href="#/removed">removed from Audits</a>.`}</div></div></div>
       <div class="stats">
         <div class="panel stat"><div class="n">${state.sites.length}</div><div class="l">Audits</div></div>
         <div class="panel stat"><div class="n">${tot.scanned}</div><div class="l">Scan complete</div></div>
@@ -2909,7 +3110,7 @@
       <div class="tabs">
         <a href="#/site/${esc(s.id)}/profile" class="${r.tab === 'profile' ? 'on' : ''}">Profile</a>
         <a href="#/site/${esc(s.id)}" class="${r.tab === 'findings' ? 'on' : ''}">Audit items <span class="tcount">${findings.length}</span></a>
-        <a href="#/site/${esc(s.id)}/leads" class="${r.tab === 'leads' ? 'on' : ''}">Form submissions${leadCount(s.id) ? ` <span class="tcount">${leadCount(s.id)}</span>` : ''}</a>
+        <a href="#/site/${esc(s.id)}/leads" class="${r.tab === 'leads' ? 'on' : ''}">Form submissions${leadCount(s.siteId) ? ` <span class="tcount">${leadCount(s.siteId)}</span>` : ''}</a>
         <a href="#/site/${esc(s.id)}/comments" class="${r.tab === 'comments' ? 'on' : ''}">Comments <span class="tcount">${generalComments}</span></a>
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
       </div>
@@ -4810,7 +5011,7 @@
     // not the AI status. Those endpoints would refuse it anyway; not calling them is the point.
     if (state.me.role === 'client') { if (!location.hash.startsWith('#/my/')) location.hash = '#/my/'; return render(); }
     await Promise.all([loadUsers(), loadSites(), loadRoles(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
-    if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; state.perms = m.perms || []; state.myRole = m.role || null; } catch (e) { /* ignore */ } }
+    if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; state.perms = m.perms || []; state.myRole = m.role || null; state.previewOf = m.preview || null; state.accessVer = m.accessVer || ''; } catch (e) { /* ignore */ } }
     renderTop();
     loadNews();
     loadCommentSites(true).catch(() => {});
@@ -4835,7 +5036,8 @@
   });
   (async () => {
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
-    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; state.perms = r.perms || []; state.myRole = r.role || null; }
+    try { state.viewRole = JSON.parse(sessionStorage.getItem('dsa-viewas') || 'null'); } catch (e) { state.viewRole = null; }
+    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; state.perms = r.perms || []; state.myRole = r.role || null; state.previewOf = r.preview || null; state.accessVer = r.accessVer || ''; }
     catch (e) { $('#view').innerHTML = `<div class="empty">Could not start the app: ${esc(e.message)}</div>`; return; }
     if (!state.me) return renderAuth();
     if (state.me.status !== 'active') { state.auth.mode = state.me.status === 'disabled' ? 'disabled' : 'pending'; state.me = null; return renderAuth(); }

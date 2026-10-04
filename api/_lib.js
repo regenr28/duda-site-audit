@@ -140,6 +140,9 @@ function ownerFix(u) {
 }
 export async function putUser(u) {
   await redis(['SET', P + 'user:' + u.email, JSON.stringify(u)], ['SADD', P + 'users', u.email]);
+  // Saving a person is the one moment their cached session is certainly out of date, so drop it
+  // here rather than expecting every caller to remember.
+  forgetUser(u.email);
   return u;
 }
 /** Display names must be unique so @mentions and "who did this" are never ambiguous. */
@@ -160,7 +163,8 @@ export const plainMentions = (text) => String(text == null ? '' : text)
 export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white',
   notifyOff: Array.isArray(u.notifyOff) ? u.notifyOff : [],
   // Client accounts: which websites they were granted, and the company they belong to.
-  sites: u.role === 'client' ? (u.sites || []).map(String) : undefined, clientId: u.clientId || undefined, company: u.company || undefined });
+  sites: u.role === 'client' ? (u.sites || []).map(String) : undefined, clientId: u.clientId || undefined, company: u.company || undefined,
+  grant: (u.grant || []).length ? u.grant : undefined, revoke: (u.revoke || []).length ? u.revoke : undefined, custom: hasCustomAccess(u) || undefined });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
@@ -197,17 +201,36 @@ export async function destroySession(req, res) {
   if (t) { cache.delete(t); await redis(['DEL', P + 'sess:' + sha(t)]); }
   res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
 }
+/**
+ * The access version, cached for a few seconds per server instance.
+ *
+ * Session records are cached for three minutes to save two reads on nearly every request — fine for
+ * a name, far too long for what somebody is allowed to do. So the cached session is checked against
+ * this number, which costs one small read every five seconds rather than one per request. An admin
+ * taking somebody's access away takes effect within seconds, everywhere, not after three minutes.
+ */
+let avCache = { v: null, at: 0 };
+async function currentAccessVersion() {
+  if (avCache.v !== null && Date.now() - avCache.at < 5000) return avCache.v;
+  const [v] = await redis(['GET', P + 'ver:access']);
+  avCache = { v: String(v || 0), at: Date.now() };
+  return avCache.v;
+}
 export async function currentUser(req) {
   const t = getToken(req);
   if (!t) return null;
+  const av = await currentAccessVersion();
   const c = cache.get(t);
-  if (c && c.exp > Date.now()) return c.user;
+  // A COPY every time. Handlers add things to this object for the life of one request — a preview,
+  // most of all — and the cache is shared by every later request on this instance. Handing out the
+  // cached object itself meant one request's preview quietly became everybody's.
+  if (c && c.exp > Date.now() && c.av === av) return Object.assign({}, c.user);
   const [email] = await redis(['GET', P + 'sess:' + sha(t)]);
   if (!email) return null;
   const user = await getUser(email);
-  // Cached for 3 minutes per server instance: saves two database reads on almost every request
-  if (user) cache.set(t, { user, exp: Date.now() + 180000 });
-  return user;
+  // Cached for 3 minutes per server instance, and dropped the moment anybody's access changes.
+  if (user) cache.set(t, { user, exp: Date.now() + 180000, av });
+  return user ? Object.assign({}, user) : user;
 }
 /** Drop cached sessions for someone whose role or account just changed (this server instance). */
 export function forgetUser(email) { for (const [k, v] of cache) if (v.user && v.user.email === email) cache.delete(k); }
@@ -231,8 +254,12 @@ export async function requireUser(req, res, { admin = false, client = false } = 
   if (u.status === 'disabled') { res.status(403).json({ error: 'This account has been switched off by an admin.', disabled: true }); return null; }
   if (u.status !== 'active') { res.status(403).json({ error: 'Your account is waiting for admin approval', pending: true }); return null; }
   if (u.role === 'client' && !client) { res.status(403).json({ error: 'Not available on this account' }); return null; }
+  await applyPreview(req, u);
+  // Every answer carries the access version, so an open browser notices a change on its next action
+  // rather than waiting for the heartbeat. The heartbeat still covers somebody sitting idle.
+  try { res.setHeader('X-Access-Ver', await currentAccessVersion()); } catch (e) { /* header only */ }
   if (client && u.role !== 'client' && !viewingAsClient(req)) { res.status(403).json({ error: 'Client accounts only' }); return null; }
-  if (admin && u.role !== 'admin') { res.status(403).json({ error: 'Admins only' }); return null; }
+  if (admin && (u.previewPerms ? !u.previewPerms.includes('*') : u.role !== 'admin')) { res.status(403).json({ error: 'Admins only' }); return null; }
   return u;
 }
 /** An admin checking what a client sees sends this header; it grants no data by itself. */
@@ -353,6 +380,7 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed',
   'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened a website you completed', 'site-removed': 'removed an audit from the Audits list',
   'comment-waiting': 'has client comments waiting for an answer',
+  access: 'changed what you can do',
   test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
 async function slackApi(method, body) {
@@ -520,11 +548,18 @@ export async function announceSignup(user, req) {
  */
 export const PERMISSIONS = [
   { group: 'Websites', items: [
+    { key: 'site.viewall', label: 'See every website', desc: 'Without this, somebody sees only the websites they have been assigned or added themselves \u2014 and keeps seeing one after it moves on to the next person.' },
     { key: 'site.add', label: 'Add websites to Audits', desc: 'Paste an editor link and start an audit.' },
     { key: 'site.scan', label: 'Run and rescan scans', desc: 'Start a scan on any website, including Rescan all shown.' },
     { key: 'site.manage', label: 'Change a website’s status and owner', desc: 'Set the status, assign it to somebody, reopen a completed one.' },
     { key: 'site.remove', label: 'Remove a website from Audits', desc: 'Anyone can always remove a website they added themselves.' },
     { key: 'site.bi', label: 'Add or exclude Business Info values', desc: 'Mark a value correct for a website, or strike one out of the reference.' },
+  ] },
+  { group: 'Live DR Sites', items: [
+    { key: 'live.view', label: 'See Live DR Sites', desc: 'The list of every website in the Duda account. Without this the page is not in the top bar at all.' },
+    { key: 'live.pull', label: 'Pull the list from Duda', desc: 'Fetch the websites again rather than using what was last pulled.' },
+    { key: 'live.domains', label: 'Check domains', desc: 'Open every live domain to see it still shows the right website.' },
+    { key: 'live.audit', label: 'See the audit column and start audits from there', desc: 'The Audit column and the "Audit this website" button. Usually QA rather than everybody.' },
   ] },
   { group: 'Audit items', items: [
     { key: 'item.status', label: 'Change audit item statuses', desc: 'Done, On hold, For clarification, False alarm.' },
@@ -566,7 +601,7 @@ export const BUILTIN_ROLES = [
     desc: 'Everything. At least one account must always have this.' },
   { id: 'member', name: 'Member', builtin: true,
     desc: 'The everyday role: audit websites, talk about them, report a false alarm.',
-    perms: ['site.add', 'site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'client.viewas'] },
+    perms: ['site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'client.viewas'] },
 ];
 /** The client role is not a team role and never appears on the Roles screen. */
 export const isTeamRole = (id) => id !== 'client';
@@ -598,24 +633,84 @@ export async function deleteRole(id) { await redis(['HDEL', P + 'roles', id]); }
 export const cleanPerms = (list) => [...new Set([].concat(list || []).map(String))].filter((k) => PERM_SET.has(k));
 
 /**
+ * Everything one person may do: their role, plus anything granted to them alone, minus anything
+ * taken off them alone.
+ *
+ * Custom access is stored as the DIFFERENCE from the role, never as a copy of it. So when the role
+ * changes, everybody on it moves with it and only the deliberate exceptions stay behind — and the
+ * exceptions are exactly what the Members screen can show an admin, because they are what is stored.
+ */
+export function effectivePerms(role, user) {
+  if (!user || user.role === 'client') return [];
+  if (user.email === OWNER_EMAIL || user.role === 'admin') return ['*'];
+  const base = new Set((role && role.perms) || []);
+  cleanPerms(user.grant).forEach((k) => base.add(k));
+  cleanPerms(user.revoke).forEach((k) => base.delete(k));
+  return [...base];
+}
+/** Does this person have anything that is not simply their role? */
+export const hasCustomAccess = (user) => !!(user && user.role !== 'admin' && user.role !== 'client'
+  && ((user.grant || []).length || (user.revoke || []).length));
+
+/**
  * May this person do this?
  *
- * The owner and the admin role are everything, by definition. Everyone else is their role's list.
- * A client account is never allowed anything here — its own endpoint is the only thing it reaches.
+ * The owner and the admin role are everything, by definition. Everyone else is their role's list
+ * with their own exceptions applied. A client account is never allowed anything here — its own
+ * endpoint is the only thing it reaches.
  */
 export function canWith(role, user, perm) {
   if (!user || user.status !== 'active') return false;
   if (user.role === 'client') return false;
+  // While previewing, the preview decides — including for an admin. A preview that quietly kept
+  // your own powers would show you a screen nobody else can actually use.
+  if (user.previewPerms) return user.previewPerms.includes('*') || user.previewPerms.includes(perm);
   if (user.email === OWNER_EMAIL || user.role === 'admin') return true;
-  const perms = (role && role.perms) || [];
+  const perms = effectivePerms(role, user);
   return perms.includes('*') || perms.includes(perm);
 }
 /** The same thing when the role has not been loaded yet. */
 export async function can(user, perm) {
   if (!user || user.status !== 'active' || user.role === 'client') return false;
+  if (user.previewPerms) return user.previewPerms.includes('*') || user.previewPerms.includes(perm);
   if (user.email === OWNER_EMAIL || user.role === 'admin') return true;
   return canWith(await getRole(user.role), user, perm);
 }
+/**
+ * Looking at the app as somebody else would see it.
+ *
+ * Only for people who manage accounts, and it only ever takes powers AWAY: the preview's permission
+ * list replaces the viewer's own, so an admin previewing a Dev is refused exactly what a Dev is
+ * refused. Nothing about who they are changes — their name is still on anything they do.
+ */
+export async function applyPreview(req, user) {
+  // Belt and braces with the copy above: a request that is not a preview never carries one.
+  delete user.previewPerms; delete user.previewOf;
+  const asRole = String(req.headers['x-view-as-role'] || '').slice(0, 32);
+  const asUser = normEmail(String(req.headers['x-view-as-user'] || '').slice(0, 160));
+  if (!asRole && !asUser) return user;
+  if (!(user.email === OWNER_EMAIL || user.role === 'admin')) return user;
+  if (asUser) {
+    const other = await getUser(asUser);
+    if (!other || other.role === 'client') return user;
+    user.previewPerms = other.role === 'admin' ? ['*'] : effectivePerms(await getRole(other.role), other);
+    user.previewOf = { email: other.email, name: other.name, role: other.role, custom: hasCustomAccess(other) };
+    return user;
+  }
+  const role = await getRole(asRole);
+  if (!role || role.id !== asRole) return user;
+  user.previewPerms = role.perms.includes('*') ? ['*'] : role.perms.slice();
+  user.previewOf = { roleId: role.id, roleName: role.name };
+  return user;
+}
+/**
+ * A number that changes whenever anybody's access could have changed.
+ *
+ * It rides along on the heartbeat every open browser already sends, so a person whose role was just
+ * edited finds out within a beat rather than the next time they happen to reload.
+ */
+export async function bumpAccess() { await redis(['INCR', P + 'ver:access']); }
+export async function accessVersion() { const [v] = await redis(['GET', P + 'ver:access']); return String(v || 0); }
 /** Refuse the request unless they may. Returns true when it has already answered. */
 export async function denyUnless(res, user, perm, what) {
   if (await can(user, perm)) return false;

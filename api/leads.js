@@ -107,6 +107,36 @@ export default async function handler(req, res) {
       return res.status(200).json({ added, months: done, failed, summary });
     }
 
+    /**
+     * Pull submissions for a handful of websites at a time.
+     *
+     * The browser drives the loop across the whole list, a few sites per request, exactly the way a
+     * scan queue works: nothing here can run long enough to be cut off, a failure costs one chunk
+     * rather than the run, and closing the tab stops it cleanly instead of leaving a half-done job.
+     */
+    if (b.op === 'fetch') {
+      const ids = [].concat(b.ids || []).map((x) => String(x).slice(0, 64)).filter(Boolean).slice(0, 25);
+      if (!ids.length) return res.status(400).json({ error: 'Which websites?' });
+      const months = Math.min(Math.max(Number(b.months) || 3, 1), 24);
+      const out = []; const failed = [];
+      for (const siteId of ids) {
+        const d = new Date(); let added = 0; let seen = 0; let err = '';
+        for (let i = 0; i < months; i++) {
+          const ym = d.toISOString().slice(0, 7);
+          try { const rows = await pullMonth(siteId, ym); seen += rows.length; added += await addLeads(siteId, rows); }
+          catch (e) { err = String(e.message || e).slice(0, 120); break; }
+          d.setUTCMonth(d.getUTCMonth() - 1);
+          // Duda allows 300 form-submission calls a minute; one every 150ms stays well inside it.
+          await new Promise((r2) => setTimeout(r2, 150));
+        }
+        if (err) { failed.push({ id: siteId, error: err }); continue; }
+        await compactOldMonths(siteId).catch(() => {});
+        const summary = await bumpSummary(siteId);
+        out.push({ id: siteId, seen, added, total: summary.total, last: summary.last });
+      }
+      return res.status(200).json({ done: out, failed });
+    }
+
     if (b.op === 'census') {
       // Counts only. Nothing is stored — this exists to answer "how many are there really?"
       const [idx] = await redis(['HGETALL', P + 'index']);

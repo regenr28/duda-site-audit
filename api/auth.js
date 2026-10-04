@@ -4,7 +4,7 @@
 import crypto from 'node:crypto';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
-  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, commentsChannel, OWNER_EMAIL , savedEditorHost, nameTaken, NOTIFY_GROUPS, getRole } from './_lib.js';
+  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, commentsChannel, OWNER_EMAIL , savedEditorHost, nameTaken, NOTIFY_GROUPS, getRole, effectivePerms, applyPreview, accessVersion } from './_lib.js';
 
 const CODE_TTL = 15 * 60;
 const code6 = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -51,10 +51,15 @@ export default async function handler(req, res) {
       // The browser is told what this person may do, so it can leave out what they cannot reach.
       // It is only ever a convenience: every endpoint checks the same thing again for itself.
       const role = u && u.role !== 'client' ? await getRole(u.role) : null;
+      if (u) await applyPreview(req, u);
+      const perms = !u ? [] : (u.previewPerms ? u.previewPerms
+        : (u.email === OWNER_EMAIL || u.role === 'admin' ? ['*'] : effectivePerms(role, u)));
       return res.status(200).json({ user: publicUser(u), rtChannel: u ? userChannel(u.email) : '',
         role: role ? { id: role.id, name: role.name } : null,
-        perms: u ? (u.email === OWNER_EMAIL || u.role === 'admin' ? ['*'] : ((role && role.perms) || [])) : [],
-        ...(u && u.email === OWNER_EMAIL ? { superAdmin: true } : {}) });
+        perms,
+        preview: (u && u.previewOf) || null,
+        accessVer: u ? await accessVersion() : '0',
+        ...(u && u.email === OWNER_EMAIL && !u.previewPerms ? { superAdmin: true } : {}) });
     }
     if (req.headers.origin) {
       try { if (new URL(req.headers.origin).host !== (req.headers['x-forwarded-host'] || req.headers.host)) return res.status(403).json({ error: 'Bad origin' }); } catch (e) { /* ignore */ }

@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole, effectivePerms, hasCustomAccess, bumpAccess, jparse } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -63,6 +63,45 @@ export default async function handler(req, res) {
     const fresh = me.role === 'admin' ? await getUser(me.email) : null;
     if (!fresh || fresh.role !== 'admin' || fresh.status !== 'active') return res.status(403).json({ error: 'Admins only' });
 
+    // ---------- one person's own exceptions ----------
+    // Stored as the difference from their role, never a copy of it: change the role and everyone on
+    // it moves, with only the deliberate exceptions left behind.
+    if (b.op === 'access') {
+      if (await denyUnless(res, me, 'members.manage', 'Your role does not allow changing what people can do.')) return;
+      const email = normEmail(b.email);
+      const u = await getUser(email);
+      if (!u || u.role === 'client') return res.status(404).json({ error: 'No such team member' });
+      if (u.role === 'admin') return res.status(400).json({ error: 'An Admin already has everything, so there is nothing to add or take away.' });
+      const role = await getRole(u.role);
+      const base = new Set(role.perms || []);
+      const wanted = new Set(cleanPerms(b.perms));
+      // Only the differences are kept, so the stored exceptions are exactly what the review shows.
+      u.grant = [...wanted].filter((k) => !base.has(k));
+      u.revoke = [...base].filter((k) => k !== '*' && !wanted.has(k));
+      await putUser(u);
+      await bumpAccess();
+      await globalLog(me, 'access', (u.grant.length || u.revoke.length)
+        ? `gave ${u.name} custom access (${u.grant.length} extra, ${u.revoke.length} removed)`
+        : `put ${u.name} back on the plain ${role.name} role`);
+      if (email !== me.email) {
+        await notifyUser(email, { by: me.email, byName: me.name, kind: 'access',
+          text: (u.grant.length || u.revoke.length) ? `Your access was changed — ${u.grant.length} extra, ${u.revoke.length} removed` : `You are back on the plain ${role.name} role` }).catch(() => {});
+      }
+      return res.status(200).json({ ok: true, grant: u.grant, revoke: u.revoke, perms: effectivePerms(role, u) });
+    }
+    // Who is in the middle of something right now, so nobody's access is pulled out from under them
+    // without the person doing it knowing.
+    if (b.op === 'busy') {
+      const email = normEmail(b.email);
+      const [pres] = await redis(['HGETALL', P + 'presence']);
+      const map = {};
+      if (Array.isArray(pres)) { for (let i = 0; i < pres.length; i += 2) map[pres[i]] = jparse(pres[i + 1]); }
+      else if (pres && typeof pres === 'object') Object.entries(pres).forEach(([k, v]) => { map[k] = typeof v === 'string' ? jparse(v) : v; });
+      const p2 = map[email];
+      const fresh = p2 && Date.now() - Date.parse(p2.seen || 0) < 10 * 60000;
+      return res.status(200).json({ online: !!fresh, where: fresh ? (p2.where || null) : null, name: p2 ? p2.name : '' });
+    }
+
     // ---------- roles ----------
     if (b.op === 'roles') {
       const roles = await listRoles();
@@ -90,6 +129,7 @@ export default async function handler(req, res) {
       const perms = id === 'admin' ? ['*'] : cleanPerms(b.perms);
       const role = { id, name, desc: String(b.desc || '').trim().slice(0, 160), perms, builtin: !!(existing && existing.builtin) };
       await saveRole(role);
+      await bumpAccess();
       await globalLog(me, 'role', existing ? `changed the role "${name}"` : `created the role "${name}"`);
       return res.status(200).json({ role });
     }
@@ -113,6 +153,7 @@ export default async function handler(req, res) {
         await globalLog(me, 'role', `moved ${holders.length} ${holders.length === 1 ? 'person' : 'people'} from "${role.name}" to "${dest.name}"`);
       }
       await deleteRole(id);
+      await bumpAccess();
       await globalLog(me, 'role', `removed the role "${role.name}"`);
       return res.status(200).json({ ok: true, moved: holders.length });
     }
@@ -188,7 +229,7 @@ export default async function handler(req, res) {
           // Any role the installation actually has, not just the two it shipped with.
           const roles = await listRoles();
           const picked = roles.find((r) => r.id === String(b.role || '')) || roles.find((r) => r.id === 'member');
-          target.role = picked.id; await putUser(target);
+          target.role = picked.id; await putUser(target); await bumpAccess();
           await globalLog(me, 'role', `made ${target.name} ${/^[aeiou]/i.test(picked.name) ? 'an' : 'a'} ${picked.name}`);
         }
         break;

@@ -71,7 +71,7 @@ export default async function handler(req, res) {
       if (!rec) return res.status(404).json({ error: 'Not found' });
 
       if (op === 'site') {
-        const sum = await getSummary(id);
+        const sum = await getSummary(rec.siteId || id);
         const [cmtRaw] = await redis(['LRANGE', P + 'cmt:' + id, 0, 199]);
         const open = (cmtRaw || []).map((x) => jparse(x)).filter((c) => c && !c.fromFalseAlarm).length;
         return res.status(200).json({ site: clientSite(rec), leads: sum, comments: open });
@@ -79,12 +79,12 @@ export default async function handler(req, res) {
 
       if (op === 'leads') {
         const months = Math.min(Math.max(Number(req.query.months) || 12, 1), 24);
-        const all = await readLeads(id, months);
+        const all = await readLeads(rec.siteId || id, months);
         let rows = all;
         if (req.query.page) rows = rows.filter((l) => l.pg === req.query.page);
         if (req.query.form) rows = rows.filter((l) => l.fm === req.query.form);
         if (req.query.source) rows = rows.filter((l) => l.src === req.query.source);
-        await bumpSummary(id).catch(() => {});
+        await bumpSummary(rec.siteId || id).catch(() => {});
         return res.status(200).json({
           leads: rows.slice(0, 500), matched: rows.length, total: all.length,
           groups: groupLeads(all), series: monthlySeries(all, months), when: whenSeries(all),
