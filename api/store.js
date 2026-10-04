@@ -5,7 +5,7 @@
 // Keys:  site:<id> (scan results + meta)   index (hash id → summary)   fstate:<id> (hash findingId → {status, assignee})
 //        fnum:<id> (hash findingId → #)   seq:<id>   cmt:<id> (hash commentId → comment)   act:<id> (list)
 //        notif:<email> (list)   notifseen:<email>
-import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, wantsEmail, plainMentions, normEmail, buildId } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, wantsEmail, plainMentions, normEmail, buildId, can, denyUnless } from './_lib.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 
@@ -247,7 +247,7 @@ export default async function handler(req, res) {
       if (op === 'stats') {
         // Who closed what: counters per person (admins see everyone, members see their own)
         const all = await listUsers();
-        const who = me.role === 'admin' ? all.filter((u) => u.status !== 'rejected') : all.filter((u) => u.email === me.email);
+        const who = (await can(me, 'members.manage')) ? all.filter((u) => u.status !== 'rejected') : all.filter((u) => u.email === me.email);
         const rows = await redis(...who.map((u) => ['HGETALL', P + 'stat:' + u.email]));
         const [idx] = await redis(['HGETALL', P + 'index']);
         const sites = Object.values(pairs(idx, true));
@@ -264,12 +264,12 @@ export default async function handler(req, res) {
         // Audits that were taken off the list: what it was, who removed it, when and why.
         const [all] = await redis(['HGETALL', P + 'removed']);
         let rows = Object.values(pairs(all, true));
-        if (me.role !== 'admin') rows = rows.filter((x) => x.removedBy === me.email || x.addedBy === me.email || x.assignee === me.email);
+        if (!(await can(me, 'activity.view'))) rows = rows.filter((x) => x.removedBy === me.email || x.addedBy === me.email || x.assignee === me.email);
         rows.sort((a, c) => String(c.removedAt || '').localeCompare(String(a.removedAt || '')));
         return res.status(200).json({ rows: rows.slice(0, 400) });
       }
       if (op === 'gactivity') {
-        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        if (await denyUnless(res, me, 'activity.view', 'Your role does not allow seeing the activity log.')) return;
         const [list] = await redis(['LRANGE', P + 'gact', 0, 999]);
         return res.status(200).json({ items: (list || []).map((x) => jparse(x)).filter(Boolean) });
       }
@@ -311,8 +311,9 @@ export default async function handler(req, res) {
         const [all] = await redis(['HGETALL', P + 'fa']);
         let items = Object.values(pairs(all, true)).sort((a, c) => String(c.markedAt || c.createdAt).localeCompare(String(a.markedAt || a.createdAt)));
         items.forEach((i) => { i.status = faStatus(i.status); });
-        if (me.role !== 'admin') items = items.filter((i) => normEmail(i.markedBy || '') === normEmail(me.email));
-        return res.status(200).json({ items, mine: me.role !== 'admin' });
+        const seeAll = await can(me, 'fa.seeall');
+        if (!seeAll) items = items.filter((i) => normEmail(i.markedBy || '') === normEmail(me.email));
+        return res.status(200).json({ items, mine: !seeAll });
       }
       if (op === 'notifs') {
         const [list, seen] = await redis(['LRANGE', P + 'notif:' + me.email, 0, 49], ['GET', P + 'notifseen:' + me.email]);
@@ -347,6 +348,7 @@ export default async function handler(req, res) {
         return res.status(200).json(await saveIndex(b.id));
       }
       case 'saveScan': {
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
         const [raw, fnum, seqRaw] = await redis(['GET', P + 'site:' + b.id], ['HGETALL', P + 'fnum:' + b.id], ['GET', P + 'seq:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
         const r = b.result || {};
@@ -448,8 +450,8 @@ export default async function handler(req, res) {
         return res.status(200).json(await saveIndex(b.id));
       }
       case 'maintenance': {
-        // Admin clean-up: compress old website records, slim the list, trim long logs, remove the old AI cache format
-        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        if (await denyUnless(res, me, 'app.maintenance', 'Your role does not allow database clean-up.')) return;
+        // Clean-up: compress old website records, slim the list, trim long logs, remove the old AI cache format
         const out = { sitesCompressed: 0, bytesBefore: 0, bytesAfter: 0, logsTrimmed: 0, oldKeysRemoved: 0 };
         const [idx] = await redis(['HGETALL', P + 'index']);
         const ids = Object.keys(pairs(idx, true));
@@ -491,10 +493,10 @@ export default async function handler(req, res) {
         // A false alarm is a bug report against a check. The admins triage it, but the person who
         // raised it is a participant, not a bystander: they can read it and answer back on it.
         const mine = normEmail(rec.markedBy || '') === normEmail(me.email);
-        if (me.role !== 'admin' && !mine) return res.status(403).json({ error: 'Not yours' });
+        if (!mine && !(await can(me, 'fa.seeall'))) return res.status(403).json({ error: 'Not yours' });
         const note = String(b.note || '').trim().slice(0, 1000);
         if (b.op === 'faUpdate') {
-          if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+          if (await denyUnless(res, me, 'fa.manage', 'Your role does not allow answering false alarm reports.')) return;
           if (!FA_STATUS.includes(b.status)) return res.status(400).json({ error: 'Bad status' });
           const from = rec.status;
           if (from !== b.status) (rec.history = rec.history || []).push({ by: me.name, byEmail: me.email, at: now(), from, to: b.status, note });
@@ -521,11 +523,12 @@ export default async function handler(req, res) {
         return res.status(200).json(rec);
       }
       case 'faDelete': {
-        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        if (await denyUnless(res, me, 'fa.manage', 'Your role does not allow answering false alarm reports.')) return;
         await redis(['HDEL', P + 'fa', String(b.key || '')]);
         return res.status(200).json({ ok: true });
       }
       case 'allowAdd': case 'allowRemove': case 'allowEdit': {
+        if (await denyUnless(res, me, 'site.bi', 'Your role does not allow changing the Business Info exceptions.')) return;
         // The team's own layer on top of Business Info.
         //
         // Duda's copy is never edited here: what Duda says is what the page shows, always fresh on
@@ -663,9 +666,10 @@ export default async function handler(req, res) {
       }
       case 'aiUnlock': { await redis(['DEL', P + 'ailock:' + b.id]); return res.status(200).json({ ok: true }); }
       case 'patchSite': {
+        const ch = b.changes || {};
+        if (('status' in ch || 'assignee' in ch) && await denyUnless(res, me, 'site.manage', 'Your role does not allow changing a website\u2019s status or owner.')) return;
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
-        const ch = b.changes || {};
         const users = await listUsers();
         const nameOf = (e) => (users.find((u) => u.email === e) || {}).name || 'Unassigned';
         const siteName = site.businessName || site.siteId;
@@ -701,9 +705,11 @@ export default async function handler(req, res) {
         return res.status(200).json(await saveIndex(b.id));
       }
       case 'patchFinding': {
+        const ch = b.changes || {};
+        if ('status' in ch && await denyUnless(res, me, 'item.status', 'Your role does not allow changing audit item statuses.')) return;
+        if ('assignee' in ch && await denyUnless(res, me, 'item.assign', 'Your role does not allow assigning audit items.')) return;
         const l = await loadSite(b.siteId); if (!l) return res.status(404).json({ error: 'Not found' });
         const ids = [].concat(b.findingIds || []);
-        const ch = b.changes || {};
         const users = await listUsers();
         const nameOf = (e) => (users.find((u) => u.email === e) || {}).name || 'Unassigned';
         const cmds = []; const touched = [];
@@ -809,7 +815,7 @@ export default async function handler(req, res) {
       case 'deleteComment': {
         const [raw] = await redis(['HGET', P + 'cmt:' + b.siteId, b.commentId]);
         const c = jparse(raw); if (!c) return res.status(404).json({ error: 'Not found' });
-        if (c.by !== me.email && me.role !== 'admin') return res.status(403).json({ error: 'You can only delete your own comments' });
+        if (c.by !== me.email && !(await can(me, 'comment.delete'))) return res.status(403).json({ error: 'You can only delete your own comments' });
         const imgKeys = (c.images || []).map((u) => P + 'img:' + String(u).split('id=')[1]).filter((k) => !k.endsWith('undefined'));
         if (imgKeys.length) await redis(['DEL', ...imgKeys]); // screenshots are the largest items in the database
         Object.assign(c, { deleted: true, text: '', images: [], deletedBy: me.email, deletedAt: now() });
@@ -821,7 +827,7 @@ export default async function handler(req, res) {
       case 'deleteSite': {
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
-        if (me.role !== 'admin' && site.addedBy !== me.email) return res.status(403).json({ error: 'Only an admin or the person who added it can remove this audit' });
+        if (!(await can(me, 'site.remove')) && site.addedBy !== me.email) return res.status(403).json({ error: 'Your role does not allow removing a website somebody else added.' });
         const reason = String(b.reason || '').trim().slice(0, 400);
         const whoList = await listUsers();
         const whoName = (e) => (whoList.find((u) => u.email === e) || {}).name || '';

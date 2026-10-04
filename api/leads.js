@@ -5,7 +5,7 @@
 // GET  /api/leads?op=summary&ids=a,b,c      → the small counts the Audits list shows
 // POST /api/leads { op: 'backfill', id, months }   (admins) → pull history from Duda
 // POST /api/leads { op: 'census' }                 (admins) → count submissions per site, store nothing
-import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON } from './_lib.js';
+import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
 import { addLeads, normalise, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, compactOldMonths, bumpSummary } from './_leads.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
@@ -73,14 +73,20 @@ export default async function handler(req, res) {
       if (f.page) leads = leads.filter((l) => l.pg === f.page);
       if (f.form) leads = leads.filter((l) => l.fm === f.form);
       if (f.source) leads = leads.filter((l) => l.src === f.source);
+      // Without leads.contacts a teammate sees that an enquiry arrived, from which page and which
+      // source, but not the customer's name, email or phone. The redaction happens here, on the way
+      // out — not in the page, where a template could forget.
+      const full = await can(me, 'leads.contacts');
+      const shape = (l) => (full ? l : Object.assign({}, l, { n: '', e: '', p: '', redacted: true }));
       return res.status(200).json({
-        leads: leads.slice(0, 500), shown: Math.min(leads.length, 500), matched: leads.length, total: all.length,
+        contacts: full,
+        leads: leads.slice(0, 500).map(shape), shown: Math.min(leads.length, 500), matched: leads.length, total: all.length,
         groups: groupLeads(all), series: monthlySeries(all, months), when: whenSeries(all), summary: await getSummary(id),
       });
     }
 
     const b = readBody(req);
-    if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+    if (await denyUnless(res, me, 'leads.import', 'Your role does not allow importing submission history.')) return;
 
     if (b.op === 'backfill') {
       const id = String(b.id || '');

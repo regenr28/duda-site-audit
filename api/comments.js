@@ -11,7 +11,7 @@
 //
 // Replying and resolving still happen in the Duda editor — there is no API to write a comment.
 // When somebody resolves one there, Duda tells us and it turns green here.
-import { redis, P, requireUser, readBody, jparse, now, listUsers, notifyUser, fetchWithTimeout, unescapeHtml, savedEditorHost, slackMembers, slackRoster, slackBotEnabled, globalLog } from './_lib.js';
+import { redis, P, requireUser, readBody, jparse, now, listUsers, notifyUser, fetchWithTimeout, unescapeHtml, savedEditorHost, slackMembers, slackRoster, slackBotEnabled, globalLog, denyUnless } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const WAIT_HOURS = Number(process.env.COMMENT_WAIT_HOURS || 24);
@@ -417,12 +417,12 @@ export default async function handler(req, res) {
       }
 
       if (op === 'slack') {
-        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        if (await denyUnless(res, me, 'duda.team', 'Your role does not allow changing who counts as the team.')) return;
         return res.status(200).json(slim(await slackRoster()));
       }
       if (op === 'log') {
         // Owner-only: did anything actually arrive? Useful while Duda is being set up.
-        if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+        if (await denyUnless(res, me, 'duda.setup', 'Your role does not allow setting up the Duda connection.')) return;
         const [list] = await redis(['LRANGE', P + 'hooklog', 0, 49]);
         return res.status(200).json({ items: (list || []).map((x) => jparse(x)).filter(Boolean), listening: !!process.env.DUDA_HOOK_KEY, checked: !!process.env.DUDA_HOOK_SECRET });
       }
@@ -437,7 +437,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
     if (b.op === 'who') {
-      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      if (await denyUnless(res, me, 'duda.team', 'Your role does not allow changing who counts as the team.')) return;
       const email = String(b.email || '').toLowerCase().trim();
       const as = b.as === 'team' ? 'team' : b.as === 'client' ? 'client' : '';
       if (!email) return res.status(400).json({ error: 'email required' });
@@ -448,7 +448,7 @@ export default async function handler(req, res) {
     if (b.op === 'slackSync') {
       // Read the Slack workspace once and keep the result. From then on, a comment from a teammate
       // is recognised by who they are rather than by which domain their address happens to use.
-      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      if (await denyUnless(res, me, 'duda.team', 'Your role does not allow changing who counts as the team.')) return;
       if (!slackBotEnabled()) return res.status(400).json({ error: 'Slack is not connected yet.' });
       const r = await slackMembers();
       if (!r.ok) {
@@ -470,7 +470,7 @@ export default async function handler(req, res) {
       // ever left a comment. Each one is asked about once, Duda says STAFF or CUSTOMER, and that is
       // the answer from then on. Older comments predate the author index, so the first run also
       // walks the conversations, a page of websites at a time.
-      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      if (await denyUnless(res, me, 'duda.team', 'Your role does not allow changing who counts as the team.')) return;
       const from = Math.max(0, Number(b.from) || 0);
       const PAGE = 120;
       const [watch] = await redis(['HGETALL', P + 'watch']);
@@ -502,7 +502,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ done: true, total: emails.length, staff, customers, nobody, pending: unknown.length });
     }
     if (b.op === 'slackForget') {
-      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      if (await denyUnless(res, me, 'duda.team', 'Your role does not allow changing who counts as the team.')) return;
       await redis(['DEL', P + 'slackroster']);
       await globalLog({ type: 'slack', by: me.email, byName: me.name, text: 'cleared the Slack member list' });
       return res.status(200).json({ ok: true, roster: null });

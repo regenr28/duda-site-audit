@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole } from './_lib.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -44,7 +44,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ user: publicUser(me) });
     }
     if (b.op === 'slackWho') {
-      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      if (await denyUnless(res, me, 'duda.team', 'Your role does not allow that.')) return;
       const all = await listUsers();
       return res.status(200).json({ who: await slackWho(all.filter((u) => u.status === 'active').map((u) => u.email)) });
     }
@@ -62,6 +62,60 @@ export default async function handler(req, res) {
     // Admin actions always check the latest role (not the short session cache), so a just-demoted admin can't act
     const fresh = me.role === 'admin' ? await getUser(me.email) : null;
     if (!fresh || fresh.role !== 'admin' || fresh.status !== 'active') return res.status(403).json({ error: 'Admins only' });
+
+    // ---------- roles ----------
+    if (b.op === 'roles') {
+      const roles = await listRoles();
+      const all = (await listUsers()).filter((u) => isTeamRole(u.role));
+      const counts = {};
+      all.forEach((u) => { counts[u.role] = (counts[u.role] || 0) + 1; });
+      return res.status(200).json({ roles, counts, permissions: PERMISSIONS, canManage: await can(me, 'roles.manage') });
+    }
+    if ((b.op === 'roleSave' || b.op === 'roleDelete') && await denyUnless(res, me, 'roles.manage', 'Your role does not allow changing roles.')) return;
+    if (b.op === 'roleSave') {
+      const name = String(b.name || '').trim().slice(0, 40);
+      if (!name) return res.status(400).json({ error: 'Give the role a name' });
+      const roles = await listRoles();
+      let id = String(b.id || '').trim().slice(0, 32);
+      if (id === 'client' || /^client$/i.test(name)) return res.status(400).json({ error: 'That name is reserved for client sign-ins.' });
+      const existing = id ? roles.find((r) => r.id === id) : null;
+      if (id && !existing) return res.status(404).json({ error: 'No such role' });
+      if (!id) {
+        id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || ('role' + Date.now().toString(36));
+        if (roles.some((r) => r.id === id)) return res.status(409).json({ error: `There is already a role called "${name}".` });
+      }
+      if (roles.some((r) => r.id !== id && r.name.toLowerCase() === name.toLowerCase())) return res.status(409).json({ error: `There is already a role called "${name}".` });
+      // Admin is everything, always. It can be renamed, but its permissions are not up for debate:
+      // an installation nobody can get back into is not a state anyone should be able to reach.
+      const perms = id === 'admin' ? ['*'] : cleanPerms(b.perms);
+      const role = { id, name, desc: String(b.desc || '').trim().slice(0, 160), perms, builtin: !!(existing && existing.builtin) };
+      await saveRole(role);
+      await globalLog(me, 'role', existing ? `changed the role "${name}"` : `created the role "${name}"`);
+      return res.status(200).json({ role });
+    }
+    if (b.op === 'roleDelete') {
+      const id = String(b.id || '');
+      const roles = await listRoles();
+      const role = roles.find((r) => r.id === id);
+      if (!role) return res.status(404).json({ error: 'No such role' });
+      if (role.builtin) return res.status(400).json({ error: `${role.name} is built in, so it can't be removed. You can rename it and change what it allows.` });
+      const holders = (await listUsers()).filter((u) => u.role === id);
+      // Nobody is left without a role, and nobody is quietly promoted. If people hold this role, the
+      // person removing it has to say where they go — and is told how many that is before deciding.
+      if (holders.length) {
+        const dest = roles.find((r) => r.id === String(b.moveTo || '') && r.id !== id);
+        if (!dest) {
+          return res.status(409).json({ error: `${holders.length} ${holders.length === 1 ? 'person has' : 'people have'} this role. Choose what they become instead.`,
+            needsMove: true, count: holders.length, names: holders.slice(0, 8).map((u) => u.name),
+            choices: roles.filter((r) => r.id !== id).map((r) => ({ id: r.id, name: r.name })) });
+        }
+        for (const u of holders) { u.role = dest.id; await putUser(u); }
+        await globalLog(me, 'role', `moved ${holders.length} ${holders.length === 1 ? 'person' : 'people'} from "${role.name}" to "${dest.name}"`);
+      }
+      await deleteRole(id);
+      await globalLog(me, 'role', `removed the role "${role.name}"`);
+      return res.status(200).json({ ok: true, moved: holders.length });
+    }
 
     // ---------- client accounts ----------
     // A client is only ever created here, by an admin, with an explicit list of websites. Signing
@@ -125,12 +179,18 @@ export default async function handler(req, res) {
         await globalLog(me, target.status === 'pending' ? 'reject' : 'remove', `${target.status === 'pending' ? 'rejected' : 'removed'} ${target.name} (${email})`);
         break;
       case 'role':
-        if (email === me.email && b.role !== 'admin') {
-          const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
-          if (admins.length < 2) return res.status(400).json({ error: 'Make someone else an admin first' });
+        // The real rule is not "don't demote yourself", it is "never leave the app with no admin".
+        if (target.role === 'admin' && String(b.role || '') !== 'admin') {
+          const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active' && u.email !== email);
+          if (!admins.length) return res.status(400).json({ error: 'Make someone else an Admin first — the app must always have one.' });
         }
-        target.role = b.role === 'admin' ? 'admin' : 'member'; await putUser(target);
-        await globalLog(me, 'role', `made ${target.name} ${target.role === 'admin' ? 'an admin' : 'a member'}`);
+        {
+          // Any role the installation actually has, not just the two it shipped with.
+          const roles = await listRoles();
+          const picked = roles.find((r) => r.id === String(b.role || '')) || roles.find((r) => r.id === 'member');
+          target.role = picked.id; await putUser(target);
+          await globalLog(me, 'role', `made ${target.name} ${/^[aeiou]/i.test(picked.name) ? 'an' : 'a'} ${picked.name}`);
+        }
         break;
       case 'disable': case 'enable': {
         // Switching an account off keeps its history (who did what) instead of deleting it

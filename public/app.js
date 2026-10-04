@@ -29,7 +29,7 @@
     // The client side of the app. `viewAs` is set when one of us is previewing a website as its
     // client — the server is told, and answers with exactly what a real client would get.
     cl: { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {} },
-    leadSums: {}, clients: null,
+    leadSums: {}, clients: null, perms: [], roles: [], roleCounts: {},
     viewAs: '',
   };
 
@@ -77,6 +77,12 @@
   const cpost = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body), headers: clientHeaders() });
   /** True when the page should be the client's, either because they are one or we are previewing. */
   const clientMode = () => !!(state.viewAs || (state.me && state.me.role === 'client'));
+  /**
+   * May I? Only ever used to leave out what somebody cannot reach — every endpoint checks again
+   * for itself, so a wrong answer here is untidy, never a way in.
+   */
+  const can = (perm) => { const p2 = state.perms || []; return p2.includes('*') || p2.includes(perm); };
+  const roleName = (id) => { const r = (state.roles || []).find((x) => x.id === id); return r ? r.name : (id === 'admin' ? 'Admin' : id === 'member' ? 'Member' : id || ''); };
   const store = (body) => post('/api/store', body);
 
   // ---------- Modal / lightbox ----------
@@ -159,7 +165,12 @@
     const msg = (t, ok) => { const m = $('#auMsg'); m.textContent = t || ''; m.className = 'au-msg ' + (ok ? 'ok' : 'bad'); };
     const rem = () => ($('#auRemember') ? $('#auRemember').checked : a.remember);
     const done = async (r) => {
-      if (r.user) { state.me = r.user; document.body.classList.remove('auth-mode'); await boot2(); return; }
+      if (r.user) {
+        state.me = r.user; document.body.classList.remove('auth-mode');
+        // Signing in does not say what this role may do; ask before drawing anything.
+        try { const m = await api('/api/auth?op=me'); state.perms = m.perms || []; state.myRole = m.role || null; state.superAdmin = !!m.superAdmin; state.rtChannel = m.rtChannel || ''; } catch (e) { state.perms = []; }
+        await boot2(); return;
+      }
       if (r.pending) { a.mode = 'pending'; renderAuth(); return; }
     };
     const form = $('#auForm');
@@ -338,9 +349,9 @@
     const isOwner = !!state.superAdmin;
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
       <a href="#/live" data-nav="live">Live DR Sites</a>
-      ${state.me.role === 'admin' ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
+      ${can('activity.view') ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
       <a href="#/comments" data-nav="comments">Duda comments${cmtWaiting() ? ` <span class="nav-dot bad" title="A client is waiting for an answer"></span>` : cmtUnread() ? ' <span class="nav-dot"></span>' : ''}</a>
-      <a href="#/suggestions" data-nav="suggestions">${isOwner || state.me.role === 'admin' ? 'Suggestions' : 'My suggestions'}</a>`;
+      <a href="#/suggestions" data-nav="suggestions">${isOwner || can('fa.manage') ? 'Suggestions' : 'My suggestions'}</a>`;
     // Light-bulb menu (left of the logo): About, AI Status, Help, Suggest a feature, AI credits
     if (!$('#btnMenu')) {
       const mb = document.createElement('button');
@@ -355,7 +366,7 @@
       <button class="btn ghost bell" id="btnBell" title="Notifications" aria-label="Notifications">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
         <span class="bell-count" id="bellCount" hidden></span></button>
-      <button class="btn ghost" id="btnMembers" type="button">Members${state.me.role === 'admin' && state.users.some((u) => u.status === 'pending') ? ` <span class="badge fs-clarification">${state.users.filter((u) => u.status === 'pending').length} for approval</span>` : ''}</button>
+      <button class="btn ghost" id="btnMembers" type="button">Members${can('members.approve') && state.users.some((u) => u.status === 'pending') ? ` <span class="badge fs-clarification">${state.users.filter((u) => u.status === 'pending').length} for approval</span>` : ''}</button>
       <button class="btn primary" id="btnAdd" type="button">+ Add website</button>
       <button class="btn ghost me-btn" id="btnMe" title="${esc(state.me.email)}">${avatar(state.me.email, 26)}</button>`;
     $('#btnAdd').onclick = openAdd;
@@ -532,7 +543,7 @@
       const hadUnread = state.notifs.unread;
       if (r.notifs) state.notifs = r.notifs;
       renderBell(); renderPresence(); roomFromPulse(); announceNotifs(state.notifs.items || []);
-      if (state.notifs.unread > hadUnread && state.me.role === 'admin' && state.notifs.items.some((n) => n.kind === 'signup')) { loadUsers().then(renderTop).catch(() => {}); }
+      if (state.notifs.unread > hadUnread && can('members.approve') && state.notifs.items.some((n) => n.kind === 'signup')) { loadUsers().then(renderTop).catch(() => {}); }
       // A Duda comment landed somewhere: pick it up without anyone pressing Refresh.
       if (r.cmtVer !== undefined && String(r.cmtVer) !== String(state.cmtVer || '')) {
         if (state.cmtVer === undefined) state.cmtVer = String(r.cmtVer);
@@ -571,7 +582,7 @@
       const w = x.pr.st !== 'offline' ? whereOf(x.u.email) : null;
       return `<button type="button" class="np-item np-member" data-member="${esc(x.u.email)}" title="See what ${esc(x.u.name)} worked on">
         <span class="pav">${avatar(x.u.email, 28)}<span class="pdot ${x.pr.st}"></span></span>
-        <div class="grow"><div><b>${esc(x.u.name)}</b>${x.u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${state.me.role === 'admin' ? ` <span class="badge subtle">${esc(x.u.role)}</span>` : ''}</div>
+        <div class="grow"><div><b>${esc(x.u.name)}</b>${x.u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${can('members.manage') ? ` <span class="badge subtle">${esc(roleName(x.u.role))}</span>` : ''}</div>
         <div class="small ${x.pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(presenceText(x.pr))}</div>
         ${w ? `<div class="small muted np-where">Now on <b>${esc(w.name)}</b>${w.item ? ` · #${w.item}` : ''}</div>` : ''}</div><span class="faint">›</span></button>`;
     }).join('');
@@ -622,7 +633,7 @@
     if (asked) return;
     try { localStorage.setItem('dsa-desk-asked', '1'); } catch (e) { /* ignore */ }
     const card = popNotify({ email: state.me.email, title: 'Get desktop notifications?', secs: 25,
-      body: `${state.me.role === 'admin' ? 'See new sign-ups, mentions and replies' : 'See mentions, replies and assignments'} even when this app is minimized.<div style="margin-top:8px;display:flex;gap:6px"><button class="btn sm primary" data-desk-yes>Turn on</button><button class="btn sm ghost" data-desk-no>Not now</button></div>` });
+      body: `${can('members.approve') ? 'See new sign-ups, mentions and replies' : 'See mentions, replies and assignments'} even when this app is minimized.<div style="margin-top:8px;display:flex;gap:6px"><button class="btn sm primary" data-desk-yes>Turn on</button><button class="btn sm ghost" data-desk-no>Not now</button></div>` });
     card.querySelector('[data-desk-yes]').onclick = () => { card.querySelector('.pop-x').click(); askDesktop(); };
     card.querySelector('[data-desk-no]').onclick = () => card.querySelector('.pop-x').click();
   }
@@ -829,7 +840,7 @@
       })();
       $('.modal').innerHTML = `<header><div style="display:flex;gap:12px;align-items:center"><span class="pav">${avatar(email, 36)}<span class="pdot ${pr.st}"></span></span><div><h2 style="margin:0">${esc(u.name)}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}</h2>
         <div class="small mono muted">${esc(u.email)}</div>
-        <div class="small ${pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(u.status === 'disabled' ? 'This account can no longer sign in. Its past work is kept.' : presenceText(pr))}${u.role && state.me.role === 'admin' ? ' · ' + esc(u.role) : ''}</div>
+        <div class="small ${pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(u.status === 'disabled' ? 'This account can no longer sign in. Its past work is kept.' : presenceText(pr))}${u.role && can('members.manage') ? ' · ' + esc(roleName(u.role)) : ''}</div>
         ${(u.nameHistory || []).length ? `<div class="small faint">Previously: ${esc([...new Set(u.nameHistory.map((h) => h.from).filter(Boolean))].join(', '))}</div>` : ''}</div></div><button class="btn ghost" data-close>✕</button></header>
         <div class="body ma-body">${body}</div>`;
       $$('[data-close]', $('.modal')).forEach((b) => (b.onclick = closeModal));
@@ -858,7 +869,7 @@
     const all = (state.config && state.config.notifyGroups) || [];
     const mailOn = !!(state.config && state.config.emailEnabled);
     const slackOn = !!(state.config && state.config.slackDM);
-    return all.filter((g) => !g.admin || state.me.role === 'admin')
+    return all.filter((g) => !g.admin || can('members.approve'))
       .map((g) => Object.assign({}, g, { channels: g.channels.filter((c) => (c !== 'email' || mailOn) && (c !== 'slack' || slackOn)) }))
       .filter((g) => g.channels.length);
   }
@@ -901,7 +912,7 @@
 
   function openMe() {
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
-      <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.me.role === 'admin' ? ' · admin' : ''}</div></div></div>
+      <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.myRole ? ' · ' + esc(state.myRole.name.toLowerCase()) : ''}</div></div></div>
       <label class="field">Display name<input type="text" id="meName" value="${esc(state.me.name)}"></label>
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
@@ -910,7 +921,7 @@
         <select id="meEnv"><option value="white" ${state.me.editorEnv !== 'duda' ? 'selected' : ''}>White-label (${esc(editorHost() || 'agency address')})</option><option value="duda" ${state.me.editorEnv === 'duda' ? 'selected' : ''}>Duda (${DUDA_HOST})</option></select>
         <span class="small muted">Only changes where the Editor and Preview links take you. Audits are the same either way.</span></label>
       ${!(state.config && state.config.slackDM) && state.superAdmin ? `<div class="small muted">Slack messages are not switched on yet. Once the Slack connection is added, a Slack option appears here for everyone.</div>` : ''}
-      ${state.config && state.config.slackDM ? `<label class="check-row slack-row"><input type="checkbox" id="meSlack" ${state.me.slackDM !== false ? 'checked' : ''}><span>Also message me on Slack (from <b>Site Auditor</b>) when someone mentions me, replies, or assigns me an item${state.me.role === 'admin' ? ', and when someone signs up' : ''}.</span></label>
+      ${state.config && state.config.slackDM ? `<label class="check-row slack-row"><input type="checkbox" id="meSlack" ${state.me.slackDM !== false ? 'checked' : ''}><span>Also message me on Slack (from <b>Site Auditor</b>) when someone mentions me, replies, or assigns me an item${can('members.approve') ? ', and when someone signs up' : ''}.</span></label>
         <div class="small muted" style="margin-top:-4px">Uses your Slack account with the same email as here: <b>${esc(state.me.email)}</b>.</div>
         <button class="btn sm" id="meSlackTest" type="button" style="justify-self:start">Send a Slack test message</button>` : ''}
       ${notifyGrid()}</div>
@@ -969,10 +980,10 @@
               <div class="pf-owner-row" id="pfOwner">${clientsFor(s.id).length
                 ? clientsFor(s.id).map((c) => `<span class="pill">${esc(c.name)}<span class="faint small"> · ${esc(c.email)}</span></span>`).join('')
                 : '<span class="faint">Nobody yet</span>'}
-                ${state.me.role === 'admin' ? '<button class="linkbtn" id="pfClient">Manage client access</button>' : ''}</div>
+                ${can('client.manage') ? '<button class="linkbtn" id="pfClient">Manage client access</button>' : ''}</div>
             </div>
             <div class="pf-acts">
-              <button class="btn" id="pfView">👁 View as client</button>
+              ${can('client.viewas') ? '<button class="btn" id="pfView">👁 View as client</button>' : ''}
               <a class="btn ghost" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
             </div>
           </div>
@@ -996,9 +1007,9 @@
           </div>
         </div>
       </div>`;
-    $('#pfView').onclick = () => { state.viewAs = s.id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(s.id)}/dashboard`; };
+    if ($('#pfView')) $('#pfView').onclick = () => { state.viewAs = s.id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(s.id)}/dashboard`; };
     // Who can see this website is only known once; after that the panel redraws from what we hold.
-    if (state.me.role === 'admin' && state.clients === null) {
+    if (can('client.manage') && state.clients === null) {
       state.clients = [];
       post('/api/users', { op: 'clients' }).then((r) => { state.clients = r.clients || []; if (route().tab === 'profile') renderProfileTab(body, s, { cnt, generalComments }); }).catch(() => {});
     }
@@ -1052,7 +1063,7 @@
       <div class="note">${d.total
         ? `<b>${d.total}</b> form submissions stored for this website over the last 12 months. ${d.summary && d.summary.d30 ? `<b>${d.summary.d30}</b> in the last 30 days.` : ''}`
         : 'No form submissions stored yet. New ones arrive on their own once Duda is connected; use <b>Import history</b> to bring in what Duda already has.'}
-        ${state.me.role === 'admin' ? '<button class="btn sm" id="lbFill" style="margin-left:8px">Import history from Duda</button>' : ''}
+        ${can('leads.import') ? '<button class="btn sm" id="lbFill" style="margin-left:8px">Import history from Duda</button>' : ''}
         <span id="lbNote" class="small faint"></span></div>
       ${d.total ? `<div class="cl-two" style="margin-top:12px">
         <div class="cl-card"><div class="cl-card-h">Each month</div>${barChart(d.series || [])}</div>
@@ -1060,7 +1071,7 @@
       <div class="cl-card" style="margin-top:12px"><div class="cl-card-h">Recent</div>
         <div class="cl-leadlist">${(d.leads || []).slice(0, 100).map((l) => `<div class="cl-lead">
           <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${esc(l.pg || '/')}</div></div>
-          <div class="cl-l-who"><b>${esc(l.n || 'No name given')}</b><div class="small faint">${l.e ? esc(l.e) : ''}</div></div>
+          <div class="cl-l-who">${l.redacted ? '<span class="faint" title="Your role does not allow seeing enquirers\u2019 contact details">Contact details hidden</span>' : `<b>${esc(l.n || 'No name given')}</b><div class="small faint">${l.e ? esc(l.e) : ''}</div>`}</div>
           <div class="cl-l-what">${Object.entries(l.f || {}).slice(0, 3).map(([k, v]) => `<div><span class="faint">${esc(k)}:</span> ${esc(String(v).slice(0, 120))}</div>`).join('')}</div>
           <div class="cl-l-src">${l.src ? `<span class="pill sm">${esc(l.src)}</span>` : ''}</div></div>`).join('')}</div></div>` : ''}`;
     if ($('#lbFill')) $('#lbFill').onclick = async () => {
@@ -1270,9 +1281,114 @@
       <p class="small muted">Counted from the moment this was switched on, so older work isn't included. A high <b>False alarm</b> or <b>On hold</b> count is worth a look: open <b>Suggestions → False alarms</b> to read the reasons.</p>`;
     $$('[data-who]', el).forEach((b) => (b.onclick = () => openMemberActivity(b.dataset.who)));
   }
+
+  // =====================================================================
+  // ROLES — what each kind of teammate is allowed to do
+  // =====================================================================
+  /** Loaded once and kept, so the Members list can name a role without asking again. */
+  async function loadRoles(force) {
+    if (state.roles.length && !force) return state.roles;
+    try { const r = await post('/api/users', { op: 'roles' }); state.roles = r.roles || []; state.roleCounts = r.counts || {}; state.permGroups = r.permissions || []; }
+    catch (e) { state.roles = []; }
+    return state.roles;
+  }
+
+  function openRoles() {
+    modal(`<header><h2>Roles</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body" id="rlBody"><div class="empty">Loading…</div></div>`, { wide: true });
+    const draw = () => {
+      const roles = state.roles || [];
+      const editable = can('roles.manage');
+      $('#rlBody').innerHTML = `
+        <p class="small muted" style="margin:0 0 12px">A role is a name and a list of what it allows. Rename them to match how your team actually works — <b>Member</b> can become <b>Dev</b> — and add as many as you need.
+        ${editable ? '' : '<br>Your role does not allow changing these, so this is a read-only view.'}</p>
+        <div class="rl-list">${roles.map((r) => {
+          const n = state.roleCounts[r.id] || 0;
+          return `<div class="rl-row">
+            <div class="grow"><b>${esc(r.name)}</b>${r.builtin ? ' <span class="badge subtle" title="Built in: it can be renamed and (except Admin) changed, but not removed">built in</span>' : ''}
+              <div class="small muted">${esc(r.desc || '')}</div>
+              <div class="small faint">${r.perms.includes('*') ? 'Everything' : `${r.perms.length} of ${permCount()} permissions`} · ${n} ${n === 1 ? 'person' : 'people'}</div></div>
+            ${editable ? `<button class="btn sm" data-rledit="${esc(r.id)}">${r.locked ? 'Rename' : 'Edit'}</button>` : ''}
+            ${editable && !r.builtin ? `<button class="btn sm ghost danger" data-rldel="${esc(r.id)}">Remove</button>` : ''}
+          </div>`;
+        }).join('')}</div>
+        ${editable ? '<button class="btn primary" id="rlNew" style="margin-top:12px">+ Add a role</button>' : ''}`;
+      $$('[data-rledit]').forEach((b) => (b.onclick = () => editRole(roles.find((r) => r.id === b.dataset.rledit), draw)));
+      $$('[data-rldel]').forEach((b) => (b.onclick = () => removeRole(roles.find((r) => r.id === b.dataset.rldel), draw)));
+      if ($('#rlNew')) $('#rlNew').onclick = () => editRole(null, draw);
+    };
+    loadRoles(true).then(draw);
+  }
+  const permCount = () => (state.permGroups || []).reduce((a, g) => a + g.items.length, 0);
+
+  /** Add or change one role. Admin shows its permissions, greyed, so it is obvious why. */
+  function editRole(role, after) {
+    const isNew = !role;
+    const locked = !!(role && role.locked);
+    const have = new Set((role && role.perms) || []);
+    const all = locked || have.has('*');
+    modal(`<header><h2>${isNew ? 'Add a role' : esc(role.name)}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <label class="field">Name<input type="text" id="rlName" maxlength="40" value="${esc(role ? role.name : '')}" placeholder="Dev, QA, Project Manager…"></label>
+        <label class="field">What this role is for <span class="faint small">(optional)</span><input type="text" id="rlDesc" maxlength="160" value="${esc((role && role.desc) || '')}"></label>
+        ${locked ? '<div class="note"><b>Admin can do everything</b>, and always will — otherwise it would be possible to lock everybody out of the app. You can rename it.</div>' : ''}
+        <div class="k" style="margin-top:14px">What it allows</div>
+        <div class="rl-perms">${(state.permGroups || []).map((g) => `<div class="rl-g"><div class="rl-g-h">${esc(g.group)}
+            ${locked ? '' : `<button class="linkbtn" data-rlall="${esc(g.group)}">all</button><button class="linkbtn" data-rlnone="${esc(g.group)}">none</button>`}</div>
+          ${g.items.map((i) => `<label class="rl-p${locked ? ' off' : ''}">
+            <input type="checkbox" data-perm="${esc(i.key)}" data-group="${esc(g.group)}" ${all || have.has(i.key) ? 'checked' : ''} ${locked ? 'disabled' : ''}>
+            <span><b>${esc(i.label)}</b>${i.desc ? `<span class="small faint"> — ${esc(i.desc)}</span>` : ''}</span></label>`).join('')}
+        </div>`).join('')}</div>
+      </div>
+      <footer><span class="spacer"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="rlSave">Save</button></footer>`, { wide: true });
+    $$('[data-rlall]').forEach((b) => (b.onclick = () => $$(`[data-group="${CSS.escape(b.dataset.rlall)}"]`).forEach((i) => { i.checked = true; })));
+    $$('[data-rlnone]').forEach((b) => (b.onclick = () => $$(`[data-group="${CSS.escape(b.dataset.rlnone)}"]`).forEach((i) => { i.checked = false; })));
+    $('#rlSave').onclick = async () => {
+      const perms = $$('[data-perm]').filter((i) => i.checked && !i.disabled).map((i) => i.dataset.perm);
+      try {
+        await post('/api/users', { op: 'roleSave', id: role ? role.id : '', name: $('#rlName').value, desc: $('#rlDesc').value, perms });
+        await loadRoles(true); await loadUsers(); closeModal(); toast('Saved');
+        openRoles();
+      } catch (e) { toast(e.message); }
+    };
+  }
+
+  /**
+   * Removing a role that people hold.
+   *
+   * Nobody is left with no role and nobody is quietly promoted, so the only way through is to say
+   * what those people become instead — and the server refuses it until you have.
+   */
+  async function removeRole(role, after) {
+    try {
+      await post('/api/users', { op: 'roleDelete', id: role.id });
+      await loadRoles(true); await loadUsers(); toast('Role removed'); openRoles();
+    } catch (e) {
+      const d = (e.data || {});
+      if (!d.needsMove) return toast(e.message);
+      const names = (d.names || []).join(', ') + (d.count > (d.names || []).length ? ` and ${d.count - d.names.length} more` : '');
+      modal(`<header><h2>Remove “${esc(role.name)}”</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body">
+          <div class="note"><b>${d.count} ${d.count === 1 ? 'person has' : 'people have'} this role.</b>
+            <div class="small" style="margin-top:3px">${esc(names)}</div></div>
+          <p class="small">Removing a role can't leave anybody without one, so choose what they become instead. Everything they have done is untouched — only what they are allowed to do changes.</p>
+          <label class="field">They become<select id="rlMove">${(d.choices || []).map((c) => `<option value="${esc(c.id)}" ${c.id === 'member' ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        </div>
+        <footer><span class="spacer"></span><button class="btn" data-close>Cancel</button><button class="btn danger" id="rlGo">Remove the role and move them</button></footer>`);
+      $('#rlGo').onclick = async () => {
+        try {
+          const r = await post('/api/users', { op: 'roleDelete', id: role.id, moveTo: $('#rlMove').value });
+          await loadRoles(true); await loadUsers(); closeModal();
+          toast(`Role removed · ${r.moved} ${r.moved === 1 ? 'person' : 'people'} moved`);
+          openRoles();
+        } catch (e2) { toast(e2.message); }
+      };
+    }
+  }
+
   const memFilter = { q: '', view: 'all' };
   function openMembers() {
-    const isAdmin = state.me.role === 'admin';
+    const isAdmin = can('members.manage');
     const draw = () => {
       const pending = state.users.filter((u) => u.status === 'pending');
       const all = state.users.filter((u) => u.status === 'active' || u.status === 'disabled');
@@ -1292,10 +1408,10 @@
           <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span><div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
           <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : ''}
         ${list.length ? list.map((u) => `<div class="member-row ${u.status === 'disabled' ? 'off' : ''}"><span class="pav">${avatar(u.email, 30)}${u.status === 'disabled' ? '' : pdot(u.email)}</span>
-          <div class="grow"><button type="button" class="whobtn" data-who="${esc(u.email)}"><b>${esc(u.name)}</b></button>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}${isAdmin && u.status !== 'disabled' ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : u.role === 'admin' ? 'Admin' : 'Member'}</span>` : ''}
+          <div class="grow"><button type="button" class="whobtn" data-who="${esc(u.email)}"><b>${esc(u.name)}</b></button>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}${isAdmin && u.status !== 'disabled' ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : esc(roleName(u.role))}</span>` : ''}
             <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(u.status === 'disabled' ? 'Can no longer sign in · past work kept' : presenceText(presenceOf(u.email)))}${isAdmin && slackWho && u.status !== 'disabled' ? (slackWho[u.email] ? ' · <span class="v-ok-t">Slack ✓</span>' : ' · <span class="v-still-t" title="No Slack account uses this email, so Slack messages can\'t reach them. They should register here with their Slack email.">No Slack match</span>') : ''}</div>
             ${(u.nameHistory || []).length ? `<div class="small faint">Renamed ${u.nameHistory.length}× · was ${esc([...new Set(u.nameHistory.map((h) => h.from).filter(Boolean))].slice(-3).join(', '))}</div>` : ''}</div>
-          ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>Admin</option></select>` : isAdmin && u.status !== 'disabled' ? `<select data-role="${esc(u.email)}" class="sm-select"><option value="member" ${u.role === 'member' ? 'selected' : ''}>Member</option><option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option></select>
+          ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>${esc(roleName('admin'))}</option></select>` : isAdmin && u.status !== 'disabled' ? `<select data-role="${esc(u.email)}" class="sm-select">${(state.roles || []).map((r) => `<option value="${esc(r.id)}" ${u.role === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
             ${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost" data-disable="${esc(u.email)}" title="Switch the account off: they can't sign in, but everything they did is kept">Switch off</button>` : ''}`
             : isAdmin && u.status === 'disabled' ? `<button class="btn sm" data-enable="${esc(u.email)}">Switch back on</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Delete for good — their name disappears from old items">Delete</button>` : ''}</div>`).join('')
           : '<div class="empty small">Nobody matches.</div>'}`;
@@ -1313,11 +1429,12 @@
         prompt('Temporary password — send it to them privately. They can change it later with "Forgot password".', r.tempPassword);
       });
     };
-    modal(`<header><h2>Team members</h2><span class="spacer"></span><button class="btn sm" id="memStats" type="button">📊 Team stats</button><button class="btn ghost" data-close>✕</button></header>
+    modal(`<header><h2>Team members</h2><span class="spacer"></span><button class="btn sm" id="memStats" type="button">📊 Team stats</button>${can('members.manage') ? '<button class="btn sm" id="memRoles" type="button">🧩 Roles</button>' : ''}<button class="btn ghost" data-close>✕</button></header>
       <div class="body"><p class="small muted" style="margin:0">${isAdmin ? 'Everyone who registers is listed here automatically. New accounts show as <b>Admin for Approval</b> until you approve them. <b>Switch off</b> an account when someone leaves: they can\'t sign in, but their name stays on everything they did.' : 'Everyone on the team. Click a name to see what they have been working on.'}</p><div id="memList"></div></div>
       <footer><button class="btn" data-close>Done</button></footer>`);
     draw();
     $('#memStats').onclick = () => openStats();
+    if ($('#memRoles')) $('#memRoles').onclick = () => openRoles();
     loadUsers().then(draw).catch(() => {});
     if (isAdmin && state.config && state.config.slackDM && !slackWho) {
       post('/api/users', { op: 'slackWho' }).then((r) => { slackWho = r.who || {}; if ($('#memList')) draw(); }).catch(() => {});
@@ -2432,7 +2549,7 @@
               <td>${issueChips(c, s.scan && s.scan.state === 'complete', s.id)}</td>
               <td style="min-width:110px"><div class="small">${c.closed || 0}/${c.total || 0}</div><div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div></td>
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
-                ${state.me.role === 'admin' || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Remove this audit from the list (the website itself is untouched)">✕</button>` : ''}</td>
+                ${can('site.remove') || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Remove this audit from the list (the website itself is untouched)">✕</button>` : ''}</td>
             </tr>`;
           }).join('')}</tbody></table></div>` : `<div class="empty">${state.sites.length ? `<div><b>No websites match these filters.</b></div><div class="small muted" style="margin:6px 0 10px">${state.sites.length} website${state.sites.length === 1 ? '' : 's'} on the list.</div><button class="btn sm primary" id="sfClear">Clear filters</button>` : 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.'}</div>`}
       </div>`;
@@ -2516,7 +2633,7 @@
         ${c.text ? `<div class="c-body">${formatText(c.text, site)}</div>` : ''}
         ${c.images && c.images.length ? `<div class="c-imgs">${c.images.map((u) => `<button class="c-img" data-img="${esc(u)}"><img src="${esc(u)}" alt="Attached screenshot" loading="lazy"></button>`).join('')}</div>` : ''}
         <div class="c-actions"><button class="linkbtn" data-reply="${esc(c.id)}">Reply</button>
-          ${!opts.noDelete && (c.by === state.me.email || state.me.role === 'admin') ? `<button class="linkbtn danger" data-delc="${esc(c.id)}">Delete</button>` : ''}</div>
+          ${!opts.noDelete && (c.by === state.me.email || can('comment.delete')) ? `<button class="linkbtn danger" data-delc="${esc(c.id)}">Delete</button>` : ''}</div>
       </div></div>`;
   }
   function bindComments(root, site, composerApi) {
@@ -3369,7 +3486,7 @@
             ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: the AI ran out of credits for today during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
               ${aiResumeAt(sc.ai.paused.retryAt) ? `They resume automatically after <b>${esc(fmtWhen(aiResumeAt(sc.ai.paused.retryAt)))}</b> (in ${countdown(aiResumeAt(sc.ai.paused.retryAt))}).` : 'AI credits are available again, so they resume automatically within a minute.'}
               Check them by hand and mark them <b>Done</b> if you can't wait. <a href="#/ai">AI Status ↗</a></div>` : ''}`
-          : state.ai && !state.ai.enabled && state.me.role === 'admin' && sc.state === 'complete' ? `<div class="small faint" style="margin-top:6px">✨ AI checks are off.${state.superAdmin ? ' Add the AI keys (see the README) to turn them on.' : ''}</div>` : ''}
+          : state.ai && !state.ai.enabled && can('members.manage') && sc.state === 'complete' ? `<div class="small faint" style="margin-top:6px">✨ AI checks are off.${state.superAdmin ? ' Add the AI keys (see the README) to turn them on.' : ''}</div>` : ''}
         ${sc.error ? `<div class="note bad">${esc(sc.error)}</div>` : ''}
         ${(sc.log || []).length ? `<details style="margin-top:8px"><summary class="small">Scan notes (${sc.log.length})</summary>${sc.log.map((l) => `<div class="note unk">${esc(l)}</div>`).join('')}</details>` : ''}
       </div>
@@ -3633,7 +3750,7 @@
       ${r.reason ? `<div class="small" style="margin-top:6px">“${esc(r.reason)}”</div>` : ''}
       ${r.verdict ? `<div class="fa-verdict"><b>${esc(FAL[r.verdict.status] || '')}</b> — ${esc(r.verdict.note)} <span class="faint small">— ${esc(r.verdict.by)}, ${esc(ago(r.verdict.at))}</span></div>`
         : `<div class="small faint" style="margin-top:6px">${r.status === 'new' ? 'Waiting for an admin to look at it.' : 'No note from the admins yet.'}</div>`}
-      ${mine || state.me.role === 'admin' ? `<div class="small" style="margin-top:6px"><a href="#/suggestions/false-alarms">${state.me.role === 'admin' ? 'Open in False alarms' : 'See all my reports'} ↗</a>${r.notes ? ` <span class="faint">· ${r.notes} note${r.notes === 1 ? '' : 's'}</span>` : ''}</div>` : ''}
+      ${mine || can('fa.manage') ? `<div class="small" style="margin-top:6px"><a href="#/suggestions/false-alarms">${can('fa.manage') === 'admin' ? 'Open in False alarms' : 'See all my reports'} ↗</a>${r.notes ? ` <span class="faint">· ${r.notes} note${r.notes === 1 ? '' : 's'}</span>` : ''}</div>` : ''}
     </div>`;
   }
   const reportChip = (f) => (f.report
@@ -4149,13 +4266,13 @@
 
     $('#view').innerHTML = `<div class="page-head"><div><h1>Duda comments</h1>
         <div class="muted">Comments left in the <b>Duda editor</b> — by clients on their draft, or by us. Every website in the account, published or not, on the Audits list or not. <a href="#/help/comments-duda">How this works</a></div></div>
-        <div style="display:flex;gap:8px">${state.me.role === 'admin' ? '<button class="btn" id="cmtTeam" title="Who counts as one of us when a comment arrives">👥 Who is on the team</button><button class="btn" id="cmtConn">⚙ Duda connection</button>' : ''}
+        <div style="display:flex;gap:8px">${can('duda.team') ? '<button class="btn" id="cmtTeam" title="Who counts as one of us when a comment arrives">👥 Who is on the team</button><button class="btn" id="cmtConn">⚙ Duda connection</button>' : ''}
         <button class="btn" id="cmtRefresh" ${cmt.loading ? 'disabled' : ''}>${cmt.loading ? 'Loading…' : '↻ Refresh'}</button></div></div>
       ${cmt.error ? `<div class="note bad">${esc(cmt.error)}</div>` : ''}
       ${!all.length && !cmt.loading ? `<div class="panel panel-pad"><h2>Nothing has arrived yet</h2>
         <p class="muted">Comments appear here by themselves once Duda is sending them. Nothing needs to be switched on for each website.</p>
         <p class="small faint">Only comments made from the day this was switched on can appear — there is no way to fetch older ones.</p>
-        ${state.me.role === 'admin' ? '<p style="margin:10px 0 0"><button class="btn primary" id="cmtConn2">⚙ Set up the Duda connection</button></p>' : ''}</div>` : `
+        ${can('duda.setup') ? '<p style="margin:10px 0 0"><button class="btn primary" id="cmtConn2">⚙ Set up the Duda connection</button></p>' : ''}</div>` : `
       ${(() => {
         // Monday morning: how bad is it, and who has been waiting longest. One line, before anything else.
         const w = all.filter((s) => s.waiting);
@@ -4229,7 +4346,7 @@
               <ul class="cmt-threads">${list.map((t) => {
                 const open = t.comments[0];
                 const replies = t.comments.slice(1);
-                const who = (c) => `<div class="cmt-by"><b>${esc(c.by || 'Someone')}</b> <span class="badge ${c.side === 'client' ? 'sev-info' : 'sev-hold'}">${c.side}</span> <span class="small faint">${esc(fmtFull(c.at))}</span>${state.me.role === 'admin' && c.by ? ` <button class="linkbtn" data-cwho="${esc(c.by)}" data-cas="${c.side === 'client' ? 'team' : 'client'}" title="Correct who this person is">not ${esc(c.side)}?</button>` : ''}</div>`;
+                const who = (c) => `<div class="cmt-by"><b>${esc(c.by || 'Someone')}</b> <span class="badge ${c.side === 'client' ? 'sev-info' : 'sev-hold'}">${c.side}</span> <span class="small faint">${esc(fmtFull(c.at))}</span>${can('duda.team') && c.by ? ` <button class="linkbtn" data-cwho="${esc(c.by)}" data-cas="${c.side === 'client' ? 'team' : 'client'}" title="Correct who this person is">not ${esc(c.side)}?</button>` : ''}</div>`;
                 const body = (c) => `<div class="cmt-text">${esc(c.text)}</div>`;
                 return `
                 <li class="cmt-card ${t.waiting ? 'waiting' : ''} ${t.status === 'resolved' ? 'done' : ''} ${newest.has(t.uuid) ? 'isnew' : ''}">
@@ -4327,7 +4444,7 @@
   }
 
   async function renderGlobalActivity() {
-    if (state.me.role !== 'admin') { $('#view').innerHTML = '<div class="empty">Only admins can see the activity log.</div>'; return; }
+    if (!can('activity.view')) { $('#view').innerHTML = '<div class="empty">Your role does not allow seeing the activity log.</div>'; return; }
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
     let items = [];
     try { items = (await api('/api/store?op=gactivity')).items; } catch (e) { $('#view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
@@ -4395,7 +4512,7 @@
     let items = [];
     try { items = (await api('/api/store?op=falseAlarms')).items || []; } catch (e) { $('#view').innerHTML = sugTabs('fa') + `<div class="empty">${esc(e.message)}</div>`; return; }
     items.forEach((i) => { i.status = faSt(i.status); });
-    const mine = state.me.role !== 'admin';
+    const mine = !can('fa.seeall');
     if (!fa.filter) fa.filter = mine ? 'all' : 'open';
     // Arriving from a notification: find the one report it is about. The key is normally the
     // record's own key; older notifications carry "<siteId>#<item number>" instead.
@@ -4417,7 +4534,7 @@
         toast('That false alarm is no longer in the list');
       }
     }
-    state.faNew = state.me.role === 'admin' ? items.filter((i) => i.status === 'new' && i.active !== false).length : 0;
+    state.faNew = can('fa.manage') ? items.filter((i) => i.status === 'new' && i.active !== false).length : 0;
     const draw = () => {
       const count = (v) => items.filter((i) => i.status === v).length;
       const openItems = items.filter(faOpen);
@@ -4537,7 +4654,7 @@
     draw();
   }
   // Everyone gets the two tabs now: admins triage every false alarm, everyone else follows their own.
-  const sugTabs = (active, faNew) => `<div class="tabs" style="margin-bottom:14px"><a href="#/suggestions" class="${active === 'ideas' ? 'on' : ''}">${state.me.role === 'admin' ? 'Feature suggestions' : 'My suggestions'}</a><a href="#/suggestions/false-alarms" class="${active === 'fa' ? 'on' : ''}">${state.me.role === 'admin' ? 'False alarms' : 'My false alarms'}${faNew ? ` <span class="badge sev-warning">${faNew} new</span>` : ''}</a></div>`;
+  const sugTabs = (active, faNew) => `<div class="tabs" style="margin-bottom:14px"><a href="#/suggestions" class="${active === 'ideas' ? 'on' : ''}">${can('fa.manage') ? 'Feature suggestions' : 'My suggestions'}</a><a href="#/suggestions/false-alarms" class="${active === 'fa' ? 'on' : ''}">${can('fa.manage') ? 'False alarms' : 'My false alarms'}${faNew ? ` <span class="badge sev-warning">${faNew} new</span>` : ''}</a></div>`;
   async function renderSuggestions() {
     if (route().tab === 'fa') return renderFalseAlarms();
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
@@ -4692,8 +4809,8 @@
     // A client account never loads any of the team's data — not the website list, not the members,
     // not the AI status. Those endpoints would refuse it anyway; not calling them is the point.
     if (state.me.role === 'client') { if (!location.hash.startsWith('#/my/')) location.hash = '#/my/'; return render(); }
-    await Promise.all([loadUsers(), loadSites(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
-    if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; } catch (e) { /* ignore */ } }
+    await Promise.all([loadUsers(), loadSites(), loadRoles(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
+    if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; state.perms = m.perms || []; state.myRole = m.role || null; } catch (e) { /* ignore */ } }
     renderTop();
     loadNews();
     loadCommentSites(true).catch(() => {});
@@ -4718,7 +4835,7 @@
   });
   (async () => {
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
-    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; }
+    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; state.perms = r.perms || []; state.myRole = r.role || null; }
     catch (e) { $('#view').innerHTML = `<div class="empty">Could not start the app: ${esc(e.message)}</div>`; return; }
     if (!state.me) return renderAuth();
     if (state.me.status !== 'active') { state.auth.mode = state.me.status === 'disabled' ? 'disabled' : 'pending'; state.me = null; return renderAuth(); }

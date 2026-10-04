@@ -19,7 +19,7 @@
 // Naming one in AI_ORDER switches it back on; AI_OFF="" switches them all on.
 // Our own daily request cap per provider: <GEMINI|GROQ|OPENROUTER|CEREBRAS|MISTRAL|CLOUDFLARE|AI_GATEWAY|ANTHROPIC>_DAILY_LIMIT (0 = no cap).
 // Results are cached for 60 days so rescans don't use any quota.
-import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL } from './_lib.js';
+import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL, can } from './_lib.js';
 import { helpFor, helpText } from './_help.js';
 import { newsFor, latestNewsId } from './_news.js';
 
@@ -429,7 +429,7 @@ async function helpAnswer(req, res, me, list) {
   const hist = (Array.isArray(b.history) ? b.history : []).slice(-6).map((h) => `${h.role === 'assistant' ? 'Assistant' : 'User'}: ${String(h.text || '').slice(0, 600)}`).join('\n');
   try {
     const r = await callChain(list, HELP_SYSTEM(me.role, helpText(me.role)), (hist ? `Earlier in this chat:\n${hist}\n\n` : '') + `Question: ${q}`);
-    const valid = new Set(helpFor(me.role).map((x) => x.id));
+    const valid = new Set(helpFor(me.role, await can(me, 'app.adminnotes')).map((x) => x.id));
     return res.status(200).json({ answer: scrubHelp(r.parsed.answer || r.parsed.text || ''), sections: [].concat(r.parsed.sections || []).filter((x) => valid.has(x)).slice(0, 3), left: Math.max(0, HELP_LIMIT - n) });
   } catch (e) {
     await redis(['DECR', k]);
@@ -457,13 +457,16 @@ export default async function handler(req, res) {
     }
     return res.status(200).json({ tested: out, providers: publicStatus(await loadStatus(list), owner), now: Date.now(), enabled: list.length > 0 });
   }
-  // "What's New" notes, filtered by role
+  // The admin-only pages of the Guide and the admin release notes follow a permission now, so a
+  // renamed or custom role that was given it sees them too.
+  const adminish = await can(me, 'app.adminnotes');
+  // "What's New" notes, filtered by what this person may see
   if (req.method === 'GET' && req.query.op === 'news') {
-    return res.status(200).json({ items: newsFor(me.role), latest: latestNewsId(me.role), seen: me.newsSeen || '' });
+    return res.status(200).json({ items: newsFor(me.role, adminish), latest: latestNewsId(me.role, adminish), seen: me.newsSeen || '' });
   }
   // Help guide (the same text the Help assistant knows), filtered by role
   if (req.method === 'GET' && req.query.op === 'help') {
-    return res.status(200).json({ sections: helpFor(me.role).map(({ id, group, title, html }) => ({ id, group, title, html })), assistant: list.length > 0 });
+    return res.status(200).json({ sections: helpFor(me.role, adminish).map(({ id, group, title, html }) => ({ id, group, title, html })), assistant: list.length > 0 });
   }
   if (req.method === 'POST' && readBody(req).op === 'help') return helpAnswer(req, res, me, list);
   if (req.method === 'GET') {

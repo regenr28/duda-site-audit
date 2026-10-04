@@ -12,7 +12,7 @@
 // Admins only. The address we register carries a secret only the app knows, so nothing else can
 // post pretend events at us.
 import crypto from 'node:crypto';
-import { redis, P, requireUser, readBody, jparse, fetchWithTimeout, appUrl, OWNER_EMAIL } from './_lib.js';
+import { redis, P, requireUser, readBody, jparse, fetchWithTimeout, appUrl, OWNER_EMAIL , denyUnless } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const TAG = 'duda-site-auditor';          // so we can tell our own subscription from anyone else's
@@ -64,7 +64,7 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
-  if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+  if (await denyUnless(res, me, 'duda.setup', 'Your role does not allow setting up the Duda connection.')) return;
   const isOwner = me.email === OWNER_EMAIL;
 
   try {

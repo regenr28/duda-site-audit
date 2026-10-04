@@ -4,7 +4,7 @@
 import crypto from 'node:crypto';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
-  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, commentsChannel, OWNER_EMAIL , savedEditorHost, nameTaken, NOTIFY_GROUPS } from './_lib.js';
+  initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, commentsChannel, OWNER_EMAIL , savedEditorHost, nameTaken, NOTIFY_GROUPS, getRole } from './_lib.js';
 
 const CODE_TTL = 15 * 60;
 const code6 = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -48,7 +48,13 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), slackDM: /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || ''), editorHost: await savedEditorHost(), cmtChannel: commentsChannel(), notifyGroups: NOTIFY_GROUPS });
       const u = await currentUser(req);
-      return res.status(200).json({ user: publicUser(u), rtChannel: u ? userChannel(u.email) : '', ...(u && u.email === OWNER_EMAIL ? { superAdmin: true } : {}) });
+      // The browser is told what this person may do, so it can leave out what they cannot reach.
+      // It is only ever a convenience: every endpoint checks the same thing again for itself.
+      const role = u && u.role !== 'client' ? await getRole(u.role) : null;
+      return res.status(200).json({ user: publicUser(u), rtChannel: u ? userChannel(u.email) : '',
+        role: role ? { id: role.id, name: role.name } : null,
+        perms: u ? (u.email === OWNER_EMAIL || u.role === 'admin' ? ['*'] : ((role && role.perms) || [])) : [],
+        ...(u && u.email === OWNER_EMAIL ? { superAdmin: true } : {}) });
     }
     if (req.headers.origin) {
       try { if (new URL(req.headers.origin).host !== (req.headers['x-forwarded-host'] || req.headers.host)) return res.status(403).json({ error: 'Bad origin' }); } catch (e) { /* ignore */ }

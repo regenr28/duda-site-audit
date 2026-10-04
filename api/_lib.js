@@ -505,6 +505,124 @@ export async function announceSignup(user, req) {
   await slack(`:wave: *${user.name}* (${user.email}) created a Duda Site Auditor account and is waiting for admin approval. <${link}|Review in Members>`);
 }
 
+
+// ---------- roles and what they may do ----------
+/**
+ * Everything a role can be allowed to do.
+ *
+ * This table is the single source of truth: the Roles screen is drawn from it and every gate in the
+ * app asks `can()` against it. Adding a feature means adding its line here and using the key —
+ * nothing else needs to know roles exist.
+ *
+ * Deliberately NOT listed: anything only the app owner may do. Those stay hard-coded against the
+ * owner's address and never appear as a switch, because a switch on a screen tells everybody the
+ * capability exists. What services the app uses behind the scenes is the obvious example.
+ */
+export const PERMISSIONS = [
+  { group: 'Websites', items: [
+    { key: 'site.add', label: 'Add websites to Audits', desc: 'Paste an editor link and start an audit.' },
+    { key: 'site.scan', label: 'Run and rescan scans', desc: 'Start a scan on any website, including Rescan all shown.' },
+    { key: 'site.manage', label: 'Change a website’s status and owner', desc: 'Set the status, assign it to somebody, reopen a completed one.' },
+    { key: 'site.remove', label: 'Remove a website from Audits', desc: 'Anyone can always remove a website they added themselves.' },
+    { key: 'site.bi', label: 'Add or exclude Business Info values', desc: 'Mark a value correct for a website, or strike one out of the reference.' },
+  ] },
+  { group: 'Audit items', items: [
+    { key: 'item.status', label: 'Change audit item statuses', desc: 'Done, On hold, For clarification, False alarm.' },
+    { key: 'item.assign', label: 'Assign audit items to people', desc: '' },
+    { key: 'fa.manage', label: 'Answer false alarm reports', desc: 'Set a report to Checking, Audit adjusted, True false alarm or Won’t change, and write back to the reporter.' },
+    { key: 'fa.seeall', label: 'See everybody’s false alarm reports', desc: 'Without this, a person sees only the ones they reported themselves.' },
+  ] },
+  { group: 'Form submissions', items: [
+    { key: 'leads.view', label: 'See form submissions', desc: 'The enquiries that came in through a website’s forms.' },
+    { key: 'leads.contacts', label: 'See enquirers’ contact details', desc: 'Without this, an enquiry shows when it arrived, which page and which source — but not the customer’s name, email or phone.' },
+    { key: 'leads.import', label: 'Import submission history', desc: 'Pull a website’s past enquiries in from Duda.' },
+  ] },
+  { group: 'Clients', items: [
+    { key: 'client.manage', label: 'Give clients access to a website', desc: 'Create a client sign-in and choose which websites it can see.' },
+    { key: 'client.viewas', label: 'Use View as client', desc: 'Check what a client sees on a website.' },
+  ] },
+  { group: 'Comments', items: [
+    { key: 'comment.delete', label: 'Delete anybody’s comment', desc: 'Everyone can always delete their own.' },
+    { key: 'duda.setup', label: 'Set up the Duda connection', desc: 'Connect, disconnect and check what is arriving.' },
+    { key: 'duda.team', label: 'Decide who counts as the team', desc: 'Used to tell a client’s comment from one of ours.' },
+  ] },
+  { group: 'People', items: [
+    { key: 'members.approve', label: 'Approve new accounts', desc: 'Let somebody who signed up in.' },
+    { key: 'members.manage', label: 'Manage accounts', desc: 'Change somebody’s role, switch an account off, reset a password.' },
+    { key: 'roles.manage', label: 'Create and change roles', desc: 'This screen. Give it out carefully — anyone with it can grant themselves anything else.' },
+  ] },
+  { group: 'The app', items: [
+    { key: 'activity.view', label: 'See the activity log', desc: 'Everything everybody has done, across all websites.' },
+    { key: 'app.maintenance', label: 'Run database clean-up', desc: 'Compress old records and trim long logs.' },
+    { key: 'app.adminnotes', label: 'See admin pages of the Guide', desc: 'The sections and release notes written for whoever runs the app.' },
+  ] },
+];
+export const PERM_KEYS = PERMISSIONS.flatMap((g) => g.items.map((i) => i.key));
+const PERM_SET = new Set(PERM_KEYS);
+
+/** The roles every installation starts with. Admin is everything and cannot be edited or removed. */
+export const BUILTIN_ROLES = [
+  { id: 'admin', name: 'Admin', perms: ['*'], builtin: true, locked: true,
+    desc: 'Everything. At least one account must always have this.' },
+  { id: 'member', name: 'Member', builtin: true,
+    desc: 'The everyday role: audit websites, talk about them, report a false alarm.',
+    perms: ['site.add', 'site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'client.viewas'] },
+];
+/** The client role is not a team role and never appears on the Roles screen. */
+export const isTeamRole = (id) => id !== 'client';
+
+export async function listRoles() {
+  const [raw] = await redis(['HGETALL', P + 'roles']);
+  const stored = {};
+  if (Array.isArray(raw)) { for (let i = 0; i < raw.length; i += 2) stored[raw[i]] = jparse(raw[i + 1]); }
+  else if (raw && typeof raw === 'object') Object.entries(raw).forEach(([k, v]) => { stored[k] = typeof v === 'string' ? jparse(v) : v; });
+  // A built-in that has been edited (renamed, or its permissions changed) is kept as stored; one
+  // that has never been touched falls back to the shipped definition, so a new installation works
+  // with nothing written at all.
+  const out = BUILTIN_ROLES.map((b) => Object.assign({}, b, stored[b.id] || {}, { id: b.id, builtin: true, locked: b.locked }));
+  Object.values(stored).forEach((r) => { if (r && r.id && !BUILTIN_ROLES.some((b) => b.id === r.id)) out.push(Object.assign({ perms: [] }, r, { builtin: false })); });
+  // Admin is always everything, whatever anybody managed to store.
+  out.forEach((r) => { if (r.id === 'admin') { r.perms = ['*']; r.locked = true; } });
+  return out;
+}
+export async function getRole(id) {
+  const all = await listRoles();
+  return all.find((r) => r.id === String(id || '')) || all.find((r) => r.id === 'member');
+}
+export async function saveRole(role) {
+  await redis(['HSET', P + 'roles', role.id, JSON.stringify(role)]);
+  return role;
+}
+export async function deleteRole(id) { await redis(['HDEL', P + 'roles', id]); }
+/** Only keys the app actually offers are stored, so a stale or invented one can never grant anything. */
+export const cleanPerms = (list) => [...new Set([].concat(list || []).map(String))].filter((k) => PERM_SET.has(k));
+
+/**
+ * May this person do this?
+ *
+ * The owner and the admin role are everything, by definition. Everyone else is their role's list.
+ * A client account is never allowed anything here — its own endpoint is the only thing it reaches.
+ */
+export function canWith(role, user, perm) {
+  if (!user || user.status !== 'active') return false;
+  if (user.role === 'client') return false;
+  if (user.email === OWNER_EMAIL || user.role === 'admin') return true;
+  const perms = (role && role.perms) || [];
+  return perms.includes('*') || perms.includes(perm);
+}
+/** The same thing when the role has not been loaded yet. */
+export async function can(user, perm) {
+  if (!user || user.status !== 'active' || user.role === 'client') return false;
+  if (user.email === OWNER_EMAIL || user.role === 'admin') return true;
+  return canWith(await getRole(user.role), user, perm);
+}
+/** Refuse the request unless they may. Returns true when it has already answered. */
+export async function denyUnless(res, user, perm, what) {
+  if (await can(user, perm)) return false;
+  res.status(403).json({ error: what || 'Your role does not allow that.' });
+  return true;
+}
+
 // ---------- compact storage ----------
 // Large records (website audits) are stored deflate-compressed: typically 5-8x smaller than plain JSON.
 export function packJSON(obj) { return 'z1:' + zlib.deflateRawSync(Buffer.from(JSON.stringify(obj)), { level: 9 }).toString('base64'); }

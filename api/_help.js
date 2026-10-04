@@ -218,6 +218,28 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'roles', group: 'Collaboration', title: 'Roles and what each one allows', audience: 'all',
+    html: `<p>A role is two things: a <b>name</b> and a <b>list of what it allows</b>. The app ships with two \u2014 <b>Admin</b> and <b>Member</b> \u2014 and you can rename them and add as many more as your team needs.</p>
+<p><b>Members \u2192 \ud83e\udde9 Roles</b> (needs <i>Create and change roles</i>).</p>
+<h3>Renaming and adding</h3>
+<ul>
+<li><b>Rename anything.</b> If your "Members" are really developers, call the role <b>Dev</b>. Nobody has to be moved \u2014 it is the same role under a better name.</li>
+<li><b>Add what you need</b> \u2014 QA, Project Manager, Content, whoever. Give the role a name, tick what it allows, save.</li>
+<li><b>Admin always allows everything</b> and cannot have permissions taken off it. You can rename it, but not weaken it \u2014 an app nobody can get back into is not a state worth being able to reach. The app also refuses to remove the last Admin.</li>
+<li>Admin and Member are built in: they can be renamed and (except Admin) changed, but not removed. Roles you create can be removed.</li>
+</ul>
+<h3>Removing a role people already have</h3>
+<p>Say five people are Project Managers and you remove that role. Nobody is left without a role, and nobody is quietly promoted \u2014 so the app <b>refuses until you say what those people become instead</b>. It tells you how many there are and names them, you pick the replacement role, and they are moved in the same step. Everything they have done is untouched; only what they are allowed to do changes.</p>
+<h3>A note on two permissions</h3>
+<ul>
+<li><b>Create and change roles</b> is the keys to the building: anyone who has it can grant themselves everything else. Give it out as carefully as Admin.</li>
+<li><b>See enquirers' contact details</b> is worth thinking about separately. Without it, somebody still sees that an enquiry arrived, which page it came from and which source \u2014 enough to do QA on a form \u2014 but not the customer's name, email or phone. The details are removed before they leave the server, not hidden in the page.</li>
+</ul>
+<h3>Where permissions apply</h3>
+<p>Both places, always. The app leaves out buttons and tabs a role cannot use, and <b>every request is checked again on the server</b>. The screen is a convenience; the server is the rule.</p>
+<p>A change takes effect the next time that person loads the app.</p>`,
+  },
+  {
     id: 'profiles', group: 'Collaboration', title: 'Profiles, form submissions and client access', audience: 'all',
     html: `<p>Every website in Audits has a <b>Profile</b> tab. It is the website as a whole rather than only its audit: a live preview, the domain, who outside the team can see it, and the three numbers that matter \u2014 open audit items, form submissions, comments \u2014 each one a link into the tab that explains it.</p>
 <p>Nothing was created to make this work. The Profile is the same website record the audit has always used, with more on it, so every website you have ever audited already has one.</p>
@@ -621,8 +643,10 @@ export const HELP_SECTIONS = [
   },
 ];
 
-export function helpFor(role) {
-  return HELP_SECTIONS.filter((s) => s.audience === 'all' || (s.audience === 'admin' && role === 'admin'));
+/** `adminish` is now a permission, not a role name — any role granted it sees the admin pages. */
+export function helpFor(role, adminish) {
+  const ok = adminish === undefined ? role === 'admin' : !!adminish;
+  return HELP_SECTIONS.filter((s) => s.audience === 'all' || (s.audience === 'admin' && ok));
 }
 export function helpText(role) {
   return helpFor(role).map((s) => `## ${s.group} › ${s.title}\n` + s.html

@@ -765,3 +765,14 @@ body.client-mode #view { max-width: none; padding: 0; }
 .ch-h-f { background: var(--brand, #2563eb); height: 100%; border-radius: 999px; }
 .ch-h-n { text-align: right; font-weight: 600; }
 .pill.sm { font-size: 11px; padding: 1px 7px; }
+
+/* ===================== Roles ===================== */
+.rl-row { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+.rl-row:first-child { border-top: 0; }
+.rl-perms { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 6px; }
+.rl-g { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.rl-g-h { display: flex; gap: 8px; align-items: baseline; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.rl-g-h .linkbtn { font-size: 11px; }
+.rl-p { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; cursor: pointer; font-size: 13px; }
+.rl-p.off { cursor: default; opacity: .7; }
+.rl-p input { margin-top: 2px; width: 16px; height: 16px; flex: none; }
