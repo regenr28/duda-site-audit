@@ -581,6 +581,7 @@
       // say so plainly — a page that quietly starts refusing things is worse than one that explains.
       if (r.accessVer && state.accessVer && r.accessVer !== state.accessVer) { state.accessVer = r.accessVer; accessChanged(); }
       else if (r.accessVer) state.accessVer = r.accessVer;
+      if (r.lq) onQueueState(r.lq);
       state.presence = r.presence || {};
       const hadUnread = state.notifs.unread;
       if (r.notifs) state.notifs = r.notifs;
@@ -1575,32 +1576,63 @@
    *
    * It stops the moment the queue is empty, which is why it costs nothing on an ordinary day.
    */
-  async function queueTick() {
-    if (live.draining || !can('leads.view')) return;
+  /**
+   * The heartbeat says whether there is catching up to do; only then does this browser do any.
+   *
+   * There used to be a separate check every 20 seconds in every open tab, visible or not, and it was
+   * one of the two things that ran through the month's database allowance in five days. Now an idle
+   * app costs nothing extra: the state rides on the heartbeat that was already running.
+   */
+  function onQueueState(lq) {
+    live.q2 = Object.assign({}, live.q2 || {}, lq);
+    if (route().name === 'live') renderLive();
+    if (!(lq.pending > 0 || lq.tidyDone === false) || !can('leads.view')) return;
+    // Work that turns up while a run is already finishing must not wait for the next heartbeat.
+    if (live.draining) live.drainAgain = true; else drainLoop();
+  }
+
+  /**
+   * Work through the catch-up, one chunk at a time, while there is any.
+   *
+   * Every call here does real work — fetching a few websites' history or tidying a few — so there is
+   * no idle polling at all. It stops the moment the server says there is nothing left, or that
+   * another browser has the lock (that browser will finish it).
+   */
+  async function drainLoop() {
+    if (live.draining) { live.drainAgain = true; return; }
+    live.draining = true; live.drainAgain = false;
+    try {
+      for (let i = 0; i < 400; i++) {
+        let r;
+        try { r = await post('/api/leadq', { op: 'drain', by: 'auto' }); } catch (e) { break; }
+        if (r.done && r.done.length) {
+          await loadLeadSums(r.done.map((d) => d.id));
+          r.done.forEach((d) => { delete (live.queued || {})[d.id]; });
+        }
+        live.q2 = Object.assign({}, live.q2 || {}, { pending: r.pending || 0, tidyDone: r.tidyDone });
+        if (route().name === 'live') renderLive();
+        const more = (r.done && r.done.length) || (r.tidied && r.tidied.sites);
+        if (!more) break;                                   // nothing done: finished, or someone else has it
+        await new Promise((res) => setTimeout(res, 1500));  // breathing room between chunks
+      }
+    } finally {
+      live.draining = false;
+      if (live.drainAgain) { live.drainAgain = false; setTimeout(drainLoop, 500); }
+    }
+  }
+
+  /** Which websites are still waiting — asked once when Live DR Sites opens, not on a timer. */
+  async function loadQueueIds() {
+    if (live.qIdsLoaded || !can('leads.view')) return;
+    live.qIdsLoaded = true;
     try {
       const st = await api('/api/leadq');
-      live.q2 = st;
-      live.queued = {};
-      (st.ids || []).forEach((id) => { live.queued[id] = 1; });
+      live.queued = {}; (st.ids || []).forEach((id) => { live.queued[id] = 1; });
+      live.q2 = Object.assign({}, live.q2 || {}, { pending: st.pending, tidyDone: st.tidyDone });
       if (route().name === 'live') renderLive();
-      // Fetching comes first; once nothing is waiting, the same turn tidies stored history instead.
-      if (st.running || (!st.pending && st.tidyDone !== false)) return;
-      live.draining = true;
-      // One chunk per tick rather than a loop: the browser stays responsive, and a tab closed
-      // halfway costs one chunk instead of stranding the lock.
-      const r = await post('/api/leadq', { op: 'drain', by: 'auto' });
-      if (r.done && r.done.length) {
-        await loadLeadSums(r.done.map((d) => d.id));
-        live.q2 = Object.assign({}, live.q2, { pending: r.pending });
-        r.done.forEach((d) => { delete live.queued[d.id]; });
-        if (route().name === 'live') renderLive();
-      }
-    } catch (e) { /* the queue is best effort: it tries again on the next tick */ }
-    finally { live.draining = false; }
+    } catch (e) { /* the list still works without the markers */ }
   }
-  // Often enough to finish a few hundred websites in an afternoon, rarely enough that an idle app
-  // with an empty queue is doing almost nothing.
-  function startQueue() { queueTick(); setInterval(queueTick, 20000); }
+  function startQueue() { /* nothing to start: the heartbeat drives the catch-up now */ }
 
   function renderProfileTab(body, s, { cnt, generalComments }) {
     const sum = (state.leadSums && state.leadSums[s.siteId]) || {};
@@ -2758,7 +2790,11 @@
   }
   async function loadLive(refresh) {
     live.loading = true; live.error = ''; if (route().name === 'live') renderLive();
-    try { const [d] = await Promise.all([api('/api/dudasites' + (refresh ? '?refresh=1' : '')), loadSites().catch(() => {})]); live.data = d; }
+    try {
+      const [d] = await Promise.all([api('/api/dudasites' + (refresh ? '?refresh=1' : '')), loadSites().catch(() => {})]); live.data = d;
+      // A pull can have just queued websites for their form history: start on them now.
+      if (d && d.lq && d.lq.pending > 0) { live.qIdsLoaded = false; onQueueState(Object.assign({}, live.q2 || {}, d.lq)); }
+    }
     catch (e) { live.error = e.message; }
     // The published list alone cannot tell "not launched yet" from "gone", and getting that wrong
     // puts an alarming badge on every pre-launch audit. So the draft list is read too, quietly.
@@ -3051,6 +3087,7 @@
     if (!d && !live.loading && !live.error) { loadLive(false); }
     else if (d && !live.bgStarted) { live.bgStarted = true; fillNames().then(() => checkDomains(false)); }
     // Every website's enquiry count arrives in one small request, not one per row.
+    if (d && live.q2 && live.q2.pending > 0) loadQueueIds();
     if (d && !live.leadsLoaded) { live.leadsLoaded = true; loadLeadSums(d.sites.map((x) => x.id)).then(() => { if (route().name === 'live') renderLive(); }); }
     const all = (d && d.sites) || [];
     const q = live.q.trim().toLowerCase();

@@ -160,14 +160,16 @@ export function normalise(raw, src) {
  */
 export async function tidySite(siteId) {
   let dropped = 0;
+  const kept = [];
   if (usingSql()) dropped = await tidySql(siteId);
   else {
-    for (const m of monthsBack(24)) {
-      const rows = await readMonth(siteId, m);
+    const all = await readMonths(siteId, monthsBack(13));
+    for (const [m, rows] of Object.entries(all)) {
       if (!rows.length) continue;
       const { keep, drop } = clusterDupes(rows);
       const next = keep.map((r) => Object.assign({}, r, { pg: realPage(r.pg) ? r.pg : '' }))
         .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      kept.push(...next);
       const changed = drop.length || rows.some((r) => r.pg === '/' || !r.sig);
       if (!changed) continue;
       await redis(['DEL', listKey(siteId, m)], ['SET', packKey(siteId, m), packJSON(next)]);
@@ -175,8 +177,29 @@ export async function tidySite(siteId) {
     }
   }
   await redis(['HSET', P + 'leadtidy', siteId, TIDY_VERSION]).catch(() => {});
-  await bumpSummary(siteId);
+  // The main store has the tidied enquiries in hand already, so they are counted from memory rather
+  // than read a second time.
+  if (usingSql()) await bumpSummary(siteId);
+  else await writeSummary(siteId, kept.map(unknownPage).map(hideUnreadable));
   return dropped;
+}
+/**
+ * The bookkeeping after an import, done once per website: tidy it if it never has been (which
+ * recounts as it finishes), otherwise just recount. Returns the fresh totals and how many copies
+ * were merged.
+ */
+export async function afterImport(siteId) {
+  if (!(await isTidy(siteId))) {
+    const merged = await tidySite(siteId).catch(() => 0);
+    return { merged, summary: await getSummary(siteId) };
+  }
+  return { merged: 0, summary: await bumpSummary(siteId) };
+}
+
+/** Has this website been tidied at the current version? One command. */
+export async function isTidy(siteId) {
+  const [v] = await redis(['HGET', P + 'leadtidy', siteId]);
+  return v === TIDY_VERSION;
 }
 /** Bump to re-tidy every website, e.g. after the rules for "the same submission" change. */
 export const TIDY_VERSION = '1';
@@ -188,8 +211,9 @@ export async function addLeads(siteId, leads, opts = {}) {
   const byMonth = new Map();
   leads.forEach((l) => { const m = monthOf(l.at); if (!byMonth.has(m)) byMonth.set(m, []); byMonth.get(m).push(l); });
   let added = 0;
+  const held = await readMonths(siteId, [...byMonth.keys()]);   // one trip for every month touched
   for (const [m, rows] of byMonth) {
-    const existing = await readMonth(siteId, m);
+    const existing = held[m] || [];
     const have = new Set(existing.map((x) => x.id));
     // The same submission under a different id — the live webhook copy and the imported one — is
     // matched by what it said and when, not by id.
@@ -212,21 +236,34 @@ export async function addLeads(siteId, leads, opts = {}) {
     }
     // A backfill run twice must not double the history, so ids already in the month are skipped.
     if (!fresh.length) continue;
-    const packed = await redis(['EXISTS', packKey(siteId, m)]).then(([e]) => !!Number(e));
-    if (packed) {
-      // The month was closed; rewrite it whole rather than leaving two halves to merge on every read.
+    if (m < monthOf(new Date().toISOString())) {
+      // A past month is finished: store it packed in one write, rather than appending to a list that
+      // then has to be found and compacted later — that sweep cost 25 commands per import on its own.
       const all = existing.concat(fresh).sort((a, b) => String(a.at).localeCompare(b.at));
-      await redis(['SET', packKey(siteId, m), packJSON(all)]);
+      await redis(['SET', packKey(siteId, m), packJSON(all)], ['DEL', listKey(siteId, m)]);
     } else {
       await redis(...fresh.map((r) => ['RPUSH', listKey(siteId, m), JSON.stringify(r)]));
     }
     added += fresh.length;
   }
-  if (added || opts.repair) await bumpSummary(siteId);
+  // The totals are NOT recounted here. Imports call this once per month, and recounting a year of
+  // history after every month was most of what one website's import cost. Callers recount once.
   return added;
 }
 
 /** Everything stored for one website in one month, oldest first. */
+/** Several months in ONE round trip. Each month is two keys: a packed history and a live list. */
+export async function readMonths(siteId, months) {
+  if (!months.length) return {};
+  const got = await redis(...months.flatMap((m) => [['GET', packKey(siteId, m)], ['LRANGE', listKey(siteId, m), 0, -1]]));
+  const out = {};
+  months.forEach((m, i) => {
+    const packed = got[i * 2]; const rows = got[i * 2 + 1];
+    out[m] = (packed ? (unpackJSON(packed) || []) : []).concat((rows || []).map((r) => jparse(r)).filter(Boolean));
+  });
+  return out;
+}
+
 export async function readMonth(siteId, m) {
   const [packed, rows] = await redis(['GET', packKey(siteId, m)], ['LRANGE', listKey(siteId, m), 0, -1]);
   const a = packed ? (unpackJSON(packed) || []) : [];
@@ -240,7 +277,9 @@ export async function readMonth(siteId, m) {
  */
 export async function compactOldMonths(siteId) {
   const current = new Date().toISOString().slice(0, 7);
-  const months = monthsBack(26).filter((m) => m < current);
+  // Only last month can still have a live list: imports now write past months packed, and live
+  // deliveries only ever append to the current month.
+  const months = monthsBack(2).filter((m) => m < current);
   const exists = await redis(...months.map((m) => ['EXISTS', listKey(siteId, m)]));
   for (let i = 0; i < months.length; i++) {
     if (!Number(exists[i])) continue;
@@ -277,7 +316,7 @@ const unknownPage = (l) => (l && l.pg === '/' ? Object.assign({}, l, { pg: '' })
 export async function readLeads(siteId, months = 12) {
   const raw = usingSql()
     ? (await leadsFor(siteId, { months, limit: 1000 })).leads
-    : (await monthsBack(months).reduce(async (acc, m) => (await acc).concat(await readMonth(siteId, m)), Promise.resolve([])))
+    : Object.values(await readMonths(siteId, monthsBack(months))).flat()
       .sort((a, b) => String(b.at).localeCompare(a.at));
   return raw.map(hideUnreadable).map(unknownPage);
 }
@@ -291,6 +330,16 @@ export async function readLeads(siteId, months = 12) {
  */
 const TOT = () => P + 'leadtot';
 const LAST = () => P + 'leadlast';
+/** Write a website's totals from enquiries already in hand — no second read of the history. */
+export async function writeSummary(siteId, leads) {
+  const now = Date.now();
+  const list = leads.slice().sort((a, b) => String(b.at).localeCompare(a.at));
+  const since = (d) => list.filter((l) => now - Date.parse(l.at) < d * 86400000).length;
+  const s = { total: list.length, d7: since(7), d30: since(30), d90: since(90), last: list[0] ? list[0].at : '' };
+  await redis(['SET', sumKey(siteId), JSON.stringify(s)], ['HSET', TOT(), siteId, String(list.length)], ['HSET', LAST(), siteId, s.last || '']);
+  return s;
+}
+
 export async function bumpSummary(siteId) {
   const leads = await readLeads(siteId, 13);
   const now = Date.now();

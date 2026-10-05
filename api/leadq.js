@@ -11,7 +11,7 @@
 import { requireUser, readBody, denyUnless, can, globalLog, now, jparse, P, redis } from './_lib.js';
 import { queueState, claim, settle, unlock, enqueue, requeue, alertOwner, takeLock, CHUNK, MONTHS } from './_queue.js';
 import { pullMonth } from './leads.js';
-import { addLeads, compactOldMonths, bumpSummary, tidySite, TIDY_VERSION } from './_leads.js';
+import { addLeads, tidySite, afterImport, TIDY_VERSION } from './_leads.js';
 
 /**
  * How busy the app is, in words anybody can act on.
@@ -79,9 +79,10 @@ export default async function handler(req, res) {
     try {
       for (const siteId of got.ids) {
         const d = new Date(); let added = 0; let seen = 0; let err = '';
+        const pulled = [];
         for (let i = 0; i < MONTHS; i++) {
           const ym = d.toISOString().slice(0, 7);
-          try { const rows = await pullMonth(siteId, ym); seen += rows.length; added += await addLeads(siteId, rows, { repair: true }); }
+          try { const rows = await pullMonth(siteId, ym); seen += rows.length; pulled.push(...rows); }
           catch (e) { err = String(e.message || e).slice(0, 140); break; }
           d.setUTCMonth(d.getUTCMonth() - 1);
           // Duda allows 300 form-submission calls a minute. One every 150ms is 400/min of headroom
@@ -89,9 +90,9 @@ export default async function handler(req, res) {
           await new Promise((r) => setTimeout(r, 150));
         }
         if (err) { failed.push({ id: siteId, error: err }); continue; }
-        await compactOldMonths(siteId).catch(() => {});
-        await tidySite(siteId).catch(() => 0);
-        const s = await bumpSummary(siteId).catch(() => ({}));
+        // Stored in one go: every month it touches is read in a single trip, not one trip per month.
+        added += await addLeads(siteId, pulled, { repair: true });
+        const s = (await afterImport(siteId).catch(() => ({ summary: {} }))).summary || {};
         done.push({ id: siteId, seen, added, total: s.total || 0 });
       }
     } finally {
@@ -157,10 +158,15 @@ async function tidyBatch(n = 8) {
   if (done === TIDY_VERSION) return null;
   if (!(await takeLock())) return null;
   try {
-    const [keys, marks] = await redis(['HKEYS', P + 'leadtot'], ['HGETALL', P + 'leadtidy']);
-    const seen = {};
-    if (Array.isArray(marks)) { for (let i = 0; i < marks.length; i += 2) seen[marks[i]] = marks[i + 1]; } else Object.assign(seen, marks || {});
-    const todo = (keys || []).filter((k) => seen[k] !== TIDY_VERSION);
+    const [tots, marks] = await redis(['HGETALL', P + 'leadtot'], ['HGETALL', P + 'leadtidy']);
+    const flat = (x) => { const o = {}; if (Array.isArray(x)) { for (let i = 0; i < x.length; i += 2) o[x[i]] = x[i + 1]; } else Object.assign(o, x || {}); return o; };
+    const total = flat(tots); const seen = flat(marks);
+    const untidy = Object.keys(total).filter((k) => seen[k] !== TIDY_VERSION);
+    // Most websites have no enquiries at all: nothing to merge, so they are marked tidy in one write
+    // instead of each being read month by month for nothing.
+    const empty = untidy.filter((k) => !Number(total[k]));
+    if (empty.length) await redis(['HSET', P + 'leadtidy', ...empty.flatMap((k) => [k, TIDY_VERSION])]);
+    const todo = untidy.filter((k) => Number(total[k]) > 0);
     let merged = 0;
     for (const id of todo.slice(0, n)) merged += await tidySite(id).catch(() => 0);
     const left = Math.max(0, todo.length - n);

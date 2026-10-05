@@ -26,13 +26,24 @@ export const hasRedis = () => !!(R_URL && R_TOKEN);
  * trade worth making for the one number that can stop the app writing.
  */
 const usageKey = () => P + 'usage:cmd:' + new Date().toISOString().slice(0, 7);
-let counting = true;
+// The allowance this store has each month. Kept beside the counter so the early warning and the
+// counter cannot disagree about what "full" means.
+export const KV_MONTHLY_COMMANDS = 500000;
 
-export async function redis(...cmds) {
-  if (!hasRedis()) throw new Error('The database is not connected. Please contact the app owner.');
-  if (counting && cmds.length && !String(cmds[0][1] || '').startsWith(P + 'usage:')) {
-    cmds = cmds.concat([['INCRBY', usageKey(), String(cmds.length + 1)]]);
-  }
+/**
+ * Commands are counted in batches, not one INCRBY per round trip.
+ *
+ * Counting every trip cost a command per trip — doubling the price of every single-command call and
+ * adding about a third to everything else. Owed counts now ride along on a later call once enough
+ * have built up. A server instance that shuts down early loses at most a few dozen, which is
+ * nothing beside a monthly figure in the hundreds of thousands.
+ */
+let owed = 0;
+let lastFlush = Date.now();
+const FLUSH_AT = 50;
+const FLUSH_MS = 60000;
+
+async function send(cmds) {
   const r = await fetch(`${R_URL}/pipeline`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${R_TOKEN}`, 'Content-Type': 'application/json' },
@@ -40,15 +51,59 @@ export async function redis(...cmds) {
   });
   if (!r.ok) throw new Error(`Redis ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const out = await r.json();
-  const mapped = out.map((x) => { if (x.error) throw new Error(x.error); return x.result; });
-  // The counter rode along on the end; the caller asked for what came before it.
-  return counting && mapped.length === cmds.length && cmds[cmds.length - 1][0] === 'INCRBY'
-    && String(cmds[cmds.length - 1][1] || '').startsWith(P + 'usage:') ? mapped.slice(0, -1) : mapped;
+  return out.map((x) => { if (x.error) throw new Error(x.error); return x.result; });
 }
-/** Count without counting the counting — used by the health page when it reads its own figures. */
-export async function redisRaw(...cmds) {
-  counting = false;
-  try { return await redis(...cmds); } finally { counting = true; }
+
+async function run(cmds, count) {
+  if (!hasRedis()) throw new Error('The database is not connected. Please contact the app owner.');
+  let flushing = 0;
+  if (count && cmds.length) {
+    owed += cmds.length;
+    if (owed >= FLUSH_AT || Date.now() - lastFlush > FLUSH_MS) {
+      flushing = owed + 1;                     // +1: the INCRBY itself is a command too
+      owed = 0; lastFlush = Date.now();
+      cmds = cmds.concat([['INCRBY', usageKey(), String(flushing)]]);
+    }
+  }
+  let mapped;
+  try { mapped = await send(cmds); }
+  catch (e) { if (flushing) owed += flushing - 1; throw e; }
+  if (!flushing) return mapped;
+  paceCheck(Number(mapped[mapped.length - 1])).catch(() => {});
+  return mapped.slice(0, -1);
+}
+
+export async function redis(...cmds) { return run(cmds, true); }
+/** Without counting — for the health page reading its own figures. Per call, never a shared switch. */
+export async function redisRaw(...cmds) { return run(cmds, false); }
+
+/**
+ * An early warning on the PACE of the month, not just its total.
+ *
+ * "90% used" arriving on the 5th is a warning that came three weeks late. The thing worth knowing is
+ * that the month is on course to overrun — which is knowable on day one or two. Checked only when a
+ * batch is flushed, using the total the flush just returned, so it costs no extra commands.
+ */
+let pacedKey = '';
+async function paceCheck(total) {
+  if (!(total > 0)) return;
+  const d = new Date();
+  const month = d.toISOString().slice(0, 7);
+  const daysIn = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  const elapsed = Math.max(0.25, d.getUTCDate() - 1 + d.getUTCHours() / 24);
+  const projected = Math.round((total / elapsed) * daysIn);
+  let level = '';
+  if (total >= KV_MONTHLY_COMMANDS * 0.9) level = 'over90';
+  else if (total >= KV_MONTHLY_COMMANDS * 0.7) level = 'over70';
+  else if (total > 25000 && projected > KV_MONTHLY_COMMANDS) level = 'pace';
+  if (!level || pacedKey === month + level) return;
+  pacedKey = month + level;
+  const fmt = (n) => Number(n).toLocaleString('en-US');
+  const text = level === 'pace'
+    ? `The main database is on course to use about ${fmt(projected)} commands this month against its ${fmt(KV_MONTHLY_COMMANDS)} allowance (${fmt(total)} so far). If it runs out, the app stops saving until the month resets. Open System health to see what is using it.`
+    : `The main database has used ${fmt(total)} of its ${fmt(KV_MONTHLY_COMMANDS)} commands this month${level === 'over90' ? ' and is about to run out' : ''}. If it runs out, the app stops saving until the month resets.`;
+  const { alertOwner } = await import('./_queue.js');
+  await alertOwner(`cmd-${level}-${month}`, text, { cooldownMs: 20 * 86400000 });
 }
 export const jparse = (s, d = null) => { try { return s ? JSON.parse(s) : d; } catch (e) { return d; } };
 

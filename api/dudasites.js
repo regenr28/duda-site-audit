@@ -173,7 +173,10 @@ export default async function handler(req, res) {
       }
     }
     // Merge remembered business names and domain checks
-    const [names, doms] = await redis(['HGETALL', NAMES], ['HGETALL', DOMS]);
+    // One extra command: whether the form-history catch-up has work, so opening this page (or a pull
+    // that just queued 700 websites) starts it at once instead of waiting for the next heartbeat.
+    const [names, doms, lqLen] = await redis(['HGETALL', NAMES], ['HGETALL', DOMS], ['HLEN', P + 'leadq']);
+    data.lq = { pending: Number(lqLen || 0) };
     data.runs = await lastRuns(['pull', 'domains', 'leads']).catch(() => ({}));
     const nm = {}; for (let i = 0; names && i < names.length; i += 2) { const v = names[i + 1]; const j = String(v).startsWith('{') ? jparse(v) : null; nm[names[i]] = j || { n: v, p: null }; }
     const dm = {}; for (let i = 0; doms && i < doms.length; i += 2) dm[doms[i]] = jparse(doms[i + 1]);

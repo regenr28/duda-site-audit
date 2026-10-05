@@ -6,7 +6,7 @@
 // POST /api/leads { op: 'backfill', id, months }   (admins) → pull history from Duda
 // POST /api/leads { op: 'census' }                 (admins) → count submissions per site, store nothing
 import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
-import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, compactOldMonths, bumpSummary, tidySite } from './_leads.js';
+import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, bumpSummary, afterImport } from './_leads.js';
 import { takeLock, unlock, enqueue } from './_queue.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
@@ -111,10 +111,9 @@ export default async function handler(req, res) {
         // Duda allows 300 form-submission calls a minute; one every 150ms stays well inside it.
         await new Promise((r2) => setTimeout(r2, 150));
       }
-      await compactOldMonths(id);
-      // Merge anything this import matched only by content, and clear pages we used to invent.
-      const merged = await tidySite(id).catch(() => 0);
-      const summary = await bumpSummary(id);
+      // Merge anything this import matched only by content and clear invented pages — once per
+      // website — then recount once.
+      const { merged, summary } = await afterImport(id);
       added = Math.max(0, Number(summary.total || 0) - before);
       await globalLog(me, 'leads-backfill', `imported ${added} form submissions for ${id} (${months} months)`);
       return res.status(200).json({ added, merged, months: done, failed, summary });
@@ -153,9 +152,7 @@ export default async function handler(req, res) {
           await new Promise((r2) => setTimeout(r2, 150));
         }
         if (err) { failed.push({ id: siteId, error: err }); continue; }
-        await compactOldMonths(siteId).catch(() => {});
-        await tidySite(siteId).catch(() => 0);
-        const summary = await bumpSummary(siteId);
+        const { summary } = await afterImport(siteId);
         out.push({ id: siteId, seen, added, total: summary.total, last: summary.last });
       }
       } finally { await unlock(); }

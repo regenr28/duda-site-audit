@@ -714,6 +714,8 @@ export const HELP_SECTIONS = [
 <h3>Catching up with Duda</h3>
 <p>Three bulk jobs, each with when it last ran and whether a person asked for it: the website list, the domain checks, and the form-submission history. The same stamps sit under their buttons on Live DR Sites, which is where the question is actually asked.</p>
 <p><b>Form submission history</b> says whether the backfill queue is empty. It drains itself while people use the app and is not scheduled, so it does nothing overnight and nothing at the weekend — by design. Ongoing enquiries do not depend on it: those arrive the moment they are submitted.</p>
+<h3>The early warning on pace</h3>
+<p>Besides the thresholds below, you are told the moment the month is <b>on course</b> to overrun the main database's command allowance — checked continuously, from day one, at no cost. A warning that the store is 90% used on the 5th of the month is a warning three weeks late; the pace is knowable on day one or two.</p>
 <h3>What gets sent to you, and what does not</h3>
 <p>A page nobody has open is no use when something runs out at 3am, so these reach your bell, and Slack if it is set up: the main database over 70% and again over 85%, a month on course to overrun its command allowance, the analysis database over 85%, nothing arriving from Duda for three days, and a website whose history could not be fetched after three tries. Each kind is sent at most once in several hours — a problem that persists must not become noise. <b>Already sent to you</b> on this page is the record of them.</p>
 <h3>Reading the states</h3>
