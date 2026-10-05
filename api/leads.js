@@ -7,6 +7,7 @@
 // POST /api/leads { op: 'census' }                 (admins) → count submissions per site, store nothing
 import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
 import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, compactOldMonths, bumpSummary } from './_leads.js';
+import { takeLock, unlock, enqueue } from './_queue.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 
@@ -43,7 +44,7 @@ export function fromDuda(rows) {
 }
 
 /** A month window of Duda's history for one site — bounded responses, resumable, no paging guesswork. */
-async function pullMonth(siteId, ym) {
+export async function pullMonth(siteId, ym) {
   const from = ym + '-01';
   const d = new Date(ym + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + 1);
   const to = d.toISOString().slice(0, 10);
@@ -119,7 +120,17 @@ export default async function handler(req, res) {
       const ids = [].concat(b.ids || []).map((x) => String(x).slice(0, 64)).filter(Boolean).slice(0, 25);
       if (!ids.length) return res.status(400).json({ error: 'Which websites?' });
       const months = Math.min(Math.max(Number(b.months) || 3, 1), 24);
+      // The background queue asks Duda the same questions, so the two share one lock. Rather than a
+      // status code, say what is happening and roughly how long it will be: the answer to "why can't
+      // I press this" is almost never a number.
+      if (!(await takeLock())) {
+        return res.status(503).json({
+          error: 'Form submissions are being fetched right now — the app does this a few websites at a time so it never overloads. Please try again in about 45 seconds.',
+          busy: true, retryAfter: 45,
+        });
+      }
       const out = []; const failed = [];
+      try {
       for (const siteId of ids) {
         const d = new Date(); let added = 0; let seen = 0; let err = '';
         for (let i = 0; i < months; i++) {
@@ -135,6 +146,7 @@ export default async function handler(req, res) {
         const summary = await bumpSummary(siteId);
         out.push({ id: siteId, seen, added, total: summary.total, last: summary.last });
       }
+      } finally { await unlock(); }
       return res.status(200).json({ done: out, failed });
     }
 

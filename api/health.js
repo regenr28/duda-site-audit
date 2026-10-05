@@ -11,6 +11,8 @@ import {
 } from './_lib.js';
 import { sqlReady, rows as sqlRows, ensureSchema } from './_sql.js';
 import { _test as ai } from './ai.js';
+import { queueState, alertOwner, recentAlerts } from './_queue.js';
+import { lastRuns } from './leadq.js';
 
 // What the free allowances are. Kept here, in one place, so a figure that changes is changed once.
 const LIMITS = {
@@ -187,6 +189,11 @@ export default async function handler(req, res) {
         note: aiCount ? `${aiCount} service${aiCount === 1 ? '' : 's'} configured — the AI page has the daily room left` : 'None configured — the AI checks are skipped' },
     ];
 
+    // ---- the backfill queue, and what was last run by hand ----
+    const queue = await queueState().catch(() => ({ pending: 0, running: false, last: null }));
+    const runs = await lastRuns(['pull', 'domains', 'leads']).catch(() => ({}));
+    const sent = await recentAlerts(10).catch(() => []);
+
     // ---- what needs doing, in plain words ----
     const alerts = [];
     const sqlPct = sqlInfo && !sqlInfo.error ? pctOf(sqlInfo.bytes, LIMITS.sqlBytes) : 0;
@@ -200,8 +207,22 @@ export default async function handler(req, res) {
     connections.filter((c) => !c.ok && ['email', 'hook'].includes(c.key)).forEach((c) => alerts.push({ level: 'warning', text: `${c.label} is not set up. ${say(c)}` }));
     if (sqlInfo && sqlInfo.unsure > 50) alerts.push({ level: 'info', text: `${sqlInfo.unsure} enquiries are still unsorted. Lead analysis can have the AI look at them.` });
 
+    // ---- and the ones the owner should be told about away from this page ----
+    // Only the things that are actually about to cost something: a page nobody has open is no use
+    // when an allowance runs out at 3am. Each is deduplicated by kind for hours, so this can run on
+    // every load without ever becoming noise.
+    if (kvPct >= 85) await alertOwner('kv-full', `The main database is ${kvPct}% full. When it fills the app stops saving anything — not just one feature.`, { cooldownMs: 6 * 3600 * 1000 }).catch(() => {});
+    else if (kvPct >= 70) await alertOwner('kv-high', `The main database is ${kvPct}% full and still growing.`, { cooldownMs: 24 * 3600 * 1000 }).catch(() => {});
+    if (projected > LIMITS.kvCmds * 0.85) await alertOwner('cmd-high', `At the current rate this month will use about ${projected.toLocaleString()} database commands against an allowance of ${LIMITS.kvCmds.toLocaleString()}.`, { cooldownMs: 24 * 3600 * 1000 }).catch(() => {});
+    if (sqlPct >= 85) await alertOwner('sql-full', `The analysis database is ${sqlPct}% full.`, { cooldownMs: 12 * 3600 * 1000 }).catch(() => {});
+    const hookConn = connections.find((c) => c.key === 'hook');
+    if (hookConn && hookConn.ok && hookConn.stale) await alertOwner('hook-quiet', `No form submission or comment has arrived from Duda for over three days. If that is not simply a quiet week, the webhook may have stopped — new enquiries would not be reaching the app.`, { cooldownMs: 24 * 3600 * 1000 }).catch(() => {});
+
     return res.status(200).json({
       at: now(),
+      queue: { pending: queue.pending, running: queue.running, last: queue.last },
+      runs,
+      sentAlerts: sent,
       kv: {
         used: kvUsed, limit: LIMITS.kvBytes, pct: kvPct, ...band(kvPct),
         keys: kvSnap ? kvSnap.keys : 0, measuredAt: kvSnap ? kvSnap.at : '',

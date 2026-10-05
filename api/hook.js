@@ -22,6 +22,7 @@
 // somebody actually looks at the Comments page.
 import crypto from 'node:crypto';
 import { redis, P, now, newId, jparse, ablyPublish, commentsChannel, unescapeHtml } from './_lib.js';
+import { enqueue } from './_queue.js';
 import { normalise, readFields, liveLeadCommands } from './_leads.js';
 
 const MAX_COMMENTS = 60;      // per conversation, oldest dropped
@@ -100,6 +101,7 @@ export default async function handler(req, res) {
   const cmds = [];
   let touched = 0;
   let sawComment = false;
+  const queued = [];   // websites that just went live and want their form history
 
   for (const ev of events) {
     const type = str(ev.event_type).toUpperCase();
@@ -172,7 +174,13 @@ export default async function handler(req, res) {
     // ---- everything else: remembered against the site ---------------------
     const [rawW] = await redis(['HGET', P + 'watch', siteId]);
     const patch = {};
-    if (type === 'PUBLISH') patch.published = at;
+    if (type === 'PUBLISH') {
+      patch.published = at;
+      // The moment a website goes live it may have a form that has been collecting since before we
+      // ever saw it. Queueing here is what makes "audited before it launched" and "live for a year"
+      // end up in the same place: the history is waiting by the time anyone looks.
+      queued.push(siteId);
+    }
     if (type === 'UNPUBLISH') patch.published = '';
     if (type === 'SITE_CREATED') patch.created = at;
     cmds.push(['HSET', P + 'watch', siteId, JSON.stringify(watchPatch(jparse(rawW), siteId, at, patch))]);
@@ -197,6 +205,10 @@ export default async function handler(req, res) {
     }
     cmds.push(['LPUSH', P + 'sitefeed:' + siteId, JSON.stringify({ type, at, by })], ['LTRIM', P + 'sitefeed:' + siteId, 0, 99]);
   }
+
+  // Queued outside the command batch on purpose: enqueue reads what is already waiting, and a
+  // webhook delivery must never fail because a background nicety did.
+  if (queued.length) await enqueue(queued, 'published').catch(() => {});
 
   if (touched) {
     cmds.push(['LPUSH', P + 'hooklog', JSON.stringify({ at: now(), n: touched, types: events.map((e) => str(e.event_type)).slice(0, 8), verified })],

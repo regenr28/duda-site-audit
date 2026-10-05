@@ -819,3 +819,14 @@ body.client-mode #view { max-width: none; padding: 0; }
 .hx-row .hx-state { font-size: 12px; }
 .hx-row .small { overflow: hidden; text-overflow: ellipsis; }
 .hx-mark { color: var(--hx, var(--muted)); font-weight: 700; flex: none; }
+
+/* ===================== Live DR action bar ===================== */
+.live-acts { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.live-acts .live-pull { flex: 1 1 260px; min-width: 200px; }
+.live-act { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+.live-stamp { font-size: 11px; color: var(--muted); text-align: center; white-space: nowrap; }
+.live-stamp.faint { color: var(--faint); }
+.live-q { margin-top: 3px; color: var(--muted); display: flex; align-items: baseline; gap: 6px; }
+.spin-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; animation: hxpulse 1.4s ease-in-out infinite; }
+@keyframes hxpulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+.lead-cell.faint { font-weight: 400; }

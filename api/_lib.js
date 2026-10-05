@@ -357,6 +357,12 @@ export const NOTIFY_GROUPS = [
     desc: 'A suggestion is sent, answered, or commented on.' },
   { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
     desc: 'Someone signs up and needs approving, or an audit is removed from the list.' },
+  // Only ever sent to the account that runs the app, and always to the bell: an allowance quietly
+  // running out is the one thing that must not be missable.
+  { key: 'system', label: 'System health', kinds: ['system'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
+    locked: ['bell'],
+    desc: 'Something is running out, or something that should be arriving has stopped.',
+    lockNote: 'Always reaches your bell. Only the account that runs the app is sent these.' },
 ];
 const GROUP_OF = {};
 NOTIFY_GROUPS.forEach((g) => g.kinds.forEach((k) => { GROUP_OF[k] = g; }));

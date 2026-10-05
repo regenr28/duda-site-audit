@@ -5,6 +5,8 @@
 // POST /api/dudasites { op: 'domains', ids }  → checks each site's live domain (working, redirecting elsewhere, 404, DNS…)
 // Uses Duda's List Sites endpoint (100 per page), so 800 sites = 8 API calls. Stored compressed in one small key.
 import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, learnEditorHost } from './_lib.js';
+import { enqueue } from './_queue.js';
+import { markRun, lastRuns } from './leadq.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const KEY = P + 'dudasites';
@@ -141,6 +143,7 @@ export default async function handler(req, res) {
         const out = {}; pick.forEach((id, j) => { out[id] = results[j]; });
         const flat = [].concat(...Object.entries(out).map(([k, v]) => [k, JSON.stringify(v)]));
         if (flat.length) await redis(['HSET', DOMS, ...flat]);
+        await markRun('domains', me, true, { count: pick.length });
         return res.status(200).json({ domains: out });
       }
       return res.status(400).json({ error: 'Unknown op' });
@@ -163,10 +166,15 @@ export default async function handler(req, res) {
         data = { at: Date.now(), by: me.email, byName: me.name, manual: !!req.query.refresh, count: sites.length, sites };
         data.scope = drafts ? 'unpublished' : 'published';
         await redis(['SET', key, packJSON(data)], ['DEL', key + ':lock']);
+        await markRun('pull', me, !!req.query.refresh, { count: sites.length, scope: data.scope });
+        // Every published website should have its form history. Anything already pulled or already
+        // waiting is ignored, so this is just "keep the queue in step with the account".
+        if (!drafts) await enqueue(sites.map((x) => x.id), 'listed').catch(() => {});
       }
     }
     // Merge remembered business names and domain checks
     const [names, doms] = await redis(['HGETALL', NAMES], ['HGETALL', DOMS]);
+    data.runs = await lastRuns(['pull', 'domains', 'leads']).catch(() => ({}));
     const nm = {}; for (let i = 0; names && i < names.length; i += 2) { const v = names[i + 1]; const j = String(v).startsWith('{') ? jparse(v) : null; nm[names[i]] = j || { n: v, p: null }; }
     const dm = {}; for (let i = 0; doms && i < doms.length; i += 2) dm[doms[i]] = jparse(doms[i + 1]);
     data.sites = data.sites.map((x) => { const m = nm[x.id]; const fresh = m && (m.p === null || m.p === (x.published || '')); return Object.assign({}, x, { name: x.name || (m && m.n !== '-' ? m.n : ''), nameChecked: !!(x.name || fresh), dom: dm[x.id] && (!x.domain || dm[x.id].domain === x.domain || dm[x.id].status === 'nodomain') ? dm[x.id] : null }); });

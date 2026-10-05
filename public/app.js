@@ -1074,6 +1074,23 @@
           <span class="small faint">${esc(c.note)}</span></div>`;
       }).join('')}</div>
 
+      <div class="k" style="margin-top:18px">Catching up with Duda</div>
+      <div class="hx-conn">
+        <div class="hx-row"><span class="hx-state hx-${d.queue && d.queue.pending ? 'warning' : 'good'}">${d.queue && d.queue.pending ? '•' : '✓'} ${d.queue && d.queue.pending ? 'Working' : 'Up to date'}</span>
+          <b>Form submission history</b>
+          <span class="small faint">${d.queue && d.queue.pending
+            ? `${d.queue.pending} website${d.queue.pending === 1 ? '' : 's'} still to fetch${d.queue.running ? ' · fetching now' : ' · picks up whenever someone has the app open'}`
+            : 'Every website has had its history fetched. New enquiries arrive on their own.'}</span></div>
+        ${['pull', 'domains', 'leads'].map((k) => { const r = (d.runs || {})[k]; const label = { pull: 'Website list pulled', domains: 'Domains checked', leads: 'Form submissions fetched' }[k];
+          return `<div class="hx-row"><span class="hx-state hx-${r ? 'good' : 'warning'}">${r ? '✓ Done' : '• Never'}</span><b>${label}</b>
+            <span class="small faint">${r ? `${esc(fmtWhen(Date.parse(r.at)))} · ${r.manual ? (r.byName ? 'by ' + esc(r.byName) : 'manually') : 'automatically'}` : 'has not run yet'}</span></div>`; }).join('')}
+      </div>
+
+      ${(d.sentAlerts || []).length ? `<div class="k" style="margin-top:18px">Already sent to you</div>
+        <div class="hx-conn">${d.sentAlerts.map((a) => `<div class="hx-row" style="grid-template-columns:150px 1fr">
+          <span class="small faint">${esc(fmtWhen(Date.parse(a.at)))}</span><span class="small">${esc(a.text)}</span></div>`).join('')}</div>
+        <div class="small faint" style="margin-top:4px">Each kind is sent at most once in several hours, so a problem that persists does not become noise.</div>` : ''}
+
       <div class="k" style="margin-top:18px">The app right now</div>
       <div class="hx-tiles small-tiles">
         ${[['Websites', d.app.websites], ['Scanned in 7 days', d.app.scanned7], ['Marked complete', d.app.complete],
@@ -1190,6 +1207,44 @@
     try { const r = await api('/api/leads?op=summary&ids=' + encodeURIComponent(ids.slice(0, 400).join(','))); state.leadSums = Object.assign(state.leadSums || {}, r.summaries || {}); }
     catch (e) { /* the profile still works without the counts */ }
   }
+
+  // =====================================================================
+  // THE BACKFILL QUEUE — websites still waiting for their history from Duda
+  // =====================================================================
+  /**
+   * Keep the queue moving.
+   *
+   * Nothing is scheduled anywhere: this browser asks whether there is work, and if there is, does a
+   * few websites' worth. The server's lock means six people with the app open still only ever
+   * produce one pull at a time, so this is safe to call from every browser without coordination.
+   *
+   * It stops the moment the queue is empty, which is why it costs nothing on an ordinary day.
+   */
+  async function queueTick() {
+    if (live.draining || !can('leads.view')) return;
+    try {
+      const st = await api('/api/leadq');
+      live.q2 = st;
+      live.queued = {};
+      (st.ids || []).forEach((id) => { live.queued[id] = 1; });
+      if (route().name === 'live') renderLive();
+      if (!st.pending || st.running) return;
+      live.draining = true;
+      // One chunk per tick rather than a loop: the browser stays responsive, and a tab closed
+      // halfway costs one chunk instead of stranding the lock.
+      const r = await post('/api/leadq', { op: 'drain', by: 'auto' });
+      if (r.done && r.done.length) {
+        await loadLeadSums(r.done.map((d) => d.id));
+        live.q2 = Object.assign({}, live.q2, { pending: r.pending });
+        r.done.forEach((d) => { delete live.queued[d.id]; });
+        if (route().name === 'live') renderLive();
+      }
+    } catch (e) { /* the queue is best effort: it tries again on the next tick */ }
+    finally { live.draining = false; }
+  }
+  // Often enough to finish a few hundred websites in an afternoon, rarely enough that an idle app
+  // with an empty queue is doing almost nothing.
+  function startQueue() { queueTick(); setInterval(queueTick, 20000); }
 
   function renderProfileTab(body, s, { cnt, generalComments }) {
     const sum = (state.leadSums && state.leadSums[s.siteId]) || {};
@@ -2259,7 +2314,7 @@
   setTimeout(aiResumeTick, 8000);
 
   // ---------- Live DR Sites: every published site in the Duda account ----------
-  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'comments', leadJob: null, leadsLoaded: false };
+  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'comments', leadJob: null, leadsLoaded: false, queued: {}, q2: null, draining: false };
   const liveDR = live; // alias: some views use a local variable called `live` for scan progress
   const DOM_OK = ['ok'];
   const domProblem = (d) => d && !['ok', 'nodomain'].includes(d.status);
@@ -2485,7 +2540,20 @@
         const r = await post('/api/leads', { op: 'fetch', ids: chunk, months });
         (r.done || []).forEach((x) => { state.leadSums[x.id] = { total: x.total, last: x.last }; live.leadJob.added += x.added; });
         live.leadJob.failed += (r.failed || []).length;
-      } catch (e) { live.leadJob.failed += chunk.length; if (/not set up|Admins|role does not allow/i.test(e.message)) { toast(e.message); break; } }
+      } catch (e) {
+        // Busy is not a failure. The background queue has the line for a moment; wait and ask again
+        // for the same websites rather than counting them as unreadable.
+        if (e.status === 503 || (e.data && e.data.busy)) {
+          live.leadJob.note = e.message;
+          if (route().name === 'live') renderLive();
+          await new Promise((r) => setTimeout(r, Math.min(60, Number((e.data && e.data.retryAfter) || 20)) * 1000));
+          live.leadJob.note = '';
+          i -= 5;                         // same chunk again
+          continue;
+        }
+        live.leadJob.failed += chunk.length;
+        if (/not set up|Admins|role does not allow/i.test(e.message)) { toast(e.message); break; }
+      }
       live.leadJob.done = Math.min(ids.length, i + chunk.length);
       if (route().name === 'live') renderLive();
     }
@@ -2495,30 +2563,112 @@
     if (route().name === 'live') renderLive();
   }
 
-  /** The enquiries cell: a count worth clicking, or a reason it is empty. */
+  /**
+   * The enquiries cell.
+   *
+   * Three honest states, because "—" for all of them told you nothing: a count, "none yet" for a
+   * website we have asked Duda about and it really has none, and "waiting" for one still in the
+   * queue. Every one of them opens the profile, whether or not the website was ever audited.
+   */
   function leadCell(x) {
     const s = state.leadSums[String(x.id)] || {};
-    const a = auditFor(x.id);
-    if (!s.total) return '<span class="faint small">—</span>';
+    const waiting = (live.queued || {})[String(x.id)];
+    if (!s.total) {
+      return `<button class="linkbtn lead-cell faint small" data-goleads="${esc(x.id)}" title="${waiting ? 'Waiting to be fetched from Duda' : 'No form submissions stored for this website'}">${waiting ? 'waiting…' : 'none yet'}</button>`;
+    }
     const when = s.last ? ago(s.last) : '';
-    return `<button class="linkbtn lead-cell" data-goleads="${esc(x.id)}" title="${a ? 'Open this website’s form submissions' : 'This website is not in Audits yet'}">
+    return `<button class="linkbtn lead-cell" data-goleads="${esc(x.id)}" title="Open this website’s profile and form submissions">
       <b>${s.total}</b> ${when ? `<span class="faint small">last ${esc(when)}</span>` : ''}</button>`;
   }
 
-  /** Clicking the count. A website with no audit has no profile to open yet, so offer to make one. */
+  /**
+   * Open a website's profile.
+   *
+   * Every live website has one, audited or not. A website that has never been audited has no record
+   * and does not need one — its profile is built from the Duda list and its own enquiries — so this
+   * no longer asks anybody to create something before they can look at their own data.
+   */
   async function goLeads(siteId) {
     const a = auditFor(siteId);
-    if (a) { location.hash = `#/site/${encodeURIComponent(a.id)}/leads`; return; }
-    const lx = (live.data && live.data.sites.find((y) => y.id === siteId)) || {};
-    if (!confirm(`${lx.name || siteId} isn't in Audits yet, so it has no profile to open.\n\nAdd it now? Its enquiries are already stored and will be waiting on the profile.`)) return;
+    location.hash = a ? `#/site/${encodeURIComponent(a.id)}/leads` : `#/dr/${encodeURIComponent(siteId)}`;
+  }
+
+  /** Kept for the one path that genuinely wants a record: adding a website from its profile. */
+  async function addFromProfile(siteId) {
     const host = editorHostOr();
     try {
-      // The same create the Audit button uses — but no scan is started: this is somebody wanting to
-      // see enquiries, not asking for the website to be checked.
       const sum = await store({ op: 'create', siteId, host, editorUrl: `https://${host}/home/site/${siteId}/home`, assignee: state.me.email });
       upsertSummary(sum);
       location.hash = `#/site/${encodeURIComponent(sum.id)}/leads`;
     } catch (e) { toast(e.message); }
+  }
+
+  /**
+   * A website's profile when it has never been audited.
+   *
+   * There is no record behind this page and there does not need to be one. Everything on it already
+   * exists somewhere: the website itself in the Duda list, its enquiries under its own site id. The
+   * alternative — writing a record for all 700 live websites — would put 700 rows into the one piece
+   * of data every single page load reads, to show what can be assembled for nothing.
+   */
+  async function renderDrProfile(siteId) {
+    const a = auditFor(siteId);
+    if (a) { location.hash = `#/site/${encodeURIComponent(a.id)}/leads`; return; }
+    if (!live.data) { $('#view').innerHTML = '<div class="empty">Loading…</div>'; await loadLive(false); }
+    const x = ((live.data && live.data.sites) || []).find((y) => y.id === siteId)
+      || ((live.draft && live.draft.sites) || []).find((y) => y.id === siteId) || null;
+    const dom = x && (x.domain || x.defaultDomain);
+    const host = editorHostOr();
+    $('#view').innerHTML = `<div class="page-head"><div>
+        <div class="small muted"><a href="#/live">← Live DR Sites</a></div>
+        <h1>${esc((x && x.name) || siteId)}</h1>
+        <div class="muted small">${dom ? `<a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a> · ` : ''}<span class="mono">${esc(siteId)}</span>
+          ${x && x.published ? ` · published ${esc(fmtFull(x.published))}` : ' · <span class="badge subtle">Not published yet</span>'}</div>
+        ${(x && (x.labels || []).length) ? `<div class="small faint" style="margin-top:3px">${x.labels.map(esc).join(' · ')}</div>` : ''}</div>
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        ${can('live.audit') ? `<button class="btn primary" id="drAudit">Audit this website</button>` : ''}
+        ${host ? `<a class="btn ghost" href="https://${esc(linkHost(null))}/home/site/${esc(siteId)}/home" target="_blank" rel="noopener">Editor ↗</a>` : ''}</div></div>
+      <div class="note" style="margin-bottom:12px"><b>This website has not been audited.</b>
+        <div class="small" style="margin-top:3px">Its form submissions are collected and kept all the same — nothing here needs an audit first.
+        ${can('live.audit') ? 'Press <b>Audit this website</b> when it should be checked.' : ''}</div></div>
+      <div id="drBody"><div class="empty">Loading…</div></div>`;
+    if ($('#drAudit')) {
+      $('#drAudit').onclick = async () => {
+        $('#drAudit').disabled = true; $('#drAudit').textContent = 'Adding…';
+        try {
+          const sum = await store({ op: 'create', siteId, host, editorUrl: `https://${host}/home/site/${siteId}/home`, assignee: state.me.email });
+          upsertSummary(sum); requestScan([sum.id]); toast(`Submitted for audit. ${doneNote()}`);
+          location.hash = `#/site/${encodeURIComponent(sum.id)}`;
+        } catch (e) {
+          if (e.status === 409) { await loadSites(); goLeads(siteId); }
+          else { toast(e.message); $('#drAudit').disabled = false; $('#drAudit').textContent = 'Audit this website'; }
+        }
+      };
+    }
+    // The same enquiries view the audited websites get — it only ever needed a Duda site id.
+    renderLeadsTab($('#drBody'), { siteId });
+  }
+
+  /**
+   * "Last done: 2 hours ago, automatically."
+   *
+   * Under each button rather than in a corner, because the question it answers — do I need to press
+   * this? — is asked while looking at the button.
+   */
+  function runStamp(kind) {
+    const r = (live.data && live.data.runs && live.data.runs[kind]) || null;
+    if (!r) return '<div class="live-stamp faint">Never run</div>';
+    const who = r.manual ? (r.byName ? `by ${esc(r.byName)}` : 'manually') : 'automatically';
+    return `<div class="live-stamp" title="${esc(fmtFull(isoOf(r.at)))}">${esc(ago(isoOf(r.at)))} · ${who}</div>`;
+  }
+
+  /** What the queue is doing, in one line, only while it has something to do. */
+  function queueNote() {
+    const q = live.q2;
+    const d = live.data;
+    const pulled = d ? `<div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : '';
+    if (!q || !q.pending) return pulled;
+    return pulled + `<div class="small live-q"><span class="spin-dot"></span> Fetching form submissions in the background — <b>${q.pending}</b> website${q.pending === 1 ? '' : 's'} to go. You can carry on; it looks after itself.</div>`;
   }
 
   function renderLive() {
@@ -2545,7 +2695,12 @@
     const host = editorHostOr();
     if (live.tab === 'unpublished') return renderDrafts();
     $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
-        <div class="row-between" style="align-items:center;gap:12px"><div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div><div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : ''}</div>${can('leads.import') ? `<button class="btn" id="liveLeads" ${live.leadJob || !d ? 'disabled' : ''} title="Fetch form submissions from Duda for the websites currently listed">${live.leadJob ? 'Fetching…' : '✉️ Get form submissions'}</button>` : ''}${can('live.domains') ? `<button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button>` : ''}${can('live.pull') ? `<button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button>` : ''}</div></div>
+        <div class="live-acts">
+          <div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div>${queueNote()}` : ''}</div>
+          ${can('leads.import') ? `<div class="live-act"><button class="btn" id="liveLeads" ${live.leadJob || !d ? 'disabled' : ''} title="Fetch form submissions from Duda for the websites currently listed">${live.leadJob ? 'Fetching…' : '✉️ Get form submissions'}</button>${runStamp('leads')}</div>` : ''}
+          ${can('live.domains') ? `<div class="live-act"><button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button>${runStamp('domains')}</div>` : ''}
+          ${can('live.pull') ? `<div class="live-act"><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button>${runStamp('pull')}</div>` : ''}
+        </div></div>
       ${liveTabs('published')}
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
 
@@ -2556,7 +2711,9 @@
         <select id="liveSort"><option value="published">Recently published first</option><option value="domain" ${live.sort === 'domain' ? 'selected' : ''}>Domain problems first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
       </div>
       ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}
-      ${live.leadJob ? `<div class="live-progress small muted"><span class="pulse-dot"></span> Fetching form submissions ${live.leadJob.done}/${live.leadJob.total} · <b>${live.leadJob.added}</b> new${live.leadJob.failed ? ` · ${live.leadJob.failed} could not be read` : ''} <button class="linkbtn" id="liveLeadStop">Stop</button></div>` : ''}
+      ${live.leadJob ? (live.leadJob.note
+        ? `<div class="live-progress small sev-warning" style="border-radius:8px"><span class="pulse-dot"></span> ${esc(live.leadJob.note)} <button class="linkbtn" id="liveLeadStop">Stop waiting</button></div>`
+        : `<div class="live-progress small muted"><span class="pulse-dot"></span> Fetching form submissions ${live.leadJob.done}/${live.leadJob.total} · <b>${live.leadJob.added}</b> new${live.leadJob.failed ? ` · ${live.leadJob.failed} could not be read` : ''} <button class="linkbtn" id="liveLeadStop">Stop</button></div>`) : ''}
       ${!d ? `<div class="empty">${live.loading ? 'Loading published sites from Duda…' : 'No data yet.'}</div>` : !list.length ? '<div class="empty">No sites match.</div>' : `
       <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Enquiries</th><th>Comments</th>${can('live.audit') ? '<th>Audit</th>' : ''}<th></th></tr></thead><tbody>
       ${shown.map((x) => { const a = auditFor(x.id); const dom = x.domain || x.defaultDomain; return `<tr>
@@ -2568,6 +2725,7 @@
         <td style="white-space:nowrap">${cmtCell(x.id)}</td>
         ${can('live.audit') ? `<td>${auditCell(x)}</td>` : ''}
         <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : can('live.audit') ? `<button class="btn sm primary" data-audit="${esc(x.id)}">Audit this website</button>` : ''}
+          <a class="btn sm ghost" href="#/dr/${esc(x.id)}" title="Form submissions and details for this website, audited or not">Profile</a>
           ${host ? `<a class="btn sm ghost" href="https://${esc(linkHost(null))}/home/site/${esc(x.id)}/home" target="_blank" rel="noopener" title="Open in the Duda editor">Editor ↗</a>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div>
       ${pages > 1 ? `<div class="row-between" style="padding:10px 14px"><span class="small muted">${live.page * PER + 1}–${Math.min(list.length, live.page * PER + PER)} of ${list.length}</span><span><button class="btn sm" id="livePrev" ${live.page ? '' : 'disabled'}>← Prev</button> <button class="btn sm" id="liveNext" ${live.page < pages - 1 ? '' : 'disabled'}>Next →</button></span></div>` : ''}`}
@@ -2734,6 +2892,8 @@
     if (parts[0] === 'comments') return { name: 'comments', site: parts[1] ? decodeURIComponent(parts[1]) : '' };
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : 'published' };
+    // A website's profile addressed by its DUDA site id, so it works for one that has no record.
+    if (parts[0] === 'dr' && parts[1]) return { name: 'dr', siteId: decodeURIComponent(parts[1]) };
     // …/false-alarms/<key> comes from a notification: open the queue ON that report, not at the top of a list of 40.
     if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas', key: parts[1] === 'false-alarms' && parts[2] ? decodeURIComponent(parts.slice(2).join('/')) : '' };
     return { name: 'sites' };
@@ -2791,6 +2951,7 @@
       return renderComments();
     }
     if (r.name === 'live') { live.tab = r.tab; return renderLive(); }
+    if (r.name === 'dr') { if (!can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; } return renderDrProfile(r.siteId); }
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
     if (/members=1/.test(location.hash)) { history.replaceState(null, '', '#/'); setTimeout(openMembers, 50); }
@@ -5224,6 +5385,9 @@
     resumeAfterReload();
     listenPersonal();
     setTimeout(offerDesktop, 4000);
+    // Started after everything else and deliberately late: catching up on form-submission history
+    // is the least urgent thing the app does and must never slow down opening it.
+    setTimeout(startQueue, 6000);
   }
   window.addEventListener('hashchange', () => {
     if (state.me && clientMode()) return render();

@@ -6,6 +6,7 @@
 //        fnum:<id> (hash findingId → #)   seq:<id>   cmt:<id> (hash commentId → comment)   act:<id> (list)
 //        notif:<email> (list)   notifseen:<email>
 import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, wantsEmail, plainMentions, normEmail, buildId, can, denyUnless } from './_lib.js';
+import { enqueue } from './_queue.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 
@@ -358,6 +359,10 @@ export default async function handler(req, res) {
         await redis(['SET', P + 'site:' + site.id, packJSON(site)]);
         await log(site.id, me, 'site', 'added this website');
         await globalLog(me, 'site-add', `added the website ${b.siteId}`, { siteId: site.id, siteRef: b.siteId, editorUrl: b.editorUrl });
+        // A website sent for audit should arrive with its enquiries already there. If it is live,
+        // its history is queued now; if it is not published yet, the PUBLISH webhook queues it the
+        // day it goes live, so by the time anyone onboards the customer the data is waiting.
+        enqueue([b.siteId], 'audit').catch(() => {});
         return res.status(200).json(await saveIndex(site.id));
       }
       case 'scanState': {
