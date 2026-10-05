@@ -382,6 +382,7 @@
     if (pb) { pb.innerHTML = previewBanner(); const x = $('#pvExit'); if (x) x.onclick = exitViewAs; }
     const isOwner = !!state.superAdmin;
     $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
+      ${can('project.view') ? `<a href="#/projects" data-nav="projects">Projects${projWaiting() ? ' <span class="nav-dot bad" title="Something is past its date"></span>' : ''}</a>` : ''}
       ${can('live.view') ? '<a href="#/live" data-nav="live">Live DR Sites</a>' : ''}
       ${can('leads.view') ? '<a href="#/analysis" data-nav="analysis">Lead analysis</a>' : ''}
       ${can('activity.view') ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
@@ -402,9 +403,11 @@
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
         <span class="bell-count" id="bellCount" hidden></span></button>
       <button class="btn ghost" id="btnMembers" type="button">Members${can('members.approve') && state.users.some((u) => u.status === 'pending') ? ` <span class="badge fs-clarification">${state.users.filter((u) => u.status === 'pending').length} for approval</span>` : ''}</button>
-      ${can('site.add') ? '<button class="btn primary" id="btnAdd" type="button">+ Add website</button>' : ''}
+      ${can('project.manage') ? '<button class="btn primary" id="btnProj" type="button">+ Add project</button>' : ''}
+      ${can('site.add') ? `<button class="btn ${can('project.manage') ? '' : 'primary'}" id="btnAdd" type="button">+ Add audit</button>` : ''}
       <button class="btn ghost me-btn" id="btnMe" title="${esc(state.me.email)}">${avatar(state.me.email, 26)}</button>`;
     if ($('#btnAdd')) $('#btnAdd').onclick = openAdd;
+    if ($('#btnProj')) $('#btnProj').onclick = openNewProject;
     $('#btnMembers').onclick = openMembers;
     $('#btnBell').onclick = toggleNotifs;
     $('#btnMe').onclick = openMe;
@@ -1097,6 +1100,358 @@
           ['Open critical items', d.app.openCritical], ['Team members', d.app.users], ['Client sign-ins', d.app.clients]]
           .map(([k, v]) => `<div class="hx-tile"><div class="hx-k">${esc(k)}</div><div class="hx-v">${Number(v || 0).toLocaleString()}</div></div>`).join('')}
       </div>`;
+  }
+
+  /**
+   * The agreed business details for a website, if a project carries them.
+   *
+   * Cached for the session: a rescan-all across forty websites must not become forty extra
+   * requests, and these change about once per project.
+   */
+  let briefCache = null;
+  async function briefFor(siteId) {
+    if (!siteId || !can('project.view')) return null;
+    if (!briefCache) {
+      briefCache = {};
+      try {
+        const r = await api('/api/projects?op=list');
+        (r.projects || []).forEach((p) => { if (p.siteId && p.facts) briefCache[p.siteId] = p.id; });
+      } catch (e) { return null; }
+    }
+    const id = briefCache[siteId];
+    if (!id) return null;
+    try {
+      const r = await api(`/api/projects?op=one&id=${encodeURIComponent(id)}`);
+      const f = (r.project || {}).facts || {};
+      return Object.keys(f).length ? f : null;
+    } catch (e) { return null; }
+  }
+
+  // =====================================================================
+  // PROJECTS — the build, from the client's files to the client's comments
+  // =====================================================================
+  const proj = { list: null, phases: [], loading: false, dropbox: false, one: null, scan: null, read: null };
+  const PHASE_OF = (k) => (proj.phases || []).find((p) => p.key === k) || { key: k, label: k, owner: '' };
+  /** Anything past its date, for the dot in the top bar. */
+  const projWaiting = () => (proj.list || []).some((p) => p.due && p.due < today() && p.phase !== 'done');
+  const today = () => new Date().toISOString().slice(0, 10);
+  const dueClass = (p) => (!p.due || p.phase === 'done') ? '' : p.due < today() ? 'sev-critical' : p.due === today() ? 'sev-warning' : 'subtle';
+  const dueWord = (p) => {
+    if (!p.due) return '';
+    const d = Math.round((Date.parse(p.due) - Date.parse(today())) / 86400000);
+    if (p.phase === 'done') return p.due;
+    if (d < 0) return `${-d} day${d === -1 ? '' : 's'} late`;
+    if (d === 0) return 'due today';
+    if (d === 1) return 'due tomorrow';
+    return `due in ${d} days`;
+  };
+
+  async function loadProjects() {
+    try { const r = await api('/api/projects?op=list'); proj.list = r.projects || []; proj.phases = r.phases || []; proj.dropbox = !!r.dropbox; proj.scoped = !!r.scoped; }
+    catch (e) { proj.list = []; proj.error = e.message; }
+  }
+
+  /** The board: one column per phase, so "where is everything" is a glance rather than a question. */
+  async function renderProjects() {
+    if (!proj.list) { $('#view').innerHTML = '<div class="empty">Loading…</div>'; await loadProjects(); renderTop(); }
+    const list = proj.list || [];
+    const late = list.filter((p) => p.due && p.due < today() && p.phase !== 'done');
+    const open = list.filter((p) => p.phase !== 'done');
+    $('#view').innerHTML = `<div class="page-head"><div><h1>Projects</h1>
+        <div class="muted">Every build and where it has got to.${proj.scoped ? ' You are seeing the ones you are on.' : ''}</div></div>
+        ${can('project.manage') ? '<button class="btn primary" id="pjNew">+ Add project</button>' : ''}</div>
+      ${proj.error ? `<div class="note bad">${esc(proj.error)}</div>` : ''}
+      ${late.length ? `<div class="note unk"><b>${late.length} past its date.</b>
+        <div class="small" style="margin-top:3px">${late.slice(0, 4).map((p) => `<a href="#/project/${esc(p.id)}">${esc(p.name)}</a> — ${esc(PHASE_OF(p.phase).label)}, ${esc(dueWord(p))}${p.assignee ? ` (${esc(nameOf(p.assignee))})` : ''}`).join('<br>')}</div></div>` : ''}
+      ${!list.length ? `<div class="empty">No projects yet.${can('project.manage') ? ' Click <b>+ Add project</b> to start one.' : ''}</div>`
+        : `<div class="pj-board">${(proj.phases || []).filter((ph) => ph.key !== 'done' || list.some((p) => p.phase === 'done')).map((ph) => {
+            const inPhase = list.filter((p) => p.phase === ph.key);
+            return `<div class="pj-col${inPhase.length ? '' : ' empty-col'}">
+              <div class="pj-col-h"><b>${esc(ph.label)}</b> <span class="faint">${inPhase.length || ''}</span>
+                ${ph.owner ? `<div class="small faint">${esc(ph.owner)}</div>` : ''}</div>
+              ${inPhase.map((p) => `<a class="pj-card" href="#/project/${esc(p.id)}">
+                <b>${esc(p.name)}</b>
+                ${p.client ? `<div class="small faint">${esc(p.client)}</div>` : ''}
+                <div class="pj-card-f">${p.assignee ? avatar(p.assignee, 20) + `<span class="small">${esc(nameOf(p.assignee))}</span>` : '<span class="small faint">nobody</span>'}</div>
+                ${p.due ? `<span class="badge ${dueClass(p)}">${esc(dueWord(p))}</span>` : ''}</a>`).join('')}
+            </div>`;
+          }).join('')}</div>
+        <div class="small faint" style="margin-top:10px">${open.length} open · ${list.length - open.length} finished</div>`}`;
+    if ($('#pjNew')) $('#pjNew').onclick = openNewProject;
+  }
+
+  function openNewProject() {
+    const people = (state.users || []).filter((u) => u.status === 'active' && u.role !== 'client');
+    modal(`<header><h2>Start a project</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <label class="field">Project name<input type="text" id="pjName" placeholder="Obsessed Detail and Restoration — new build"></label>
+        <label class="field">Client<input type="text" id="pjClient" placeholder="Obsessed Detail and Restoration"></label>
+        <label class="field">Dropbox folder link
+          <input type="text" id="pjDrop" placeholder="https://www.dropbox.com/scl/fo/…">
+          <span class="small muted">${proj.dropbox ? 'The app will read this folder, find the client’s brief and offer the business details from it. The link must be set so that anyone with it can view.' : 'Dropbox is not connected yet, so the link is kept for reference only.'}</span></label>
+        <label class="field">Hand it to
+          <select id="pjWho"><option value="${esc(state.me.email)}">Me (${esc(state.me.name)})</option>
+            ${people.filter((u) => u.email !== state.me.email).map((u) => `<option value="${esc(u.email)}">${esc(u.name)}</option>`).join('')}</select></label>
+        <label class="field">Due<input type="date" id="pjDue" min="${today()}"></label>
+        <div class="field"><span>Who else is involved</span>
+          <div class="pj-people">${people.map((u) => `<label class="check-row"><input type="checkbox" data-pjm="${esc(u.email)}" ${u.email === state.me.email ? 'checked disabled' : ''}><span>${esc(u.name)}</span></label>`).join('')}</div>
+          <span class="small muted">They get the project in their list and hear about anything written in it.</span></div>
+      </div>
+      <footer><span class="spacer"></span><button class="btn primary" id="pjGo">Start project</button></footer>`);
+    $('#pjGo').onclick = async () => {
+      const body = {
+        op: 'create', name: $('#pjName').value.trim(), client: $('#pjClient').value.trim(),
+        dropbox: $('#pjDrop').value.trim(), assignee: $('#pjWho').value, due: $('#pjDue').value,
+        members: $$('[data-pjm]').filter((i) => i.checked).map((i) => i.dataset.pjm).concat([state.me.email]),
+      };
+      if (!body.name) return toast('Give the project a name.');
+      $('#pjGo').disabled = true;
+      try { const r = await post('/api/projects', body); closeModal(); proj.list = null; location.hash = `#/project/${r.project.id}`; }
+      catch (e) { toast(e.message); $('#pjGo').disabled = false; }
+    };
+  }
+
+  /** One project: its details, its files, and the handover that moves it on. */
+  async function renderProject(id) {
+    $('#view').innerHTML = '<div class="empty">Loading…</div>';
+    let d;
+    try { d = await api(`/api/projects?op=one&id=${encodeURIComponent(id)}`); }
+    catch (e) { $('#view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    proj.phases = d.phases || proj.phases;
+    const p = d.project;
+    proj.one = p;
+    proj.scan = d.listing || null;
+    const ph = PHASE_OF(p.phase);
+    const may = can('project.manage') || p.assignee === state.me.email;
+    const facts = p.facts || {};
+    const hasFacts = Object.keys(facts).length > 0;
+
+    $('#view').innerHTML = `<div class="page-head"><div>
+        <div class="small muted"><a href="#/projects">← Projects</a></div>
+        <h1>${esc(p.name)}</h1>
+        <div class="muted small">${p.client ? esc(p.client) + ' · ' : ''}<b>${esc(ph.label)}</b>
+          ${p.assignee ? ` · with ${esc(nameOf(p.assignee))}` : ' · nobody is holding it'}
+          ${p.due ? ` · <span class="badge ${dueClass(p)}">${esc(dueWord(p))}</span>` : ''}</div></div>
+      <div style="display:flex;gap:8px">
+        ${may ? '<button class="btn primary" id="pjHand">Hand on →</button>' : ''}
+        ${can('project.manage') ? '<button class="btn ghost" id="pjEdit">Edit</button>' : ''}</div></div>
+
+      <div class="pj-rail">${(proj.phases || []).map((x, i) => {
+        const at = (proj.phases || []).findIndex((y) => y.key === p.phase);
+        return `<span class="pj-step ${i < at ? 'past' : i === at ? 'now' : ''}" title="${esc(x.desc || '')}">${esc(x.label)}</span>`;
+      }).join('')}</div>
+
+      <div class="cl-two" style="margin-top:14px">
+        <div class="cl-card">
+          <div class="cl-card-h">Business details <span class="faint small">${hasFacts ? 'the reference every audit is checked against' : 'not agreed yet'}</span></div>
+          ${hasFacts ? `<table class="grid sm"><tbody>${(d.factFields || []).filter((f) => facts[f.key]).map((f) => `<tr>
+              <td class="faint" style="width:150px">${esc(f.label)}</td><td style="white-space:pre-line">${esc(facts[f.key])}</td></tr>`).join('')}</tbody></table>
+            ${p.factsFile ? `<div class="small faint" style="margin-top:6px">From <b>${esc(String(p.factsFile).split('/').pop())}</b></div>` : ''}`
+            : '<div class="empty small">Nothing agreed yet. Read the client’s brief from Dropbox, or type them in.</div>'}
+          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+            ${may ? '<button class="btn sm" id="pjFacts">Edit details</button>' : ''}
+            ${may && Object.keys(p.factsFrom || {}).length ? '<button class="btn sm ghost" id="pjReset" title="Put back exactly what the brief said">↺ Reset to the brief</button>' : ''}
+          </div>
+        </div>
+        <div class="cl-card">
+          <div class="cl-card-h">Dropbox</div>
+          ${p.dropbox ? `<div class="small"><a href="${esc(p.dropbox)}" target="_blank" rel="noopener">Open the folder ↗</a></div>
+            ${!d.dropbox ? '<div class="small faint" style="margin-top:6px">Dropbox is not connected, so the app cannot read this folder — the link is here for reference.</div>'
+              : `<div style="margin-top:8px"><button class="btn sm" id="pjScan">${proj.scan ? '↻ Read the folder again' : 'Read the folder'}</button></div>
+                 <div id="pjFiles">${filesPanel()}</div>`}`
+            : `<div class="empty small">No Dropbox folder linked yet.${can('project.manage') ? ' Use <b>Edit</b> to add one.' : ''}</div>`}
+        </div>
+      </div>
+
+      <div class="cl-card" style="margin-top:12px">
+        <div class="cl-card-h">The website</div>
+        ${p.auditId ? `<div class="small"><a href="#/site/${esc(p.auditId)}">Open the audit ↗</a>${p.siteId ? ` <span class="faint mono">${esc(p.siteId)}</span>` : ''}</div>`
+          : p.siteId ? `<div class="small"><a href="#/dr/${esc(p.siteId)}">Open the profile ↗</a> <span class="faint mono">${esc(p.siteId)}</span>
+              ${can('site.add') ? ` · <button class="linkbtn" id="pjAudit">Start the audit</button>` : ''}</div>`
+          : `<div class="empty small">No website linked yet.${may ? ' Add its Duda site ID with <b>Edit</b>, and the agreed details above become what its audit is checked against.' : ''}</div>`}
+      </div>
+
+      <div class="cl-card" style="margin-top:12px">
+        <div class="cl-card-h">What has happened <span class="faint small">${(p.members || []).length} involved</span></div>
+        <div class="pj-say">${may || (p.members || []).includes(state.me.email) ? `<input type="text" id="pjNote" placeholder="Say something to everyone on this project…"><button class="btn sm" id="pjSay">Post</button>` : ''}</div>
+        <div class="pj-trail">${(p.history || []).slice().reverse().map(trailLine).join('') || '<div class="empty small">Nothing yet.</div>'}</div>
+      </div>`;
+
+    if ($('#pjHand')) $('#pjHand').onclick = () => openHand(p);
+    if ($('#pjEdit')) $('#pjEdit').onclick = () => openEditProject(p);
+    if ($('#pjFacts')) $('#pjFacts').onclick = () => openFacts(p, d.factFields || []);
+    if ($('#pjScan')) $('#pjScan').onclick = () => scanDropbox(p);
+    if ($('#pjReset')) $('#pjReset').onclick = async () => {
+      if (!confirm('Put the business details back to exactly what the brief said?')) return;
+      try { await post('/api/projects', { op: 'facts', id: p.id, reset: true }); toast('Back to the brief'); renderProject(p.id); } catch (e) { toast(e.message); }
+    };
+    if ($('#pjSay')) $('#pjSay').onclick = async () => {
+      const t = $('#pjNote').value.trim(); if (!t) return;
+      $('#pjSay').disabled = true;
+      try { await post('/api/projects', { op: 'say', id: p.id, text: t }); renderProject(p.id); } catch (e) { toast(e.message); $('#pjSay').disabled = false; }
+    };
+    if ($('#pjAudit')) $('#pjAudit').onclick = async () => {
+      const host = editorHostOr();
+      try {
+        const sum = await store({ op: 'create', siteId: p.siteId, host, editorUrl: `https://${host}/home/site/${p.siteId}/home`, assignee: state.me.email });
+        upsertSummary(sum); requestScan([sum.id]);
+        await post('/api/projects', { op: 'link', id: p.id, auditId: sum.id });
+        toast('Audit started'); renderProject(p.id);
+      } catch (e) { toast(e.message); }
+    };
+    bindFiles(p);
+  }
+
+  /** One line of the trail, in words rather than field names. */
+  function trailLine(h) {
+    const who = esc(h.byName || h.by || 'somebody');
+    const when = `<span class="faint small">${esc(fmtWhen(Date.parse(h.at)))}</span>`;
+    const body = {
+      created: () => `<b>${who}</b> started the project`,
+      phase: () => `<b>${who}</b> moved it to <b>${esc(PHASE_OF(h.to).label)}</b>${h.toWho ? ` and gave it to ${esc(nameOf(h.toWho))}` : ''}${h.due ? `, due ${esc(h.due)}` : ''}${h.note ? `<div class="pj-note">${esc(h.note)}</div>` : ''}`,
+      facts: () => `<b>${who}</b> set the business details${(h.fields || []).length ? ` (${h.fields.map(esc).join(', ')})` : ''}${h.file ? ` from <b>${esc(String(h.file).split('/').pop())}</b>` : ''}`,
+      'facts-reset': () => `<b>${who}</b> put the details back to the brief`,
+      scanned: () => `<b>${who}</b> read the Dropbox folder — ${Number(h.n || 0)} files`,
+      members: () => `<b>${who}</b> changed who is involved`,
+      linked: () => `<b>${who}</b> linked the website${h.siteId ? ` <span class="mono faint">${esc(h.siteId)}</span>` : ''}`,
+      note: () => `<b>${who}</b>: ${esc(h.note || '')}`,
+      late: () => `<span class="sev-critical badge">Past its date</span> on ${esc(PHASE_OF(h.phase).label)} (was due ${esc(h.due || '')})`,
+    }[h.what];
+    return `<div class="pj-ev">${body ? body() : esc(h.what)} ${when}</div>`;
+  }
+
+  function filesPanel() {
+    const sc = proj.scan;
+    if (!sc) return '';
+    const briefs = sc.briefs || [];
+    return `<div class="small faint" style="margin:8px 0 4px">${sc.count} file${sc.count === 1 ? '' : 's'} in the folder${briefs.length ? ` · ${briefs.length} PDF${briefs.length === 1 ? '' : 's'} that could be the brief` : ' · no PDFs'}</div>
+      ${briefs.map((f) => `<div class="pj-file"><span class="grow">${esc(f.name)}<div class="small faint">${Math.round((f.size || 0) / 1024)} KB</div></span>
+        <button class="btn sm" data-pjread="${esc(f.path)}">Read it</button></div>`).join('')}`;
+  }
+
+  function bindFiles(p) {
+    $$('[data-pjread]').forEach((b) => (b.onclick = async () => {
+      b.disabled = true; b.textContent = 'Reading…';
+      try {
+        const r = await post('/api/projects', { op: 'read', id: p.id, file: b.dataset.pjread });
+        if (!r.readable) { toast(r.why); b.disabled = false; b.textContent = 'Read it'; return; }
+        offerFacts(p, r);
+      } catch (e) { toast(e.message); b.disabled = false; b.textContent = 'Read it'; }
+    }));
+  }
+
+  async function scanDropbox(p) {
+    const b = $('#pjScan'); b.disabled = true; b.textContent = 'Reading the folder…';
+    try { proj.scan = await post('/api/projects', { op: 'scan', id: p.id }); $('#pjFiles').innerHTML = filesPanel(); bindFiles(p); }
+    catch (e) { toast(e.message); }
+    b.disabled = false; b.textContent = '↻ Read the folder again';
+  }
+
+  /**
+   * What the brief says, offered rather than applied.
+   *
+   * Every value shows how it was arrived at, because "it said so on the form" and "we matched a
+   * pattern in the text" deserve different amounts of trust, and the person confirming is the only
+   * one who can tell them apart.
+   */
+  function offerFacts(p, r) {
+    const F = (proj.factFields || [
+      { key: 'businessName', label: 'Business name' }, { key: 'phone', label: 'Phone' }, { key: 'email', label: 'Email' },
+      { key: 'address', label: 'Address' }, { key: 'hours', label: 'Opening hours' }, { key: 'website', label: 'Website' }]);
+    const got = r.found || {};
+    modal(`<header><h2>What the brief says</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <div class="note"><b>Check these before they become the reference.</b>
+          <div class="small" style="margin-top:3px">Every audit of this website will be checked against whatever is saved here, so a wrong value here becomes a wrong value everywhere. <b>Answered</b> means the brief had a label for it; <b>guessed</b> means it was matched out of the text.</div></div>
+        ${F.map((f) => {
+          const g = got[f.key];
+          const multi = f.key === 'hours' || f.key === 'address';
+          return `<label class="field">${esc(f.label)}
+            ${g ? `<span class="badge ${g.how === 'labelled' ? 'subtle' : 'sev-warning'}" style="margin-left:6px">${g.how === 'labelled' ? 'answered' : 'guessed'}</span>` : ''}
+            ${multi ? `<textarea id="ff-${f.key}" rows="${f.key === 'hours' ? 4 : 2}">${esc((g || {}).value || '')}</textarea>`
+              : `<input type="text" id="ff-${f.key}" value="${esc((g || {}).value || '')}">`}</label>`;
+        }).join('')}
+        ${(got.otherPhones || []).length ? `<div class="small muted">Other phone numbers in the document: ${got.otherPhones.map(esc).join(', ')}</div>` : ''}
+        ${(got.otherEmails || []).length ? `<div class="small muted">Other emails: ${got.otherEmails.map(esc).join(', ')}</div>` : ''}
+        <details style="margin-top:8px"><summary class="small">What the document actually said</summary>
+          <pre class="pj-raw">${esc(r.text || '')}</pre></details>
+      </div>
+      <footer><span class="spacer"></span><button class="btn primary" id="ffSave">Use these details</button></footer>`);
+    $('#ffSave').onclick = async () => {
+      const facts = {};
+      F.forEach((f) => { const el = $(`#ff-${f.key}`); if (el && el.value.trim()) facts[f.key] = el.value.trim(); });
+      $('#ffSave').disabled = true;
+      try { await post('/api/projects', { op: 'facts', id: p.id, facts, from: r.file }); closeModal(); toast('These are the reference now'); renderProject(p.id); }
+      catch (e) { toast(e.message); $('#ffSave').disabled = false; }
+    };
+  }
+
+  function openFacts(p, fields) {
+    const F = fields.length ? fields : [{ key: 'businessName', label: 'Business name' }, { key: 'phone', label: 'Phone' }, { key: 'email', label: 'Email' }, { key: 'address', label: 'Address' }, { key: 'hours', label: 'Opening hours' }, { key: 'website', label: 'Website' }];
+    modal(`<header><h2>Business details</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body"><div class="small muted">These are what every audit of this website is checked against.</div>
+        ${F.map((f) => { const multi = f.key === 'hours' || f.key === 'address';
+          return `<label class="field">${esc(f.label)}${multi ? `<textarea id="fe-${f.key}" rows="${f.key === 'hours' ? 4 : 2}">${esc((p.facts || {})[f.key] || '')}</textarea>` : `<input type="text" id="fe-${f.key}" value="${esc((p.facts || {})[f.key] || '')}">`}</label>`;
+        }).join('')}</div>
+      <footer><span class="spacer"></span><button class="btn primary" id="feSave">Save</button></footer>`);
+    $('#feSave').onclick = async () => {
+      const facts = {};
+      F.forEach((f) => { const el = $(`#fe-${f.key}`); if (el && el.value.trim()) facts[f.key] = el.value.trim(); });
+      try { await post('/api/projects', { op: 'facts', id: p.id, facts }); closeModal(); renderProject(p.id); } catch (e) { toast(e.message); }
+    };
+  }
+
+  /** The handover. One screen, because it is one decision: who, which phase, by when, and why. */
+  function openHand(p) {
+    const people = (state.users || []).filter((u) => u.status === 'active' && u.role !== 'client');
+    const at = (proj.phases || []).findIndex((x) => x.key === p.phase);
+    const suggested = (proj.phases || [])[Math.min((proj.phases || []).length - 1, at + 1)] || {};
+    modal(`<header><h2>Hand on</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <label class="field">To which phase
+          <select id="hdPhase">${(proj.phases || []).map((x) => `<option value="${esc(x.key)}" ${x.key === suggested.key ? 'selected' : ''}>${esc(x.label)}${x.owner ? ` — ${esc(x.owner)}` : ''}</option>`).join('')}</select>
+          <span class="small muted">Going backwards is normal — revisions are a phase, not a failure.</span></label>
+        <label class="field">To whom
+          <select id="hdWho"><option value="">Nobody yet</option>
+            ${people.map((u) => `<option value="${esc(u.email)}" ${u.email === state.me.email ? '' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+        <label class="field">Due<input type="date" id="hdDue" min="${today()}">
+          <span class="small muted">If it passes, the project manager and whoever is holding it both hear about it — once.</span></label>
+        <label class="field">Anything they should know<textarea id="hdNote" rows="3" placeholder="What is done, what is left, anything odd…"></textarea></label>
+      </div>
+      <footer><span class="spacer"></span><button class="btn primary" id="hdGo">Hand on</button></footer>`);
+    $('#hdGo').onclick = async () => {
+      $('#hdGo').disabled = true;
+      try {
+        await post('/api/projects', { op: 'hand', id: p.id, phase: $('#hdPhase').value, assignee: $('#hdWho').value, due: $('#hdDue').value, note: $('#hdNote').value });
+        closeModal(); proj.list = null; toast('Handed on'); renderProject(p.id);
+      } catch (e) { toast(e.message); $('#hdGo').disabled = false; }
+    };
+  }
+
+  function openEditProject(p) {
+    const people = (state.users || []).filter((u) => u.status === 'active' && u.role !== 'client');
+    modal(`<header><h2>Edit project</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <label class="field">Project name<input type="text" id="peName" value="${esc(p.name)}"></label>
+        <label class="field">Client<input type="text" id="peClient" value="${esc(p.client || '')}"></label>
+        <label class="field">Dropbox folder link<input type="text" id="peDrop" value="${esc(p.dropbox || '')}"></label>
+        <label class="field">Duda site ID<input type="text" id="peSite" value="${esc(p.siteId || '')}" placeholder="e.g. 018964f1">
+          <span class="small muted">Once this is set, the business details above become what its audit is checked against.</span></label>
+        <div class="field"><span>Who is involved</span>
+          <div class="pj-people">${people.map((u) => `<label class="check-row"><input type="checkbox" data-pem="${esc(u.email)}" ${(p.members || []).includes(u.email) ? 'checked' : ''}><span>${esc(u.name)}</span></label>`).join('')}</div></div>
+      </div>
+      <footer><button class="btn danger" id="peDel">Delete</button><span class="spacer"></span><button class="btn primary" id="peSave">Save</button></footer>`);
+    $('#peSave').onclick = async () => {
+      try {
+        await post('/api/projects', { op: 'link', id: p.id, name: $('#peName').value.trim(), client: $('#peClient').value.trim(), dropbox: $('#peDrop').value.trim(), siteId: $('#peSite').value.trim() });
+        await post('/api/projects', { op: 'members', id: p.id, members: $$('[data-pem]').filter((i) => i.checked).map((i) => i.dataset.pem) });
+        closeModal(); proj.list = null; renderProject(p.id);
+      } catch (e) { toast(e.message); }
+    };
+    $('#peDel').onclick = async () => {
+      if (!confirm(`Delete ${p.name}? The audit and its form submissions are not touched.`)) return;
+      try { await post('/api/projects', { op: 'remove', id: p.id }); closeModal(); proj.list = null; location.hash = '#/projects'; } catch (e) { toast(e.message); }
+    };
   }
 
   // =====================================================================
@@ -1988,8 +2343,12 @@
       // Websites added by ID before the agency's editor address was known were saved under Duda's address: tidy that up
       const fixHost = site.host === DUDA_HOST && editorHost() ? editorHost() : '';
       if (meta) (meta.errors || []).forEach((x) => log.push(x));
-      let truth = meta ? A.buildTruth({ site: meta.site, content: meta.content }) : null;
+      // The client's own brief, when this website belongs to a project that has one. It goes ahead
+      // of Duda's Business Info: during a build, Duda often still carries the template's details.
+      const brief = await briefFor(site.siteId);
+      let truth = meta || brief ? A.buildTruth({ site: (meta || {}).site, content: (meta || {}).content }, null, brief) : null;
       if (truth && truth.source === 'none') truth = null;
+      if (brief) log.push('Business details taken from the client brief on the project');
       // Duda's copy is kept as it is — it is what the page shows and what gets saved. The scan is
       // judged against it minus anything the team has struck out for this website.
       const scanTruth = A.truthWithout(truth, site.allow);
@@ -2662,15 +3021,12 @@
     return `<div class="live-stamp" title="${esc(fmtFull(isoOf(r.at)))}">${esc(ago(isoOf(r.at)))} · ${who}</div>`;
   }
 
-  /** What the queue is doing, in one line, only while it has something to do. */
+  /** What the queue is doing, in one line, and only while it has something to do. */
   function queueNote() {
     const q = live.q2;
-    const d = live.data;
-    const pulled = d ? `<div class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled: <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'auto'}` : ''})</span></div>` : '';
-    if (!q || !q.pending) return pulled;
-    return pulled + `<div class="small live-q"><span class="spin-dot"></span> Fetching form submissions in the background — <b>${q.pending}</b> website${q.pending === 1 ? '' : 's'} to go. You can carry on; it looks after itself.</div>`;
+    if (!q || !q.pending) return '';
+    return `<span class="small live-q"><span class="spin-dot"></span> Fetching form submissions in the background — <b>${q.pending}</b> website${q.pending === 1 ? '' : 's'} to go. You can carry on; it looks after itself.</span>`;
   }
-
   function renderLive() {
     const d = live.data;
     if (!d && !live.loading && !live.error) { loadLive(false); }
@@ -2696,11 +3052,14 @@
     if (live.tab === 'unpublished') return renderDrafts();
     $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
         <div class="live-acts">
-          <div class="live-pull">${d ? `<div class="small"><b>${d.count}</b> published sites</div>${queueNote()}` : ''}</div>
           ${can('leads.import') ? `<div class="live-act"><button class="btn" id="liveLeads" ${live.leadJob || !d ? 'disabled' : ''} title="Fetch form submissions from Duda for the websites currently listed">${live.leadJob ? 'Fetching…' : '✉️ Get form submissions'}</button>${runStamp('leads')}</div>` : ''}
           ${can('live.domains') ? `<div class="live-act"><button class="btn" id="liveCheck" ${live.doms || !d ? 'disabled' : ''} title="Opens every live domain to check it still shows this website">${live.doms ? 'Checking…' : '🌐 Check domains'}</button>${runStamp('domains')}</div>` : ''}
           ${can('live.pull') ? `<div class="live-act"><button class="btn" id="liveRefresh" ${live.loading ? 'disabled' : ''}>${live.loading ? 'Pulling from Duda…' : '↻ Pull from Duda'}</button>${runStamp('pull')}</div>` : ''}
         </div></div>
+      ${d ? `<div class="live-status">
+        <span class="small"><b>${d.count}</b> published sites</span>
+        <span class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'automatically'}` : ''})</span></span>
+        ${queueNote()}</div>` : ''}
       ${liveTabs('published')}
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
 
@@ -2891,6 +3250,8 @@
     if (parts[0] === 'removed') return { name: 'removed' };
     if (parts[0] === 'comments') return { name: 'comments', site: parts[1] ? decodeURIComponent(parts[1]) : '' };
     if (parts[0] === 'ai') return { name: 'ai' };
+    if (parts[0] === 'projects') return { name: 'projects' };
+    if (parts[0] === 'project' && parts[1]) return { name: 'project', id: decodeURIComponent(parts[1]) };
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : 'published' };
     // A website's profile addressed by its DUDA site id, so it works for one that has no record.
     if (parts[0] === 'dr' && parts[1]) return { name: 'dr', siteId: decodeURIComponent(parts[1]) };
@@ -2950,6 +3311,8 @@
       }
       return renderComments();
     }
+    if (r.name === 'projects') { if (!can('project.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include projects.</div>'; return; } return renderProjects(); }
+    if (r.name === 'project') { if (!can('project.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include projects.</div>'; return; } return renderProject(r.id); }
     if (r.name === 'live') { live.tab = r.tab; return renderLive(); }
     if (r.name === 'dr') { if (!can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; } return renderDrProfile(r.siteId); }
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
@@ -4042,6 +4405,8 @@
         const lx = liveOf(s.siteId);
         return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
       ${staleBanner()}${newChecksBanner(s)}
+      ${t.fromBrief ? `<div class="note" style="margin-bottom:12px"><b>Checked against the client’s brief.</b>
+        <div class="small" style="margin-top:3px">The business details on this website’s project come from the document the client supplied, so they are what every item below is measured against. Duda’s own Business Info is still accepted — nothing is flagged for using a value Duda holds.</div></div>` : ''}
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}${state.scanning[s.id] || otherClaim(s.id) ? `<div class="small muted" style="margin-top:6px">${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to.</div>` : ''}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
@@ -4107,6 +4472,7 @@
           <select id="ffloc"><option value="">All locations</option>${locs.map((c) => `<option ${c === ff.loc ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="ffdev"><option value="">All devices</option>${A.DEVICES.map((d) => `<option value="${d}" ${ff.dev === d ? 'selected' : ''}>Visible on ${A.DEVICE_LABEL[d]}</option>`).join('')}<option value="hidden" ${ff.dev === 'hidden' ? 'selected' : ''}>Hidden on all devices</option></select>
           <select id="ffwho"><option value="">Anyone</option><option value="_mine" ${ff.who === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${ff.who === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${ff.who === u.email ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
+          ${can('item.add') ? '<button class="btn sm" id="ffAdd" title="Write an audit item the scan cannot see — a layout or design problem">+ Add item</button>' : ''}
         </div>
         ${shown.length && activeFilters(ff).length ? `<div class="small muted filter-line">Showing <b>${shown.length}</b> of ${findings.length} audit item${findings.length === 1 ? '' : 's'} · filtered by <b>${esc(activeFilters(ff).join(', '))}</b> <button class="linkbtn" id="ffClear2">Clear filters</button></div>` : ''}
         ${!findings.length ? `<div class="empty">${sc.state === 'complete' ? 'No issues found.' : live ? 'Scanning… results appear here when it finishes.' : 'Not scanned yet.'}</div>` : !shown.length ? `<div class="empty">
@@ -4171,6 +4537,7 @@
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
+    if ($('#ffAdd', body)) $('#ffAdd', body).onclick = () => openAddItem(s);
     if ($('#ffClear', body)) $('#ffClear', body).onclick = () => { clearFilters(); renderSite(); };
     // A filtered list that doesn't say it is filtered is how "critical is empty, but there's 5"
     // happens. Now it says so whether the result is empty or not.
@@ -4342,6 +4709,110 @@
     </div>`;
   }
 
+  /**
+   * An audit item somebody writes themselves.
+   *
+   * The scanner is blind to anything that needs an eye — spacing, hierarchy, a logo at the wrong
+   * size, copy that reads badly. Those used to live in a chat message and get lost. A screenshot is
+   * the whole point: "the hero looks wrong" is an argument, and a picture of it is a finding.
+   */
+  function openAddItem(s) {
+    const paths = [...new Set((s.pages || []).map((p) => p.path).concat((s.findings || []).map((f) => f.path)).filter(Boolean))].sort();
+    modal(`<header><h2>Add an audit item</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <div class="small muted">For anything a scan cannot see. It gets a number like any other item, can be assigned and marked Done, and survives rescans.</div>
+        <label class="field">What is wrong<input type="text" id="aiMsg" maxlength="300" placeholder="Hero image is stretched on mobile"></label>
+        <div class="two-up">
+          <label class="field">How serious
+            <select id="aiSev"><option value="critical">Critical</option><option value="warning" selected>Warning</option><option value="info">Info</option></select></label>
+          <label class="field">Page
+            <input type="text" id="aiPath" list="aiPaths" value="/" placeholder="/">
+            <datalist id="aiPaths">${paths.map((p) => `<option value="${esc(p)}">`).join('')}</datalist></label>
+        </div>
+        <label class="field">Device
+          <select id="aiDev"><option value="">Any</option>${A.DEVICES.map((d) => `<option value="${d}">${esc(A.DEVICE_LABEL[d])}</option>`).join('')}</select></label>
+        <label class="field">More detail<textarea id="aiDetail" rows="3" placeholder="What it should look like, and anything the developer needs to know."></textarea></label>
+        <label class="field">Screenshot
+          <input type="file" id="aiShot" accept="image/png,image/jpeg,image/webp">
+          <span class="small muted">Optional, but it saves a conversation. Large images are shrunk automatically.</span></label>
+        <div id="aiPrev"></div>
+      </div>
+      <footer><span class="spacer"></span><button class="btn primary" id="aiGo">Add item</button></footer>`);
+    let shot = '';
+    $('#aiShot').onchange = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) { shot = ''; $('#aiPrev').innerHTML = ''; return; }
+      try {
+        shot = await shrinkImage(file, 1400, 0.75);
+        $('#aiPrev').innerHTML = `<img src="${shot}" class="ai-shot-prev" alt="Screenshot to attach">
+          <div class="small faint">${Math.round(shot.length / 1400)} KB after shrinking</div>`;
+      } catch (err) { toast('That image could not be read.'); shot = ''; }
+    };
+    $('#aiGo').onclick = async () => {
+      const message = $('#aiMsg').value.trim();
+      if (!message) return toast('Say what is wrong.');
+      $('#aiGo').disabled = true;
+      try {
+        const r = await store({
+          op: 'addItem', siteId: s.id, message, severity: $('#aiSev').value, path: $('#aiPath').value.trim() || '/',
+          device: $('#aiDev').value, detail: $('#aiDetail').value.trim(), shot,
+        });
+        closeModal(); toast(`Added as #${r.num}`);
+        state.sitesVer = ''; await loadSites().catch(() => {});
+        await loadSite(s.id).catch(() => {}); renderSite();
+      } catch (e) { toast(e.message); $('#aiGo').disabled = false; }
+    };
+  }
+
+  /**
+   * Disagreeing with a call somebody already made.
+   *
+   * The reason is required, and it is required because of who reads it: the person who closed this
+   * item gets told, by name, that it was reopened. "Reopened" on its own starts an argument; "the
+   * phone number on the footer is still the old one" ends it.
+   */
+  function openChallenge(s, f) {
+    const was = f.status === 'done' ? 'done' : 'false';
+    modal(`<header><h2>Reopen #${f.num}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <div class="note"><b>${was === 'done' ? 'Marked Done, but it is still wrong.' : 'Called a False alarm, but it is a real problem.'}</b>
+          <div class="small" style="margin-top:3px">${f.statusBy ? `<b>${esc(nameOf(f.statusBy))}</b> will be told, with what you write below.` : 'Nobody is recorded as having closed it, so nobody will be told.'}</div></div>
+        <div class="kv" style="margin:8px 0"><b>The item:</b> ${esc(f.message)}</div>
+        <label class="field">What is still wrong<textarea id="chWhy" rows="4" placeholder="${was === 'done' ? 'The footer still shows the old number on mobile.' : 'It is a real finding — the alt text really is the file name.'}"></textarea></label>
+      </div>
+      <footer><span class="spacer"></span><button class="btn primary" id="chGo">Reopen it</button></footer>`);
+    $('#chGo').onclick = async () => {
+      const why = $('#chWhy').value.trim();
+      if (!why) return toast('Say what is still wrong.');
+      $('#chGo').disabled = true;
+      try {
+        await store({ op: 'challenge', siteId: s.id, findingId: f.id, why });
+        closeModal(); toast('Reopened'); state.sitesVer = ''; await loadSite(s.id).catch(() => {}); renderSite();
+      } catch (e) { toast(e.message); $('#chGo').disabled = false; }
+    };
+  }
+
+  /** A screenshot the size of a screenshot, not the size of a camera roll. */
+  function shrinkImage(file, maxW, quality) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onerror = reject;
+      fr.onload = () => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          const scale = Math.min(1, maxW / img.width);
+          const c = document.createElement('canvas');
+          c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL('image/jpeg', quality));
+        };
+        img.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+
   function openDrawer(num) {
     const s = state.current; if (!s) return;
     const f = (s.findings || []).find((x) => x.num === num);
@@ -4365,6 +4836,12 @@
       </div>
       <div class="dr-body">
         <h2 class="dr-title">${esc(f.message)}</h2>
+        ${f.manual ? `<div class="small faint">Written by ${esc(nameOf(f.by, f.byName))} · ${esc(fmtWhen(Date.parse(f.at)))}${f.device ? ' · ' + esc(A.DEVICE_LABEL[f.device] || f.device) : ''}</div>` : ''}
+        ${f.detail ? `<div class="dr-detail">${esc(f.detail)}</div>` : ''}
+        ${f.shot ? `<a href="${f.shot}" target="_blank" rel="noopener" title="Open the full size"><img src="${f.shot}" class="dr-shot" alt="Screenshot added with this item"></a>` : ''}
+        ${f.challenge ? `<div class="note bad" style="margin-top:10px"><b>Reopened by ${esc(f.challenge.byName || f.challenge.by)}</b> — ${f.challenge.was === 'done' ? 'was marked Done, but it is still wrong' : 'was called a False alarm, but it is real'}
+          <div class="pj-note">${esc(f.challenge.why)}</div>
+          <div class="small faint">${esc(fmtWhen(Date.parse(f.challenge.at)))}${f.challenge.of ? ` · ${esc(nameOf(f.challenge.of))} was told` : ''}</div></div>` : ''}
         ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
         ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
@@ -4383,6 +4860,9 @@
         <div class="k" style="margin-top:14px">Status</div>
         <div class="status-btns">${FSTATUS.map((x) => `<button class="sbtn fs-${x.v} ${f.status === x.v ? 'on' : ''}" data-set="${x.v}">${x.label}</button>`).join('')}</div>
         ${f.statusBy ? `<div class="small faint" style="margin-top:4px">Last changed by ${esc(nameOf(f.statusBy))} · ${esc(fmtFull(f.statusAt))}</div>` : ''}
+        ${['done', 'false'].includes(f.status || '') && can('item.status') ? `<button class="linkbtn" id="drChallenge" style="margin-top:6px"
+          title="Reopen it and tell whoever closed it why">↺ This is not ${f.status === 'done' ? 'done' : 'a false alarm'} — reopen it</button>` : ''}
+        ${f.manual && (f.by === state.me.email || can('item.add')) ? `<button class="linkbtn danger" id="drRmItem" style="margin-top:6px;margin-left:10px">Remove this item</button>` : ''}
         <div class="k" style="margin-top:14px">Assignee</div>
         <span class="member-select">${avatar(effWho(f, s))}<select id="drWho">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span>
         <h3 style="margin-top:22px">Discussion <span class="faint">(${comments.filter((c) => !c.deleted).length})</span></h3>
@@ -4409,6 +4889,12 @@
       copy(snip, `Snippet copied. Paste it in the ${A.DEVICE_LABEL[dev]} preview's console.`);
     };
     $$('[data-set]', d).forEach((b) => (b.onclick = () => { if (b.dataset.set !== f.status) setFinding(s, [f.id], { status: b.dataset.set }); }));
+    if ($('#drChallenge', d)) $('#drChallenge', d).onclick = () => openChallenge(s, f);
+    if ($('#drRmItem', d)) $('#drRmItem', d).onclick = async () => {
+      if (!confirm('Remove this item? It was written by hand, so nothing will bring it back.')) return;
+      try { await store({ op: 'removeItem', siteId: s.id, findingId: f.id }); closeDrawer(true); state.sitesVer = ''; await loadSite(s.id).catch(() => {}); renderSite(); }
+      catch (e) { toast(e.message); }
+    };
     $('#drWho').onchange = (e) => setFinding(s, [f.id], { assignee: e.target.value });
     drawerComposer = composer($('#drComposer'), { site: s, target: f.id, placeholder: 'Comment on this item… @ to tag, # to link another item, paste screenshots with Cmd/Ctrl+V.', onPosted: async () => { await loadSite(s.id); renderSite(); setTimeout(() => { const b = $('#drawer .dr-body'); if (b) b.scrollTop = b.scrollHeight; }, 50); } });
     bindComments(d, s, drawerComposer);

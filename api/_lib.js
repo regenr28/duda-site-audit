@@ -351,12 +351,16 @@ export const NOTIFY_GROUPS = [
     desc: 'Clients have left comments in Duda that nobody has answered yet.' },
   { key: 'scans', label: 'Scans finishing', kinds: ['scan-done', 'rescan-done'], channels: ['bell', 'popup', 'slack'],
     desc: 'A scan you started has finished, or a website you completed was rescanned.' },
+  { key: 'challenges', label: 'Items reopened against you', kinds: ['challenge'], channels: ['bell', 'popup', 'slack', 'email'],
+    desc: 'Somebody reopens an item you marked Done or called a false alarm, because they disagree.' },
   { key: 'falsealarms', label: 'False alarm reports', kinds: ['false-alarm', 'fa-status', 'fa-note'], channels: ['bell', 'popup', 'slack', 'email'],
     desc: 'Somebody reports an audit item as a false alarm, or answers a report you made.' },
   { key: 'suggestions', label: 'Feature suggestions', kinds: ['suggestion', 'suggestion-status', 'suggestion-comment'], channels: ['bell', 'popup', 'slack', 'email'],
     desc: 'A suggestion is sent, answered, or commented on.' },
   { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
     desc: 'Someone signs up and needs approving, or an audit is removed from the list.' },
+  { key: 'projects', label: 'Projects you are on', kinds: ['project-assign', 'project-late', 'project-note'], channels: ['bell', 'popup', 'slack', 'email'],
+    desc: 'A project is handed to you, runs past its date, or somebody writes in its channel.' },
   // Only ever sent to the account that runs the app, and always to the bell: an allowance quietly
   // running out is the one thing that must not be missable.
   { key: 'system', label: 'System health', kinds: ['system'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
@@ -593,6 +597,7 @@ export const PERMISSIONS = [
   { group: 'Audit items', items: [
     { key: 'item.status', label: 'Change audit item statuses', desc: 'Done, On hold, For clarification, False alarm.' },
     { key: 'item.assign', label: 'Assign audit items to people', desc: '' },
+    { key: 'item.add', label: 'Add audit items by hand', desc: 'Write a finding the scanner cannot see — a layout or design problem — with a screenshot and an explanation. Usually QA.' },
     { key: 'fa.manage', label: 'Answer false alarm reports', desc: 'Set a report to Checking, Audit adjusted, True false alarm or Won’t change, and write back to the reporter.' },
     { key: 'fa.seeall', label: 'See everybody’s false alarm reports', desc: 'Without this, a person sees only the ones they reported themselves.' },
   ] },
@@ -609,6 +614,11 @@ export const PERMISSIONS = [
     { key: 'comment.delete', label: 'Delete anybody’s comment', desc: 'Everyone can always delete their own.' },
     { key: 'duda.setup', label: 'Set up the Duda connection', desc: 'Connect, disconnect and check what is arriving.' },
     { key: 'duda.team', label: 'Decide who counts as the team', desc: 'Used to tell a client’s comment from one of ours.' },
+  ] },
+  { group: 'Projects', items: [
+    { key: 'project.view', label: 'See projects', desc: 'The build workflow — phases, deadlines, who is holding what. Without this the Projects page is not in the top bar at all.' },
+    { key: 'project.viewall', label: 'See every project', desc: 'Without this, somebody sees only the projects they are involved in.' },
+    { key: 'project.manage', label: 'Start and run projects', desc: 'Create a project, change who is involved, reassign it, and delete it. Usually project managers and admins. Anyone holding a project can always hand it on without this.' },
   ] },
   { group: 'People', items: [
     { key: 'members.approve', label: 'Approve new accounts', desc: 'Let somebody who signed up in.' },

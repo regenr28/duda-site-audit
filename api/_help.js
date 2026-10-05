@@ -673,6 +673,26 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'projects', group: 'Collaboration', title: 'Projects — running a build', audience: 'all',
+    html: `<p><b>Projects</b> is the build itself, from the client's files to the client's comments. An <b>audit</b> is one scan of one website; a <b>project</b> is the whole job, and it can exist before the website does.</p>
+<h3>Starting one</h3>
+<p><b>+ Add project</b> (admins and project managers) takes a name, the client, the <b>Dropbox folder link</b>, who it goes to first and when it is due. Everyone ticked as involved sees it in their list and hears anything written in its channel.</p>
+<h3>The client's brief becomes the reference</h3>
+<p>With Dropbox connected, <b>Read the folder</b> lists what is in it and picks out the PDFs most likely to be the brief. <b>Read it</b> pulls out the business name, phone, email, address, hours and website and shows them for checking — each marked <b>answered</b> (the document had a label for it) or <b>guessed</b> (matched out of the text). Nothing is saved until somebody presses <b>Use these details</b>.</p>
+<p>Once saved, <b>those details are what every audit of that website is checked against</b>, ahead of Duda's own Business Info — during a build Duda often still carries the template's values, while the brief is what the customer actually wrote. Duda's values stay acceptable, so nothing is flagged for using one of them. Correct anything by hand; <b>↺ Reset to the brief</b> puts back exactly what the document said.</p>
+<p>A scanned or photographed PDF has no text in it at all. The app says so rather than guessing, and the details are typed in.</p>
+<h3>The phases</h3>
+<p>Data collection → Dev (design) → Dev (pre-check) → QA (design and audit) → Dev (revisions) → QA (approval) → Cleanup (admin) → Cleanup → Domain access → With the client → Jaguars.</p>
+<p><b>Hand on</b> moves it: which phase, to whom, by when, and anything they should know. Going backwards is normal — revisions are a phase, not a failure. Whoever is holding a project can always hand it on; reassigning one you are not on needs <b>Start and run projects</b>.</p>
+<p>Every handover is kept with who, to whom, when and why. That trail is the point: not "where is it" but "who has had it, for how long, and who is late".</p>
+<h3>Deadlines</h3>
+<p>A phase past its date tells the project manager and whoever is holding it — <b>once per deadline</b>, so it does not nag. The board calls it out at the top and the Projects link in the bar carries a dot.</p>
+<h3>Audit items written by hand</h3>
+<p>The scanner is blind to anything needing an eye — spacing, hierarchy, a logo at the wrong size, copy that reads badly. <b>+ Add item</b> on the audit items tab writes one, with a severity, a page, a device, an explanation and a <b>screenshot</b>. It gets a number like any other item, can be assigned and marked Done, and <b>survives every rescan</b>.</p>
+<h3>Disagreeing with a call</h3>
+<p>An item marked <b>Done</b> that is still wrong, or a <b>False alarm</b> that was real, can be reopened from the item itself: <b>↺ This is not done — reopen it</b>. A reason is required, because the person who closed it is told by name and reads it. "Reopened" on its own starts an argument; "the footer still shows the old number on mobile" ends it.</p>`,
+  },
+  {
     // Owner only. Nobody else is shown this page, and the Help assistant is not given it either.
     id: 'health', group: 'More', title: 'System health', audience: 'owner',
     html: `<p><b>Your account → ⚑ System health</b> answers three questions before any of them becomes a problem: is anything about to run out, is anything that should be arriving not arriving, and how long have you got.</p>

@@ -821,12 +821,50 @@ body.client-mode #view { max-width: none; padding: 0; }
 .hx-mark { color: var(--hx, var(--muted)); font-weight: 700; flex: none; }
 
 /* ===================== Live DR action bar ===================== */
-.live-acts { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
-.live-acts .live-pull { flex: 1 1 260px; min-width: 200px; }
+/* The buttons keep their own row and each carries its own "last run" line; the counts and the
+   background note sit on a full-width strip below, where a sentence has room to be a sentence. */
+.live-acts { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .live-act { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+.live-act .btn { white-space: nowrap; }
 .live-stamp { font-size: 11px; color: var(--muted); text-align: center; white-space: nowrap; }
 .live-stamp.faint { color: var(--faint); }
-.live-q { margin-top: 3px; color: var(--muted); display: flex; align-items: baseline; gap: 6px; }
+.live-status { display: flex; align-items: baseline; gap: 6px 16px; flex-wrap: wrap; margin: -4px 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.live-q { color: var(--muted); display: inline-flex; align-items: baseline; gap: 6px; }
 .spin-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; animation: hxpulse 1.4s ease-in-out infinite; }
 @keyframes hxpulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 .lead-cell.faint { font-weight: 400; }
+
+/* ===================== Projects ===================== */
+/* A column per phase: "where is everything" should be a glance, not a query. */
+.pj-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(190px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
+.pj-col { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; min-height: 90px; }
+.pj-col.empty-col { opacity: .62; }
+.pj-col-h { font-size: 12px; padding: 2px 4px 8px; line-height: 1.25; }
+.pj-card { display: block; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; margin-bottom: 7px; color: var(--text); box-shadow: var(--shadow); }
+.pj-card:hover { text-decoration: none; border-color: var(--border-strong); }
+.pj-card b { display: block; font-size: 13px; line-height: 1.3; }
+.pj-card-f { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; }
+.pj-card .badge { font-size: 10.5px; }
+
+/* The phase rail: where it has been, where it is, where it is going. */
+.pj-rail { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 14px; }
+.pj-step { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--faint); background: var(--panel); white-space: nowrap; }
+.pj-step.past { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.pj-step.now { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 650; }
+
+.pj-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px; max-height: 190px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
+.pj-file { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.pj-file:first-of-type { border-top: 0; }
+.pj-raw { white-space: pre-wrap; font-size: 11px; max-height: 240px; overflow: auto; background: var(--panel-2); border-radius: 7px; padding: 8px 10px; margin-top: 6px; }
+.pj-say { display: flex; gap: 6px; margin-bottom: 10px; }
+.pj-say input { flex: 1; }
+.pj-trail { display: flex; flex-direction: column; gap: 7px; max-height: 420px; overflow: auto; }
+.pj-ev { font-size: 13px; padding-bottom: 7px; border-bottom: 1px solid var(--border); }
+.pj-ev:last-child { border-bottom: 0; }
+.pj-note { font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--border-strong); padding-left: 8px; margin: 4px 0 2px; white-space: pre-line; }
+table.grid.sm td { padding: 5px 8px; font-size: 13px; }
+.dr-detail { white-space: pre-line; font-size: 13.5px; color: var(--muted); margin: 8px 0; }
+.dr-shot { display: block; max-width: 100%; border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; }
+.ai-shot-prev { display: block; max-width: 100%; max-height: 220px; border: 1px solid var(--border); border-radius: 8px; margin-top: 6px; }
+.linkbtn.danger { color: var(--crit); }
+.two-up { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

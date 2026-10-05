@@ -383,7 +383,11 @@ export default async function handler(req, res) {
         const r = b.result || {};
         ['host', 'editorUrl', 'businessName', 'truth', 'profiles', 'pages', 'scan', 'fonts', 'photos'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
         if (site.scan && Array.isArray(site.scan.log)) site.scan.log = site.scan.log.slice(0, 40).map((l) => String(l).slice(0, 300));
-        site.findings = (r.findings || []).map((f) => { const c = Object.assign({}, f); ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done'].forEach((k) => delete c[k]); return c; });
+        // A rescan replaces what the SCANNER found. An item a person typed in is not the scanner's
+        // to withdraw — QA writes those precisely because no scan will ever see them — so they are
+        // carried across untouched, statuses and all.
+        const byHand = (site.findings || []).filter((f) => f && f.manual);
+        site.findings = (r.findings || []).map((f) => { const c = Object.assign({}, f); ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done'].forEach((k) => delete c[k]); return c; }).concat(byHand);
         // Stable ID numbers: the same issue keeps its # across rescans; new issues get the next number
         const nums = pairs(fnum); let seq = Number(seqRaw || 0); const add = [];
         const RANK = { critical: 0, outdated: 1, warning: 2, info: 3 };
@@ -734,6 +738,100 @@ export default async function handler(req, res) {
         await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
         return res.status(200).json(await saveIndex(b.id));
       }
+      /**
+       * An audit item a person typed in.
+       *
+       * The scanner is good at what it can see and blind to everything else — a layout that is
+       * subtly wrong, a logo at the wrong size, copy that reads badly. Those were previously
+       * arguments in a chat window. This makes them an audit item like any other: numbered,
+       * assignable, with a status, and carried through every rescan.
+       */
+      case 'addItem': {
+        if (await denyUnless(res, me, 'item.add', 'Your role does not allow adding audit items.')) return;
+        const l = await loadSite(b.siteId); if (!l) return res.status(404).json({ error: 'Not found' });
+        const site = l.site;
+        const message = String(b.message || '').trim().slice(0, 300);
+        if (!message) return res.status(400).json({ error: 'Say what is wrong.' });
+        const sev = ['critical', 'warning', 'info'].includes(b.severity) ? b.severity : 'warning';
+        // A data: image, kept with the item. Capped, because a screenshot is evidence and not a
+        // photo album, and the store is shared with everything else the app holds.
+        const shot = String(b.shot || '');
+        if (shot && !/^data:image\/(png|jpeg|jpg|webp);base64,/.test(shot)) return res.status(400).json({ error: 'That image is not a picture.' });
+        if (shot.length > 1400000) return res.status(400).json({ error: 'That screenshot is too large — about 1MB is the limit.' });
+        const f = {
+          id: 'manual-' + newId(8),
+          code: 'MANUAL', manual: true,
+          severity: sev,
+          category: String(b.category || 'Added by hand').slice(0, 60),
+          message,
+          detail: String(b.detail || '').slice(0, 2000),
+          path: String(b.path || '/').slice(0, 200),
+          device: ['desktop', 'tablet', 'mobile'].includes(b.device) ? b.device : '',
+          pages: [String(b.path || '/').slice(0, 200)],
+          shot,
+          by: me.email, byName: me.name, at: now(),
+        };
+        const [seqRaw] = await redis(['GET', P + 'seq:' + b.siteId]);
+        const seq = Number(seqRaw || 0) + 1;
+        site.findings = (site.findings || []).concat(f);
+        site.updatedAt = now();
+        await redis(['SET', P + 'site:' + b.siteId, packJSON(site)], ['HSET', P + 'fnum:' + b.siteId, f.id, String(seq)], ['SET', P + 'seq:' + b.siteId, String(seq)]);
+        await log(b.siteId, me, 'item', `added audit item #${seq} by hand — ${message.slice(0, 120)}`);
+        return res.status(200).json({ finding: f, num: seq, summary: await saveIndex(b.siteId) });
+      }
+
+      case 'removeItem': {
+        const l = await loadSite(b.siteId); if (!l) return res.status(404).json({ error: 'Not found' });
+        const site = l.site;
+        const f = (site.findings || []).find((x) => x.id === b.findingId);
+        if (!f || !f.manual) return res.status(404).json({ error: 'That is not an item anyone added by hand.' });
+        // Your own always; anybody's with the permission.
+        if (f.by !== me.email && await denyUnless(res, me, 'item.add', 'You can only remove items you added yourself.')) return;
+        site.findings = site.findings.filter((x) => x.id !== b.findingId);
+        site.updatedAt = now();
+        await redis(['SET', P + 'site:' + b.siteId, packJSON(site)], ['HDEL', P + 'fnum:' + b.siteId, b.findingId]);
+        await log(b.siteId, me, 'item', `removed the hand-written audit item — ${String(f.message || '').slice(0, 120)}`);
+        return res.status(200).json({ summary: await saveIndex(b.siteId) });
+      }
+
+      /**
+       * QA disagreeing with a call somebody already made.
+       *
+       * Two cases, and they are the same shape: an item marked Done that is still wrong on the live
+       * website, and a False alarm that was a real finding. Both are a person saying "this was
+       * closed and should not have been", and in both cases the person who closed it should hear
+       * about it rather than find out in a meeting.
+       */
+      case 'challenge': {
+        if (await denyUnless(res, me, 'item.status', 'Your role does not allow changing audit item statuses.')) return;
+        const l = await loadSite(b.siteId); if (!l) return res.status(404).json({ error: 'Not found' });
+        const site = l.site;
+        const f = (site.findings || []).find((x) => x.id === b.findingId);
+        if (!f) return res.status(404).json({ error: 'That item is not here.' });
+        const was = f.status || '';
+        if (!['done', 'false'].includes(was)) return res.status(400).json({ error: 'That item is not marked Done or False alarm, so there is nothing to disagree with.' });
+        const why = String(b.why || '').trim().slice(0, 600);
+        if (!why) return res.status(400).json({ error: 'Say what is still wrong — the person who closed it will read this.' });
+        const whoClosed = f.statusBy || '';
+        f.status = '';
+        f.challenge = { was, by: me.email, byName: me.name, at: now(), why, of: whoClosed };
+        f.statusBy = ''; f.statusAt = '';
+        site.updatedAt = now();
+        await redis(['SET', P + 'site:' + b.siteId, packJSON(site)]);
+        const [numRaw] = await redis(['HGET', P + 'fnum:' + b.siteId, f.id]);
+        const num = Number(numRaw || 0);
+        const label = was === 'done' ? 'marked Done but still wrong' : 'called a False alarm but it is real';
+        await log(b.siteId, me, 'item', `reopened #${num} — ${label}: ${why.slice(0, 160)}`);
+        if (whoClosed && whoClosed !== me.email) {
+          await notifyUser(whoClosed, {
+            kind: 'challenge', by: me.email, byName: me.name,
+            text: `${me.name} reopened #${num} on ${site.businessName || site.siteId} — ${label}`,
+            link: `#/site/${b.siteId}/findings/${num}`,
+          }).catch(() => {});
+        }
+        return res.status(200).json({ finding: f, num, summary: await saveIndex(b.siteId) });
+      }
+
       case 'patchFinding': {
         const ch = b.changes || {};
         if ('status' in ch && await denyUnless(res, me, 'item.status', 'Your role does not allow changing audit item statuses.')) return;

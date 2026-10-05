@@ -479,7 +479,16 @@
    * Build the reference ("truth") from Duda API responses. `api` = { site, content } (raw API JSON).
    * Falls back to the site's own JSON-LD schema (which Duda generates from Business Info) when the API is unavailable.
    */
-  function buildTruth(api, schemaObj) {
+  /**
+   * The reference an audit is checked against.
+   *
+   * `brief` is the client's own document — the thing the website was actually built from. When a
+   * project has one, it goes FIRST: during a pre-launch build, Duda's Business Info is often half
+   * filled in or still carries the template's details, while the brief is what the customer wrote
+   * down. Duda's values are kept alongside rather than discarded, so a phone number that appears in
+   * either place is still correct and nobody gets a false alarm for using the one Duda holds.
+   */
+  function buildTruth(api, schemaObj, brief) {
     api = api || {};
     const site = api.site || {};
     const content = api.content || {};
@@ -527,6 +536,28 @@
       const a = normAddress(schemaObj.address); if (a) t.addresses.push(a);
       [].concat(schemaObj.sameAs || []).forEach((u) => { const net = socialNetOf(u); if (net) { t.socials[net] = t.socials[net] || []; t.socials[net].push(socialHandle(net, u)); (t.socialLinks[net] = t.socialLinks[net] || []).push(u); } });
       if (schemaObj.url) { try { t.domain = new URL(schemaObj.url).hostname.toLowerCase(); } catch (e) { /* ignore */ } }
+    }
+    // The brief last in code, first in the lists: unshift, so it becomes the expected value a
+    // finding quotes while everything Duda knows stays acceptable.
+    if (brief && (brief.businessName || brief.phone || brief.email || brief.address)) {
+      t.source = t.source === 'none' ? 'brief' : t.source + '+brief';
+      t.fromBrief = true;
+      if (brief.businessName) {
+        t.names = [String(brief.businessName).trim()].concat(t.names.filter((n) => compact(n) !== compact(brief.businessName)));
+      }
+      if (brief.phone) {
+        const d = normPhone(brief.phone).slice(-10);
+        if (d.length >= 10) t.phones = [d].concat(t.phones.filter((x) => x !== d));
+      }
+      if (brief.email) {
+        const e = String(brief.email).toLowerCase().trim();
+        t.emails = [e].concat(t.emails.filter((x) => x !== e));
+      }
+      if (brief.address) {
+        const a = normAddress(brief.address);
+        if (a && (a.street || a.zip)) t.addresses = [a].concat(t.addresses);
+      }
+      t.notes.push('Business details taken from the client brief');
     }
     t.businessName = t.names[0] || '';
     t.nameTokens = nameTokens(t.businessName);
