@@ -22,7 +22,7 @@
 // somebody actually looks at the Comments page.
 import crypto from 'node:crypto';
 import { redis, P, now, newId, jparse, ablyPublish, commentsChannel, unescapeHtml } from './_lib.js';
-import { normalise, liveLeadCommands } from './_leads.js';
+import { normalise, readFields, liveLeadCommands } from './_leads.js';
 
 const MAX_COMMENTS = 60;      // per conversation, oldest dropped
 
@@ -184,10 +184,10 @@ export default async function handler(req, res) {
       // …and the submission itself. Duda keeps the original, so anything we fail to read here is
       // recoverable by a backfill — which is why this never throws the delivery away.
       try {
-        const fd = f.fieldsData || f.fields_data || f.fields || d.fieldsData || [];
+        const fd = f.fieldsData || f.fields_data || f.fields || f.data || d.fieldsData || [];
         const lead = normalise({
           id: str(f.id || f.uuid || d.id || ''), at,
-          fields: [].concat(fd).map((x) => ({ label: x.field_label || x.label || x.name, value: x.field_value == null ? x.value : x.field_value })),
+          fields: readFields(fd),
           page: str(f.pageName || f.page_name || f.page || d.pageName || ''),
           form: str(f.form_name || f.formName || ''),
           source: [str(f.utm_source || d.utm_source || ''), str(f.utm_medium || d.utm_medium || '')].filter(Boolean).join('/'),

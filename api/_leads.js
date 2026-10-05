@@ -46,20 +46,95 @@ export function monthsBack(n = 24) {
  * subject and sender — is dropped: it is most of the bytes and none of the value, and Duda keeps
  * the original anyway if anyone ever needs it back.
  */
+// Envelope keys that are not answers somebody typed. Checked against the normalised label.
+// Includes the underscored spellings, because normLabel strips the underscore: Duda sends
+// `page_name` and `site_name` on the row itself when there is no envelope, and without these they
+// are stored as if somebody had typed them into the form.
+const SKIP_KEY = /^(id|uuid|date|time|created|updated|submitted|page|pagename|pageurl|pagepath|url|form|formname|formid|site|sitename|siteid|accountname|externalid|submissionid|leadid|ip|ipaddress|useragent|devicetype|referrer|recaptcha.*|utm.*|source|medium|campaign|subject|sender|recipient|type|widget.*)$/;
+const LABEL_KEYS = ['field_label', 'label', 'title', 'field_name', 'name', 'key'];
+const VALUE_KEYS = ['field_value', 'value', 'values', 'text', 'answer', 'content'];
+const labelIn = (o, fallback) => {
+  for (const k of LABEL_KEYS) if (o && typeof o[k] === 'string' && o[k].trim()) return o[k].trim();
+  return fallback || '';
+};
+const valueIn = (o) => {
+  for (const k of VALUE_KEYS) if (o && o[k] !== undefined && o[k] !== null) return o[k];
+  return undefined;
+};
+
+/**
+ * Every answer in a submission, whatever shape it arrived in.
+ *
+ * Duda does not publish this schema and it is not one shape. A submission's answers have turned up
+ * as a list of `{field_label, field_value}`, as a flat map of label to answer, and as a map of field
+ * id to `{label, value}` — and a reader written for one of those turns the others into the string
+ * "[object Object]", which is a stored enquiry nobody can read and that no rescan puts right.
+ *
+ * So this reads structure rather than a shape: unwrap anything that carries a value, expand
+ * anything that does not, join lists, and never hand back an object. Depth is capped because a
+ * payload is not to be trusted to be finite.
+ */
+export function readFields(raw, depth = 0, seen = new Set()) {
+  const out = [];
+  if (raw === null || raw === undefined || depth > 4) return out;
+  if (typeof raw === 'object') { if (seen.has(raw)) return out; seen.add(raw); }
+
+  const add = (label, v) => {
+    if (v === null || v === undefined || v === '') return;
+    if (Array.isArray(v)) {
+      // A list of plain answers is one answer ("Ceramic Coating, Paint Correction"); a list of
+      // objects is several fields that happen to be nested.
+      if (v.every((x) => x === null || typeof x !== 'object')) {
+        const joined = v.filter((x) => x !== null && x !== '').join(', ');
+        if (joined) out.push({ label, value: joined });
+      } else v.forEach((x) => add(label, x));
+      return;
+    }
+    if (typeof v === 'object') {
+      const inner = valueIn(v);
+      if (inner !== undefined && (typeof inner !== 'object' || Array.isArray(inner))) {
+        add(labelIn(v, label), inner);
+        return;
+      }
+      // No value of its own: it is a group of fields. Keep the inner labels, not this one.
+      readFields(v, depth + 1, seen).forEach((f) => out.push({ label: f.label || label, value: f.value }));
+      return;
+    }
+    out.push({ label, value: v });
+  };
+
+  if (Array.isArray(raw)) { raw.forEach((x) => add(typeof x === 'object' && x ? labelIn(x, '') : '', x)); return out; }
+  Object.entries(raw).forEach(([k, v]) => {
+    if (SKIP_KEY.test(normLabel(k))) return;
+    add(typeof v === 'object' && v && !Array.isArray(v) ? labelIn(v, k) : k, v);
+  });
+  return out;
+}
+
+/** A label reduced to the part worth matching on: "First Name:*" and "first_name" are one thing. */
+const normLabel = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, '');
+
 export function normalise(raw, src) {
   const fields = {};
-  let name = '', email = '', phone = '';
+  let name = '', last = '', email = '', phone = '';
   (raw.fields || []).forEach((f) => {
     const label = String(f.label || '').trim().slice(0, 60);
-    const value = String(f.value == null ? '' : f.value).trim().slice(0, 2000);
-    if (!label || !value) return;
-    const l = label.toLowerCase();
-    if (/^(first ?name|name|full ?name)$/.test(l)) name = (name ? name + ' ' : '') + value;
-    else if (/^last ?name$/.test(l)) name = (name ? name + ' ' : '') + value;
-    else if (/e-?mail/.test(l) && !email) email = value;
-    else if (/phone|mobile|tel/.test(l) && !phone) phone = value;
+    // Belt and braces: if a value still arrives as an object, keep it as text rather than storing
+    // the word "[object Object]" over the top of what somebody actually wrote.
+    const value = (f.value !== null && typeof f.value === 'object' ? JSON.stringify(f.value) : String(f.value == null ? '' : f.value)).trim().slice(0, 2000);
+    if (!label || !value || value === '[object Object]') return;
+    // Match on the normalised label, so "First Name:*", "first_name" and "First Name" all land.
+    const l = normLabel(label);
+    // Bare "first"/"last" are included: a nested group writes its inner labels, so a submission can
+    // arrive as {contact: {first, last}} and otherwise lands as "No name given" with the name
+    // sitting in plain sight two lines below it.
+    if (/^(firstname|first|givenname|name|fullname|yourname|contactname|customername)$/.test(l)) name = (name ? name + ' ' : '') + value;
+    else if (/^(lastname|last|surname|familyname)$/.test(l)) last = value;
+    else if (/e?mail/.test(l) && !email) email = value;
+    else if (/(phone|mobile|tel|cell)/.test(l) && !phone) phone = value;
     else fields[label] = value;
   });
+  if (last) name = (name ? name + ' ' : '') + last;
   const at = raw.at && !isNaN(Date.parse(raw.at)) ? new Date(raw.at).toISOString() : new Date().toISOString();
   return {
     id: raw.id || newId(8),
@@ -76,28 +151,43 @@ export function normalise(raw, src) {
 }
 
 /** Add submissions to a website, skipping any already stored. Returns how many were new. */
-export async function addLeads(siteId, leads) {
+export async function addLeads(siteId, leads, opts = {}) {
   if (!leads.length) return 0;
-  if (usingSql()) return addLeadsSql(siteId, leads);
+  if (usingSql()) return addLeadsSql(siteId, leads, opts);
   const byMonth = new Map();
   leads.forEach((l) => { const m = monthOf(l.at); if (!byMonth.has(m)) byMonth.set(m, []); byMonth.get(m).push(l); });
   let added = 0;
   for (const [m, rows] of byMonth) {
-    // A backfill run twice must not double the history, so ids already in the month are skipped.
-    const have = new Set((await readMonth(siteId, m)).map((x) => x.id));
+    const existing = await readMonth(siteId, m);
+    const have = new Set(existing.map((x) => x.id));
     const fresh = rows.filter((r) => !have.has(r.id));
+    // Repair: an enquiry already stored is read again from Duda's own copy and rewritten. This is
+    // what makes a parsing fix reach the history rather than only the enquiries that arrive next.
+    if (opts.repair) {
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const merged = existing.map((old) => (byId.has(old.id) ? Object.assign({}, byId.get(old.id)) : old))
+        .concat(fresh).sort((a, b) => String(a.at).localeCompare(b.at));
+      const changed = merged.length !== existing.length
+        || merged.some((r, i) => JSON.stringify(r) !== JSON.stringify(existing[i]));
+      if (changed) {
+        await redis(['DEL', listKey(siteId, m)], ['SET', packKey(siteId, m), packJSON(merged)]);
+        added += fresh.length;
+      }
+      continue;
+    }
+    // A backfill run twice must not double the history, so ids already in the month are skipped.
     if (!fresh.length) continue;
     const packed = await redis(['EXISTS', packKey(siteId, m)]).then(([e]) => !!Number(e));
     if (packed) {
       // The month was closed; rewrite it whole rather than leaving two halves to merge on every read.
-      const all = (await readMonth(siteId, m)).concat(fresh).sort((a, b) => String(a.at).localeCompare(b.at));
+      const all = existing.concat(fresh).sort((a, b) => String(a.at).localeCompare(b.at));
       await redis(['SET', packKey(siteId, m), packJSON(all)]);
     } else {
       await redis(...fresh.map((r) => ['RPUSH', listKey(siteId, m), JSON.stringify(r)]));
     }
     added += fresh.length;
   }
-  if (added) await bumpSummary(siteId);
+  if (added || opts.repair) await bumpSummary(siteId);
   return added;
 }
 
@@ -125,11 +215,31 @@ export async function compactOldMonths(siteId) {
 }
 
 /** Leads for a website over the last `months`, newest first. */
+/**
+ * An enquiry stored before the reader understood its shape holds the literal words "[object
+ * Object]" where the answer should be. Re-importing is what actually repairs it, but until somebody
+ * does, nothing should show a customer that string as if it were what they typed — so it is hidden
+ * on the way out, and `broken` is set so the team's own view can offer the repair.
+ */
+const UNREADABLE = /\[object [A-Za-z]+\]/;
+export function hideUnreadable(l) {
+  const f = {};
+  let hid = 0;
+  Object.entries(l.f || {}).forEach(([k, v]) => { if (UNREADABLE.test(String(v))) hid++; else f[k] = v; });
+  // The body was built by joining the fields, so a bad field left its mark there too. Drop the
+  // lines that carry it rather than the whole body: a submission is often part readable.
+  const lines = String(l.b || '').split('\n').filter((x) => !UNREADABLE.test(x));
+  const body = lines.join('\n').trim();
+  if (!hid && body === l.b) return l;
+  return Object.assign({}, l, { f, b: body, broken: true });
+}
+
 export async function readLeads(siteId, months = 12) {
-  if (usingSql()) return (await leadsFor(siteId, { months, limit: 1000 })).leads;
-  const out = [];
-  for (const m of monthsBack(months)) out.push(...await readMonth(siteId, m));
-  return out.sort((a, b) => String(b.at).localeCompare(a.at));
+  const raw = usingSql()
+    ? (await leadsFor(siteId, { months, limit: 1000 })).leads
+    : (await monthsBack(months).reduce(async (acc, m) => (await acc).concat(await readMonth(siteId, m)), Promise.resolve([])))
+      .sort((a, b) => String(b.at).localeCompare(a.at));
+  return raw.map(hideUnreadable);
 }
 
 /**

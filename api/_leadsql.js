@@ -37,7 +37,7 @@ export const fromRow = (r) => ({
  * Judging here rather than at read time means a verdict is decided once per enquiry rather than
  * once per person who looks at it — and it is what lets the counts be a query instead of a scan.
  */
-export async function addLeadsSql(siteId, leads) {
+export async function addLeadsSql(siteId, leads, opts = {}) {
   if (!leads.length) return 0;
   await ensureSchema();
   const prepared = leads.map((l) => toRow(siteId, l));
@@ -61,9 +61,27 @@ export async function addLeadsSql(siteId, leads) {
     const stmts = chunk.map((r) => {
       const across = Math.max(spread[r.fp] || 0, (batch[r.fp] || { size: 0 }).size || 0);
       const j = decide(r, across, taught);
-      return [`INSERT OR IGNORE INTO leads
+      // Repair re-reads an enquiry from Duda's own copy and rewrites what we parsed from it, so a
+      // parsing fix reaches the history and not only what arrives next. A verdict a PERSON set is
+      // never touched — `decided_by IS NULL` is the whole guard — and `created` stays as it was so
+      // the monthly write count does not jump every time a repair is run.
+      if (!opts.repair) {
+        return [`INSERT OR IGNORE INTO leads
+          (id, site, at, name, email, phone, page, form, source, medium, campaign, fields, body, fp, verdict, why, via, created)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        r.id, r.site, r.at, r.name, r.email, r.phone, r.page, r.form, r.source, r.medium, r.campaign,
+        r.fields, r.body, r.fp, j.verdict, j.why, r.via, r.created];
+      }
+      return [`INSERT INTO leads
         (id, site, at, name, email, phone, page, form, source, medium, campaign, fields, body, fp, verdict, why, via, created)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET
+          at = excluded.at, name = excluded.name, email = excluded.email, phone = excluded.phone,
+          page = excluded.page, form = excluded.form, source = excluded.source,
+          medium = excluded.medium, campaign = excluded.campaign,
+          fields = excluded.fields, body = excluded.body, fp = excluded.fp,
+          verdict = CASE WHEN leads.decided_by IS NULL THEN excluded.verdict ELSE leads.verdict END,
+          why = CASE WHEN leads.decided_by IS NULL THEN excluded.why ELSE leads.why END`,
       r.id, r.site, r.at, r.name, r.email, r.phone, r.page, r.form, r.source, r.medium, r.campaign,
       r.fields, r.body, r.fp, j.verdict, j.why, r.via, r.created];
     });

@@ -6,7 +6,7 @@
 // POST /api/leads { op: 'backfill', id, months }   (admins) → pull history from Duda
 // POST /api/leads { op: 'census' }                 (admins) → count submissions per site, store nothing
 import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
-import { addLeads, normalise, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, compactOldMonths, bumpSummary } from './_leads.js';
+import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, compactOldMonths, bumpSummary } from './_leads.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 
@@ -27,10 +27,8 @@ async function duda(path) {
  */
 export function fromDuda(rows) {
   return [].concat(rows || []).map((r) => {
-    const data = r.data || r.fields || r.form_data || r;
-    const fields = Array.isArray(data)
-      ? data.map((f) => ({ label: f.field_label || f.label || f.name, value: f.field_value == null ? f.value : f.field_value }))
-      : Object.entries(data || {}).filter(([k]) => !/^(id|uuid|date|created|page|form|utm_|site)/i.test(k)).map(([k, v]) => ({ label: k, value: v }));
+    // Whatever shape the answers arrived in — readFields reads structure, not one schema.
+    const fields = readFields(r.data || r.fields || r.form_data || r.fieldsData || r.submission_data || r);
     const utm = r.utm_source || (r.utm && r.utm.source) || '';
     const med = r.utm_medium || (r.utm && r.utm.medium) || '';
     return normalise({
@@ -92,10 +90,13 @@ export default async function handler(req, res) {
       const id = String(b.id || '');
       if (!id) return res.status(400).json({ error: 'Which website?' });
       const months = Math.min(Math.max(Number(b.months) || 12, 1), 24);
-      const d = new Date(); const done = []; let added = 0; const failed = [];
+      const d = new Date(); const done = []; let added = 0; let seen = 0; const failed = [];
       for (let i = 0; i < months; i++) {
         const ym = d.toISOString().slice(0, 7);
-        try { const rows = await pullMonth(id, ym); added += await addLeads(id, rows); done.push({ m: ym, n: rows.length }); }
+        // Importing repairs as well as adds. Duda keeps the original of every submission, so asking
+        // for the history again is the way anything we once read wrongly gets put right — a person's
+        // own verdict on an enquiry is the one thing it leaves alone.
+        try { const rows = await pullMonth(id, ym); seen += rows.length; added += await addLeads(id, rows, { repair: true }); done.push({ m: ym, n: rows.length }); }
         catch (e) { failed.push({ m: ym, error: String(e.message || e).slice(0, 160) }); }
         d.setUTCMonth(d.getUTCMonth() - 1);
         // Duda allows 300 form-submission calls a minute; one every 150ms stays well inside it.

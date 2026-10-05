@@ -1297,8 +1297,11 @@
       <div class="note">${d.total
         ? `<b>${d.total}</b> form submissions stored for this website over the last 12 months. ${d.summary && d.summary.d30 ? `<b>${d.summary.d30}</b> in the last 30 days.` : ''}`
         : 'No form submissions stored yet. New ones arrive on their own once Duda is connected; use <b>Import history</b> to bring in what Duda already has.'}
-        ${can('leads.import') ? '<button class="btn sm" id="lbFill" style="margin-left:8px">Import history from Duda</button>' : ''}
+        ${can('leads.import') ? '<button class="btn sm" id="lbFill" style="margin-left:8px" title="Reads the history again from Duda. Duda keeps the original of every submission, so this also repairs anything stored before a reading fix — your own junk and real rulings are left alone.">Import history from Duda</button>' : ''}
         <span id="lbNote" class="small faint"></span></div>
+      ${(d.leads || []).some((l) => l.broken) ? `<div class="note unk" style="margin-top:10px"><b>Some of these were stored before the app could read their shape.</b>
+        <div class="small" style="margin-top:4px">What the customer actually wrote is still safe in Duda — only our copy is unreadable, and it is hidden rather than shown as nonsense.
+        ${can('leads.import') ? '<b>Import history from Duda</b> reads them again and puts them right; your own junk and real rulings are left alone.' : 'Ask an admin to re-import this website’s history.'}</div></div>` : ''}
       ${d.total ? `<div class="cl-two" style="margin-top:12px">
         <div class="cl-card"><div class="cl-card-h">Each month</div>${barChart(d.series || [])}</div>
         <div class="cl-card"><div class="cl-card-h">By page</div>${hBars(g.pages || [])}</div></div>
