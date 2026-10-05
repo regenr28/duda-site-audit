@@ -23,7 +23,7 @@
 import crypto from 'node:crypto';
 import { redis, P, now, newId, jparse, ablyPublish, commentsChannel, unescapeHtml } from './_lib.js';
 import { enqueue } from './_queue.js';
-import { normalise, readFields, liveLeadCommands } from './_leads.js';
+import { normalise, readFields, liveLeadAdd, addLeads, usingSql } from './_leads.js';
 
 const MAX_COMMENTS = 60;      // per conversation, oldest dropped
 
@@ -102,6 +102,7 @@ export default async function handler(req, res) {
   let touched = 0;
   let sawComment = false;
   const queued = [];   // websites that just went live and want their form history
+  const liveSql = [];  // live enquiries bound for the analysis database
 
   for (const ev of events) {
     const type = str(ev.event_type).toUpperCase();
@@ -200,7 +201,12 @@ export default async function handler(req, res) {
           form: str(f.form_name || f.formName || ''),
           source: [str(f.utm_source || d.utm_source || ''), str(f.utm_medium || d.utm_medium || '')].filter(Boolean).join('/'),
         }, 'hook');
-        if (lead.n || lead.e || lead.p || Object.keys(lead.f).length) cmds.push(...liveLeadCommands(siteId, lead));
+        if (lead.n || lead.e || lead.p || Object.keys(lead.f).length) {
+          // With the analysis database connected, that is where every page reads enquiries from. A live
+          // enquiry written only to the old store would arrive and never be seen.
+          if (usingSql()) liveSql.push([siteId, lead]);
+          else cmds.push(...await liveLeadAdd(siteId, lead));
+        }
       } catch (e) { /* a malformed payload must never cost us the rest of the delivery */ }
     }
     cmds.push(['LPUSH', P + 'sitefeed:' + siteId, JSON.stringify({ type, at, by })], ['LTRIM', P + 'sitefeed:' + siteId, 0, 99]);
@@ -209,6 +215,7 @@ export default async function handler(req, res) {
   // Queued outside the command batch on purpose: enqueue reads what is already waiting, and a
   // webhook delivery must never fail because a background nicety did.
   if (queued.length) await enqueue(queued, 'published').catch(() => {});
+  for (const [site, lead] of liveSql) await addLeads(site, [lead]).catch(() => {});
 
   if (touched) {
     cmds.push(['LPUSH', P + 'hooklog', JSON.stringify({ at: now(), n: touched, types: events.map((e) => str(e.event_type)).slice(0, 8), verified })],

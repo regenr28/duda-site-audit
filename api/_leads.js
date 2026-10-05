@@ -15,7 +15,8 @@
 // Measured at ~36 bytes a lead packed, against ~325 raw.
 import { redis, P, packJSON, unpackJSON, jparse, newId, sha } from './_lib.js';
 import { sqlReady } from './_sql.js';
-import { addLeadsSql, leadsFor, summariesFor, seriesFor, whenFor, fromRow } from './_leadsql.js';
+import { SKIP_KEY, normLabel, leadSig, stableId, realPage, clusterDupes, SAME_WINDOW_MS } from './_leadid.js';
+import { addLeadsSql, leadsFor, summariesFor, seriesFor, whenFor, fromRow, tidySql } from './_leadsql.js';
 
 // Where enquiries live.
 //
@@ -46,11 +47,6 @@ export function monthsBack(n = 24) {
  * subject and sender — is dropped: it is most of the bytes and none of the value, and Duda keeps
  * the original anyway if anyone ever needs it back.
  */
-// Envelope keys that are not answers somebody typed. Checked against the normalised label.
-// Includes the underscored spellings, because normLabel strips the underscore: Duda sends
-// `page_name` and `site_name` on the row itself when there is no envelope, and without these they
-// are stored as if somebody had typed them into the form.
-const SKIP_KEY = /^(id|uuid|date|time|created|updated|submitted|page|pagename|pageurl|pagepath|url|form|formname|formid|site|sitename|siteid|accountname|externalid|submissionid|leadid|ip|ipaddress|useragent|devicetype|referrer|recaptcha.*|utm.*|source|medium|campaign|subject|sender|recipient|type|widget.*)$/;
 const LABEL_KEYS = ['field_label', 'label', 'title', 'field_name', 'name', 'key'];
 const VALUE_KEYS = ['field_value', 'value', 'values', 'text', 'answer', 'content'];
 const labelIn = (o, fallback) => {
@@ -111,8 +107,6 @@ export function readFields(raw, depth = 0, seen = new Set()) {
   return out;
 }
 
-/** A label reduced to the part worth matching on: "First Name:*" and "first_name" are one thing. */
-const normLabel = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, '');
 
 export function normalise(raw, src) {
   const fields = {};
@@ -136,19 +130,56 @@ export function normalise(raw, src) {
   });
   if (last) name = (name ? name + ' ' : '') + last;
   const at = raw.at && !isNaN(Date.parse(raw.at)) ? new Date(raw.at).toISOString() : new Date().toISOString();
+  const out = { n: name.slice(0, 120), e: email.slice(0, 160), p: phone.slice(0, 40), f: fields };
+  const sig = leadSig(out);
   return {
-    id: raw.id || newId(8),
+    // Duda's history endpoint gives no id at all. A random one here meant every import stored a
+    // second copy of everything; one derived from the time and the content makes an import repeatable.
+    id: raw.id ? String(raw.id) : stableId(at, sig),
     at,
-    n: name.slice(0, 120), e: email.slice(0, 160), p: phone.slice(0, 40),
-    f: fields,
-    pg: String(raw.page || '').slice(0, 120) || '/',
+    ...out,
+    sig,
+    // Unknown is empty, never "/". Only a live delivery says which page a form was on; inventing the
+    // homepage for everything else made every chart by page say the homepage did all the work.
+    pg: String(raw.page || '').trim().slice(0, 120),
     fm: String(raw.form || '').slice(0, 80),
+    campaign: String(raw.campaign || '').slice(0, 80),
     src: String(raw.source || '').slice(0, 80),
     // The fingerprint of the message text, so the same blast across different websites is one thing.
     h: sha(Object.values(fields).join(' ').toLowerCase().replace(/\s+/g, ' ').trim()).slice(0, 12),
     via: src || 'hook',
   };
 }
+
+/**
+ * Put a website's stored enquiries right, without asking Duda anything.
+ *
+ * Two copies of one submission become one, keeping whichever knows its page and any ruling a person
+ * made; an invented "/" becomes an honest blank. Safe to run any number of times — a tidy website
+ * comes back unchanged. Returns how many copies were removed.
+ */
+export async function tidySite(siteId) {
+  let dropped = 0;
+  if (usingSql()) dropped = await tidySql(siteId);
+  else {
+    for (const m of monthsBack(24)) {
+      const rows = await readMonth(siteId, m);
+      if (!rows.length) continue;
+      const { keep, drop } = clusterDupes(rows);
+      const next = keep.map((r) => Object.assign({}, r, { pg: realPage(r.pg) ? r.pg : '' }))
+        .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      const changed = drop.length || rows.some((r) => r.pg === '/' || !r.sig);
+      if (!changed) continue;
+      await redis(['DEL', listKey(siteId, m)], ['SET', packKey(siteId, m), packJSON(next)]);
+      dropped += drop.length;
+    }
+  }
+  await redis(['HSET', P + 'leadtidy', siteId, TIDY_VERSION]).catch(() => {});
+  await bumpSummary(siteId);
+  return dropped;
+}
+/** Bump to re-tidy every website, e.g. after the rules for "the same submission" change. */
+export const TIDY_VERSION = '1';
 
 /** Add submissions to a website, skipping any already stored. Returns how many were new. */
 export async function addLeads(siteId, leads, opts = {}) {
@@ -160,7 +191,11 @@ export async function addLeads(siteId, leads, opts = {}) {
   for (const [m, rows] of byMonth) {
     const existing = await readMonth(siteId, m);
     const have = new Set(existing.map((x) => x.id));
-    const fresh = rows.filter((r) => !have.has(r.id));
+    // The same submission under a different id — the live webhook copy and the imported one — is
+    // matched by what it said and when, not by id.
+    const said = existing.map((x) => ({ sig: x.sig || leadSig(x), t: Date.parse(x.at) }));
+    const already = (r) => said.some((x) => x.sig === (r.sig || leadSig(r)) && Math.abs(x.t - Date.parse(r.at)) <= SAME_WINDOW_MS);
+    const fresh = rows.filter((r) => !have.has(r.id) && !already(r));
     // Repair: an enquiry already stored is read again from Duda's own copy and rewritten. This is
     // what makes a parsing fix reach the history rather than only the enquiries that arrive next.
     if (opts.repair) {
@@ -230,16 +265,21 @@ export function hideUnreadable(l) {
   // lines that carry it rather than the whole body: a submission is often part readable.
   const lines = String(l.b || '').split('\n').filter((x) => !UNREADABLE.test(x));
   const body = lines.join('\n').trim();
-  if (!hid && body === l.b) return l;
+  // Compared as text: a row with no stored body at all (every row from the analysis database) is
+  // not "changed" by being read as an empty string — treating it so flagged every clean enquiry.
+  if (!hid && body === String(l.b || '').trim()) return l;
   return Object.assign({}, l, { f, b: body, broken: true });
 }
+
+/** Older rows were stored with "/" standing for "we do not know". Read it as what it meant. */
+const unknownPage = (l) => (l && l.pg === '/' ? Object.assign({}, l, { pg: '' }) : l);
 
 export async function readLeads(siteId, months = 12) {
   const raw = usingSql()
     ? (await leadsFor(siteId, { months, limit: 1000 })).leads
     : (await monthsBack(months).reduce(async (acc, m) => (await acc).concat(await readMonth(siteId, m)), Promise.resolve([])))
       .sort((a, b) => String(b.at).localeCompare(a.at));
-  return raw.map(hideUnreadable);
+  return raw.map(hideUnreadable).map(unknownPage);
 }
 
 /**
@@ -290,6 +330,26 @@ export function liveLeadCommands(siteId, lead) {
   ];
 }
 
+/**
+ * A live delivery, unless that submission is already stored.
+ *
+ * Kept cheap on purpose — this runs for every enquiry across every website, so it reads one month
+ * (two commands) rather than the whole history. If the stored copy came from the history import it
+ * has no page; the live copy knows it, so the page is handed across instead of being thrown away.
+ */
+export async function liveLeadAdd(siteId, lead) {
+  const m = monthOf(lead.at);
+  const existing = await readMonth(siteId, m);
+  const sig = lead.sig || leadSig(lead);
+  const same = existing.find((x) => (x.id === lead.id) || ((x.sig || leadSig(x)) === sig && Math.abs(Date.parse(x.at) - Date.parse(lead.at)) <= SAME_WINDOW_MS));
+  if (!same) return liveLeadCommands(siteId, lead);
+  if (realPage(lead.pg) && !realPage(same.pg)) {
+    const next = existing.map((x) => (x === same ? Object.assign({}, x, { pg: lead.pg }) : x));
+    return [['DEL', listKey(siteId, m)], ['SET', packKey(siteId, m), packJSON(next)]];
+  }
+  return [];
+}
+
 /** Counts by page, by form and by source — the three questions a lead list actually gets asked. */
 export function groupLeads(leads) {
   const by = (pick) => {
@@ -297,7 +357,9 @@ export function groupLeads(leads) {
     leads.forEach((l) => { const k = pick(l) || '—'; m.set(k, (m.get(k) || 0) + 1); });
     return [...m.entries()].map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n).slice(0, 40);
   };
-  return { pages: by((l) => l.pg), forms: by((l) => l.fm), sources: by((l) => l.src) };
+  // Unknown pages are one bucket under one key (''), whatever older rows stored for "unknown".
+  const pages = by((l) => (l.pg && l.pg !== '/' ? l.pg : '\u0000')).map((x) => (x.k === '\u0000' ? { k: '', n: x.n } : x));
+  return { pages, forms: by((l) => l.fm), sources: by((l) => l.src) };
 }
 
 /** Leads per month, oldest first — what the dashboard draws. */

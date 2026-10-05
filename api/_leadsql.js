@@ -3,6 +3,7 @@
 // Everything here is a query with an index behind it. The loops this replaces — reading twelve
 // monthly buckets, concatenating, sorting and filtering in JavaScript — are gone, and so is the
 // reason they existed.
+import { leadSig, realPage, clusterDupes, SAME_WINDOW_MS } from './_leadid.js';
 import { sql, rows, row, run, ensureSchema, sqlReady } from './_sql.js';
 import { judgeByRules, fingerprint, bodyOf } from './_judge.js';
 
@@ -18,17 +19,18 @@ export function toRow(siteId, lead) {
     // two clients can both have submission "7" — so an id alone would quietly drop the second one.
     id: String(siteId) + ':' + String(lead.id), site: String(siteId), at: ISO(lead.at),
     name: lead.n || '', email: lead.e || '', phone: lead.p || '',
-    page: lead.pg || '/', form: lead.fm || '', source: source || '', medium: medium || '', campaign: lead.campaign || '',
+    page: realPage(lead.pg) ? lead.pg : '', form: lead.fm || '', source: source || '', medium: medium || '', campaign: lead.campaign || '',
     fields: JSON.stringify(f), body: bodyOf({ fields: f }).slice(0, 4000),
     fp: fingerprint({ fields: f }), via: lead.via || 'hook', created: new Date().toISOString(),
+    sig: lead.sig || leadSig({ n: lead.n, e: lead.e, p: lead.p, f }),
   };
 }
 /** …and back, so everything that already reads leads keeps working unchanged. */
 export const fromRow = (r) => ({
   id: r.id, at: r.at, n: r.name || '', e: r.email || '', p: r.phone || '',
   f: (() => { try { return JSON.parse(r.fields || '{}'); } catch (e) { return {}; } })(),
-  pg: r.page || '/', fm: r.form || '', src: [r.source, r.medium].filter(Boolean).join('/'),
-  verdict: r.verdict, why: r.why || '', decidedBy: r.decided_by || '', via: r.via || '',
+  pg: realPage(r.page) ? r.page : '', fm: r.form || '', src: [r.source, r.medium].filter(Boolean).join('/'),
+  verdict: r.verdict, why: r.why || '', decidedBy: r.decided_by || '', via: r.via || '', sig: r.sig || '',
 });
 
 /**
@@ -40,7 +42,29 @@ export const fromRow = (r) => ({
 export async function addLeadsSql(siteId, leads, opts = {}) {
   if (!leads.length) return 0;
   await ensureSchema();
-  const prepared = leads.map((l) => toRow(siteId, l));
+  let prepared = leads.map((l) => toRow(siteId, l));
+  // Already held under a different id — typically the live copy, which knows its page. Matched by
+  // what it said and when; the index on (site, sig) keeps this a lookup rather than a scan.
+  const sigs = [...new Set(prepared.map((r) => r.sig))];
+  const held = [];
+  for (let i = 0; i < sigs.length; i += 200) {
+    const part = sigs.slice(i, i + 200);
+    held.push(...await rows(`SELECT id, at, sig, page FROM leads WHERE site = ? AND sig IN (${part.map(() => '?').join(',')})`, String(siteId), ...part));
+  }
+  if (held.length) {
+    const pageFixes = [];
+    prepared = prepared.filter((r) => {
+      // Same id included: with no id from Duda, both copies can derive the very same one, and then
+      // the plain insert is ignored — so the page has to be handed across here or not at all.
+      const twin = held.find((h) => h.sig === r.sig && Math.abs(Date.parse(h.at) - Date.parse(r.at)) <= SAME_WINDOW_MS);
+      if (!twin) return true;
+      // A late live copy knows the page the imported copy never could. Hand it across.
+      if (realPage(r.page) && !realPage(twin.page)) pageFixes.push(['UPDATE leads SET page = ? WHERE id = ?', r.page, twin.id]);
+      return twin.id === r.id && opts.repair;   // a repair still rewrites its own row; anything else is a copy
+    });
+    if (pageFixes.length) await sql(...pageFixes);
+    if (!prepared.length) return 0;
+  }
   // How widely each message has been sent already, across every client. The strongest signal there
   // is, and the one only an agency holding 800 websites can see.
   const fps = [...new Set(prepared.map((r) => r.fp).filter(Boolean))];
@@ -67,28 +91,54 @@ export async function addLeadsSql(siteId, leads, opts = {}) {
       // the monthly write count does not jump every time a repair is run.
       if (!opts.repair) {
         return [`INSERT OR IGNORE INTO leads
-          (id, site, at, name, email, phone, page, form, source, medium, campaign, fields, body, fp, verdict, why, via, created)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          (id, site, at, name, email, phone, page, form, source, medium, campaign, fields, body, fp, verdict, why, via, created, sig)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         r.id, r.site, r.at, r.name, r.email, r.phone, r.page, r.form, r.source, r.medium, r.campaign,
-        r.fields, r.body, r.fp, j.verdict, j.why, r.via, r.created];
+        r.fields, r.body, r.fp, j.verdict, j.why, r.via, r.created, r.sig];
       }
       return [`INSERT INTO leads
-        (id, site, at, name, email, phone, page, form, source, medium, campaign, fields, body, fp, verdict, why, via, created)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        (id, site, at, name, email, phone, page, form, source, medium, campaign, fields, body, fp, verdict, why, via, created, sig)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
-          at = excluded.at, name = excluded.name, email = excluded.email, phone = excluded.phone,
-          page = excluded.page, form = excluded.form, source = excluded.source,
+          at = excluded.at, name = excluded.name, email = excluded.email, phone = excluded.phone, sig = excluded.sig,
+          -- The history endpoint never knows the page. A repair must not wipe one a live delivery recorded.
+          page = CASE WHEN excluded.page <> '' THEN excluded.page ELSE leads.page END,
+          form = excluded.form, source = excluded.source,
           medium = excluded.medium, campaign = excluded.campaign,
           fields = excluded.fields, body = excluded.body, fp = excluded.fp,
           verdict = CASE WHEN leads.decided_by IS NULL THEN excluded.verdict ELSE leads.verdict END,
           why = CASE WHEN leads.decided_by IS NULL THEN excluded.why ELSE leads.why END`,
       r.id, r.site, r.at, r.name, r.email, r.phone, r.page, r.form, r.source, r.medium, r.campaign,
-      r.fields, r.body, r.fp, j.verdict, j.why, r.via, r.created];
+      r.fields, r.body, r.fp, j.verdict, j.why, r.via, r.created, r.sig];
     });
     (await sql(...stmts)).forEach((x) => { added += x.changed; });
   }
   if (added) await rebuildDays(siteId);
   return added;
+}
+
+/**
+ * Merge copies of the same submission already stored for one website, and clear invented pages.
+ * One read of the website's rows, then only the writes that change something.
+ */
+export async function tidySql(siteId) {
+  await ensureSchema();
+  const all = await rows('SELECT id, site, at, name, email, phone, fields, page, form, via, verdict, why, decided_by, sig FROM leads WHERE site = ?', String(siteId));
+  if (!all.length) return 0;
+  const { keep, drop } = clusterDupes(all.map(fromRow));
+  const before = new Map(all.map((r) => [r.id, r]));
+  const stmts = [];
+  drop.forEach((d) => stmts.push(['DELETE FROM leads WHERE id = ?', d.id]));
+  keep.forEach((k) => {
+    const was = before.get(k.id) || {};
+    const page = realPage(k.pg) ? k.pg : '';
+    if (was.sig === k.sig && (was.page || '') === page && (was.decided_by || '') === (k.decidedBy || '') && (was.form || '') === (k.fm || '')) return;
+    stmts.push(['UPDATE leads SET sig = ?, page = ?, form = ?, verdict = ?, why = ?, decided_by = ? WHERE id = ?',
+      k.sig, page, k.fm || '', k.verdict || was.verdict || 'unsure', k.why || was.why || '', k.decidedBy || null, k.id]);
+  });
+  for (let i = 0; i < stmts.length; i += 100) await sql(...stmts.slice(i, i + 100));
+  if (stmts.length) await rebuildDays(siteId);
+  return drop.length;
 }
 
 /** The team's own rulings, which always win over the rules. */
@@ -137,7 +187,7 @@ export async function leadsFor(siteId, { months = 12, page, form, source, verdic
     [`SELECT * FROM leads WHERE ${w} ORDER BY at DESC LIMIT ?`, ...args, Math.min(limit, 1000)],
     [`SELECT SUM(CASE WHEN verdict <> 'junk' THEN 1 ELSE 0 END) AS real, SUM(CASE WHEN verdict = 'junk' THEN 1 ELSE 0 END) AS junk,
              COUNT(*) AS total FROM leads WHERE site = ? AND at > datetime('now', ?)`, siteId, WHEN(months)],
-    [`SELECT page AS k, COUNT(*) AS n FROM leads WHERE ${w} GROUP BY page ORDER BY n DESC LIMIT 40`, ...args],
+    [`SELECT CASE WHEN page IN ('', '/') THEN '' ELSE page END AS k, COUNT(*) AS n FROM leads WHERE ${w} GROUP BY k ORDER BY n DESC LIMIT 40`, ...args],
     [`SELECT CASE WHEN source = '' THEN '(direct)' ELSE source END AS k, COUNT(*) AS n FROM leads WHERE ${w} GROUP BY k ORDER BY n DESC LIMIT 40`, ...args],
     [`SELECT form AS k, COUNT(*) AS n FROM leads WHERE ${w} AND form <> '' GROUP BY form ORDER BY n DESC LIMIT 40`, ...args],
   );
@@ -227,7 +277,7 @@ export async function marketingFor(siteId, months = 12) {
       WHERE site = ? AND verdict <> 'junk' AND campaign <> '' AND at > datetime('now', ?)
       GROUP BY campaign ORDER BY n DESC LIMIT 20`, siteId, WHEN(months)],
     [`SELECT page, COUNT(*) AS n FROM leads
-      WHERE site = ? AND verdict <> 'junk' AND at > datetime('now', ?)
+      WHERE site = ? AND verdict <> 'junk' AND at > datetime('now', ?) AND page NOT IN ('', '/')
       GROUP BY page ORDER BY n DESC LIMIT 20`, siteId, WHEN(months)],
   );
   return { sources: bySource.rows, months: byMonth.rows, campaigns: byCampaign.rows, pages: byPage.rows };
@@ -250,7 +300,7 @@ export async function benchmarks({ months = 12, minSites = 3 } = {}) {
     // Which kinds of page produce enquiries, across everybody.
     [`SELECT page, COUNT(DISTINCT site) AS sites, COUNT(*) AS n,
              ROUND(CAST(COUNT(*) AS REAL) / COUNT(DISTINCT site), 1) AS per_site
-      FROM leads WHERE verdict <> 'junk' AND at > datetime('now', ?)
+      FROM leads WHERE verdict <> 'junk' AND at > datetime('now', ?) AND page NOT IN ('', '/')
       GROUP BY page HAVING COUNT(DISTINCT site) >= ? ORDER BY per_site DESC LIMIT 25`, WHEN(months), minSites],
     [`SELECT CASE WHEN source = '' THEN '(direct)' ELSE source END AS source,
              COUNT(DISTINCT site) AS sites, COUNT(*) AS n,

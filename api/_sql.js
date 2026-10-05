@@ -130,5 +130,9 @@ let ensured = false;
 export async function ensureSchema(force) {
   if (ensured && !force) return;
   await sql(...SCHEMA);
+  // Added after the first release: what an enquiry said, so a live copy and an imported copy of the
+  // same submission can be recognised. ADD COLUMN fails once it exists, which is the signal it does.
+  await sql('ALTER TABLE leads ADD COLUMN sig TEXT').catch(() => {});
+  await sql('CREATE INDEX IF NOT EXISTS leads_sig ON leads (site, sig)').catch(() => {});
   ensured = true;
 }

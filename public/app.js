@@ -1583,7 +1583,8 @@
       live.queued = {};
       (st.ids || []).forEach((id) => { live.queued[id] = 1; });
       if (route().name === 'live') renderLive();
-      if (!st.pending || st.running) return;
+      // Fetching comes first; once nothing is waiting, the same turn tidies stored history instead.
+      if (st.running || (!st.pending && st.tidyDone !== false)) return;
       live.draining = true;
       // One chunk per tick rather than a loop: the browser stays responsive, and a tab closed
       // halfway costs one chunk instead of stranding the lock.
@@ -1697,6 +1698,24 @@
     draw();
   }
 
+  /**
+   * Enquiries by page, with the unknowns said out loud.
+   *
+   * Duda's history endpoint does not record which page a form was on; only enquiries that arrive
+   * live do. Those used to be filed under "/" and the chart then credited the homepage with almost
+   * everything. Now they are one honest bucket, always last, with a line saying why.
+   */
+  const NO_PAGE = 'Page not recorded';
+  function pageBars(pages) {
+    const list = (pages || []).map((p) => ({ k: p.k && p.k !== '/' && p.k !== '\u2014' ? p.k : NO_PAGE, n: p.n }));
+    const known = list.filter((p) => p.k !== NO_PAGE);
+    const unknown = list.filter((p) => p.k === NO_PAGE).reduce((a, p) => a + p.n, 0);
+    const rows = unknown ? known.concat({ k: NO_PAGE, n: unknown }) : known;
+    return hBars(rows) + (unknown ? `<div class="small faint" style="margin-top:8px">${unknown} enquir${unknown === 1 ? 'y' : 'ies'} came in through Duda's history, which does not say which page the form was on. Enquiries arriving from now on record their page.</div>` : '');
+  }
+  const busiestPage = (pages) => (pages || []).find((p) => p.k && p.k !== '/' && p.k !== '\u2014') || null;
+  const pageLabel = (pg) => (pg && pg !== '/' ? esc(pg) : '<span class="faint">page not recorded</span>');
+
   // --- the team's own view of a website's form submissions ---
   async function renderLeadsTab(body, s) {
     body.innerHTML = '<div class="empty">Loading…</div>';
@@ -1714,10 +1733,10 @@
         ${can('leads.import') ? '<b>Import history from Duda</b> reads them again and puts them right; your own junk and real rulings are left alone.' : 'Ask an admin to re-import this website’s history.'}</div></div>` : ''}
       ${d.total ? `<div class="cl-two" style="margin-top:12px">
         <div class="cl-card"><div class="cl-card-h">Each month</div>${barChart(d.series || [])}</div>
-        <div class="cl-card"><div class="cl-card-h">By page</div>${hBars(g.pages || [])}</div></div>
+        <div class="cl-card"><div class="cl-card-h">By page</div>${pageBars(g.pages || [])}</div></div>
       <div class="cl-card" style="margin-top:12px"><div class="cl-card-h">Recent</div>
         <div class="cl-leadlist">${(d.leads || []).slice(0, 100).map((l) => `<div class="cl-lead">
-          <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${esc(l.pg || '/')}</div></div>
+          <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${pageLabel(l.pg)}</div></div>
           <div class="cl-l-who">${l.redacted ? '<span class="faint" title="Your role does not allow seeing enquirers\u2019 contact details">Contact details hidden</span>' : `<b>${esc(l.n || 'No name given')}</b><div class="small faint">${l.e ? esc(l.e) : ''}</div>`}</div>
           <div class="cl-l-what">${Object.entries(l.f || {}).slice(0, 3).map(([k, v]) => `<div><span class="faint">${esc(k)}:</span> ${esc(String(v).slice(0, 120))}</div>`).join('')}</div>
           <div class="cl-l-src">${l.src ? `<span class="pill sm">${esc(l.src)}</span>` : ''}</div></div>`).join('')}</div></div>` : ''}`;
@@ -1845,7 +1864,7 @@
           : delta === 0 ? '<div class="cl-t-d faint">same as last month</div>'
           : `<div class="cl-t-d ${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)}% vs last month</div>`}</div>
       <div class="cl-tile"><div class="cl-t-k">All enquiries</div><div class="cl-t-v">${d.total}</div><div class="cl-t-d faint">in the last ${state.cl.months} months</div></div>
-      <div class="cl-tile"><div class="cl-t-k">Busiest page</div><div class="cl-t-v sm">${esc(((d.groups || {}).pages || [])[0] ? d.groups.pages[0].k : '—')}</div><div class="cl-t-d faint">${((d.groups || {}).pages || [])[0] ? d.groups.pages[0].n + ' enquiries' : ''}</div></div>
+      <div class="cl-tile"><div class="cl-t-k">Busiest page</div><div class="cl-t-v sm">${esc((busiestPage((d.groups || {}).pages) || {}).k || '—')}</div><div class="cl-t-d faint">${busiestPage((d.groups || {}).pages) ? busiestPage(d.groups.pages).n + ' enquiries' : 'not recorded yet'}</div></div>
       <div class="cl-tile"><div class="cl-t-k">Top source</div><div class="cl-t-v sm">${esc(((d.groups || {}).sources || [])[0] ? d.groups.sources[0].k : '—')}</div><div class="cl-t-d faint">${((d.groups || {}).sources || [])[0] ? d.groups.sources[0].n + ' enquiries' : ''}</div></div>
     </div>`;
 
@@ -1853,7 +1872,7 @@
       el.innerHTML = clHead(site, 'Dashboard', `Where your enquiries come from, over the last ${state.cl.months} months.`) + tiles
         + `<div class="cl-card"><div class="cl-card-h">Enquiries each month</div>${barChart(d.series || [])}</div>
            <div class="cl-two">
-             <div class="cl-card"><div class="cl-card-h">By page</div>${hBars((d.groups || {}).pages || [])}</div>
+             <div class="cl-card"><div class="cl-card-h">By page</div>${pageBars((d.groups || {}).pages || [])}</div>
              <div class="cl-card"><div class="cl-card-h">By source</div>${hBars((d.groups || {}).sources || [])}</div>
            </div>
            <div class="cl-card"><div class="cl-card-h">When people get in touch</div>${dowChart((d.when || {}).dow || [])}</div>`;
@@ -1870,7 +1889,7 @@
             ${Object.keys(pick).length ? '<button class="linkbtn" id="clClear">Clear filters</button>' : ''}</div>
         </div>
         ${rows.length ? `<div class="cl-card cl-leadlist">${rows.map((l) => `<div class="cl-lead">
-            <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${esc(l.pg || '/')}</div></div>
+            <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${pageLabel(l.pg)}</div></div>
             <div class="cl-l-who"><b>${esc(l.n || 'No name given')}</b>
               <div class="small">${l.e ? `<a href="mailto:${esc(l.e)}">${esc(l.e)}</a>` : ''}${l.e && l.p ? ' · ' : ''}${l.p ? `<a href="tel:${esc(l.p.replace(/[^\d+]/g, ''))}">${esc(l.p)}</a>` : ''}</div></div>
             <div class="cl-l-what">${Object.entries(l.f || {}).map(([k, v]) => `<div><span class="faint">${esc(k)}:</span> ${esc(v)}</div>`).join('') || '<span class="faint">—</span>'}</div>

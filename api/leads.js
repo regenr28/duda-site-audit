@@ -6,7 +6,7 @@
 // POST /api/leads { op: 'backfill', id, months }   (admins) → pull history from Duda
 // POST /api/leads { op: 'census' }                 (admins) → count submissions per site, store nothing
 import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
-import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, compactOldMonths, bumpSummary } from './_leads.js';
+import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, compactOldMonths, bumpSummary, tidySite } from './_leads.js';
 import { takeLock, unlock, enqueue } from './_queue.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
@@ -28,16 +28,21 @@ async function duda(path) {
  */
 export function fromDuda(rows) {
   return [].concat(rows || []).map((r) => {
-    // Whatever shape the answers arrived in — readFields reads structure, not one schema.
-    const fields = readFields(r.data || r.fields || r.form_data || r.fieldsData || r.submission_data || r);
+    // Duda's history endpoint documents four fields — date, form_title, message, utm_campaign — with
+    // the answers in `message`. Older shapes are still read; the row itself is the last resort.
+    const msg = r.message;
+    const fields = typeof msg === 'string' && msg.trim() ? [{ label: 'Message', value: msg.trim() }]
+      : readFields((msg && typeof msg === 'object' ? msg : null) || r.data || r.fields || r.form_data || r.fieldsData || r.submission_data || r);
     const utm = r.utm_source || (r.utm && r.utm.source) || '';
     const med = r.utm_medium || (r.utm && r.utm.medium) || '';
     return normalise({
       id: r.id || r.uuid || r.submission_id,
       at: r.date || r.created_at || r.submission_date || r.time,
       fields,
+      // Duda does not say which page in this endpoint. Left blank rather than guessed.
       page: r.page_name || r.pageName || r.page || '',
-      form: r.form_name || r.formName || r.form || '',
+      form: r.form_title || r.form_name || r.formName || r.form || '',
+      campaign: r.utm_campaign || (r.utm && r.utm.campaign) || '',
       source: [utm, med].filter(Boolean).join('/'),
     }, 'duda');
   }).filter((x) => x.n || x.e || x.p || Object.keys(x.f).length);
@@ -92,6 +97,9 @@ export default async function handler(req, res) {
       if (!id) return res.status(400).json({ error: 'Which website?' });
       const months = Math.min(Math.max(Number(b.months) || 12, 1), 24);
       const d = new Date(); const done = []; let added = 0; let seen = 0; const failed = [];
+      // "Added" means new enquiries. A repair rewrites rows it already had, and counting those made
+      // a second import of the same history announce itself as hundreds of new submissions.
+      const before = Number((await getSummary(id).catch(() => ({}))).total || 0);
       for (let i = 0; i < months; i++) {
         const ym = d.toISOString().slice(0, 7);
         // Importing repairs as well as adds. Duda keeps the original of every submission, so asking
@@ -104,9 +112,12 @@ export default async function handler(req, res) {
         await new Promise((r2) => setTimeout(r2, 150));
       }
       await compactOldMonths(id);
+      // Merge anything this import matched only by content, and clear pages we used to invent.
+      const merged = await tidySite(id).catch(() => 0);
       const summary = await bumpSummary(id);
+      added = Math.max(0, Number(summary.total || 0) - before);
       await globalLog(me, 'leads-backfill', `imported ${added} form submissions for ${id} (${months} months)`);
-      return res.status(200).json({ added, months: done, failed, summary });
+      return res.status(200).json({ added, merged, months: done, failed, summary });
     }
 
     /**
@@ -143,6 +154,7 @@ export default async function handler(req, res) {
         }
         if (err) { failed.push({ id: siteId, error: err }); continue; }
         await compactOldMonths(siteId).catch(() => {});
+        await tidySite(siteId).catch(() => 0);
         const summary = await bumpSummary(siteId);
         out.push({ id: siteId, seen, added, total: summary.total, last: summary.last });
       }

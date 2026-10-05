@@ -9,9 +9,9 @@
 // else has the lock, does a few websites' worth. That is what "automatic" means in this app: the
 // work happens while people are using it and stops dead when they are not.
 import { requireUser, readBody, denyUnless, can, globalLog, now, jparse, P, redis } from './_lib.js';
-import { queueState, claim, settle, unlock, enqueue, requeue, alertOwner, CHUNK, MONTHS } from './_queue.js';
+import { queueState, claim, settle, unlock, enqueue, requeue, alertOwner, takeLock, CHUNK, MONTHS } from './_queue.js';
 import { pullMonth } from './leads.js';
-import { addLeads, compactOldMonths, bumpSummary } from './_leads.js';
+import { addLeads, compactOldMonths, bumpSummary, tidySite, TIDY_VERSION } from './_leads.js';
 
 /**
  * How busy the app is, in words anybody can act on.
@@ -45,7 +45,7 @@ export default async function handler(req, res) {
       // "waiting" against the right websites instead of "none yet" against all of them.
       let ids = [];
       if (st.pending) { const [raw] = await redis(['HKEYS', P + 'leadq']); ids = (raw || []).slice(0, 2000); }
-      return res.status(200).json(Object.assign(st, { ids, retryAfter: busy.retryAfter, busyMessage: busy.message, chunk: CHUNK, months: MONTHS }));
+      return res.status(200).json(Object.assign(st, await tidyState(), { ids, retryAfter: busy.retryAfter, busyMessage: busy.message, chunk: CHUNK, months: MONTHS }));
     }
 
     const b = readBody(req);
@@ -66,7 +66,13 @@ export default async function handler(req, res) {
     const got = await claim(CHUNK);
     if (!got) {
       const st = await queueState();
-      return res.status(200).json(Object.assign({ skipped: st.pending ? 'someone else is doing it' : 'nothing to do' }, st));
+      // Nothing to fetch: spend the turn tidying what is already stored instead, a few websites at a
+      // time, under the same lock. Nothing here asks Duda for anything.
+      if (!st.pending && !st.running) {
+        const tidied = await tidyBatch().catch(() => null);
+        if (tidied) return res.status(200).json(Object.assign({ tidied }, await queueState(), await tidyState()));
+      }
+      return res.status(200).json(Object.assign({ skipped: st.pending ? 'someone else is doing it' : 'nothing to do' }, st, await tidyState()));
     }
 
     const done = []; const failed = [];
@@ -84,6 +90,7 @@ export default async function handler(req, res) {
         }
         if (err) { failed.push({ id: siteId, error: err }); continue; }
         await compactOldMonths(siteId).catch(() => {});
+        await tidySite(siteId).catch(() => 0);
         const s = await bumpSummary(siteId).catch(() => ({}));
         done.push({ id: siteId, seen, added, total: s.total || 0 });
       }
@@ -123,4 +130,41 @@ export async function lastRuns(kinds) {
   const out = {};
   keys.forEach((k, i) => { const v = jparse(got[i]); if (v) out[k] = v; });
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Tidying what is already stored
+// ---------------------------------------------------------------------------
+/**
+ * Has every website been tidied at the current version?
+ *
+ * One key, read on every queue check, so that once the job is finished it costs one command and
+ * nothing more. Only while it is unfinished does anything heavier happen.
+ */
+async function tidyState() {
+  const [v] = await redis(['GET', P + 'leadtidy:all']);
+  return { tidyDone: v === TIDY_VERSION };
+}
+
+/**
+ * Tidy the next few websites that need it.
+ *
+ * Every website with enquiries is in the totals hash; any not yet tidied at this version gets
+ * merged and cleaned. When none are left, the "all done" key is set and this stops being called.
+ */
+async function tidyBatch(n = 8) {
+  const [done] = await redis(['GET', P + 'leadtidy:all']);
+  if (done === TIDY_VERSION) return null;
+  if (!(await takeLock())) return null;
+  try {
+    const [keys, marks] = await redis(['HKEYS', P + 'leadtot'], ['HGETALL', P + 'leadtidy']);
+    const seen = {};
+    if (Array.isArray(marks)) { for (let i = 0; i < marks.length; i += 2) seen[marks[i]] = marks[i + 1]; } else Object.assign(seen, marks || {});
+    const todo = (keys || []).filter((k) => seen[k] !== TIDY_VERSION);
+    let merged = 0;
+    for (const id of todo.slice(0, n)) merged += await tidySite(id).catch(() => 0);
+    const left = Math.max(0, todo.length - n);
+    if (!left) await redis(['SET', P + 'leadtidy:all', TIDY_VERSION]);
+    return { sites: Math.min(n, todo.length), merged, left };
+  } finally { await unlock(); }
 }
