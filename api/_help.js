@@ -110,12 +110,25 @@ export const HELP_SECTIONS = [
 <li>During the AI steps, a <b>Skip AI</b> button lets you finish the scan without the AI checks. Skipped parts become "AI check pending" items.</li>
 <li><b>Rescanning keeps your work.</b> The same issue keeps its number (#12), status, assignee and comments. New issues get new numbers.</li>
 </ul>
+<h3>Fix it in the editor, then rescan</h3>
+<p>You don't have to change an item's status after fixing it. Fix the problem in the Duda editor, rescan, and anything that is <b>no longer on the website closes by itself</b>.</p>
+<ul>
+<li>It is set to <b>Done</b>, keeps its number, and is labelled <b>✓ Fixed on rescan</b>. Opening it says who rescanned and when. It counts towards the website's progress like any item you closed by hand.</li>
+<li>Done items are hidden by the default filter, as always. Pick <b>Done</b> in the Status filter to see them.</li>
+<li>An item from a check that has since been corrected closes as <b>✓ Check corrected — closed</b> instead, because there was nothing to fix.</li>
+<li><b>Your decisions stand.</b> An item you already marked <b>Done</b> or <b>False alarm</b> is left as it is. <b>On hold</b> and <b>For clarification</b> items do close if the problem is gone.</li>
+<li><b>Only pages that were scanned count.</b> If a page wasn't part of the scan, its items are not judged.</li>
+<li><b>Marked Done but not actually fixed?</b> If a rescan still finds an item someone marked <b>Done</b>, it goes back to <b>Open</b>, labelled <b>⚠ Still there after rescan</b>. A note at the top of Audit items lists them, and whoever marked it Done is told by name (bell and Slack, under <b>Items reopened against you</b>). The note clears itself once each one has a new status. If the scan is wrong about it, mark it <b>False alarm</b> instead. False alarms are never reopened by a rescan.</li>
+<li><b>If it comes back, it reopens.</b> A later rescan that finds it again sets it back to <b>Open</b> with the same number, labelled <b>↺ Back after a rescan</b>.</li>
+<li><b>Fixing one of several identical items</b> (say the 2nd of five links) changes the others' CSS selectors. Those are recognised as the same items: they keep their numbers and statuses, and are not counted as fixed or new.</li>
+<li>Items written by hand are never closed this way. No scan can see them, so only a person can close them.</li>
+</ul>
 <h3>When new checks are added</h3>
 <p>The check list grows over time. A finished audit is <b>never</b> changed behind your back: it keeps exactly the items it was given, and no new item appears until somebody rescans that website. A <b>Complete</b> audit stays Complete.</p>
 <ul>
 <li>A website scanned before the newest checks shows a <b>blue note at the top of its Audit items</b>: how many checks were added, and <b>See what was added</b> for the full list in plain words.</li>
 <li><b>Rescan now</b> runs it. <b>Not now</b> hides the note on that website — for you only, and it comes back the next time checks are added.</li>
-<li>Rescanning <b>keeps every item you already have</b>, including everything marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b>. The new checks only add new <b>Open</b> items, so a website at 24/24 might become 24/31.</li>
+<li>Rescanning <b>keeps every item you already have</b>, including everything marked <b>False alarm</b> or <b>On hold</b>, and everything marked <b>Done</b> that the scan no longer finds. The new checks only add new <b>Open</b> items, so a website at 24/24 might become 24/31.</li>
 <li>Checks added this way are <b>warnings and notes, never critical</b>, so your critical counts don't move.</li>
 <li>To find them all: on <b>Audits</b>, the toolbar button <b>✨ Scanned before the newest checks</b> filters the list to them, and each one is flagged in the <b>Scan</b> column. Filter first, then <b>Rescan all shown</b> if you want the lot done at once.</li>
 </ul>

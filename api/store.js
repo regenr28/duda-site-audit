@@ -387,12 +387,108 @@ export default async function handler(req, res) {
         // to withdraw — QA writes those precisely because no scan will ever see them — so they are
         // carried across untouched, statuses and all.
         const byHand = (site.findings || []).filter((f) => f && f.manual);
+        // Everything the website had before this scan, to tell what has gone since.
+        const before = (site.findings || []).filter((f) => f && !f.manual);
         site.findings = (r.findings || []).map((f) => { const c = Object.assign({}, f); ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done'].forEach((k) => delete c[k]); return c; }).concat(byHand);
         // Stable ID numbers: the same issue keeps its # across rescans; new issues get the next number
         const nums = pairs(fnum); let seq = Number(seqRaw || 0); const add = [];
         const RANK = { critical: 0, outdated: 1, warning: 2, info: 3 };
         site.findings.sort((a, c) => RANK[a.severity] - RANK[c.severity]);
+        const [stPrev] = await redis(['HGETALL', P + 'fstate:' + b.id]);
+        const prevSt = pairs(stPrev, true);
+        const nowIds = new Set(site.findings.map((f) => f.id));
+
+        // ---- the same item at a new address ----
+        // An item's ID includes its CSS selector, and selectors count siblings: fix the 2nd of five
+        // links and the 3rd, 4th and 5th all get new selectors. Without this they would look like
+        // three things fixed plus three new things. Same check, same text found, same page = the
+        // same item: it keeps its number, its status and its assignee.
+        const loose = (f) => [f.code, f.found || '', f.message, (f.pages && f.pages.length > 1) ? '*' : (f.path || '/')].join('|');
+        const vanished = before.filter((f) => !nowIds.has(f.id) && nums[f.id]);
+        const movedFrom = {};   // new id -> the old finding it continues
+        const taken = new Set();
+        site.findings.forEach((f) => {
+          if (f.manual || nums[f.id]) return;
+          const k = loose(f);
+          const old = vanished.find((o) => !taken.has(o.id) && loose(o) === k);
+          if (!old) return;
+          taken.add(old.id); movedFrom[f.id] = old;
+          nums[f.id] = nums[old.id]; add.push(f.id, String(nums[old.id]));
+        });
         site.findings.forEach((f) => { if (!nums[f.id]) { seq++; nums[f.id] = seq; add.push(f.id, String(seq)); } });
+
+        // ---- items that were there before and are not any more ----
+        // Fixing something in the editor and rescanning is the natural way to work, and it should
+        // count: the item is closed as Done, kept with its number, and says how it was closed. Before,
+        // it simply vanished, so the work left no trace and the counts went down for no visible reason.
+        //
+        // Only items whose pages were all part of this scan are judged. If a page was not scanned,
+        // nothing is known about it, and an item is never closed on a guess.
+        const normP = (x) => '/' + String(x || '/').replace(/^https?:\/\/[^/]+/i, '').replace(/[?#].*$/, '').replace(/^\/+|\/+$/g, '').toLowerCase();
+        const scanned = new Set((r.pages || []).map((pg) => normP(typeof pg === 'string' ? pg : (pg && (pg.path || pg.url)))));
+        const corrected = new Set([].concat(b.corrected || []).map(String));
+        const KEEP_GONE_MS = 45 * 86400000;
+        const closing = []; let fixedN = 0; let correctedN = 0;
+        const autoClosed = (st) => st && st.status === 'done' && ['rescan-gone', 'check-corrected'].includes(st.auto);
+        before.forEach((f) => {
+          if (nowIds.has(f.id) || taken.has(f.id)) return;
+          // Already closed by this mechanism on an earlier scan: carried along until it ages out.
+          if (f.gone) { if (Date.now() - Date.parse(f.gone.at) < KEEP_GONE_MS) site.findings.push(f); return; }
+          const where = (f.pages && f.pages.length ? f.pages : [f.path || '/']).map(normP);
+          if (!where.every((x) => scanned.has(x))) return;
+          const why = corrected.has(String(f.code)) ? 'check-corrected' : 'gone';
+          const carried = Object.assign({}, f, { gone: { at: now(), by: me.email, byName: me.name, why } });
+          ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done', 'auto'].forEach((k) => delete carried[k]);
+          site.findings.push(carried);
+          const cur = prevSt[f.id] || {};
+          // A decision somebody already made stands. Only items still open are closed.
+          if (cur.status === 'done' || cur.status === 'false') return;
+          closing.push(f.id, JSON.stringify(Object.assign({}, cur, { status: 'done', updatedBy: me.email, updatedAt: now(),
+            auto: why === 'check-corrected' ? 'check-corrected' : 'rescan-gone' })));
+          if (why === 'check-corrected') correctedN++; else fixedN++;
+        });
+        // The other way round: an item this mechanism closed is back on the website. The fix didn't
+        // hold (or was undone), so it opens again — only if nobody has touched it since. An item that
+        // merely moved takes its status with it.
+        //
+        // And an item a PERSON marked Done that this scan still finds was not fixed. Left alone it would
+        // sit in Done, counted as progress, until a client noticed. It reopens, and whoever marked it
+        // Done is told by name. False alarm is a different claim ("the check is wrong") and is left alone.
+        // "AI check pending" items checked by hand are carried back by the browser, not found again.
+        let backN = 0; const stillBy = {};
+        site.findings.forEach((f) => {
+          if (f.gone || f.manual) return;
+          const from = movedFrom[f.id];
+          const cur = from ? prevSt[from.id] : prevSt[f.id];
+          if (autoClosed(cur)) {
+            closing.push(f.id, JSON.stringify(Object.assign({}, cur, { status: 'open', updatedBy: me.email, updatedAt: now(), auto: 'came-back' })));
+            backN++;
+          } else if (cur && cur.status === 'done' && !/^AI_PENDING/.test(String(f.code))) {
+            closing.push(f.id, JSON.stringify({ status: 'open', assignee: cur.assignee || '', updatedBy: me.email, updatedAt: now(),
+              auto: 'still-there', autoRef: cur.updatedBy || '', autoAt: cur.updatedAt || '' }));
+            const who = cur.updatedBy || '';
+            (stillBy[who] = stillBy[who] || []).push(Number(nums[f.id]) || 0);
+          } else if (from && cur) closing.push(f.id, JSON.stringify(cur));
+        });
+        const stillN = Object.values(stillBy).reduce((a, x) => a + x.length, 0);
+        if (closing.length) await redis(['HSET', P + 'fstate:' + b.id, ...closing]);
+        if (stillN) {
+          const list = Object.values(stillBy).flat().sort((a, c) => a - c).map((n) => '#' + n);
+          await log(b.id, me, 'item-status', `${stillN} item${stillN === 1 ? '' : 's'} marked Done ${stillN === 1 ? 'was' : 'were'} still on the website when it was rescanned — reopened: ${list.slice(0, 20).join(', ')}${list.length > 20 ? '…' : ''}`);
+          const where = site.businessName || site.siteId || 'a website';
+          for (const [who, ns] of Object.entries(stillBy)) {
+            if (!who || who === me.email) continue;
+            ns.sort((a, c) => a - c);
+            await notifyUser(who, {
+              kind: 'challenge', by: me.email, byName: me.name,
+              text: `${me.name} rescanned ${where}: ${ns.length === 1 ? '#' + ns[0] + ', which you marked Done, is' : ns.length + ' items you marked Done (' + ns.slice(0, 8).map((n) => '#' + n).join(', ') + (ns.length > 8 ? '…' : '') + ') are'} still on the website — reopened`,
+              link: `#/site/${b.id}/findings${ns.length === 1 ? '/' + ns[0] : ''}`,
+            }).catch(() => {});
+          }
+        }
+        if (backN) await log(b.id, me, 'item-status', `${backN} item${backN === 1 ? '' : 's'} closed on an earlier rescan ${backN === 1 ? 'is' : 'are'} back on the website — reopened`);
+        if (fixedN) await log(b.id, me, 'item-status', `${fixedN} item${fixedN === 1 ? ' was' : 's were'} no longer on the website when it was rescanned — closed as Done`);
+        if (correctedN) await log(b.id, me, 'item-status', `${correctedN} item${correctedN === 1 ? '' : 's'} closed: raised by a check that has since been corrected, and no longer raised`);
         if (site.status === 'Not started') site.status = 'In progress';
 
         // Business Info as of today, against Business Info as of last time. A change here is the
@@ -438,8 +534,9 @@ export default async function handler(req, res) {
         if (add.length) cmds.push(['HSET', P + 'fnum:' + b.id, ...add]);
         await redis(...cmds);
         const c = { critical: 0, outdated: 0, warning: 0, info: 0 };
-        site.findings.forEach((f) => { if (c[f.severity] !== undefined) c[f.severity]++; });
+        site.findings.forEach((f) => { if (!f.gone && c[f.severity] !== undefined) c[f.severity]++; });
         if (site.scan) site.scan.counts = c;
+        const activeN = site.findings.filter((f) => !f.gone).length;
         if (b.mode === 'aiResume') {
           const a = b.aiLog || {};
           await log(b.id, me, 'ai', `resumed the AI check: ${a.checked || 0} item(s) checked, ${a.flagged || 0} new finding(s)${a.stillPending ? `, ${a.stillPending} still waiting for AI credits` : ''}`);
@@ -467,7 +564,7 @@ export default async function handler(req, res) {
           if (autos.length) await redis(['HSET', P + 'fstate:' + b.id, ...autos]);
         } catch (e) { /* the item simply stays Open */ }
         if (asked) await log(b.id, me, 'item-status', `${asked} item${asked === 1 ? '' : 's'} set to For clarification automatically — a client comment mentions the value`);
-        await log(b.id, me, 'scan', `completed a scan: ${site.findings.length} findings (${c.critical || 0} critical)${add.length && Number(seqRaw || 0) ? `, ${add.length / 2} new` : ''}`);
+        await log(b.id, me, 'scan', `completed a scan: ${activeN} findings (${c.critical || 0} critical)${seq > Number(seqRaw || 0) && Number(seqRaw || 0) ? `, ${seq - Number(seqRaw || 0)} new` : ''}`);
         // Tell the person who added the website and whoever it's assigned to (bell, desktop and Slack) that it's ready
         const wasComplete = site.status === 'Complete' || !!site.completedAt;
         // The person who started it is told as well — the whole point is to walk away and be called
@@ -478,7 +575,7 @@ export default async function handler(req, res) {
         const name = site.businessName || site.siteId;
         for (const email of tell) {
           await notify(email, { by: me.email, byName: me.name, siteId: b.id, siteName: name, kind: wasComplete ? 'rescan-done' : 'scan-done', self: email === me.email,
-            text: `${wasComplete ? `This audit was completed${site.completedAt ? ' on ' + new Date(site.completedAt).toDateString() : ''} and has been scanned again. ` : ''}${site.findings.length} audit item${site.findings.length === 1 ? '' : 's'}, ${c.critical || 0} critical · ${(r.pages || []).length} page${(r.pages || []).length === 1 ? '' : 's'}` });
+            text: `${wasComplete ? `This audit was completed${site.completedAt ? ' on ' + new Date(site.completedAt).toDateString() : ''} and has been scanned again. ` : ''}${activeN} audit item${activeN === 1 ? '' : 's'}${fixedN ? ` (${fixedN} fixed since last time)` : ''}, ${c.critical || 0} critical · ${(r.pages || []).length} page${(r.pages || []).length === 1 ? '' : 's'}` });
         }
         return res.status(200).json(await saveIndex(b.id));
       }
@@ -817,7 +914,9 @@ export default async function handler(req, res) {
         f.challenge = { was, by: me.email, byName: me.name, at: now(), why, of: whoClosed };
         f.statusBy = ''; f.statusAt = '';
         site.updatedAt = now();
-        await redis(['SET', P + 'site:' + b.siteId, packJSON(site)]);
+        await redis(['SET', P + 'site:' + b.siteId, packJSON(site)],
+          // The status lives in fstate, not on the item: without this the item read back as Done.
+          ['HSET', P + 'fstate:' + b.siteId, f.id, JSON.stringify({ status: 'open', assignee: f.assignee || '', updatedBy: me.email, updatedAt: now(), auto: 'challenged', autoRef: whoClosed, autoAt: now() })]);
         const [numRaw] = await redis(['HGET', P + 'fnum:' + b.siteId, f.id]);
         const num = Number(numRaw || 0);
         const label = was === 'done' ? 'marked Done but still wrong' : 'called a False alarm but it is real';

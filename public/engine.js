@@ -228,6 +228,19 @@
         'The "A different photo in each place" line is gone, because it took the space where the places belonged',
       ],
     },
+    {
+      v: 17,
+      date: '2026-10-06',
+      title: 'Share-by-email buttons are left alone — and fixing then rescanning closes items by itself',
+      fixes: ['MAILTO_INVALID'],
+      fixedWhat: 'A "share this by email" button (an email link with no address, only a subject or message filled in, so the visitor chooses who to send it to) was raised as a critical "Email link has an invalid address". The empty address is on purpose. Email links that do carry an address are checked exactly as before.',
+      items: [
+        'Share-by-email buttons, the kind on blog posts, are no longer raised at all',
+        'An email link with no address and nothing filled in is still critical — that one really is broken',
+        'Fix something in the editor, rescan, and the item is closed as Done on its own, keeps its number, and says "Fixed on rescan"',
+        'If a closed item shows up again on a later rescan, it reopens',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1654,6 +1667,9 @@
       }
       if (/^mailto:/i.test(href)) {
         const e = safeDecode(href.slice(7).split('?')[0]).trim().toLowerCase();
+        // "Share this by email": no address on purpose, so the visitor picks who to send it to, with
+        // a subject or body filled in. That is a share button, not a contact link — nothing to check.
+        if (!e && /[?&](subject|body)=/i.test(href)) return;
         if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) { add(a, { code: 'MAILTO_INVALID', severity: 'critical', category: 'Contact info', message: 'Email link has an invalid address', found: href }); return; }
         const shownE = (text.match(EMAIL_RE) || [])[0];
         const mailOk = emailOk(e);

@@ -154,7 +154,7 @@ export function markOutdated(findings, retired) {
   if (!retired || !findings) return 0;
   let n = 0;
   findings.forEach((f) => {
-    if (!OUTDATED_KIND[f.code] || f.severity === 'info') return;
+    if (f.gone || !OUTDATED_KIND[f.code] || f.severity === 'info') return;
     const hit = retiredHit(f, retired);
     if (!hit) return;
     const label = OUTDATED_LABEL[OUTDATED_KIND[f.code]] || 'detail';

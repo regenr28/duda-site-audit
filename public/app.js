@@ -1039,7 +1039,8 @@
         + (d.kv.perDay > 0 ? ` · growing ${esc(bytes(d.kv.perDay))} a day` : '')
         + (d.kv.daysLeft !== null && d.kv.daysLeft < 400 ? ` · <b>about ${d.kv.daysLeft} days</b> before it needs attention` : '')
       : 'Never measured — press <b>Measure storage now</b>.';
-    const cmdFoot = `Day ${d.commands.dayOfMonth} of ${d.commands.daysInMonth} · on course for <b>${d.commands.projected.toLocaleString()}</b> this month`;
+    const cmdFoot = `Day ${d.commands.dayOfMonth} of ${d.commands.daysInMonth} · on course for <b>${d.commands.projected.toLocaleString()}</b> this month`
+      + (d.commands.free ? `<br>The first ${d.commands.free.toLocaleString()} are free. Beyond them: about <b>$${Number(d.commands.costSoFar || 0).toFixed(2)}</b> so far. At its cap the app pauses itself, so a month can never cost more than about $${Number(d.commands.costCap || 0).toFixed(2)}.` : '');
 
     $('#hxBody').innerHTML = `
       ${d.alerts.length ? `<div class="hx-alerts">${d.alerts.map((a) => `<div class="hx-alert hx-${a.level === 'info' ? 'good' : a.level}">
@@ -1049,7 +1050,7 @@
       <div class="k" style="margin-top:18px">Storage and allowances</div>
       <div class="hx-tiles">
         ${meter({ title: 'Main database', value: bytes(d.kv.used), of: bytes(d.kv.limit), pct: d.kv.pct, state: d.kv.state, label: d.kv.label, foot: kvFoot })}
-        ${meter({ title: 'Commands this month', value: d.commands.used.toLocaleString(), of: d.commands.limit.toLocaleString(), pct: d.commands.pct, state: d.commands.state, label: d.commands.label, foot: cmdFoot })}
+        ${meter({ title: 'Commands this month (against the app\u2019s cap)', value: d.commands.used.toLocaleString(), of: d.commands.limit.toLocaleString(), pct: d.commands.pct, state: d.commands.state, label: d.commands.label, foot: cmdFoot })}
         ${d.sql && !d.sql.error ? meter({ title: 'Analysis database', value: bytes(d.sql.used), of: bytes(d.sql.limit), pct: d.sql.pct, state: d.sql.state, label: d.sql.label,
           foot: `${d.sql.leads.toLocaleString()} enquiries across ${d.sql.sites} websites`
             + (d.sql.monthsLeft !== null && d.sql.monthsLeft < 600 ? ` · <b>about ${d.sql.monthsLeft} months</b> at this rate` : '')
@@ -2440,7 +2441,13 @@
       res.findings = A.filterAllowed(res.findings, site.allow);
       res.counts = { critical: 0, outdated: 0, warning: 0, info: 0 }; res.findings.forEach((f) => { res.counts[f.severity]++; });
       const profiles = await checkProfiles(res.truth);
-      const sum = await store({ op: 'saveScan', id, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
+      // Checks corrected since this website was last scanned: an item that disappears for THAT reason
+      // was never really fixed, and is closed saying so rather than credited as a fix.
+      // Both kinds: corrected in an update, and set to Audit Adjusted by an admin since the last scan.
+      const corrected = [...A.fixedSince((site.scan && site.scan.cv) || 1)];
+      const lastDone = (site.scan && site.scan.finishedAt) || '';
+      Object.values(state.fixedChecks || {}).forEach((x) => { if (x && x.code && lastDone && x.at > lastDone && !corrected.includes(x.code)) corrected.push(x.code); });
+      const sum = await store({ op: 'saveScan', id, corrected, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
         scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
       } });
@@ -4150,9 +4157,24 @@
     </div>`).join('')}${list.length > show.length ? `<div class="faint small">…and ${list.length - show.length} more — open the item to see them all</div>` : ''}</div>`;
   }
 
+  /** Closed by a rescan: the thing is no longer on the website (or the check behind it was corrected). */
+  const goneBadge = (f) => {
+    if (f.gone) return `<div style="margin-bottom:4px"><span class="badge v-ok" title="${esc((f.gone.byName || '') + ' rescanned ' + fmtWhen(Date.parse(f.gone.at)))}">${f.gone.why === 'check-corrected' ? '\u2713 Check corrected \u2014 closed' : '\u2713 Fixed on rescan'}</span></div>`;
+    if (f.auto && f.auto.why === 'still-there') return `<div style="margin-bottom:4px"><span class="badge v-still" title="${esc('Marked Done by ' + nameOf(f.auto.ref, 'someone') + (f.auto.at ? ' on ' + fmtWhen(Date.parse(f.auto.at)) : '') + ', but the next rescan still found it')}">\u26A0 Still there after rescan \u2014 reopened</span></div>`;
+    if (f.auto && f.auto.why === 'came-back') return `<div style="margin-bottom:4px"><span class="badge v-still" title="It was closed on an earlier rescan, then showed up again">\u21BA Back after a rescan \u2014 reopened</span></div>`;
+    return '';
+  };
   const correctedBadge = (s, f) => (isCorrected(s, f)
     ? `<div style="margin-bottom:4px"><span class="badge ck-fixed" title="The check that produced this item has since been corrected, so it may not be a real problem. Rescan the website to replace it.">⚠ This check was corrected — rescan</span></div>` : '');
 
+  /** Items somebody marked Done that the last rescan still found, and so reopened. Clears itself as they are dealt with. */
+  function stillBanner(s) {
+    const list = (s.findings || []).filter((f) => !f.gone && f.auto && f.auto.why === 'still-there' && f.status === 'open');
+    if (!list.length) return '';
+    return `<div class="note unk" style="margin-bottom:10px"><b>\u26A0 ${list.length} item${list.length === 1 ? '' : 's'} marked Done ${list.length === 1 ? 'was' : 'were'} still on the website at the last rescan, so ${list.length === 1 ? 'it was' : 'they were'} reopened.</b>
+      <div class="small" style="margin-top:3px">Whoever marked ${list.length === 1 ? 'it' : 'them'} Done has been told. Fix ${list.length === 1 ? 'it' : 'them'} in the editor and rescan, or mark <b>False alarm</b> if the scan is wrong. This note goes away once each one has a new status.</div>
+      <div class="v-row" style="margin-top:6px">${itemChips(list, s)}</div></div>`;
+  }
   function newChecksBanner(s) {
     const rel = newChecksFor(s);
     const bad = correctedItems(s);
@@ -4166,11 +4188,11 @@
     const head = bad.length
       ? `<b>⚠ ${bad.length} item${bad.length === 1 ? '' : 's'} on this website came from a check that has since been corrected.</b>
          <div class="small" style="margin-top:3px">${fixedWhy(s).map(esc).join(' ')}
-         <b>Don't work through them</b> — rescan and they go, along with anything else the correction affects. The rescan keeps everything you have already marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b>, with its number and its comments.</div>
+         <b>Don't work through them</b> — rescan and they go, along with anything else the correction affects. The rescan keeps everything you have already marked <b>False alarm</b> or <b>On hold</b>, with its number and its comments; <b>Done</b> stays Done unless the rescan still finds it.</div>
          ${n ? `<div class="small" style="margin-top:6px">The same rescan also picks up <b>${n} new check${n === 1 ? '' : 's'}</b> added since ${esc(fmtFull(sc.finishedAt))}.</div>` : ''}`
       : `<b>✨ ${n} new audit check${n === 1 ? '' : 's'} ${n === 1 ? 'has' : 'have'} been added since this website was scanned.</b>
          <div class="small" style="margin-top:3px">This audit still shows what the scan found on ${esc(fmtFull(sc.finishedAt))}, and it stays that way until someone rescans it.
-         A rescan keeps every item you already have — anything marked <b>Done</b>, <b>False alarm</b> or <b>On hold</b> stays exactly as it is, with its number and its comments — and simply adds whatever the new checks find as new <b>Open</b> items. None of them are critical.</div>`;
+         A rescan keeps every item you already have, with its number and its comments — anything marked <b>False alarm</b> or <b>On hold</b> stays as it is, and <b>Done</b> stays Done unless the rescan still finds it — and simply adds whatever the new checks find as new <b>Open</b> items. None of them are critical.</div>`;
     return `<div class="note ${bad.length ? 'fixed-checks' : 'new-checks'}" id="ckBanner">
       <div class="row-between" style="align-items:flex-start;gap:12px">
         <div class="grow">${head}</div>
@@ -4460,7 +4482,7 @@
         if (st === 'gone') return `<div class="note unk dom-banner"><b>Not found in Duda.</b> Duda lists this website neither as published nor as a draft, so it looks deleted or moved to another account. The audit is kept for reference.</div>`;
         const lx = liveOf(s.siteId);
         return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
-      ${staleBanner()}${newChecksBanner(s)}
+      ${staleBanner()}${newChecksBanner(s)}${stillBanner(s)}
       ${t.fromBrief ? `<div class="note" style="margin-bottom:12px"><b>Checked against the client’s brief.</b>
         <div class="small" style="margin-top:3px">The business details on this website’s project come from the document the client supplied, so they are what every item below is measured against. Duda’s own Business Info is still accepted — nothing is flagged for using a value Duda holds.</div></div>` : ''}
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
@@ -4550,7 +4572,7 @@
               <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
                 <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
-              <td style="min-width:240px">${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>
+              <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
                 ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
@@ -4892,6 +4914,10 @@
       </div>
       <div class="dr-body">
         <h2 class="dr-title">${esc(f.message)}</h2>
+        ${f.gone ? `<div class="note ${f.gone.why === 'check-corrected' ? 'known-note' : 'good'}" style="margin:8px 0"><b>${f.gone.why === 'check-corrected' ? 'Closed: the check that raised this was corrected' : '\u2713 Fixed \u2014 no longer on the website'}</b>
+          <div class="small">${f.gone.why === 'check-corrected' ? 'It was never a real problem, so there was nothing to fix.' : 'It was there on the previous scan and gone on this one, so it was closed as Done.'} ${esc(f.gone.byName || nameOf(f.gone.by))} rescanned ${esc(fmtWhen(Date.parse(f.gone.at)))}.</div></div>` : ''}
+        ${!f.gone && f.auto && f.auto.why === 'still-there' ? `<div class="note unk" style="margin:8px 0"><b>\u26A0 Marked Done, but still on the website</b><div class="small">${esc(nameOf(f.auto.ref, 'Someone'))} marked this Done${f.auto.at ? ' on ' + esc(fmtWhen(Date.parse(f.auto.at))) : ''}. ${esc(nameOf(f.statusBy, 'The next rescan'))} rescanned${f.statusAt ? ' on ' + esc(fmtWhen(Date.parse(f.statusAt))) : ''} and it was still there, so it was reopened. If the scan is wrong about it, mark it <b>False alarm</b> instead.</div></div>` : ''}
+        ${!f.gone && f.auto && f.auto.why === 'came-back' ? `<div class="note unk" style="margin:8px 0"><b>\u21BA Back on the website</b><div class="small">This was closed as Done on an earlier rescan, then the latest scan found it again, so it was reopened.</div></div>` : ''}
         ${f.manual ? `<div class="small faint">Written by ${esc(nameOf(f.by, f.byName))} · ${esc(fmtWhen(Date.parse(f.at)))}${f.device ? ' · ' + esc(A.DEVICE_LABEL[f.device] || f.device) : ''}</div>` : ''}
         ${f.detail ? `<div class="dr-detail">${esc(f.detail)}</div>` : ''}
         ${f.shot ? `<a href="${f.shot}" target="_blank" rel="noopener" title="Open the full size"><img src="${f.shot}" class="dr-shot" alt="Screenshot added with this item"></a>` : ''}

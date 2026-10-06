@@ -4,10 +4,25 @@
 
 export const NEWS = [
   {
+    id: '2026-10-07-rescanfix', date: '2026-10-07', audience: 'all', tag: 'Audits',
+    title: 'Rescans now keep statuses honest: fixed items close themselves, and "Done" items that aren\u2019t fixed reopen',
+    what: 'Fixing a problem in the Duda editor and then rescanning is the quickest way to work. Until now, though, the fixed items just disappeared: nothing showed the work was done, and the counts dropped for no visible reason.<br><br><b>Now they close themselves.</b> When a rescan no longer finds an item, it is set to <b>Done</b>, keeps its number and is labelled <b>✓ Fixed on rescan</b>, with who rescanned and when. You don\u2019t need to change any statuses by hand.<br><br><b>If it comes back, it reopens.</b> If a later rescan finds the same problem again, the item goes back to <b>Open</b> with the same number and is labelled <b>↺ Back after a rescan</b>.<br><br><b>Marked Done, but not fixed.</b> If someone marks an item <b>Done</b> and the next rescan still finds it, it goes back to <b>Open</b>, labelled <b>⚠ Still there after rescan</b>. Whoever marked it Done is told by name, and a note at the top of Audit items lists them until each one has a new status. <b>False alarm</b> items are never reopened this way, so if the scan is wrong about something, use False alarm, not Done.<br><br><b>Share-by-email buttons are no longer flagged.</b> The share buttons on blog posts (an email link with a subject and message but no address, so the visitor picks who to send it to) were being raised as critical <b>"Email link has an invalid address"</b>. The missing address is deliberate, so they are now ignored. On websites scanned before this change, those items close on the next rescan as <b>✓ Check corrected — closed</b>.',
+    where: [
+      '<b>Walkthrough:</b> open an audit item, fix it in the editor, then press <b>Rescan</b> on the website. When the scan finishes, choose <b>Done</b> in the Status filter. The item is there, marked <b>✓ Fixed on rescan</b>. Open it to see who rescanned and when.',
+      '<b>Walkthrough, the other way:</b> mark an item <b>Done</b> without fixing it, then rescan. It is back in the default list as <b>Open</b> with <b>⚠ Still there after rescan</b>, an orange note at the top lists it, and the person who marked it Done gets a bell (and Slack) message.',
+      'Items marked <b>False alarm</b> are left as you set them. Hand-written items are never closed or reopened by a scan.',
+      'Also fixed: <b>↺ This is not done — reopen it</b> now really reopens the item. Before, it still showed as Done after a refresh.',
+      'Only pages that were part of the scan are checked. An item on a page the scan didn\u2019t cover stays as it is.',
+      'Fixing one of several identical items (say the 2nd of five links) no longer makes the others look fixed or new. They keep their numbers and statuses.',
+      'The website\u2019s <b>Activity log</b> records how many items closed or reopened on each rescan.',
+    ],
+    link: '#/help/scan', linkText: 'Scanning and rescanning',
+  },
+  {
     id: '2026-10-07-commands', date: '2026-10-07', audience: 'owner', tag: 'Admin',
     title: 'The main database was using its monthly allowance about 30 times too fast',
     what: 'The form-history catch-up and its 20-second check were burning through the main database\u2019s command allowance: an idle tab cost 52 commands every two minutes, a tab on Live DR Sites during the catch-up cost over 6,000, and fetching one website\u2019s history cost about 600. Seven hundred websites at 600 each is almost exactly what the month had used by the 5th.<br><br><b>Measured, then fixed:</b> an idle tab now costs nothing between heartbeats (the catch-up\u2019s state rides on the heartbeat that was already running), fetching a website\u2019s history costs about 80 in the worst case instead of 600, and the usage counter itself no longer adds a command to every round trip.<br><br><b>And an earlier warning.</b> You are now told the moment the month is <i>on course</i> to overrun, not when it is 90% gone. On this month\u2019s numbers that would have fired on the first day.',
-    where: ['<b>System health</b> \u2192 <b>Commands this month</b> shows the projection; the warning reaches your bell and Slack.', 'The count is now kept in batches, so it can trail the real figure by a few dozen commands. The provider\u2019s own dashboard is the exact number.'],
+    where: ['<b>The app now has its own spending cap.</b> On pay-as-you-go it pauses itself at 1.5 million commands in a month \u2014 about $2 at most \u2014 and warns you at 60% and again at 90%, so a runaway bug can never run up a bill. Change it with <b>KV_MONTHLY_CEILING</b>.', '<b>System health</b> \u2192 <b>Commands this month</b> shows the projection and the cost so far; the warnings reach your bell and Slack.', 'The count is now kept in batches, so it can trail the real figure by a few dozen commands. The provider\u2019s own dashboard is the exact number.'],
   },
   {
     id: '2026-10-07-leadcounts', date: '2026-10-07', audience: 'all', tag: 'Profiles',

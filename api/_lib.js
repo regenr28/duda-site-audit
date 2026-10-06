@@ -26,9 +26,15 @@ export const hasRedis = () => !!(R_URL && R_TOKEN);
  * trade worth making for the one number that can stop the app writing.
  */
 const usageKey = () => P + 'usage:cmd:' + new Date().toISOString().slice(0, 7);
-// The allowance this store has each month. Kept beside the counter so the early warning and the
-// counter cannot disagree about what "full" means.
+// The free allowance, kept for reference: the first 500K a month cost nothing.
 export const KV_MONTHLY_COMMANDS = 500000;
+// The app's OWN spending cap, enforced here whatever the database provider offers. On pay-as-you-go
+// every 100K commands beyond the free allowance costs $0.20, so 1.5M a month is roughly $2 at most.
+// Normal use sits far below it; only a runaway bug ever reaches it. Raise or lower with
+// KV_MONTHLY_CEILING.
+export const KV_CEILING = Math.max(100000, Number(process.env.KV_MONTHLY_CEILING) || 1500000);
+// Rough cost of a month's commands, counting EVERY command as paid so it can only over-estimate.
+export const kvCostUpTo = (n) => Math.round((Number(n) || 0) / 100000 * 0.2 * 100) / 100;
 
 /**
  * Commands are counted in batches, not one INCRBY per round trip.
@@ -54,8 +60,22 @@ async function send(cmds) {
   return out.map((x) => { if (x.error) throw new Error(x.error); return x.result; });
 }
 
+/**
+ * What this server instance last learned the month's total to be. Every batched flush returns the
+ * running total for free, so this is never more than about fifty commands out of date.
+ */
+let knownTotal = 0;
+let knownMonth = '';
+
 async function run(cmds, count) {
   if (!hasRedis()) throw new Error('The database is not connected. Please contact the app owner.');
+  const month = new Date().toISOString().slice(0, 7);
+  if (knownMonth !== month) { knownMonth = month; knownTotal = 0; }
+  // The cap. Past it, the app stops itself — exactly what a provider's budget cap would do, but
+  // without depending on the provider offering one. It lifts on the 1st, or when the ceiling is raised.
+  if (count && knownTotal >= KV_CEILING) {
+    throw new Error('The app has reached its monthly database budget and has paused itself so the bill stays capped. It starts again on the 1st of next month, or sooner if the owner raises the limit.');
+  }
   let flushing = 0;
   if (count && cmds.length) {
     owed += cmds.length;
@@ -69,7 +89,8 @@ async function run(cmds, count) {
   try { mapped = await send(cmds); }
   catch (e) { if (flushing) owed += flushing - 1; throw e; }
   if (!flushing) return mapped;
-  paceCheck(Number(mapped[mapped.length - 1])).catch(() => {});
+  knownTotal = Number(mapped[mapped.length - 1]) || knownTotal;
+  paceCheck(knownTotal).catch(() => {});
   return mapped.slice(0, -1);
 }
 
@@ -93,15 +114,22 @@ async function paceCheck(total) {
   const elapsed = Math.max(0.25, d.getUTCDate() - 1 + d.getUTCHours() / 24);
   const projected = Math.round((total / elapsed) * daysIn);
   let level = '';
-  if (total >= KV_MONTHLY_COMMANDS * 0.9) level = 'over90';
-  else if (total >= KV_MONTHLY_COMMANDS * 0.7) level = 'over70';
+  // Escalating, each sent once a month: so a runaway late in the month still warns, rather than
+  // being swallowed by a warning already sent on the 2nd.
+  if (total >= KV_CEILING * 0.9) level = 'cap90';
+  else if (total >= KV_CEILING * 0.6) level = 'cap60';
+  else if (total >= KV_MONTHLY_COMMANDS && projected > KV_CEILING * 0.6) level = 'paid-pace';
   else if (total > 25000 && projected > KV_MONTHLY_COMMANDS) level = 'pace';
   if (!level || pacedKey === month + level) return;
   pacedKey = month + level;
   const fmt = (n) => Number(n).toLocaleString('en-US');
-  const text = level === 'pace'
-    ? `The main database is on course to use about ${fmt(projected)} commands this month against its ${fmt(KV_MONTHLY_COMMANDS)} allowance (${fmt(total)} so far). If it runs out, the app stops saving until the month resets. Open System health to see what is using it.`
-    : `The main database has used ${fmt(total)} of its ${fmt(KV_MONTHLY_COMMANDS)} commands this month${level === 'over90' ? ' and is about to run out' : ''}. If it runs out, the app stops saving until the month resets.`;
+  const cost = (n) => `$${kvCostUpTo(n).toFixed(2)}`;
+  const text = {
+    pace: `The main database is on course for about ${fmt(projected)} commands this month (${fmt(total)} so far). The first ${fmt(KV_MONTHLY_COMMANDS)} are free; beyond that it costs $0.20 per 100,000. Open System health to see what is using it.`,
+    'paid-pace': `The main database is past its free ${fmt(KV_MONTHLY_COMMANDS)} commands and on course for about ${fmt(projected)} this month — about ${cost(projected)} at most. The app pauses itself at ${fmt(KV_CEILING)} (about ${cost(KV_CEILING)}).`,
+    cap60: `The main database has used ${fmt(total)} commands this month (about ${cost(total)} at most) — 60% of the app's own cap of ${fmt(KV_CEILING)}. Something may be using far more than normal; open System health.`,
+    cap90: `The main database has used ${fmt(total)} commands this month — 90% of the app's cap. At ${fmt(KV_CEILING)} (about ${cost(KV_CEILING)}) the app pauses itself until the 1st. Raise KV_MONTHLY_CEILING only if you know why it is this high.`,
+  }[level];
   const { alertOwner } = await import('./_queue.js');
   await alertOwner(`cmd-${level}-${month}`, text, { cooldownMs: 20 * 86400000 });
 }
