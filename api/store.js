@@ -8,6 +8,7 @@
 import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, wantsEmail, plainMentions, normEmail, buildId, can, denyUnless } from './_lib.js';
 import { enqueue } from './_queue.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
+import { createBackup } from './_backup.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 
 const FSTATUS = ['open', 'clarification', 'done', 'hold', 'false'];
@@ -243,6 +244,8 @@ export default async function handler(req, res) {
         try {
           const cc = await crossCheck(l.site.findings, l.site.siteId);
           (l.site.findings || []).forEach((f) => { const k = cc.byFinding[f.id]; if (k && (k.comments.length || k.falseAlarms.length)) f.known = k; });
+          // How many comments were searched, so "not mentioned in any comment" can say out of how many.
+          l.site.ccSearched = cc.searched || 0;
         } catch (e) { /* context is a bonus */ }
         // A false alarm reported on THIS item: its status and the admins' verdict ride along, so
         // whoever raised it can follow it from the item itself rather than going hunting.
@@ -369,12 +372,38 @@ export default async function handler(req, res) {
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
         const wasScanned = !!(site.scan && site.scan.finishedAt);
+        // Before the first scan of an audit, a backup of the website in Duda — so whatever the fixes
+        // that follow do, the website as it was handed over can be restored from Site History.
+        // A failed backup is reported, never a reason not to scan.
+        let backup = null;
+        if (b.scan && b.scan.state === 'scanning' && !wasScanned && !(site.backups || []).some((x) => x.auto) && site.siteId) {
+          backup = await createBackup(site.siteId, me, b.stamp);
+          site.backups = [{ name: backup.name, at: now(), by: me.email, byName: me.name, auto: true, ok: backup.ok, error: backup.error || '' }].concat(site.backups || []).slice(0, 20);
+        }
         site.scan = Object.assign({}, site.scan, b.scan || {}); site.updatedAt = now();
         if (b.scan && b.scan.state === 'scanning') { site.scan.startedBy = me.email; site.scan.startedByName = me.name; }
         await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+        if (backup) await log(b.id, me, 'backup', backup.ok ? `backed up the website in Duda before the audit: ${backup.name}` : `tried to back up the website in Duda before the audit, but it failed — ${backup.error}`);
         if (b.scan && b.scan.state === 'scanning') await log(b.id, me, 'scan-start', wasScanned ? 'clicked Rescan (started a rescan)' : 'started the first scan');
         if (b.scan && b.scan.state === 'failed') await log(b.id, me, 'scan', 'scan failed: ' + String(b.scan.error || '').slice(0, 120));
-        return res.status(200).json(await saveIndex(b.id));
+        return res.status(200).json(Object.assign(await saveIndex(b.id), backup ? { backup } : {}));
+      }
+      case 'backup': {
+        // "Back up in Duda" on an audit: the same backup, made by hand, at any time.
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow this.')) return;
+        const [raw] = await redis(['GET', P + 'site:' + b.id]);
+        const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
+        // Two backups in the same minute would share a name, which Duda refuses: number the second.
+        const taken = new Set((site.backups || []).map((x) => x.name));
+        const bk = await createBackup(site.siteId, me, b.stamp, taken);
+        // Re-read: the backup can take a while, and the audit may have been saved meanwhile.
+        const [raw2] = await redis(['GET', P + 'site:' + b.id]);
+        const fresh = unpackJSON(raw2) || site;
+        fresh.backups = [{ name: bk.name, at: now(), by: me.email, byName: me.name, auto: false, ok: bk.ok, error: bk.error || '' }].concat(fresh.backups || []).slice(0, 20);
+        await redis(['SET', P + 'site:' + b.id, packJSON(fresh)]);
+        await log(b.id, me, 'backup', bk.ok ? `backed up the website in Duda: ${bk.name}` : `tried to back up the website in Duda, but it failed — ${bk.error}`);
+        if (!bk.ok) return res.status(502).json({ error: bk.error, name: bk.name });
+        return res.status(200).json({ ok: true, name: bk.name, backups: fresh.backups });
       }
       case 'saveScan': {
         if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;

@@ -252,6 +252,17 @@
         'A business named inside a service\u2019s schema (as the one providing it) is now checked too, along with its phone and address, where before it was missed',
       ],
     },
+    {
+      v: 19,
+      date: '2026-10-07',
+      title: 'Business name spelling, compared letter for letter',
+      items: [
+        'Every mention of the business name in the page text is compared with the spelling in Business Info. "Buff & Beyond" or "Buff and Beyond" where Business Info says "Buff&Beyond" is raised, showing both spellings side by side',
+        'A one-letter typo in a longer name ("Buff&Beyon") is raised as "looks misspelled"',
+        'The name in capitals (usually a heading), curly vs straight apostrophes and possessives ("Buff&Beyond\u2019s") are not counted',
+        'A spelling the client really uses can be approved as correct for that website, and it is never raised again there',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1569,7 +1580,7 @@
 
     // --- Schema (JSON-LD) ---
     const schemas = extractSchema(doc);
-    if (truth.source === 'api') {
+    if (/^api|\+brief/.test(truth.source || '') || truth.source === 'brief') {
       schemas.forEach(({ node, data, biz }) => {
         const tel = data.telephone && normPhone(data.telephone);
         if (tel && tel.length >= 10 && !phoneOk(tel)) add(node, { code: 'SCHEMA_PHONE', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) phone differs from Business Info', found: data.telephone, expected: expectedPhones });
@@ -1907,6 +1918,75 @@
     return p === '/home' ? '/' : p;
   }
 
+
+  // ---------- the business name, written differently ----------
+  /**
+   * Every place the text spells the business name differently from Business Info:
+   * "Buff & Beyond" or "Buff and Beyond" where Business Info says "Buff&Beyond", "buff&beyond",
+   * "Buff&Beyon". Each spelling is compared with the official one, letter for letter, rather than
+   * judged loosely, so a reader sees exactly what differs.
+   *
+   * Not counted: the official spelling itself or another name Business Info carries, the same name in
+   * capitals (usually a heading), curly vs straight apostrophes, a possessive ("Buff&Beyond's"),
+   * and anything inside a web address or an email address.
+   * A one-letter typo is only considered for names of 8+ letters, written with a capital, so
+   * ordinary words that happen to be close are not flagged.
+   */
+  function lev1(a, b) {
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+    return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+  }
+  const nameSkel = (s) => String(s || '').toLowerCase().replace(/[’'`]s\b/g, '').replace(/\s*[&+]\s*/g, ' and ').replace(/[^a-z0-9]/g, '');
+  const quoteNorm = (s) => String(s || '').replace(/[‘’`]/g, "'").replace(/\s+/g, ' ').trim();
+  function nameVariants(textIdx, truth) {
+    const official = quoteNorm(truth && truth.businessName);
+    if (!official) return [];
+    const target = nameSkel(official);
+    if (target.length < 5) return [];
+    const okForms = new Set([official].concat((truth.names || []).map(quoteNorm)).filter(Boolean));
+    const nWords = official.split(/[\s&+]+/).filter(Boolean).length;
+    const maxW = Math.min(8, nWords * 2 + 1);
+    const out = [];
+    (textIdx || []).forEach((x) => {
+      const toks = String(x.text || '').split(/\s+/).filter(Boolean);
+      const seen = new Set();
+      for (let i = 0; i < toks.length; i++) {
+        for (let w = 1; w <= maxW && i + w <= toks.length; w++) {
+          const raw = toks.slice(i, i + w).join(' ');
+          if (/[@/\\]|\.[a-z]{2,}\b/i.test(raw)) continue;          // a web or email address
+          let surf = quoteNorm(raw).replace(/^[^A-Za-z0-9&]+|[^A-Za-z0-9&]+$/g, '').replace(/'s$/i, '');
+          if (!surf) continue;
+          const k = nameSkel(surf);
+          if (!k || k[0] !== target[0]) continue;
+          let typo = false;
+          if (k !== target) {
+            if (target.length < 8 || !/^[A-Z]/.test(surf) || !lev1(k, target)) continue;
+            typo = true;
+          }
+          if (okForms.has(surf)) continue;
+          // Capitals alone: "BUFF&BEYOND" in a heading is styling. For a name of two or more words,
+          // "Joe's auto care" in a sentence is ordinary writing, not a different name, so only a
+          // one-word name ("buff&beyond") counts a change of capitals as a different spelling.
+          const caseOnly = [...okForms].some((o) => o.toLowerCase() === surf.toLowerCase());
+          if (caseOnly && (surf === surf.toUpperCase() || official.split(/\s+/).length >= 2)) continue;
+          // A longer window that merely contains the official spelling ("Buff&Beyond LLC") is not a variant.
+          if ([...okForms].some((o) => surf.includes(o))) continue;
+          if (seen.has(surf)) continue;
+          seen.add(surf);
+          out.push({
+            code: 'NAME_SPELLING', severity: 'warning', category: 'Business name',
+            message: typo ? 'Business name looks misspelled' : 'Business name is written differently from Business Info',
+            found: surf, expected: official, spelling: typo ? 'typo' : 'format',
+            path: x.path, device: x.device, selector: x.selector, location: x.location,
+            visible: !x.hiddenBy, hiddenBy: x.hiddenBy, snippet: cut(x.text, 120),
+          });
+        }
+      }
+    });
+    return out;
+  }
   // ---------- merging ----------
   /** /thank-you, /thanks, /thankyou-quote, /quote-thank-you, /confirmation, /form-success … */
   function isThankYouPath(path) {
@@ -1918,7 +1998,7 @@
     email: ['EMAIL_MISMATCH', 'MAILTO_MISMATCH', 'MAILTO_TEXT_MISMATCH', 'SCHEMA_EMAIL'],
     phone: ['PHONE_MISMATCH', 'TEL_MISMATCH', 'TEL_TEXT_MISMATCH', 'SMS_MISMATCH', 'SCHEMA_PHONE'],
     social: ['SOCIAL_OTHER_BUSINESS', 'SOCIAL_MISMATCH', 'GMB_ID_MISMATCH', 'GMB_ID_ONLY'],
-    name: ['TEXT_OTHER_BUSINESS', 'COPYRIGHT_NAME', 'SCHEMA_NAME', 'MAP_OTHER_BUSINESS', 'MAP_LABEL_OLD'],
+    name: ['TEXT_OTHER_BUSINESS', 'COPYRIGHT_NAME', 'SCHEMA_NAME', 'MAP_OTHER_BUSINESS', 'MAP_LABEL_OLD', 'NAME_SPELLING'],
     font: ['FONT_OFF_SYSTEM', 'FONT_OFF_SYSTEM_MORE', 'FONT_NOT_LOADED', 'FONT_SOURCE_ODD'],
     image: ['IMAGE_DUPLICATE'],
   };
@@ -2356,6 +2436,9 @@
       });
     }
 
+    // The business name spelled some other way
+    nameVariants(textIdx, truth).forEach((f) => raw.push(f));
+
     // The website's typefaces, and the text that doesn't use them
     let fontSys = null;
     if (fontRows.length) {
@@ -2574,6 +2657,6 @@
   global.DudaAudit = {
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

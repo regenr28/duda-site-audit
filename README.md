@@ -235,3 +235,11 @@ Rough monthly total for 5 people auditing daily: about 200–350K commands, and 
 - Duda API credentials only live in Vercel environment variables and are never sent to the browser.
 - Every API endpoint requires a signed-in, admin-approved account. Passwords are hashed (scrypt), and sessions use HttpOnly secure cookies.
 - If your API password was ever shared in chat or a screenshot, rotate it in Duda and update the Vercel variable.
+
+
+## Audit summary, backups and spelling
+
+- **📋 Summary** (`openSummary` / `auditSummary` in `public/app.js`) builds a plain-text report from the loaded audit: coverage from `scan` (pages, external links, images), fixed items (status `done`, excluding `check-corrected`), false alarms, open items, and a spelling comparison from `NAME_SPELLING` items. Contact lines use `f.known.comments[].fromFound` and `site.ccSearched` (returned by `op=site`) to say whether the client's comments mention the value.
+- **Comment cross-check** (`api/_crosscheck.js`) covers phones, emails, business names (squashed: `&`/`and`/spaces/punctuation ignored) and street addresses. Each comment hit carries `fromFound` (it mentions the value the item found, not just the official one).
+- **Backups** (`api/_backup.js`): `POST /sites/multiscreen/backups/{site}/create` with `{ name }`. Name `R8<initials>_b4_audit_<YYYYMMDD>_<HHMM>` in the browser's local time; `_2`, `_3`… if taken. Made automatically by `scanState` before an audit's first scan, and by `store op=backup` on demand. Stored on the site as `backups[]` (last 20) and logged as activity type `backup`. Duda allows 50 manual backups per site.
+- **NAME_SPELLING** (engine `nameVariants`, check release v19): word windows of the page text whose squashed form equals the official name (or is one letter off for names of 8+ letters, capitalised) but whose spelling differs.

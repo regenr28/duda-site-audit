@@ -11,8 +11,9 @@ export const HELP_SECTIONS = [
 <h4>The process in short</h4>
 <ol>
 <li><b>Add</b> a website (paste its site ID or editor link), or pick one from <b>Live DR Sites</b>.</li>
-<li>The app <b>scans</b> it and lists the audit items.</li>
-<li>The team <b>fixes</b> each item in the Duda editor and sets its status (Done, For clarification, On hold or False alarm).</li>
+<li>The app <b>backs the website up in Duda</b>, then <b>scans</b> it and lists the audit items.</li>
+<li>The team <b>fixes</b> each item in the Duda editor and rescans (fixed items close themselves), or sets a status by hand (Done, For clarification, On hold or False alarm).</li>
+<li><b>📋 Summary</b> writes up what was found and fixed for the group chat.</li>
 <li>When every item is closed, <b>publish</b> the site in Duda.</li>
 <li>Click <b>🌐 Verify on live site</b> to confirm the fixes are really live.</li>
 <li>Set the website's status to <b>Complete</b>.</li>
@@ -78,7 +79,25 @@ export const HELP_SECTIONS = [
 <ul>
 <li>Under the name: the site ID and when it was <b>last published</b> in Duda.</li>
 <li><b>Open editor ↗</b>: the Duda editor. <b>Live site ↗</b>: the published website visitors see. <b>Draft preview ↗</b>: the editor's current version, including changes that aren't published yet (this is what scans read).</li>
-<li><b>Export CSV</b> downloads the audit items. <b>Rescan</b> scans the draft again.</li>
+<li><b>📋 Summary</b> writes a short note for the group chat (see below). <b>Export CSV</b> downloads the audit items. <b>Rescan</b> scans the draft again.</li>
+<li><b>💾 Backup</b> (under the last scan): the latest backup of the website made from here, and <b>Back up now</b> to make another.</li>
+</ul>
+<h4>Summary for the group chat</h4>
+<p><b>📋 Summary</b> on a website's page writes a plain-text note of the audit, ready to paste into Slack or Google Chat:</p>
+<ul>
+<li><b>What the app checked</b>: how many pages, on which devices, how many links and images, and that every contact detail was compared with Business Info (and the client's brief, if there is one) and cross-checked with the client's comments.</li>
+<li><b>Fixed</b>: every critical item in a sentence, saying how it was checked. For example: <i>Wrong phone number (302) 555-0199 on Home — not in Business Info, and not mentioned in any of the 14 comments on this website ✓</i>. A ✓ means a rescan confirmed it is gone. Smaller fixes are counted by kind.</li>
+<li><b>Business name spelling</b>: Business Info's spelling next to every other way the site wrote it, and whether each was fixed.</li>
+<li><b>Checked and ruled out</b> (false alarms) and <b>Still open</b>.</li>
+<li>Choose <b>Whole audit</b>, <b>Last 24 hours</b> or <b>Last 7 days</b> for the fixes, edit the text if you like, then <b>Copy</b>.</li>
+</ul>
+<h4>Backups in Duda</h4>
+<ul>
+<li>Before the <b>first scan</b> of an audit, the app makes a backup of the website in Duda, named <span class="mono">R8</span> + your initials + <span class="mono">_b4_audit_</span> + the date and time, e.g. <span class="mono">R8RR_b4_audit_20261007_0930</span>. Rescans don't make more.</li>
+<li><b>Back up now</b> makes one at any time. Two in the same minute get <span class="mono">_2</span> on the end.</li>
+<li>Backups live in Duda, not here. To restore one, open the editor and use <b>Site History</b>.</li>
+<li>Duda keeps at most <b>50</b> manual backups per website. When it's full, the app says so; delete old ones in Site History.</li>
+<li>If a backup fails, the scan still runs, and the page says why.</li>
 </ul>
 <h4>Website statuses</h4>
 <ul>
@@ -490,7 +509,8 @@ export const HELP_SECTIONS = [
 <li><b>Favicon</b> and <b>home screen icon</b> missing. Both are settings for the <b>whole website</b>, so they're judged once: if any page on any device carries one, nothing is reported, and when there genuinely isn't one you get a single item rather than one per page. (Duda serves the mobile version as separate HTML that usually leaves the favicon link out, which is why this has to be settled across the whole website rather than page by page.)</li>
 <li><b>Mixed content</b>: images, scripts or stylesheets loaded over http:// on an https:// website.</li>
 <li><b>Contact info</b>: phone numbers and click-to-call links (including buttons that show one number but dial another), email links, addresses, Google Map embeds pointing to another business. <b>A map embed is judged by its place ID, not by the name in the link</b>: Google draws the pin and its current name from that ID, and the name sitting in the link is only a label from the day somebody made it, never shown to visitors. So a pin in the client's own town under an old name is <b>info</b> — a renamed Google listing, nothing to fix, and you can mark the old name correct for the website so it never returns. A pin in a different town is a <b>warning</b> to open and check. A map with no place ID at all is <b>critical</b>, because there the name really is what chooses the pin.</li>
-<li><b>Business name</b>: another shop's name left over from a template, name written differently.</li>
+<li><b>Business name</b>: another shop's name left over from a template. <b>Spelling</b>: every mention of the name in the page text is compared letter for letter with Business Info. "Buff &amp; Beyond" or "Buff and Beyond" where Business Info says "Buff&amp;Beyond" is a <b>warning</b> showing both spellings; a one-letter slip in a longer name ("Buff&amp;Beyon") is raised as <b>looks misspelled</b>. Not counted: the name in capitals, curly vs straight apostrophes, a possessive ("Buff&amp;Beyond's"), web and email addresses, and (for a name of two or more words) capitals alone. If the client really uses a spelling, approve it as correct for that website.</li>
+<li><b>Cross-checked with comments</b>: before a phone number, email, address or business name is called wrong, the client's comments on that website in Duda are searched for it. A comment that mentions it is shown on the item, and an item nobody has touched is moved to <b>For clarification</b>. The same value marked a False alarm on another website is shown too.</li>
 <li><b>Social</b>: links to another business's profiles, generic links that don't point to a profile. A Google Maps link that carries only a place ID (<code>data=!4m2!…</code>) can't be read by name, so it's only a note asking you to open it, or a warning when it's a different place than Business Info — never "another business". "Share this page" buttons on blog posts are ignored.</li>
 <li><b>Links</b>: broken internal pages, broken external links, insecure http:// links, links with no readable text.</li>
 <li><b>Images / Alt</b>: missing or placeholder alt text, alt text naming another business, broken images. The site's own logo is checked; brand/partner logos are accepted. <b>Our own footer badge is skipped entirely</b> — an image inside <span class="mono">id="footer-logo"</span> (or <span class="mono">agency-logo</span> / <span class="mono">credit-logo</span>) is the agency's logo, not the client's image, so it raises no alt item, isn't sent to the AI, and isn't counted as a repeated photo.</li>

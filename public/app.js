@@ -2386,7 +2386,9 @@
     delete state.skipAI[id];
     const startedAt = new Date().toISOString();
     state.scanning[id] = { done: 0, total: 0, message: 'Reading Business Info…' };
-    upsertSummary(await store({ op: 'scanState', id, scan: { state: 'scanning', startedAt, error: '' } })); render();
+    const st0 = await store({ op: 'scanState', id, stamp: backupStamp(), scan: { state: 'scanning', startedAt, error: '' } });
+    upsertSummary(st0); render();
+    if (st0 && st0.backup) toast(st0.backup.ok ? `Backed up in Duda first: ${st0.backup.name}` : `Couldn't back up in Duda: ${st0.backup.error}`);
     const log = [];
     try {
       let meta = null;
@@ -3886,13 +3888,14 @@
           <div class="muted small"><span class="mono">${esc(s.siteId)}</span> · <span id="sitePub">${sitePubHtml(s)}</span></div>
           <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtFull(s.createdAt)) : ''}</div>
           ${s.completedAt ? `<div class="small"><span class="badge scan-complete">✓ Marked Complete</span> by <button type="button" class="whobtn" data-who="${esc(s.completedBy || '')}"><b>${esc(nameOf(s.completedBy, s.completedByName))}</b></button> · ${esc(fmtFull(s.completedAt))}${sc.finishedAt && new Date(sc.finishedAt) > new Date(s.completedAt) ? ` <span class="v-still-t">· rescanned since (${esc(fmtFull(sc.finishedAt))})</span>` : ''}</div>` : ''}
-          <div class="last-scan">${sc.finishedAt ? `🕑 Last scan: <b>${esc(fmtFull(sc.finishedAt))}</b>${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}` : '🕑 Not scanned yet'}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</div><div id="roomBar">${roomBarHtml()}</div></div>
+          <div class="last-scan">${sc.finishedAt ? `🕑 Last scan: <b>${esc(fmtFull(sc.finishedAt))}</b>${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}` : '🕑 Not scanned yet'}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</div>${backupLine(s)}<div id="roomBar">${roomBarHtml()}</div></div>
         <div class="head-actions">
           <span class="member-select">${avatar(s.assignee)}<select id="sAssign">${userOptions(s.assignee)}</select></span>
           <select class="pill st-${slug(s.status)}" id="sStatus">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
           <a class="btn" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
           <span id="liveBtn">${liveBtnHtml(s)}</span>
           <a class="btn" href="https://${esc(linkHost(s))}/preview/${esc(s.siteId)}" target="_blank" rel="noopener" title="The editor's current version, including changes that aren't published yet">Draft preview ↗</a>
+          <button class="btn" id="sSum" ${findings.length ? '' : 'disabled'} title="What was checked, fixed and left — ready to paste in the group chat">📋 Summary</button>
           <button class="btn" id="sCsv" ${findings.length ? '' : 'disabled'}>Export CSV</button>
           ${otherClaim(s.id) && !live ? `<button class="btn primary" id="sRescan" disabled title="Only one scan of a website runs at a time">${esc(claimText(otherClaim(s.id)))}</button>` : `<button class="btn primary" id="sRescan" ${live ? 'disabled' : ''}>${live ? (live.queued ? 'Queued…' : 'Scanning…') : 'Rescan'}</button>`}
         </div>
@@ -3910,6 +3913,12 @@
     $('#sRescan').onclick = () => requestScan([s.id]);
     loadPubInfo(s);
     $('#sCsv').onclick = () => exportCsv(s);
+    $('#sSum').onclick = () => openSummary(s);
+    if ($('#sBackup')) $('#sBackup').onclick = async (e) => {
+      const btn = e.target; btn.disabled = true; btn.textContent = 'Backing up…';
+      try { const r = await store({ op: 'backup', id: s.id, stamp: backupStamp() }); toast('Backed up in Duda: ' + r.name); await loadSite(s.id); renderSite(); }
+      catch (err) { toast(err.message); await loadSite(s.id); renderSite(); }
+    };
     const body = $('#tabBody');
     state.renderedTab = r.tab;
     if (r.tab === 'comments') renderCommentsTab(body, s);
@@ -4006,6 +4015,18 @@
       .finally(() => { if (state.current && state.current.id === s.id) refreshVerifyPanel(s); });
   }
   /** "Last published …" for the site header: Duda's answer when loaded, else the Live DR Sites list. */
+  /** Local date and time as YYYYMMDD_HHMM, for backup names people read in their own time zone. */
+  function backupStamp() {
+    const d = new Date(); const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+  }
+  /** The latest backup made from this app, and a button to make another. */
+  function backupLine(s) {
+    const last = (s.backups || [])[0];
+    const btn = can('site.scan') && s.siteId ? ` <button class="linkbtn" id="sBackup" title="Make a backup of the website in Duda now. It appears in the editor under Site History, where it can be restored.">Back up now</button>` : '';
+    if (!last) return `<div class="small faint">💾 No backup made from here yet — one is made automatically before the first scan.${btn}</div>`;
+    return `<div class="small ${last.ok ? 'faint' : 'v-still-t'}">💾 ${last.ok ? `Backup in Duda: <span class="mono">${esc(last.name)}</span>` : `Backup failed (${esc(last.error || 'unknown')})`} · ${esc(last.byName || nameOf(last.by))} · ${esc(fmtFull(last.at))}${btn}</div>`;
+  }
   function sitePubHtml(s) {
     const pd = (pubInfo[s.id] || {}).d;
     const lx = liveOf(s.siteId);
@@ -4508,7 +4529,7 @@
         </span></div>
         <div class="grid-2" ${state.refTab === 'info' || !state.refTab ? '' : 'hidden'}>
           <div class="panel panel-pad">
-            <h2>Reference: Business Info <span class="badge ${t.source === 'api' ? 'scan-complete' : 'sev-warning'}">${t.source === 'api' ? 'From Duda API' : t.source === 'schema' ? 'Fallback: site schema' : 'Not loaded yet'}</span></h2>
+            <h2>Reference: Business Info <span class="badge ${/^api|brief/.test(t.source || '') ? 'scan-complete' : 'sev-warning'}">${t.source === 'api' ? 'From Duda API' : /brief/.test(t.source || '') ? 'Client\u2019s brief + Duda' : t.source === 'schema' ? 'Fallback: site schema' : 'Not loaded yet'}</span></h2>
             <div class="truth">
               <div><div class="k">Business name</div><div class="v">${vals(s, 'name', t.names || [], (x) => x)}</div></div>
               <div><div class="k">Phone</div><div class="v">${vals(s, 'phone', t.phones || [], A.fmtPhone)}</div></div>
@@ -5127,6 +5148,149 @@
     (s.findings || []).slice().sort((a, b) => a.num - b.num).forEach((f) => rows.push(['#' + f.num, FLABEL[f.status], f.severity, f.category, f.path, (f.pages || []).slice(1).join(' '), f.location, (f.visibleOn || []).map((d) => A.DEVICE_LABEL[d]).join('/') || 'Hidden', f.selector, f.message, f.found, f.expected, nameOf(effWho(f, s), ''), f.comments || 0]));
     const blob = new Blob([rows.map((r) => r.map(q).join(',')).join('\n')], { type: 'text/csv' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `audit-${slug(s.businessName || s.siteId)}.csv`; a.click();
+  }
+
+
+  // =====================================================================
+  // AUDIT SUMMARY — a note for the group chat
+  // =====================================================================
+  /*
+   * What happened on one audit, in words a reader outside the app understands: what was looked at,
+   * what was found and fixed (critical items one by one, the rest counted), and how each contact
+   * detail was checked — against Business Info, the client's brief and the client's own comments.
+   * Plain text with *bold*, which reads the same in Slack and Google Chat.
+   */
+  const SUM_NAME = /^(TEXT_OTHER_BUSINESS|COPYRIGHT_NAME|SCHEMA_NAME|MAP_OTHER_BUSINESS|MAP_LABEL_OLD|AI_TEXT_OTHER_BUSINESS)$/;
+  const SUM_PHONE = /^(TEL_|PHONE_|SMS_|SCHEMA_PHONE)/;
+  const SUM_EMAIL = /^(MAILTO_|EMAIL_|SCHEMA_EMAIL)/;
+  const SUM_ADDR = /^(SCHEMA_ADDRESS|MAP_ADDRESS|ADDRESS_)/;
+  const SUM_CROSS = /^(TEL_|PHONE_|SMS_|SCHEMA_PHONE|MAILTO_|EMAIL_|SCHEMA_EMAIL|SCHEMA_ADDRESS|MAP_ADDRESS|ADDRESS_|TEXT_OTHER_BUSINESS|COPYRIGHT_NAME|SCHEMA_NAME|MAP_OTHER_BUSINESS|MAP_LABEL_OLD|NAME_SPELLING|AI_TEXT_OTHER_BUSINESS|AI_TEXT_NAME_VARIANT)/;
+  const sumWhere = (f) => {
+    const p = (x) => (x === '/' ? 'Home' : x);
+    const pages = f.pages && f.pages.length ? f.pages : [f.path || '/'];
+    return pages.length > 1 ? `${p(pages[0])} + ${pages.length - 1} more page${pages.length === 2 ? '' : 's'}` : p(pages[0]);
+  };
+  const sumPhone = (x) => { const m = String(x || '').match(/(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?\d{3}[\s.-]?\d{4}/); if (!m) return ''; const d = m[0].replace(/\D/g, '').slice(-10); return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`; };
+  const sumEmail = (x) => (String(x || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [''])[0];
+  const sumCut = (x, n) => { const t = String(x || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+  /** How a contact value was cross-checked, in a few words. */
+  function sumChecked(s, f) {
+    if (!SUM_CROSS.test(f.code || '')) return '';
+    const brief = /brief/.test((s.truth && s.truth.source) || '');
+    const ref = brief ? 'Business Info or the client’s brief' : 'Business Info';
+    const said = ((f.known && f.known.comments) || []).filter((c) => c.fromFound !== false);
+    if (said.length) return `not in ${ref}; the client mentioned it in a comment`;
+    const n = s.ccSearched || 0;
+    return n ? `not in ${ref}, and not mentioned in any of the ${n} comment${n === 1 ? '' : 's'} on this website` : `not in ${ref} (no comments on this website to check against)`;
+  }
+  /** One audit item as a sentence a non-technical reader follows. */
+  function sumLine(s, f) {
+    const where = sumWhere(f);
+    const why = sumChecked(s, f);
+    const tail = why ? ` — ${why}` : '';
+    const code = String(f.code || '');
+    if (SUM_NAME.test(code)) {
+      // A copyright line is mostly not the name: "© 2025 Sample Auto Spa. All rights reserved." → "Sample Auto Spa".
+      const bare = String(f.found || '').replace(/\u00a9|\(c\)|copyright/gi, '').replace(/\b(19|20)\d{2}\b/g, '').replace(/all rights reserved\.?/i, '').replace(/^[\s.,|\u2013\u2014-]+|[\s.,|\u2013\u2014-]+$/g, '');
+      const n = f.foreignName || sumCut(bare || f.found, 60);
+      return `Different business name "${n}" on ${where} (should be "${f.expected || s.businessName || ''}")${tail}`;
+    }
+    if (code === 'NAME_SPELLING' || code === 'AI_TEXT_NAME_VARIANT') return `Business name spelled "${sumCut(f.found, 50).replace(/^"|"$/g, '')}" on ${where} — Business Info spells it "${f.expected}"`;
+    if (SUM_PHONE.test(code)) return `Wrong phone number ${sumPhone(f.found) || sumCut(f.found, 40)} on ${where}${tail}`;
+    if (SUM_EMAIL.test(code)) return `${code === 'MAILTO_INVALID' ? 'Broken email link' : 'Wrong email ' + (sumEmail(f.found) || sumCut(f.found, 40))} on ${where}${code === 'MAILTO_INVALID' ? '' : tail}`;
+    if (SUM_ADDR.test(code)) return `Wrong address "${sumCut(f.found, 60)}" on ${where}${tail}`;
+    if (code === 'LINK_BROKEN_INTERNAL') return `Link to a page that doesn't exist (${sumCut(f.found, 50)}) on ${where}`;
+    if (/^LINK_/.test(code)) return `${f.message}${f.found ? ' (' + sumCut(f.found, 50) + ')' : ''} on ${where}`;
+    return `${f.message}${f.found && String(f.found).length < 70 ? ': ' + sumCut(f.found, 60) : ''} on ${where}`;
+  }
+  function auditSummary(s, opt = {}) {
+    const since = opt.since ? Date.now() - opt.since : 0;
+    const when = (f) => Date.parse((f.gone && f.gone.at) || f.statusAt || '') || 0;
+    const all = (s.findings || []).filter((f) => !/^AI_PENDING/.test(f.code || ''));
+    const corrected = (f) => (f.gone && f.gone.why === 'check-corrected') || (f.auto && f.auto.why === 'check-corrected');
+    const fixed = all.filter((f) => f.status === 'done' && !corrected(f) && (!since || when(f) >= since));
+    const falseAl = all.filter((f) => f.status === 'false' && (!since || when(f) >= since));
+    const cleared = all.filter((f) => f.status === 'done' && corrected(f) && (!since || when(f) >= since));
+    const open = all.filter((f) => !f.gone && ['open', 'hold'].includes(f.status));
+    const clar = all.filter((f) => !f.gone && f.status === 'clarification');
+    const sc = s.scan || {};
+    const pd = (pubInfo[s.id] || {}).d || {};
+    const lx = liveOf(s.siteId) || {};
+    const domain = pd.domain || lx.domain || (s.verify && s.verify.domain) || '';
+    const scans = (s.activity || []).filter((a) => a.type === 'scan' && /completed a scan/.test(a.text || '')).length;
+    const brief = /brief/.test((s.truth && s.truth.source) || '');
+    const L = [];
+    L.push(`*Audit summary — ${s.businessName || s.siteId}*${domain ? ' (' + domain + ')' : ''}`);
+    L.push(`Audited by ${nameOf(s.assignee || sc.by || s.addedBy, 'the team')}${scans ? ` · ${scans} scan${scans === 1 ? '' : 's'}` : ''}${sc.finishedAt ? ` · last scan ${fmtFull(sc.finishedAt)}` : ''}${since ? ` · changes in the last ${opt.sinceLabel}` : ''}`);
+    L.push('');
+    L.push('*What the app checked*');
+    if (sc.pages) L.push(`• ${sc.pages} page${sc.pages === 1 ? '' : 's'}, each on desktop, tablet and mobile${sc.externalLinks ? `, plus ${sc.externalLinks} outside links` : ''}${sc.images ? ` and ${sc.images} images` : ''}`);
+    L.push(`• Every phone number, email, address and business name on the site compared with ${brief ? 'Business Info and the client’s brief' : 'Business Info in Duda'}, including the hidden code Google reads`);
+    L.push(`• Anything that didn’t match was cross-checked against the client’s own comments on this website${s.ccSearched ? ` (${s.ccSearched} comment${s.ccSearched === 1 ? '' : 's'})` : ''} before being called wrong`);
+    L.push('• Business name spelling, broken links, SEO titles and descriptions, image alt text, fonts, repeated photos, forms and social links');
+    L.push('');
+    const crit = fixed.filter((f) => f.severity === 'critical' || f.severity === 'outdated');
+    const rest = fixed.filter((f) => !(f.severity === 'critical' || f.severity === 'outdated'));
+    if (fixed.length) {
+      const rescanned = fixed.filter((f) => f.gone && f.gone.why === 'gone').length;
+      L.push(`*Fixed — ${fixed.length} item${fixed.length === 1 ? '' : 's'}${crit.length ? `, ${crit.length} critical` : ''}*${rescanned ? ` (${rescanned} confirmed gone by a rescan)` : ''}`);
+      crit.sort((a, b) => a.num - b.num).slice(0, opt.max || 15).forEach((f) => L.push(`• ${sumLine(s, f)}${f.gone && f.gone.why === 'gone' ? ' ✓' : ''}`));
+      if (crit.length > (opt.max || 15)) L.push(`• …and ${crit.length - (opt.max || 15)} more critical items`);
+      if (rest.length) {
+        const by = {}; rest.forEach((f) => { by[f.category || 'Other'] = (by[f.category || 'Other'] || 0) + 1; });
+        L.push(`• Also fixed: ${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} (${n})`).join(', ')}`);
+      }
+    } else L.push(since ? '*Fixed* — nothing in this period' : '*Fixed* — nothing yet');
+    // Spelling, as a comparison: what Business Info says against every other way the site writes it.
+    const sp = all.filter((f) => f.code === 'NAME_SPELLING' && f.status !== 'false');
+    if (sp.length) {
+      const by = {};
+      sp.forEach((f) => { const v = by[f.found] || (by[f.found] = { n: 0, items: 0, done: 0 }); v.n += (f.pages && f.pages.length) || 1; v.items++; if (f.status === 'done') v.done++; });
+      L.push('');
+      L.push('*Business name spelling*');
+      L.push(`\u2022 Business Info spells it: "${sp[0].expected}"`);
+      Object.entries(by).forEach(([k, v]) => L.push(`\u2022 The site had: "${k}" \u2014 ${v.n} place${v.n === 1 ? '' : 's'} (${v.done === v.items ? 'fixed' : v.done ? `${v.done} of ${v.items} fixed` : 'still to fix'})`));
+    }
+    if (falseAl.length || cleared.length) {
+      L.push('');
+      L.push(`*Checked and ruled out — ${falseAl.length + cleared.length}*${falseAl.length ? ` (${falseAl.length} looked wrong but were confirmed correct for this client)` : ''}`);
+    }
+    L.push('');
+    if (open.length || clar.length) {
+      const oc = open.filter((f) => f.severity === 'critical');
+      L.push(`*Still open — ${open.length}${oc.length ? ` (${oc.length} critical)` : ''}*`);
+      oc.sort((a, b) => a.num - b.num).slice(0, 5).forEach((f) => L.push(`• ${sumLine(s, f)}`));
+      if (oc.length > 5) L.push(`• …and ${oc.length - 5} more critical`);
+      const minor = open.filter((f) => f.severity !== 'critical');
+      if (minor.length) {
+        const by = {}; minor.forEach((f) => { by[f.category || 'Other'] = (by[f.category || 'Other'] || 0) + 1; });
+        L.push(`\u2022 ${oc.length ? 'Also to do' : 'To do'}: ${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} (${n})`).join(', ')}`);
+      }
+      if (clar.length) L.push(`• ${clar.length} waiting on the client to confirm`);
+    } else L.push('*Still open* — nothing. ✅');
+    return L.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  function openSummary(s) {
+    const ranges = [['', 'Whole audit', 0], ['1d', 'Last 24 hours', 86400000], ['7d', 'Last 7 days', 7 * 86400000]];
+    modal(`<header><h2>Summary for the group chat</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <div class="small muted">What was checked, what was fixed and what is left, in plain words. Edit anything before copying.</div>
+        <div class="two-up" style="margin-top:8px">
+          <label class="field">Fixes from<select id="smRange">${ranges.map((r) => `<option value="${r[0]}">${r[1]}</option>`).join('')}</select></label>
+          <label class="field">Critical items listed<select id="smMax"><option value="10">Up to 10</option><option value="15" selected>Up to 15</option><option value="40">Up to 40</option></select></label>
+        </div>
+        <textarea id="smText" rows="18" class="mono small" style="width:100%"></textarea>
+      </div>
+      <footer><span class="small faint" id="smNote"></span><span class="spacer"></span><button class="btn primary" id="smCopy">Copy</button></footer>`);
+    const draw = () => {
+      const r = ranges.find((x) => x[0] === $('#smRange').value) || ranges[0];
+      $('#smText').value = auditSummary(s, { since: r[2], sinceLabel: r[1].replace(/^Last /, '').toLowerCase(), max: Number($('#smMax').value) });
+    };
+    $('#smRange').onchange = draw; $('#smMax').onchange = draw; draw();
+    $('#smCopy').onclick = async () => {
+      try { await navigator.clipboard.writeText($('#smText').value); toast('Copied — paste it in the group chat'); }
+      catch (e) { $('#smText').select(); document.execCommand('copy'); toast('Copied'); }
+    };
   }
 
   // =====================================================================
@@ -5901,6 +6065,8 @@
         <ul>
           <li><b>Contact info:</b> phone numbers, emails, phone buttons that show one number but dial another, map embeds and social links</li>
           <li><b>Other-client leftovers:</b> names, logos, links and copyright lines from a different business</li>
+          <li><b>Business name spelling:</b> every mention compared letter for letter with Business Info</li>
+          <li><b>Cross-checked with the client:</b> before a phone, email, address or name is called wrong, the client\u2019s own comments in Duda are searched for it</li>
           <li><b>Links and images:</b> broken pages, broken links and images, alt text</li>
           <li><b>SEO basics:</b> titles, descriptions, H1s, noindex, placeholder text</li>
           <li><b>Design:</b> text set in a typeface that isn't one of the website's own fonts — read from the design settings, and counting every weight of a font as the same font</li>
@@ -5909,6 +6075,8 @@
       <ol class="steps" style="margin-top:14px">
         <li class="panel"><h3>Add websites</h3><p>Click <b>+ Add website</b>, paste editor links (one per line) and assign someone. Keep the tab open while it scans.</p></li>
         <li class="panel"><h3>Work through audit items</h3><p>Each item has an ID like <b>#12</b>. Click it to set the status (Open, For clarification, Done, On hold, False alarm), reassign it, comment and paste screenshots.</p></li>
+        <li class="panel"><h3>Backed up first</h3><p>Before an audit\u2019s first scan, the website is backed up in Duda (e.g. <span class="mono">R8RR_b4_audit_20261007_0930</span>), so a fix that goes wrong can be undone from <b>Site History</b> in the editor.</p></li>
+        <li class="panel"><h3>Report back</h3><p><b>📋 Summary</b> on any audit writes a short note for the group chat: what was checked, every critical fix in plain words and how it was verified, and what is left.</p></li>
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the top menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
@@ -5921,7 +6089,7 @@
         <table class="help-table"><tbody>
           <tr><td><b>Open</b></td><td>Needs fixing (default).</td></tr>
           <tr><td><b>For clarification</b></td><td>"I have a question before I can fix this." Picking it asks you what the question is and who can answer — type <b>@</b> for a person or <b>@Admins</b> for all of them. Stays in the default list.</td></tr>
-          <tr><td><b>Done</b></td><td>Fixed in the Duda editor. Confirmed later with <b>Verify on live site</b>.</td></tr>
+          <tr><td><b>Done</b></td><td>Fixed in the Duda editor. A rescan closes fixed items by itself and reopens anything marked Done that is still there. Confirmed later with <b>Verify on live site</b>.</td></tr>
           <tr><td><b>On hold</b></td><td>"We know what to do, but it can't be done yet." Waiting on something outside the team (client, domain, approval). Leaves the default list.</td></tr>
           <tr><td><b>False alarm</b></td><td>Not actually a problem. Add a reason to help improve the checks. Skipped by the live check.</td></tr>
         </tbody></table>

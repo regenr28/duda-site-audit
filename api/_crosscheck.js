@@ -12,18 +12,34 @@
 import { redis, P, jparse, unescapeHtml, listUsers, slackRoster } from './_lib.js';
 import { sideTest, dudaTypes } from './comments.js';
 
-const CONTACT_CODES = /^(TEL_|PHONE_|MAILTO_|EMAIL_|SMS_|COPYRIGHT_NAME|TEXT_OTHER_BUSINESS|SCHEMA_(PHONE|EMAIL|NAME|ADDRESS)|MAP_ADDRESS|SOCIAL_)/;
+const CONTACT_CODES = /^(TEL_|PHONE_|MAILTO_|EMAIL_|SMS_|COPYRIGHT_NAME|TEXT_OTHER_BUSINESS|NAME_SPELLING|SCHEMA_(PHONE|EMAIL|NAME|ADDRESS)|MAP_(ADDRESS|OTHER_BUSINESS|LABEL_OLD)|ADDRESS_|SOCIAL_|AI_TEXT_(OTHER_BUSINESS|NAME_VARIANT))/;
+const NAME_CODES = /^(COPYRIGHT_NAME|TEXT_OTHER_BUSINESS|NAME_SPELLING|SCHEMA_NAME|MAP_OTHER_BUSINESS|MAP_LABEL_OLD|AI_TEXT_(OTHER_BUSINESS|NAME_VARIANT))$/;
+const ADDRESS_CODES = /^(SCHEMA_ADDRESS|MAP_ADDRESS|ADDRESS_)/;
+const squash = (s) => String(s || '').toLowerCase().replace(/[’'`]s\b/g, '').replace(/\s*[&+]\s*/g, ' and ').replace(/[^a-z0-9]/g, '');
 const MAX_PER_ITEM = 3;
 
 /** The values worth searching for in a finding: phone digits, email addresses, quoted names. */
 export function valuesOf(f) {
-  const hay = [f.found, f.expected, f.snippet].filter(Boolean).join(' ');
   const out = [];
+  // What the item FOUND comes first and is marked as such: a comment mentioning the number on the
+  // page is about that number, while one mentioning the official number is only related.
+  const fromFound = (x) => String(f.found || '').replace(/[^\d]/g, '').includes(x) || String(f.found || '').toLowerCase().includes(x);
+  // Names and addresses: the text that was found, squashed so "Buff & Beyond" and "buff and beyond"
+  // are the same thing. Only for items about a name or an address.
+  if (NAME_CODES.test(f.code || '')) {
+    const n = squash(f.foreignName || f.found);
+    if (n.length >= 5 && n.length <= 40) out.push({ kind: 'name', v: n, src: 'found' });
+  }
+  if (ADDRESS_CODES.test(f.code || '')) {
+    const st = String(f.found || '').match(/\b(\d{2,6})\s+([A-Za-z][A-Za-z]+)/);
+    if (st) out.push({ kind: 'street', v: st[1] + ' ' + st[2].toLowerCase(), src: 'found' });
+  }
+  const hay = [f.found, f.expected, f.snippet].filter(Boolean).join(' ');
   // A bounded pattern, not a greedy run of digits and punctuation: "(443) 736-2070 (302) 317-2793"
   // is two numbers, and a loose pattern swallows them into one and loses the first.
   (hay.match(/(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g) || [])
-    .forEach((x) => { const d = x.replace(/\D/g, '').slice(-10); if (d.length === 10 && !out.some((o) => o.v === d)) out.push({ kind: 'phone', v: d }); });
-  (hay.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).forEach((x) => { const e = x.toLowerCase(); if (!out.some((o) => o.v === e)) out.push({ kind: 'email', v: e }); });
+    .forEach((x) => { const d = x.replace(/\D/g, '').slice(-10); if (d.length === 10 && !out.some((o) => o.v === d)) out.push({ kind: 'phone', v: d, src: fromFound(d) ? 'found' : 'other' }); });
+  (hay.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).forEach((x) => { const e = x.toLowerCase(); if (!out.some((o) => o.v === e)) out.push({ kind: 'email', v: e, src: fromFound(e) ? 'found' : 'other' }); });
   return out.slice(0, 6);
 }
 
@@ -31,6 +47,8 @@ export function valuesOf(f) {
 function mentions(text, val) {
   const t = String(text || '');
   if (val.kind === 'email') return t.toLowerCase().includes(val.v);
+  if (val.kind === 'name') return squash(t).includes(val.v);
+  if (val.kind === 'street') return t.toLowerCase().replace(/\s+/g, ' ').includes(val.v);
   const digits = t.replace(/[^\d]/g, '');
   return digits.includes(val.v);
 }
@@ -41,7 +59,7 @@ function mentions(text, val) {
  */
 export async function crossCheck(findings, dudaSiteId) {
   const wanted = (findings || []).filter((f) => CONTACT_CODES.test(f.code || ''));
-  if (!wanted.length) return { byFinding: {} };
+  if (!wanted.length) return { byFinding: {}, searched: 0 };
 
   const values = new Map();          // "phone:3023172793" → [findingId]
   wanted.forEach((f) => {
@@ -50,7 +68,8 @@ export async function crossCheck(findings, dudaSiteId) {
       (values.get(k) || values.set(k, { val: v, ids: [] }).get(k)).ids.push(f.id);
     });
   });
-  if (!values.size) return { byFinding: {} };
+  if (!values.size) return { byFinding: {}, searched: 0 };
+  let searched = 0;
 
   const out = {};
   const put = (id, key, row) => {
@@ -71,12 +90,13 @@ export async function crossCheck(findings, dudaSiteId) {
       const isClient = sideTest(await listUsers(), overrides, await slackRoster(), await dudaTypes(authors, 6));
       threads.forEach((t) => {
         (t.comments || []).filter((c) => !c.deleted).forEach((c) => {
+          searched++;
           const text = unescapeHtml(c.text || '');
           values.forEach(({ val, ids }) => {
             if (!mentions(text, val)) return;
             ids.forEach((id) => put(id, 'comments', {
               ref: t.u + ':' + (c.u || c.at), conv: t.u, num: t.num || 0, at: c.at, by: c.by || '',
-              text: String(text).slice(0, 220), status: t.status || 'open', client: isClient(c.by) === 'client',
+              text: String(text).slice(0, 220), status: t.status || 'open', client: isClient(c.by) === 'client', fromFound: val.src === 'found',
             }));
           });
         });
@@ -96,7 +116,7 @@ export async function crossCheck(findings, dudaSiteId) {
     }
   } catch (e) { /* likewise */ }
 
-  return { byFinding: out };
+  return { byFinding: out, searched };
 }
 
 /** Remember a value that was marked a False alarm, so the next audit can say so. */

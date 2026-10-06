@@ -4,6 +4,18 @@
 
 export const NEWS = [
   {
+    id: '2026-10-07-summary', date: '2026-10-07', audience: 'all', tag: 'Audits',
+    title: 'A summary for the group chat, a backup before every audit, and business-name spelling',
+    what: '<b>📋 Summary.</b> Every audit now writes its own short report: what the app checked, every critical item that was fixed in a plain sentence, how each one was verified, and what is still left. Paste it straight into Slack or Google Chat. For example:<br><i>Wrong phone number (302) 555-0199 on Home — not in Business Info, and not mentioned in any of the 14 comments on this website ✓</i><br>The ✓ means a rescan confirmed it is gone.<br><br><b>Contact details are cross-checked with the client\u2019s comments.</b> This already happened for phone numbers and emails. It now covers <b>business names and addresses</b> too, and the summary says what it found: \u201cthe client mentioned it in a comment\u201d or \u201cnot mentioned in any of the N comments\u201d.<br><br><b>Business-name spelling, compared.</b> Every mention of the name is compared letter for letter with Business Info. \u201cBuff & Beyond\u201d or \u201cBuff and Beyond\u201d where Business Info says \u201cBuff&Beyond\u201d is raised, and the summary lists every spelling the site used next to the official one.<br><br><b>💾 A Duda backup before the audit.</b> Before the first scan of an audit, the app backs the website up in Duda as <b>R8</b> + your initials + <b>_b4_audit_</b> + date and time, e.g. <b>R8RR_b4_audit_20261007_0930</b>. Restore it from <b>Site History</b> in the editor if a fix goes wrong.',
+    where: [
+      '<b>Walkthrough:</b> open any audit and press <b>📋 Summary</b> next to Export CSV. Pick <b>Whole audit</b> or <b>Last 24 hours</b>, edit if you like, press <b>Copy</b> and paste it in the group chat.',
+      '<b>Backups:</b> under <b>Last scan</b> on an audit\u2019s page you\u2019ll see the latest backup\u2019s name, and <b>Back up now</b> to make another. Duda keeps 50 manual backups per website; the app tells you when that is full.',
+      '<b>Spelling:</b> rescan a website to get the new spelling check. These items are warnings, so critical counts don\u2019t move. If the client really uses a spelling, approve it as correct for that website.',
+      'Also fixed: when a project\u2019s brief is the reference, the structured-data checks were being skipped. They now run.',
+    ],
+    link: '#/help/audits', linkText: 'The Audits page',
+  },
+  {
     id: '2026-10-07-schemaname', date: '2026-10-07', audience: 'all', tag: 'Audits',
     title: 'Service pages no longer get a false \u201cbusiness name differs\u201d item',
     what: 'Every service page was getting a critical <b>\u201cStructured data (JSON-LD) business name differs from Business Info\u201d</b> item, with the service\u2019s own name as what was found (for example <b>Tesla Window Tinting</b>).<br><br><b>What structured data is:</b> a block of code in the page\u2019s head that visitors never see. It tells Google what the page is about. It is <b>not</b> the SEO title. On a service page it describes the service, and the service\u2019s name is meant to be the service, not the business.<br><br><b>What changed:</b> only the entry that describes the business itself has to carry the business name. Services, products, FAQs and articles are named after what they are, and are left alone. A business mentioned <i>inside</i> a service\u2019s schema, as the one providing it, is still checked, along with its phone and address.<br><br>The SEO title is not judged this way either. It is only checked for the business name on the home page, and that is an Info note, never critical.',
