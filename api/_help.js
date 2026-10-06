@@ -496,7 +496,7 @@ export const HELP_SECTIONS = [
 <li><b>Images / Alt</b>: missing or placeholder alt text, alt text naming another business, broken images. The site's own logo is checked; brand/partner logos are accepted. <b>Our own footer badge is skipped entirely</b> — an image inside <span class="mono">id="footer-logo"</span> (or <span class="mono">agency-logo</span> / <span class="mono">credit-logo</span>) is the agency's logo, not the client's image, so it raises no alt item, isn't sent to the AI, and isn't counted as a repeated photo.</li>
 <li><b>Meta / SEO</b>: missing or too long/short titles and descriptions, missing H1, social share image, canonical pointing elsewhere.</li>
 <li><b>noindex</b>: normal pages set to "noindex" are <b>critical</b>. <b>Thank-you / confirmation pages must be noindex</b>; one that isn't is <b>critical</b>.</li>
-<li><b>Schema</b>: structured data that doesn't match Business Info.</li>
+<li><b>Schema</b>: structured data (JSON-LD), the hidden code in a page's head that tells Google about the business. It is not the SEO title. Only the entry describing the business itself is compared with Business Info (name, phone, email, ZIP). Entries for a service, product or FAQ are named after what they are and aren't compared with the business name.</li>
 <li><b>Content</b>: lorem ipsum and template filler, copyright lines from another business.</li>
 </ul>
 <p class="small">Still check by hand: business hours, prices, service areas, form recipients and text inside images.</p>`,

@@ -241,6 +241,17 @@
         'If a closed item shows up again on a later rescan, it reopens',
       ],
     },
+    {
+      v: 18,
+      date: '2026-10-06',
+      title: 'Service and product schema is no longer compared to the business name',
+      fixes: ['SCHEMA_NAME'],
+      fixedWhat: 'The structured data (JSON-LD) check compared EVERY "name" in a page\u2019s schema to the business name. On a service page that name belongs to the service ("Tesla Window Tinting"), a product or an FAQ, not to the business, so every service page got a critical "business name differs" item that was never wrong.',
+      items: [
+        'Only the schema entry that describes the business itself (a local business or organisation) has to carry the business name',
+        'A business named inside a service\u2019s schema (as the one providing it) is now checked too, along with its phone and address, where before it was missed',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1194,18 +1205,27 @@
     return { rows, loaded, theme: themeFonts(doc, resolve).roles };
   }
 
+  /**
+   * Is this JSON-LD object the BUSINESS, or something the business offers? Only the business's own
+   * entry has to carry the business name. A Service, Product, Offer, FAQ or Article is named after
+   * what it is ("Tesla Window Tinting"), and comparing that to the business name is meaningless.
+   */
+  const BUSINESS_TYPE = /(^|\b)(LocalBusiness|Organization|Corporation|AutomotiveBusiness|Auto[A-Z][A-Za-z]*|MotorcycleDealer|MotorcycleRepair|GasStation|ProfessionalService|HomeAndConstructionBusiness|[A-Za-z]*Store|[A-Za-z]*Shop|[A-Za-z]*Contractor|[A-Za-z]*Business)$/;
+  function isBusinessType(t) { return [].concat(t || []).some((x) => BUSINESS_TYPE.test(String(x).replace(/^https?:\/\/schema\.org\//i, ''))); }
   function extractSchema(doc) {
     const out = [];
     doc.querySelectorAll('script[type="application/ld+json"]').forEach((s) => {
       try {
         const j = JSON.parse(s.textContent);
-        const walk = (o) => {
-          if (!o || typeof o !== 'object') return;
-          if (Array.isArray(o)) return o.forEach(walk);
-          if (o['@graph']) walk(o['@graph']);
-          if (o.telephone || o.address || (o.name && o['@type'] && !/WebPage|BreadcrumbList|WebSite/i.test(String(o['@type'])))) out.push({ node: s, data: o });
+        // Nested objects are walked too: a Service page's schema usually names the business one
+        // level down, as its "provider", and that is the part worth checking.
+        const walk = (o, depth) => {
+          if (!o || typeof o !== 'object' || depth > 6) return;
+          if (Array.isArray(o)) return o.forEach((x) => walk(x, depth + 1));
+          if (o.telephone || o.address || (o.name && o['@type'] && !/WebPage|BreadcrumbList|WebSite/i.test(String(o['@type'])))) out.push({ node: s, data: o, biz: isBusinessType(o['@type']) });
+          Object.keys(o).forEach((k) => { if (k !== '@context' && o[k] && typeof o[k] === 'object') walk(o[k], depth + 1); });
         };
-        walk(j);
+        walk(j, 0);
       } catch (e) { /* invalid JSON-LD handled elsewhere */ }
     });
     return out;
@@ -1550,11 +1570,11 @@
     // --- Schema (JSON-LD) ---
     const schemas = extractSchema(doc);
     if (truth.source === 'api') {
-      schemas.forEach(({ node, data }) => {
+      schemas.forEach(({ node, data, biz }) => {
         const tel = data.telephone && normPhone(data.telephone);
         if (tel && tel.length >= 10 && !phoneOk(tel)) add(node, { code: 'SCHEMA_PHONE', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) phone differs from Business Info', found: data.telephone, expected: expectedPhones });
         if (data.email && !emailOk(data.email)) add(node, { code: 'SCHEMA_EMAIL', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) email differs from Business Info', found: data.email, expected: expectedEmails });
-        if (data.name && truth.businessName && !matchesBusiness(data.name, truth)) add(node, { code: 'SCHEMA_NAME', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) business name differs from Business Info', found: data.name, expected: truth.businessName });
+        if (biz && data.name && truth.businessName && !matchesBusiness(data.name, truth)) add(node, { code: 'SCHEMA_NAME', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) business name differs from Business Info', found: data.name, expected: truth.businessName });
         const a = normAddress(data.address);
         if (a && a.zip && truth.addresses.length && !truth.addresses.some((x) => x.zip && x.zip === a.zip)) add(node, { code: 'SCHEMA_ADDRESS', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) ZIP differs from Business Info', found: [a.street, a.city, a.zip].filter(Boolean).join(', '), expected: truth.addresses.map((x) => [x.street, x.city, x.zip].filter(Boolean).join(', ')).join(' | ') });
       });
