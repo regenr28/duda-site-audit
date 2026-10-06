@@ -4152,12 +4152,17 @@
    */
   function dupPlaces(f) {
     const list = f.dupPlaces || [];
-    if (list.length < 2) return '';
-    return `<div class="note known-note"><div class="k">Where this photo is used (${list.length})</div>
-      ${list.map((x) => `<div class="known-row">
+    const links = f.placesKind === 'link';
+    if (!list.length || (!links && list.length < 2)) return '';
+    // A link repeated on every blog post is one element on many pages: each page is its own row,
+    // so every one can be opened and ticked off.
+    const rows = links ? list.flatMap((x) => (x.paths || ['/']).map((p) => Object.assign({}, x, { paths: [p] }))) : list;
+    return `<div class="note known-note"><div class="k">${links ? `Where to find them (${rows.length})` : `Where this photo is used (${list.length})`}</div>
+      ${rows.map((x) => `<div class="known-row">
         <span class="badge subtle">${esc(x.location || '')}</span>
-        <code class="sel">${esc(x.selector)}</code>
-        <span class="faint small">${x.how === 'background' ? 'background image' : 'image'}${x.paths && x.paths.length ? ' · ' + x.paths.slice(0, 4).map(esc).join(', ') + (x.paths.length > 4 ? ` +${x.paths.length - 4}` : '') : ''}</span>
+        ${links ? `<span class="mono small">${esc(x.paths[0])}</span> <code class="sel">${esc(x.selector)}</code>${x.devices && x.devices.length && x.devices.length < 3 ? ` <span class="faint small">${x.devices.map((d) => esc(A.DEVICE_LABEL[d] || d)).join(', ')} only</span>` : ''}`
+          : `<code class="sel">${esc(x.selector)}</code>
+        <span class="faint small">${x.how === 'background' ? 'background image' : 'image'}${x.paths && x.paths.length ? ' · ' + x.paths.slice(0, 4).map(esc).join(', ') + (x.paths.length > 4 ? ` +${x.paths.length - 4}` : '') : ''}</span>`}
         <button class="linkbtn" data-dupsel="${esc(x.selector)}" data-duppath="${esc((x.paths || ['/'])[0])}">👁 Show on page</button>
       </div>`).join('')}</div>`;
   }
@@ -4168,11 +4173,11 @@
    */
   function dupWhereRow(f) {
     const list = f.dupPlaces || [];
-    if (list.length < 2) return '';
+    if (!list.length || (f.placesKind !== 'link' && list.length < 2)) return '';
     const show = list.slice(0, 4);
-    return `<div class="dup-where"><div class="k">Used here</div>${show.map((x) => `<div class="dup-row">
+    return `<div class="dup-where"><div class="k">${f.placesKind === 'link' ? 'Found here' : 'Used here'}</div>${show.map((x) => `<div class="dup-row">
       <button class="linkbtn" data-dupsel="${esc(x.selector)}" data-dupfid="${esc(f.id)}" data-duppath="${esc((x.paths || ['/'])[0])}" title="Open the page with this one highlighted">👁</button>
-      <span class="faint small">${esc(x.location || '')}${x.how === 'background' ? ' background' : ''}</span>
+      <span class="faint small">${esc(x.location || '')}${x.how === 'background' ? ' background' : ''}${x.how === 'link' && x.paths && x.paths.length > 1 ? ` \u00b7 ${x.paths.length} pages` : ''}</span>
       <code class="sel">${esc(x.selector)}</code>
       <span class="mono small">${(x.paths || []).slice(0, 3).map(esc).join(', ')}${(x.paths || []).length > 3 ? ` +${x.paths.length - 3}` : ''}</span>
     </div>`).join('')}${list.length > show.length ? `<div class="faint small">…and ${list.length - show.length} more — open the item to see them all</div>` : ''}</div>`;
@@ -4618,7 +4623,7 @@
       e.stopPropagation();
       const f = s.findings.find((x) => x.id === b.dataset.dupfid); if (!f) return;
       const place = (f.dupPlaces || []).find((x) => x.selector === b.dataset.dupsel) || {};
-      openInspector(s, Object.assign({}, f, { selector: b.dataset.dupsel, path: b.dataset.duppath, pages: place.paths || [b.dataset.duppath], location: place.location || f.location }));
+      openInspector(s, Object.assign({}, f, { selector: b.dataset.dupsel, path: b.dataset.duppath, pages: f.placesKind === 'link' ? [b.dataset.duppath] : (place.paths || [b.dataset.duppath]), location: place.location || f.location }, place.devices && place.devices.length ? { visibleOn: place.devices } : {}));
     }));
     bindSelLinks(body, s);
     bindVerify(body, s);
@@ -4935,8 +4940,8 @@
       </div>
       <div class="dr-body">
         <h2 class="dr-title">${esc(f.message)}</h2>
-        ${f.gone ? `<div class="note ${f.gone.why === 'check-corrected' ? 'known-note' : 'good'}" style="margin:8px 0"><b>${f.gone.why === 'check-corrected' ? 'Closed: the check that raised this was corrected' : '\u2713 Fixed \u2014 no longer on the website'}</b>
-          <div class="small">${f.gone.why === 'check-corrected' ? 'It was never a real problem, so there was nothing to fix.' : 'It was there on the previous scan and gone on this one, so it was closed as Done.'} ${esc(f.gone.byName || nameOf(f.gone.by))} rescanned ${esc(fmtWhen(Date.parse(f.gone.at)))}.</div></div>` : ''}
+        ${f.gone ? `<div class="note ${f.gone.why === 'check-corrected' ? 'known-note' : 'good'}" style="margin:8px 0"><b>${f.gone.why === 'check-corrected' ? 'Closed: the check that raised this was changed' : '\u2713 Fixed \u2014 no longer on the website'}</b>
+          <div class="small">${f.gone.why === 'check-corrected' ? 'The check that raised it was changed, so this item was closed. If it still needs fixing, the changed check raises it again, possibly as one new item instead of several.' : 'It was there on the previous scan and gone on this one, so it was closed as Done.'} ${esc(f.gone.byName || nameOf(f.gone.by))} rescanned ${esc(fmtWhen(Date.parse(f.gone.at)))}.</div></div>` : ''}
         ${!f.gone && f.auto && f.auto.why === 'still-there' ? `<div class="note unk" style="margin:8px 0"><b>\u26A0 Marked Done, but still on the website</b><div class="small">${esc(nameOf(f.auto.ref, 'Someone'))} marked this Done${f.auto.at ? ' on ' + esc(fmtWhen(Date.parse(f.auto.at))) : ''}. ${esc(nameOf(f.statusBy, 'The next rescan'))} rescanned${f.statusAt ? ' on ' + esc(fmtWhen(Date.parse(f.statusAt))) : ''} and it was still there, so it was reopened. If the scan is wrong about it, mark it <b>False alarm</b> instead.</div></div>` : ''}
         ${!f.gone && f.auto && f.auto.why === 'came-back' ? `<div class="note unk" style="margin:8px 0"><b>\u21BA Back on the website</b><div class="small">This was closed as Done on an earlier rescan, then the latest scan found it again, so it was reopened.</div></div>` : ''}
         ${f.manual ? `<div class="small faint">Written by ${esc(nameOf(f.by, f.byName))} · ${esc(fmtWhen(Date.parse(f.at)))}${f.device ? ' · ' + esc(A.DEVICE_LABEL[f.device] || f.device) : ''}</div>` : ''}
@@ -4984,7 +4989,7 @@
     // Each place a repeated photo turns up opens on its own element and its own page.
     $$('[data-dupsel]', d).forEach((b) => (b.onclick = () => {
       const place = (f.dupPlaces || []).find((x) => x.selector === b.dataset.dupsel) || {};
-      openInspector(s, Object.assign({}, f, { selector: b.dataset.dupsel, path: b.dataset.duppath, pages: place.paths || [b.dataset.duppath], location: place.location || f.location }));
+      openInspector(s, Object.assign({}, f, { selector: b.dataset.dupsel, path: b.dataset.duppath, pages: f.placesKind === 'link' ? [b.dataset.duppath] : (place.paths || [b.dataset.duppath]), location: place.location || f.location }, place.devices && place.devices.length ? { visibleOn: place.devices } : {}));
     }));
     if ($('#drAiNow')) $('#drAiNow').onclick = () => aiResume(s.id, true);
     if ($('#drSnip')) $('#drSnip').onclick = () => {
@@ -5175,7 +5180,7 @@
   const sumCut = (x, n) => { const t = String(x || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
   /** How a contact value was cross-checked, in a few words. */
   function sumChecked(s, f) {
-    if (!SUM_CROSS.test(f.code || '')) return '';
+    if (!SUM_CROSS.test(f.code || '') || f.code === 'MAILTO_SHARE_NO_TO' || f.code === 'MAILTO_INVALID') return '';
     const brief = /brief/.test((s.truth && s.truth.source) || '');
     const ref = brief ? 'Business Info or the client’s brief' : 'Business Info';
     const said = ((f.known && f.known.comments) || []).filter((c) => c.fromFound !== false);
@@ -5196,6 +5201,7 @@
       return `Different business name "${n}" on ${where} (should be "${f.expected || s.businessName || ''}")${tail}`;
     }
     if (code === 'NAME_SPELLING' || code === 'AI_TEXT_NAME_VARIANT') return `Business name spelled "${sumCut(f.found, 50).replace(/^"|"$/g, '')}" on ${where} — Business Info spells it "${f.expected}"`;
+    if (code === 'MAILTO_SHARE_NO_TO') { const pg = (f.pages || [f.path]).length; return `${f.message.replace(/ \u2014 .*$/, '')}, on ${pg} page${pg === 1 ? '' : 's'}`; }
     if (SUM_PHONE.test(code)) return `Wrong phone number ${sumPhone(f.found) || sumCut(f.found, 40)} on ${where}${tail}`;
     if (SUM_EMAIL.test(code)) return `${code === 'MAILTO_INVALID' ? 'Broken email link' : 'Wrong email ' + (sumEmail(f.found) || sumCut(f.found, 40))} on ${where}${code === 'MAILTO_INVALID' ? '' : tail}`;
     if (SUM_ADDR.test(code)) return `Wrong address "${sumCut(f.found, 60)}" on ${where}${tail}`;

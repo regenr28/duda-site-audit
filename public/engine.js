@@ -263,6 +263,17 @@
         'A spelling the client really uses can be approved as correct for that website, and it is never raised again there',
       ],
     },
+    {
+      v: 20,
+      date: '2026-10-07',
+      title: 'Share-by-email buttons are back — as one item listing every place',
+      items: [
+        'A share-by-email button with no recipient address is raised again, because it still needs fixing',
+        'Instead of one item per blog post, the website gets ONE item that lists every place, each with its own Show on page',
+        'The item keeps its number while places are fixed, and closes by itself on the rescan that finds none left',
+        'A share link that also carries "class=…" in its address (a styling setting that leaked into the link) says so',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1698,9 +1709,17 @@
       }
       if (/^mailto:/i.test(href)) {
         const e = safeDecode(href.slice(7).split('?')[0]).trim().toLowerCase();
-        // "Share this by email": no address on purpose, so the visitor picks who to send it to, with
-        // a subject or body filled in. That is a share button, not a contact link — nothing to check.
-        if (!e && /[?&](subject|body)=/i.test(href)) return;
+        // "Share this by email": no address, only a subject or message filled in. Each one is still an
+        // email link that opens with nobody to send to, and the team fixes them — but they repeat on
+        // every blog post, so they become ONE item listing every place (see oneItemPerSite), not one
+        // item per page.
+        if (!e && /[?&](subject|body)=/i.test(href)) {
+          const junk = /[?&]class=/i.test(href);
+          add(a, { code: 'MAILTO_SHARE_NO_TO', severity: 'critical', category: 'Contact info',
+            message: 'Share-by-email button has no recipient address',
+            found: href.replace(/([?&]body=)[^&]*/i, '$1…').slice(0, 160) + (junk ? '  (the link also carries "class=…", a styling setting that leaked into the address)' : '') });
+          return;
+        }
         if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) { add(a, { code: 'MAILTO_INVALID', severity: 'critical', category: 'Contact info', message: 'Email link has an invalid address', found: href }); return; }
         const shownE = (text.match(EMAIL_RE) || [])[0];
         const mailOk = emailOk(e);
@@ -2152,6 +2171,48 @@
     });
   }
 
+
+  /**
+   * Some problems are one decision repeated on many pages: a share-by-email button on every blog
+   * post, each with its own page address in it. One item per place buries the list in copies, so
+   * these become ONE item per website that lists every place (like a repeated photo does), each with
+   * its own Show on page. Its ID depends only on the check, so it keeps its number while places are
+   * fixed one by one, and closes when the last one is gone.
+   */
+  const ONE_ITEM = {
+    MAILTO_SHARE_NO_TO: (n) => `Share-by-email button has no recipient address — ${n} place${n === 1 ? '' : 's'}`,
+  };
+  function oneItemPerSite(list) {
+    const out = []; const groups = {};
+    list.forEach((f) => { if (ONE_ITEM[f.code]) (groups[f.code] = groups[f.code] || []).push(f); else out.push(f); });
+    Object.entries(groups).forEach(([code, items]) => {
+      const places = [];
+      items.forEach((f) => {
+        const paths = f.pages && f.pages.length ? f.pages : [f.path];
+        const key = f.selector;
+        const had = places.find((x) => x.selector === key);
+        if (had) { paths.forEach((p) => { if (!had.paths.includes(p)) had.paths.push(p); }); (f.visibleOn || []).forEach((d) => { if (!had.devices.includes(d)) had.devices.push(d); }); return; }
+        places.push({ selector: f.selector, location: f.location, how: 'link', paths: paths.slice(), devices: (f.visibleOn || []).slice() });
+      });
+      const n = places.reduce((a, x) => a + x.paths.length, 0);
+      const first = items[0];
+      const pages = [...new Set(places.flatMap((x) => x.paths))].sort();
+      const g = Object.assign({}, first, {
+        message: ONE_ITEM[code](n),
+        found: first.found,
+        path: pages[0], pages,
+        devices: [...new Set(items.flatMap((f) => f.devices || []))],
+        visibleOn: [...new Set(items.flatMap((f) => f.visibleOn || []))],
+        hiddenOn: [...new Set(items.flatMap((f) => f.hiddenOn || []))],
+        dupPlaces: places.slice(0, 60).map((x) => Object.assign(x, { paths: x.paths.sort().slice(0, 40) })),
+        placesKind: 'link',
+        snippet: `${n} place${n === 1 ? '' : 's'} on ${pages.length} page${pages.length === 1 ? '' : 's'}`,
+      });
+      g.id = hash([code, 'one-item-per-site'].join('|'));
+      out.push(g);
+    });
+    return out;
+  }
   function sortFindings(list) {
     return list.sort((a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || a.category.localeCompare(b.category) || String(a.path).localeCompare(String(b.path)));
   }
@@ -2519,7 +2580,7 @@
       for (let i = raw.length - 1; i >= 0; i--) if (raw[i].code === code && i !== keep) raw.splice(i, 1);
     });
 
-    const merged = sortFindings(groupAcrossPages(mergeDevices(raw)));
+    const merged = sortFindings(oneItemPerSite(groupAcrossPages(mergeDevices(raw))));
     const counts = { critical: 0, outdated: 0, warning: 0, info: 0 };
     merged.forEach((f) => { counts[f.severity]++; });
     return {
