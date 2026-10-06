@@ -550,13 +550,23 @@
       if (!L) return;
       (L.phones || []).forEach((p) => addPhone(pick(p, 'phoneNumber', 'phone_number', 'number') || p));
       (L.emails || []).forEach((e) => addEmail(pick(e, 'emailAddress', 'email_address', 'email') || e));
-      const a = normAddress(L.address); if (a && (a.street || a.zip)) t.addresses.push(a);
+      // An address can be a full one, only a town (a business that serves an area and hides its
+      // street), or only Duda's map lookup string. Each is kept for what it is; checks that need a
+      // street or a ZIP only use addresses that have one.
+      let a = normAddress(L.address);
+      if (!(a && (a.street || a.zip || a.city)) && typeof L.address_geolocation === 'string' && L.address_geolocation.trim()) a = normAddress(L.address_geolocation.trim());
+      if (a && (a.street || a.zip || a.city) && !t.addresses.some((x) => x.street === a.street && x.zip === a.zip && x.city === a.city)) t.addresses.push(a);
+      if (!t.addressSeen) t.addressSeen = L.address ? (typeof L.address === 'string' ? L.address : Object.entries(L.address).filter(([, v]) => v && typeof v !== 'object').map(([k, v]) => k + ': ' + v).join(', ')) : '';
       const sa = flatSocials(L.social_accounts || L.socialAccounts || {});
       Object.keys(sa).forEach((k) => {
         const net = /^(google_my_business|google|gmb|google_business|googlemybusiness)$/i.test(k) ? 'google_my_business' : k.toLowerCase();
         sa[k].forEach((val) => {
           const url = socialUrl(net, val);
-          t.socials[net] = t.socials[net] || []; t.socials[net].push(socialHandle(net, url || val));
+          const h = socialHandle(net, url || val);
+          t.socials[net] = t.socials[net] || [];
+          // The main location and an extra one often carry the same accounts: list each once.
+          if (t.socials[net].includes(h)) return;
+          t.socials[net].push(h);
           (t.socialLinks[net] = t.socialLinks[net] || []).push(url || val);
         });
       });
@@ -1598,7 +1608,8 @@
         if (data.email && !emailOk(data.email)) add(node, { code: 'SCHEMA_EMAIL', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) email differs from Business Info', found: data.email, expected: expectedEmails });
         if (biz && data.name && truth.businessName && !matchesBusiness(data.name, truth)) add(node, { code: 'SCHEMA_NAME', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) business name differs from Business Info', found: data.name, expected: truth.businessName });
         const a = normAddress(data.address);
-        if (a && a.zip && truth.addresses.length && !truth.addresses.some((x) => x.zip && x.zip === a.zip)) add(node, { code: 'SCHEMA_ADDRESS', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) ZIP differs from Business Info', found: [a.street, a.city, a.zip].filter(Boolean).join(', '), expected: truth.addresses.map((x) => [x.street, x.city, x.zip].filter(Boolean).join(', ')).join(' | ') });
+        const zips = truth.addresses.filter((x) => x.zip);
+        if (a && a.zip && zips.length && !zips.some((x) => x.zip === a.zip)) add(node, { code: 'SCHEMA_ADDRESS', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) ZIP differs from Business Info', found: [a.street, a.city, a.zip].filter(Boolean).join(', '), expected: zips.map((x) => [x.street, x.city, x.zip].filter(Boolean).join(', ')).join(' | ') });
       });
     }
     schemas.forEach(({ node, data }) => {
@@ -1873,7 +1884,8 @@
           const addrLike = /^\d+\s/.test(place) || /,\s*[A-Z]{2}\b/.test(place);
           if (addrLike) {
             const num = (place.match(/^\d+/) || [''])[0];
-            if (num && truth.addresses.length && !truth.addresses.some((x) => x.street && x.street.startsWith(num))) add(f, { code: 'MAP_ADDRESS', severity: 'critical', category: 'Contact info', message: 'Google Map embed shows a different address', found: place, expected: truth.addresses.map((x) => x.street).join(' | ') });
+            const streets = truth.addresses.filter((x) => x.street);
+            if (num && streets.length && !streets.some((x) => x.street.startsWith(num))) add(f, { code: 'MAP_ADDRESS', severity: 'critical', category: 'Contact info', message: 'Google Map embed shows a different address', found: place, expected: streets.map((x) => x.street).join(' | ') });
           } else if (!matchesBusiness(place, truth)) {
             // The name in an embed link is a SNAPSHOT, not a lookup. Google draws the pin from the
             // place id, and the "!2s" label is whatever that place was called on the day somebody
@@ -2690,6 +2702,12 @@
       // Already caught by a rule on the same element? Attach the AI opinion instead of duplicating
       const existing = findings.find((f) => f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)) && /OTHER_BUSINESS|COPYRIGHT_NAME/.test(f.code) && v.type === 'other_business');
       if (existing) { existing.ai = { verdict: 'other_business', confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote }; return; }
+      // The spelling rule compares the name letter for letter and has usually caught it already:
+      // the AI's opinion joins that item rather than making a second one for the same words.
+      if (v.type === 'name_variant') {
+        const spelled = findings.find((f) => f.code === 'NAME_SPELLING' && f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)));
+        if (spelled) { spelled.ai = { verdict: 'name_variant', confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote }; return; }
+      }
       const pages = blk.pages.slice().sort();
       const t = blk.text;
       const at = v.quote ? t.toLowerCase().indexOf(v.quote.toLowerCase()) : -1;
@@ -2702,6 +2720,8 @@
         selector: blk.selector, location: blk.location, snippet: context,
         ai: { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote },
       };
+      // The spelling as written, picked out of the quote, so reports can group by it.
+      if (v.type === 'name_variant' && truth) { const nv = nameVariants([{ text: v.quote || t }], truth)[0]; if (nv) f.variant = nv.found; }
       f.id = hash([f.code, f.selector, f.found, f.message, pages.length > 1 ? '*' : f.path].join('|'));
       if (!findings.some((x) => x.id === f.id)) findings.push(f);
     });

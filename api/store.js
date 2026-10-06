@@ -9,6 +9,7 @@ import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, n
 import { enqueue } from './_queue.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
 import { createBackup } from './_backup.js';
+import { cleanRichHtml, richToText } from './_rich.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 
 const FSTATUS = ['open', 'clarification', 'done', 'hold', 'false'];
@@ -890,7 +891,8 @@ export default async function handler(req, res) {
           severity: sev,
           category: String(b.category || 'Added by hand').slice(0, 60),
           message,
-          detail: String(b.detail || '').slice(0, 2000),
+          detail: String(b.detail || (b.detailHtml ? richToText(cleanRichHtml(b.detailHtml)) : '')).slice(0, 2000),
+          ...(b.detailHtml ? { detailHtml: cleanRichHtml(b.detailHtml).slice(0, 20000) } : {}),
           path: String(b.path || '/').slice(0, 200),
           device: ['desktop', 'tablet', 'mobile'].includes(b.device) ? b.device : '',
           pages: [String(b.path || '/').slice(0, 200)],

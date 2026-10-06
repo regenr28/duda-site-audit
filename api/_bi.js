@@ -29,7 +29,9 @@ export function biShape(truth) {
     names: [...new Set((t.names || []).map((x) => String(x).trim()).filter(Boolean))],
     phones: [...new Set((t.phones || []).map(lower).filter(Boolean))],
     emails: [...new Set((t.emails || []).map(lower).filter(Boolean))],
-    addresses: [...new Set((t.addresses || []).map(addrLine).filter(Boolean))],
+    // Only full addresses (a street or a ZIP): a town on its own was not read before, and starting
+    // to read it is not Business Info changing.
+    addresses: [...new Set((t.addresses || []).filter((a) => typeof a === 'string' || (a && (a.street || a.zip))).map(addrLine).filter(Boolean))],
     domain: lower(t.domain),
   };
 }

@@ -4,6 +4,18 @@
 
 export const NEWS = [
   {
+    id: '2026-10-07-markup', date: '2026-10-07', audience: 'all', tag: 'Audits',
+    title: 'Mark up screenshots in the app, paste them into items, and a summary the boss can read',
+    what: '<b>✏️ Mark up a screenshot.</b> Paste a screenshot, then draw boxes, circles, arrows and text on it, as many as you like. Every shape can be moved, resized or deleted until you\u2019re done. Then <b>Copy picture</b> to paste it anywhere, or put it straight into the item or comment you were writing.<br><br><b>Rich text in items you write by hand.</b> The explanation now takes bold, lists and links, and screenshots pasted straight in with Cmd/Ctrl+V. No more screenshot \u2192 save \u2192 find \u2192 upload.<br><br><b>The summary groups each problem once.</b> The same wrong phone number in 15 meta descriptions is now one entry: what was found, where on the page, what Business Info says is correct, whether the client mentioned it, the pages it was on (a., b., c. and how many more), and whether it is fixed. Spelling reads the same way: <i>Found "Buff & Beyond", but Business Info says "Buff&Beyond", which is the official spelling.</i><br><br><b>Business Info addresses.</b> A Business Info address with only a town (common for businesses that serve an area) used to show as empty. It is now read and shown, with a note that address checks needing a street or ZIP are skipped. Social accounts listed twice are listed once.',
+    where: [
+      '<b>Walkthrough \u2014 screenshot:</b> open any audit item, press <b>✏️ Screenshot</b> next to 📎 Image in the comment box, paste your screenshot, draw a box and an arrow, then <b>Attach</b>.',
+      '<b>Walkthrough \u2014 item:</b> <b>+ Add item</b>, write what is wrong, click into <b>More detail</b> and press Cmd/Ctrl+V to paste a screenshot. Click it to mark it up.',
+      '<b>Walkthrough \u2014 summary:</b> <b>📋 Summary</b> on an audit; choose how many pages to list per issue, then Copy.',
+      'Where an AI check and the spelling check both caught the same words, the AI\u2019s note now joins the spelling item instead of making a second one.',
+    ],
+    link: '#/help/projects', linkText: 'Writing and marking up items',
+  },
+  {
     id: '2026-10-07-oneitem', date: '2026-10-07', audience: 'all', tag: 'Audits',
     title: 'Share-by-email buttons: one item listing every place, not one item per blog post',
     what: 'A share-by-email button with no recipient address still needs fixing, but it sits on every blog post, so the audit was filling up with copies of the same item. It is now <b>one item per website</b> that lists every place, the same way a repeated photo does.<br><br>Each place has its own <b>👁 Show on page</b>, so you can open it, fix it in the editor and move to the next. The item keeps its number while you work through the list, shrinks on each rescan, and closes by itself (<b>✓ Fixed on rescan</b>) when none are left.<br><br>If the link also carries <b>class=…</b> in its address (a styling setting that leaked into the link), the item says so.<br><br>The separate items raised for these earlier were closed as <b>Check corrected</b> on your last rescan. That label meant the check had changed, not that nothing was wrong. The single item replaces them on the next rescan.',

@@ -86,10 +86,11 @@ export const HELP_SECTIONS = [
 <p><b>📋 Summary</b> on a website's page writes a plain-text note of the audit, ready to paste into Slack or Google Chat:</p>
 <ul>
 <li><b>What the app checked</b>: how many pages, on which devices, how many links and images, and that every contact detail was compared with Business Info (and the client's brief, if there is one) and cross-checked with the client's comments.</li>
-<li><b>Fixed</b>: every critical item in a sentence, saying how it was checked. For example: <i>Wrong phone number (302) 555-0199 on Home — not in Business Info, and not mentioned in any of the 14 comments on this website ✓</i>. A ✓ means a rescan confirmed it is gone. Smaller fixes are counted by kind.</li>
-<li><b>Business name spelling</b>: Business Info's spelling next to every other way the site wrote it, and whether each was fixed.</li>
+<li><b>What was found</b>: each problem once, however many places it was in. The same wrong phone number in 15 meta descriptions is one entry, not 15. Each entry says what was found and where on the page (meta description, page text, click-to-call links…), what Business Info says is correct, whether the client mentioned it in a comment, the pages it was on (a., b., c. and how many more), and whether it is fixed. For example:<br><i>1. Wrong phone number. Found (732) 800-3960 in the meta description and social share description. The correct number is (609) 642-8206 (Business Info). Not mentioned in any of the 14 client comments on this website. Found on these pages: a. /ceramic-coating b. /ppf c. /window-tint …and 10 more pages. ✅ Fixed — all 26 places, confirmed by a rescan</i></li>
+<li>Spelling works the same way: <i>Found "Buff &amp; Beyond", but Business Info says "Buff&amp;Beyond", which is the official spelling.</i></li>
+<li><b>Smaller fixes</b> and <b>Still to do (minor)</b> are counted by kind.</li>
 <li><b>Checked and ruled out</b> (false alarms) and <b>Still open</b>.</li>
-<li>Choose <b>Whole audit</b>, <b>Last 24 hours</b> or <b>Last 7 days</b> for the fixes, edit the text if you like, then <b>Copy</b>.</li>
+<li>Choose <b>Whole audit</b>, <b>Last 24 hours</b> or <b>Last 7 days</b>, and how many pages to list per issue (3, 5, 10 or all). Edit the text if you like, then <b>Copy</b>.</li>
 </ul>
 <h4>Backups in Duda</h4>
 <ul>
@@ -723,7 +724,18 @@ export const HELP_SECTIONS = [
 <h3>Deadlines</h3>
 <p>A phase past its date tells the project manager and whoever is holding it — <b>once per deadline</b>, so it does not nag. The board calls it out at the top and the Projects link in the bar carries a dot.</p>
 <h3>Audit items written by hand</h3>
-<p>The scanner is blind to anything needing an eye — spacing, hierarchy, a logo at the wrong size, copy that reads badly. <b>+ Add item</b> on the audit items tab writes one, with a severity, a page, a device, an explanation and a <b>screenshot</b>. It gets a number like any other item, can be assigned and marked Done, and <b>survives every rescan</b>.</p>
+<p>The scanner is blind to anything needing an eye — spacing, hierarchy, a logo at the wrong size, copy that reads badly. <b>+ Add item</b> on the audit items tab writes one, with a severity, a page, a device and an explanation. It gets a number like any other item, can be assigned and marked Done, and <b>survives every rescan</b>.</p>
+<p><b>The explanation is rich text</b>: bold, italic, lists and links (<b>🔗 Link</b>, after selecting the words). <b>Paste a screenshot straight in</b> with Cmd/Ctrl+V — no saving it to disk and uploading. Click a pasted picture to mark it up.</p>
+<h3>Marking up a screenshot</h3>
+<p><b>✏️ Screenshot</b> (in the item explanation and next to <b>📎 Image</b> in every comment box) opens a mark-up window:</p>
+<ul>
+<li>Take a screenshot to the clipboard (Cmd+Ctrl+Shift+4 on a Mac, Win+Shift+S on Windows), then paste it in. Or drop a file, or use <b>Open…</b>.</li>
+<li>Draw <b>▭ boxes</b>, <b>◯ circles</b>, <b>↗ arrows</b> and <b>T text</b>, as many as you like, in six colours and three thicknesses. Hold Shift for a perfect square or circle.</li>
+<li><b>↖ Move</b> selects a shape: drag it to move it, drag a corner to resize it, press Delete to remove it. Cmd/Ctrl+Z undoes.</li>
+<li><b>⧉ Copy picture</b> puts the marked-up picture on the clipboard to paste anywhere. <b>Download</b> saves it. <b>Add to item</b> / <b>Attach</b> puts it straight where you were writing.</li>
+<li>A picture already attached to a comment can be clicked to mark it up; the marked-up copy replaces it.</li>
+<li>Shortcuts: V move, R box, O circle, A arrow, T text, Esc to deselect or close.</li>
+</ul>
 <h3>Disagreeing with a call</h3>
 <p>An item marked <b>Done</b> that is still wrong, or a <b>False alarm</b> that was real, can be reopened from the item itself: <b>↺ This is not done — reopen it</b>. A reason is required, because the person who closed it is told by name and reads it. "Reopened" on its own starts an argument; "the footer still shows the old number on mobile" ends it.</p>`,
   },

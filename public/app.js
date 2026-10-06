@@ -3645,13 +3645,15 @@
       <div class="reply-bar" hidden></div>
       <div class="ta-wrap"><textarea rows="3" placeholder="${esc(placeholder || 'Write a comment… Type @ to tag a member, # to link an audit item. Paste a screenshot with Cmd/Ctrl+V.')}"></textarea><div class="suggest" hidden></div></div>
       <div class="c-previews"></div>
-      <div class="composer-foot"><label class="btn sm ghost attach" title="Attach image">📎 Image<input type="file" accept="image/*" multiple hidden></label>
+      <div class="composer-foot"><label class="btn sm ghost attach" title="Attach image">📎 Image<input type="file" accept="image/*" multiple hidden></label><button type="button" class="btn sm ghost c-anno" title="Paste a screenshot and mark it up with boxes, circles and arrows">✏️ Screenshot</button>
         <span class="small faint">Cmd/Ctrl+Enter to send</span><span class="spacer"></span><button class="btn sm primary" type="button">${esc(submitLabel || 'Comment')}</button></div></div>`;
     const ta = $('textarea', host), sug = $('.suggest', host), prev = $('.c-previews', host), bar = $('.reply-bar', host), btn = $('.composer-foot .btn.primary', host), file = $('input[type=file]', host);
     const images = []; let uploading = 0; let replyTo = null; let sel = 0; let items = [];
     const refresh = () => {
-      prev.innerHTML = images.map((im, i) => `<div class="pv">${im.url ? `<img src="${esc(im.url)}" alt="">` : '<div class="pv-load">Uploading…</div>'}<button type="button" data-rm="${i}" title="Remove">✕</button></div>`).join('');
+      prev.innerHTML = images.map((im, i) => `<div class="pv">${im.url ? `<img src="${esc(im.url)}" alt="" data-anno="${i}" title="Click to mark it up">` : '<div class="pv-load">Uploading…</div>'}<button type="button" data-rm="${i}" title="Remove">✕</button></div>`).join('');
       $$('[data-rm]', prev).forEach((b) => (b.onclick = () => { images.splice(Number(b.dataset.rm), 1); refresh(); }));
+      // A picture already attached can be marked up in place: the marked-up copy replaces it.
+      $$('[data-anno]', prev).forEach((im) => (im.onclick = () => { const i = Number(im.dataset.anno); openAnnotator({ src: images[i].url, doneLabel: 'Replace picture', onDone: (bl) => { images.splice(i, 1); addFile(new File([bl], 'annotated.png', { type: 'image/png' })); } }); }));
       btn.disabled = uploading > 0;
     };
     async function addFile(f) {
@@ -3666,6 +3668,7 @@
     host.addEventListener('dragleave', () => host.classList.remove('drag'));
     host.addEventListener('drop', (e) => { e.preventDefault(); host.classList.remove('drag'); Array.from(e.dataTransfer.files || []).forEach(addFile); });
     file.onchange = () => { Array.from(file.files).forEach(addFile); file.value = ''; };
+    $('.c-anno', host).onclick = () => openAnnotator({ doneLabel: 'Attach', onDone: (bl) => addFile(new File([bl], 'annotated.png', { type: 'image/png' })) });
     // Suggestions
     const hideSug = () => { sug.hidden = true; items = []; };
     const showSug = () => {
@@ -4539,7 +4542,8 @@
               <div><div class="k">Business name</div><div class="v">${vals(s, 'name', t.names || [], (x) => x)}</div></div>
               <div><div class="k">Phone</div><div class="v">${vals(s, 'phone', t.phones || [], A.fmtPhone)}</div></div>
               <div><div class="k">Email</div><div class="v">${vals(s, 'email', t.emails || [], (x) => x)}</div></div>
-              <div><div class="k">Address</div><div class="v">${esc((t.addresses || []).map((a) => [a.street, a.city, a.region, a.zip].filter(Boolean).join(', ')).join(' | ') || '—')}</div></div>
+              <div><div class="k">Address</div><div class="v">${(t.addresses || []).length ? esc(t.addresses.map((a) => [a.street, a.city, a.region, a.zip].filter(Boolean).join(', ')).join(' | ')) + (t.addresses.every((a) => !a.street && !a.zip) ? '<div class="small faint">Town only \u2014 no street or ZIP in Business Info, so address checks that need one are skipped.</div>' : '')
+                : `\u2014<div class="small faint">${!('addressSeen' in t) ? 'Business Info may have only a town, which earlier scans didn\u2019t read. Rescan to see exactly what Duda has.' : t.addressSeen ? `Duda sent: ${esc(t.addressSeen)}` : /api/.test(t.source || '') ? 'Business Info in Duda has no address filled in (common for businesses that serve an area). Add one in Duda, or here under Our additions, to check addresses.' : 'Rescan to read the address from Duda.'}</div>`}</div></div>
               <div><div class="k">Domain</div><div class="v">${esc(t.domain || '—')}</div></div>
               <div><div class="k">Social (Business Info)</div><div class="v small">${socials || '—'}</div></div>
             </div>
@@ -4835,31 +4839,21 @@
         </div>
         <label class="field">Device
           <select id="aiDev"><option value="">Any</option>${A.DEVICES.map((d) => `<option value="${d}">${esc(A.DEVICE_LABEL[d])}</option>`).join('')}</select></label>
-        <label class="field">More detail<textarea id="aiDetail" rows="3" placeholder="What it should look like, and anything the developer needs to know."></textarea></label>
-        <label class="field">Screenshot
-          <input type="file" id="aiShot" accept="image/png,image/jpeg,image/webp">
-          <span class="small muted">Optional, but it saves a conversation. Large images are shrunk automatically.</span></label>
-        <div id="aiPrev"></div>
+        <div class="field"><span>More detail</span><div id="aiRich"></div></div>
       </div>
       <footer><span class="spacer"></span><button class="btn primary" id="aiGo">Add item</button></footer>`);
-    let shot = '';
-    $('#aiShot').onchange = async (e) => {
-      const file = e.target.files && e.target.files[0];
-      if (!file) { shot = ''; $('#aiPrev').innerHTML = ''; return; }
-      try {
-        shot = await shrinkImage(file, 1400, 0.75);
-        $('#aiPrev').innerHTML = `<img src="${shot}" class="ai-shot-prev" alt="Screenshot to attach">
-          <div class="small faint">${Math.round(shot.length / 1400)} KB after shrinking</div>`;
-      } catch (err) { toast('That image could not be read.'); shot = ''; }
-    };
+    // The detail is rich text: links, lists, and screenshots pasted (and marked up) in place,
+    // instead of save-to-disk, find, upload.
+    const ed = richEditor($('#aiRich'), { placeholder: 'What it should look like, and anything the developer needs to know. Paste screenshots here.' });
     $('#aiGo').onclick = async () => {
       const message = $('#aiMsg').value.trim();
       if (!message) return toast('Say what is wrong.');
+      if (ed.busy()) return toast('Wait for the picture to finish uploading');
       $('#aiGo').disabled = true;
       try {
         const r = await store({
           op: 'addItem', siteId: s.id, message, severity: $('#aiSev').value, path: $('#aiPath').value.trim() || '/',
-          device: $('#aiDev').value, detail: $('#aiDetail').value.trim(), shot,
+          device: $('#aiDev').value, detail: ed.text(), detailHtml: ed.html(),
         });
         closeModal(); toast(`Added as #${r.num}`);
         state.sitesVer = ''; await loadSites().catch(() => {});
@@ -4945,7 +4939,7 @@
         ${!f.gone && f.auto && f.auto.why === 'still-there' ? `<div class="note unk" style="margin:8px 0"><b>\u26A0 Marked Done, but still on the website</b><div class="small">${esc(nameOf(f.auto.ref, 'Someone'))} marked this Done${f.auto.at ? ' on ' + esc(fmtWhen(Date.parse(f.auto.at))) : ''}. ${esc(nameOf(f.statusBy, 'The next rescan'))} rescanned${f.statusAt ? ' on ' + esc(fmtWhen(Date.parse(f.statusAt))) : ''} and it was still there, so it was reopened. If the scan is wrong about it, mark it <b>False alarm</b> instead.</div></div>` : ''}
         ${!f.gone && f.auto && f.auto.why === 'came-back' ? `<div class="note unk" style="margin:8px 0"><b>\u21BA Back on the website</b><div class="small">This was closed as Done on an earlier rescan, then the latest scan found it again, so it was reopened.</div></div>` : ''}
         ${f.manual ? `<div class="small faint">Written by ${esc(nameOf(f.by, f.byName))} · ${esc(fmtWhen(Date.parse(f.at)))}${f.device ? ' · ' + esc(A.DEVICE_LABEL[f.device] || f.device) : ''}</div>` : ''}
-        ${f.detail ? `<div class="dr-detail">${esc(f.detail)}</div>` : ''}
+        ${f.detailHtml ? `<div class="dr-detail rich">${cleanRich(f.detailHtml)}</div>` : f.detail ? `<div class="dr-detail">${esc(f.detail)}</div>` : ''}
         ${f.shot ? `<a href="${f.shot}" target="_blank" rel="noopener" title="Open the full size"><img src="${f.shot}" class="dr-shot" alt="Screenshot added with this item"></a>` : ''}
         ${f.challenge ? `<div class="note bad" style="margin-top:10px"><b>Reopened by ${esc(f.challenge.byName || f.challenge.by)}</b> — ${f.challenge.was === 'done' ? 'was marked Done, but it is still wrong' : 'was called a False alarm, but it is real'}
           <div class="pj-note">${esc(f.challenge.why)}</div>
@@ -4985,6 +4979,7 @@
     $$('[data-copy]', d).forEach((c) => (c.onclick = () => copy(c.dataset.copy, c.closest('.ai-sugg') ? 'Suggestion copied' : 'Selector copied')));
     ['#drInspect', '#drInspect2'].forEach((sel) => { const b = $(sel, d); if (b) b.onclick = () => openInspector(s, f); });
     bindSelLinks(d, s, [f]);
+    $$('.dr-detail.rich img', d).forEach((im) => (im.onclick = () => window.open(im.src, '_blank')));
     $$('[data-pshow]', d).forEach((b) => (b.onclick = () => { const x = f.aiPending.items[Number(b.dataset.pshow)]; openInspector(s, Object.assign({}, f, { selector: x.selector, path: (x.pages || [f.path])[0], pages: x.pages || [f.path], devices: x.devices || f.devices, visibleOn: x.visibleOn || f.visibleOn, location: x.location })); }));
     // Each place a repeated photo turns up opens on its own element and its own page.
     $$('[data-dupsel]', d).forEach((b) => (b.onclick = () => {
@@ -5157,6 +5152,347 @@
 
 
   // =====================================================================
+  // SCREENSHOT ANNOTATOR
+  // =====================================================================
+  /*
+   * Paste a screenshot, mark it up with boxes, circles, arrows and text, then copy the picture or
+   * drop it straight into what you were writing. Shapes stay shapes until the end — click one to
+   * move it, drag a corner to resize it, Delete to remove it — so a misplaced arrow is a drag, not
+   * a redo. The picture is only flattened when it leaves.
+   *
+   * openAnnotator({ src, onDone(blob), doneLabel })
+   */
+  const ANNO_COLORS = ['#e11d48', '#f59e0b', '#16a34a', '#2563eb', '#ffffff', '#111827'];
+  function openAnnotator(opts = {}) {
+    const root = document.createElement('div');
+    root.className = 'anno-back';
+    root.innerHTML = `<div class="anno" role="dialog" aria-label="Annotate a screenshot">
+      <div class="anno-bar">
+        <div class="anno-group">
+          <button type="button" class="anno-tool" data-tool="select" title="Move and resize (V)">↖ Move</button>
+          <button type="button" class="anno-tool" data-tool="rect" title="Rectangle (R)">▭ Box</button>
+          <button type="button" class="anno-tool" data-tool="ellipse" title="Circle (O)">◯ Circle</button>
+          <button type="button" class="anno-tool" data-tool="arrow" title="Arrow (A)">↗ Arrow</button>
+          <button type="button" class="anno-tool" data-tool="text" title="Text (T)">T Text</button>
+        </div>
+        <div class="anno-group">${ANNO_COLORS.map((c) => `<button type="button" class="anno-color" data-color="${c}" style="background:${c}" title="${c}"></button>`).join('')}</div>
+        <div class="anno-group"><select class="anno-size" title="Line thickness"><option value="1">Thin</option><option value="2" selected>Medium</option><option value="3">Thick</option></select></div>
+        <div class="anno-group">
+          <button type="button" class="btn sm ghost" data-act="undo" title="Undo (Cmd/Ctrl+Z)">↶ Undo</button>
+          <button type="button" class="btn sm ghost" data-act="del" title="Delete the selected shape (Delete)">Delete</button>
+          <button type="button" class="btn sm ghost" data-act="clear" title="Remove every shape">Clear</button>
+        </div>
+        <span class="spacer"></span>
+        <div class="anno-group">
+          <label class="btn sm ghost" title="Open a picture from your computer">Open…<input type="file" accept="image/*" hidden></label>
+          <button type="button" class="btn sm" data-act="copy" title="Copy the marked-up picture, then paste it anywhere">⧉ Copy picture</button>
+          <button type="button" class="btn sm ghost" data-act="download">Download</button>
+          ${opts.onDone ? `<button type="button" class="btn sm primary" data-act="done">${esc(opts.doneLabel || 'Use it')}</button>` : ''}
+          <button type="button" class="btn sm ghost" data-act="close" title="Close (Esc)">✕</button>
+        </div>
+      </div>
+      <div class="anno-stage">
+        <div class="anno-empty"><b>Paste a screenshot</b> (Cmd/Ctrl+V), drop one here, or use <b>Open…</b><div class="small faint">Take the screenshot to the clipboard first: Cmd+Ctrl+Shift+4 on a Mac, Win+Shift+S on Windows.</div></div>
+        <canvas hidden></canvas>
+        <input type="text" class="anno-text-in" hidden placeholder="Type, then Enter">
+      </div>
+      <div class="anno-foot small faint">Draw with a tool, then <b>↖ Move</b> to drag shapes or their corners. Delete removes the selected one.</div>
+    </div>`;
+    document.body.appendChild(root);
+    const cv = $('canvas', root), cx = cv.getContext('2d'), stage = $('.anno-stage', root), empty = $('.anno-empty', root), tin = $('.anno-text-in', root);
+    let img = null, shapes = [], sel = -1, tool = 'rect', color = ANNO_COLORS[0], size = 2;
+    const hist = [];
+    const snap = () => { hist.push(JSON.stringify(shapes)); if (hist.length > 60) hist.shift(); };
+    const base = () => Math.max(2, Math.round(Math.max(cv.width, cv.height) / 450));
+    const lw = (sh) => base() * (sh.size === 1 ? 0.7 : sh.size === 3 ? 1.8 : 1.1);
+    const fontPx = (sh) => Math.round(base() * (sh.size === 1 ? 6 : sh.size === 3 ? 12 : 8.5));
+
+    function setTool(t) { tool = t; $$('.anno-tool', root).forEach((b) => b.classList.toggle('on', b.dataset.tool === t)); cv.style.cursor = t === 'select' ? 'default' : 'crosshair'; }
+    function setColor(c) { color = c; $$('.anno-color', root).forEach((b) => b.classList.toggle('on', b.dataset.color === c)); if (sel >= 0) { snap(); shapes[sel].color = c; draw(); } }
+    setTool('rect'); setColor(color);
+
+    function load(src) {
+      const im = new Image();
+      im.onload = () => {
+        const k = Math.min(1, 2400 / Math.max(im.naturalWidth, im.naturalHeight));
+        cv.width = Math.round(im.naturalWidth * k); cv.height = Math.round(im.naturalHeight * k);
+        img = im; shapes = []; sel = -1; hist.length = 0;
+        cv.hidden = false; empty.hidden = true; draw();
+      };
+      im.onerror = () => toast('That picture could not be opened');
+      im.crossOrigin = 'anonymous';
+      im.src = src;
+    }
+    const loadBlob = (b) => { if (b && /^image\//.test(b.type)) load(URL.createObjectURL(b)); };
+    if (opts.src) load(opts.src);
+
+    function bbox(sh) {
+      if (sh.type === 'text') { cx.font = `bold ${fontPx(sh)}px system-ui, sans-serif`; const w = cx.measureText(sh.text).width; const h = fontPx(sh); return { x: sh.x1, y: sh.y1 - h, w, h: h * 1.25 }; }
+      return { x: Math.min(sh.x1, sh.x2), y: Math.min(sh.y1, sh.y2), w: Math.abs(sh.x2 - sh.x1), h: Math.abs(sh.y2 - sh.y1) };
+    }
+    function paint(sh) {
+      cx.save(); cx.strokeStyle = sh.color; cx.fillStyle = sh.color; cx.lineWidth = lw(sh); cx.lineCap = 'round'; cx.lineJoin = 'round';
+      // A thin dark halo keeps a red box readable on a red website.
+      cx.shadowColor = 'rgba(0,0,0,.35)'; cx.shadowBlur = Math.max(2, lw(sh));
+      if (sh.type === 'rect') { const b = bbox(sh); cx.strokeRect(b.x, b.y, b.w, b.h); }
+      else if (sh.type === 'ellipse') { const b = bbox(sh); cx.beginPath(); cx.ellipse(b.x + b.w / 2, b.y + b.h / 2, Math.max(1, b.w / 2), Math.max(1, b.h / 2), 0, 0, Math.PI * 2); cx.stroke(); }
+      else if (sh.type === 'arrow') {
+        const ang = Math.atan2(sh.y2 - sh.y1, sh.x2 - sh.x1); const head = lw(sh) * 4 + 8;
+        cx.beginPath(); cx.moveTo(sh.x1, sh.y1); cx.lineTo(sh.x2 - Math.cos(ang) * head * 0.6, sh.y2 - Math.sin(ang) * head * 0.6); cx.stroke();
+        cx.beginPath(); cx.moveTo(sh.x2, sh.y2);
+        cx.lineTo(sh.x2 - head * Math.cos(ang - 0.45), sh.y2 - head * Math.sin(ang - 0.45));
+        cx.lineTo(sh.x2 - head * Math.cos(ang + 0.45), sh.y2 - head * Math.sin(ang + 0.45));
+        cx.closePath(); cx.fill();
+      } else if (sh.type === 'text') {
+        cx.font = `bold ${fontPx(sh)}px system-ui, sans-serif`; cx.shadowBlur = 0;
+        cx.lineWidth = Math.max(3, fontPx(sh) / 6); cx.strokeStyle = sh.color === '#ffffff' ? '#111827' : '#ffffff';
+        cx.strokeText(sh.text, sh.x1, sh.y1); cx.fillText(sh.text, sh.x1, sh.y1);
+      }
+      cx.restore();
+    }
+    function handles(sh) {
+      if (sh.type === 'arrow') return [[sh.x1, sh.y1, 'p1'], [sh.x2, sh.y2, 'p2']];
+      if (sh.type === 'text') return [];
+      return [[sh.x1, sh.y1, 'p1'], [sh.x2, sh.y1, 'x2y1'], [sh.x1, sh.y2, 'x1y2'], [sh.x2, sh.y2, 'p2']];
+    }
+    function draw(clean) {
+      if (!img) return;
+      cx.clearRect(0, 0, cv.width, cv.height);
+      cx.drawImage(img, 0, 0, cv.width, cv.height);
+      shapes.forEach(paint);
+      if (!clean && sel >= 0 && shapes[sel]) {
+        const sh = shapes[sel]; const b = bbox(sh); const pad = base() * 3;
+        cx.save(); cx.setLineDash([base() * 3, base() * 2]); cx.strokeStyle = '#60a5fa'; cx.lineWidth = Math.max(1, base() / 2);
+        cx.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2); cx.restore();
+        const hs = base() * 3.5;
+        handles(sh).forEach(([x, y]) => { cx.fillStyle = '#fff'; cx.strokeStyle = '#2563eb'; cx.lineWidth = Math.max(1, base() / 2); cx.fillRect(x - hs, y - hs, hs * 2, hs * 2); cx.strokeRect(x - hs, y - hs, hs * 2, hs * 2); });
+      }
+    }
+    const pt = (e) => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * (cv.width / r.width), y: (e.clientY - r.top) * (cv.height / r.height) }; };
+    const distSeg = (p, a, b) => { const dx = b.x - a.x, dy = b.y - a.y; const L2 = dx * dx + dy * dy || 1; let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2; t = Math.max(0, Math.min(1, t)); return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)); };
+    function hit(p) {
+      const tol = base() * 5;
+      for (let i = shapes.length - 1; i >= 0; i--) {
+        const sh = shapes[i];
+        if (sh.type === 'arrow') { if (distSeg(p, { x: sh.x1, y: sh.y1 }, { x: sh.x2, y: sh.y2 }) <= tol) return i; continue; }
+        const b = bbox(sh);
+        if (p.x >= b.x - tol && p.x <= b.x + b.w + tol && p.y >= b.y - tol && p.y <= b.y + b.h + tol) return i;
+      }
+      return -1;
+    }
+    function hitHandle(p) {
+      if (sel < 0) return null; const hs = base() * 5;
+      const h = handles(shapes[sel]).find(([x, y]) => Math.abs(p.x - x) <= hs && Math.abs(p.y - y) <= hs);
+      return h ? h[2] : null;
+    }
+    let drag = null;
+    cv.addEventListener('pointerdown', (e) => {
+      if (!img) return;
+      e.preventDefault(); cv.setPointerCapture(e.pointerId);
+      const p = pt(e);
+      if (tool === 'text') return startText(p);
+      if (tool === 'select') {
+        const h = hitHandle(p);
+        if (h) { snap(); drag = { mode: 'resize', h, last: p }; return; }
+        sel = hit(p);
+        if (sel >= 0) { snap(); drag = { mode: 'move', last: p }; }
+        draw(); return;
+      }
+      snap();
+      shapes.push({ type: tool, x1: p.x, y1: p.y, x2: p.x, y2: p.y, color, size });
+      sel = shapes.length - 1; drag = { mode: 'new', last: p }; draw();
+    });
+    cv.addEventListener('pointermove', (e) => {
+      if (!img) return;
+      const p = pt(e);
+      if (!drag) { if (tool === 'select') cv.style.cursor = hitHandle(p) ? 'nwse-resize' : hit(p) >= 0 ? 'move' : 'default'; return; }
+      const sh = shapes[sel]; if (!sh) return;
+      if (drag.mode === 'new') { sh.x2 = p.x; sh.y2 = p.y; if (e.shiftKey && sh.type !== 'arrow') { const d = Math.max(Math.abs(sh.x2 - sh.x1), Math.abs(sh.y2 - sh.y1)); sh.x2 = sh.x1 + Math.sign(sh.x2 - sh.x1 || 1) * d; sh.y2 = sh.y1 + Math.sign(sh.y2 - sh.y1 || 1) * d; } }
+      else if (drag.mode === 'move') { const dx = p.x - drag.last.x, dy = p.y - drag.last.y; sh.x1 += dx; sh.y1 += dy; if (sh.type !== 'text') { sh.x2 += dx; sh.y2 += dy; } drag.last = p; }
+      else if (drag.mode === 'resize') {
+        if (drag.h === 'p1') { sh.x1 = p.x; sh.y1 = p.y; } else if (drag.h === 'p2') { sh.x2 = p.x; sh.y2 = p.y; }
+        else if (drag.h === 'x2y1') { sh.x2 = p.x; sh.y1 = p.y; } else if (drag.h === 'x1y2') { sh.x1 = p.x; sh.y2 = p.y; }
+      }
+      draw();
+    });
+    const endDrag = () => {
+      if (drag && drag.mode === 'new') {
+        const sh = shapes[sel];
+        // A click without a drag is not a shape.
+        if (sh && Math.hypot(sh.x2 - sh.x1, sh.y2 - sh.y1) < base() * 3) { shapes.pop(); hist.pop(); sel = -1; }
+      }
+      drag = null; draw();
+    };
+    cv.addEventListener('pointerup', endDrag);
+    cv.addEventListener('pointercancel', endDrag);
+    function startText(p) {
+      const r = cv.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+      tin.hidden = false; tin.value = '';
+      tin.style.left = (r.left - sr.left + stage.scrollLeft + p.x * (r.width / cv.width)) + 'px';
+      tin.style.top = (r.top - sr.top + stage.scrollTop + p.y * (r.height / cv.height) - 18) + 'px';
+      tin.style.color = color; tin.dataset.x = p.x; tin.dataset.y = p.y;
+      setTimeout(() => tin.focus(), 0);
+    }
+    const commitText = () => {
+      if (tin.hidden) return;
+      const v = tin.value.trim(); tin.hidden = true;
+      if (!v) return;
+      snap(); shapes.push({ type: 'text', text: v.slice(0, 120), x1: Number(tin.dataset.x), y1: Number(tin.dataset.y) + fontPx({ size }) * 0.8, color, size });
+      sel = shapes.length - 1; setTool('select'); draw();
+    };
+    tin.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') commitText(); if (e.key === 'Escape') { tin.hidden = true; } });
+    tin.addEventListener('blur', commitText);
+
+    const toBlob = () => new Promise((resolve) => { draw(true); cv.toBlob((b) => { draw(); resolve(b); }, 'image/png'); });
+    function close() { document.removeEventListener('paste', onPaste, true); document.removeEventListener('keydown', onKey, true); root.remove(); }
+    async function copyPicture() {
+      if (!img) return toast('Paste a screenshot first');
+      try {
+        if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) throw new Error('no clipboard');
+        // The promise form keeps Safari happy: the write has to start inside the click.
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': toBlob() })]);
+        toast('Picture copied — paste it into the item or a comment');
+      } catch (e) { toast('This browser can’t copy pictures. Use Download instead.'); }
+    }
+    function onPaste(e) {
+      if (!tin.hidden) return;
+      const f = Array.from((e.clipboardData || {}).items || []).filter((i) => i.kind === 'file' && /^image\//.test(i.type)).map((i) => i.getAsFile())[0];
+      if (!f) return;
+      e.preventDefault(); e.stopPropagation();
+      if (img && shapes.length && !confirm('Replace this picture and its markings with the one you pasted?')) return;
+      loadBlob(f);
+    }
+    function onKey(e) {
+      if (!tin.hidden) return;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && sel >= 0) { e.preventDefault(); snap(); shapes.splice(sel, 1); sel = -1; draw(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (hist.length) { shapes = JSON.parse(hist.pop()); sel = -1; draw(); } return; }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c' && img) { e.preventDefault(); copyPicture(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (sel >= 0) { sel = -1; draw(); } else close(); return; }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = { v: 'select', r: 'rect', o: 'ellipse', a: 'arrow', t: 'text' }[e.key.toLowerCase()];
+      if (k) { setTool(k); e.preventDefault(); }
+    }
+    document.addEventListener('paste', onPaste, true);
+    document.addEventListener('keydown', onKey, true);
+    stage.addEventListener('dragover', (e) => e.preventDefault());
+    stage.addEventListener('drop', (e) => { e.preventDefault(); loadBlob((e.dataTransfer.files || [])[0]); });
+    $('input[type=file]', root).onchange = (e) => { loadBlob(e.target.files[0]); e.target.value = ''; };
+    $$('.anno-tool', root).forEach((b) => (b.onclick = () => { setTool(b.dataset.tool); if (b.dataset.tool !== 'select') { sel = -1; draw(); } }));
+    $$('.anno-color', root).forEach((b) => (b.onclick = () => setColor(b.dataset.color)));
+    $('.anno-size', root).onchange = (e) => { size = Number(e.target.value); if (sel >= 0) { snap(); shapes[sel].size = size; draw(); } };
+    root.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-act]'); if (!b) return;
+      const act = b.dataset.act;
+      if (act === 'close') return close();
+      if (act === 'undo') { if (hist.length) { shapes = JSON.parse(hist.pop()); sel = -1; draw(); } return; }
+      if (act === 'del') { if (sel >= 0) { snap(); shapes.splice(sel, 1); sel = -1; draw(); } return; }
+      if (act === 'clear') { if (shapes.length) { snap(); shapes = []; sel = -1; draw(); } return; }
+      if (act === 'copy') return copyPicture();
+      if (!img) return toast('Paste a screenshot first');
+      if (act === 'download') { const bl = await toBlob(); const a = document.createElement('a'); a.href = URL.createObjectURL(bl); a.download = 'screenshot-annotated.png'; a.click(); return; }
+      if (act === 'done') { b.disabled = true; const bl = await toBlob(); close(); opts.onDone(bl); }
+    });
+    return { close };
+  }
+
+  // =====================================================================
+  // RICH TEXT (audit item detail)
+  // =====================================================================
+  /** What a written-up item may contain: text formatting, lists, links, and our own uploaded pictures. */
+  const RICH_TAGS = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'BR', 'P', 'DIV', 'UL', 'OL', 'LI', 'A', 'IMG']);
+  function cleanRich(html) {
+    const doc = new DOMParser().parseFromString(`<div>${String(html || '')}</div>`, 'text/html');
+    const walk = (node) => {
+      [...node.childNodes].forEach((n) => {
+        if (n.nodeType === 3) return;
+        if (n.nodeType !== 1) { n.remove(); return; }
+        if (!RICH_TAGS.has(n.tagName)) {
+          if (/^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|TEMPLATE|META|LINK)$/.test(n.tagName)) { n.remove(); return; }
+          walk(n); n.replaceWith(...n.childNodes); return;
+        }
+        const keep = {};
+        if (n.tagName === 'A') { const h = n.getAttribute('href') || ''; if (/^(https?:|mailto:)/i.test(h)) keep.href = h; }
+        if (n.tagName === 'IMG') { const s2 = n.getAttribute('src') || ''; if (/^\/api\/img\?id=[\w-]+$/.test(s2)) keep.src = s2; else { n.remove(); return; } }
+        [...n.attributes].forEach((a) => n.removeAttribute(a.name));
+        Object.entries(keep).forEach(([k, v]) => n.setAttribute(k, v));
+        if (n.tagName === 'A') { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener'); }
+        walk(n);
+      });
+    };
+    const root = doc.body.firstChild; walk(root);
+    return root.innerHTML;
+  }
+  /** Turn the plain-text parts of rich HTML into text, for search, CSV and notifications. */
+  const richText = (html) => { const d = new DOMParser().parseFromString(`<div>${String(html || '')}</div>`, 'text/html'); d.querySelectorAll('br,p,div,li').forEach((n) => n.append('\n')); return (d.body.textContent || '').replace(/\n{3,}/g, '\n\n').trim(); };
+  /**
+   * A small rich-text box: bold, italic, lists, links, and screenshots pasted straight in. Clicking a
+   * picture in it opens the annotator on that picture.
+   */
+  function richEditor(host, { placeholder } = {}) {
+    host.innerHTML = `<div class="rte">
+      <div class="rte-bar">
+        <button type="button" data-cmd="bold" title="Bold (Cmd/Ctrl+B)"><b>B</b></button>
+        <button type="button" data-cmd="italic" title="Italic (Cmd/Ctrl+I)"><i>I</i></button>
+        <button type="button" data-cmd="insertUnorderedList" title="Bulleted list">• List</button>
+        <button type="button" data-cmd="link" title="Link the selected text">🔗 Link</button>
+        <span class="rte-sep"></span>
+        <button type="button" data-cmd="shot" title="Paste or open a screenshot and mark it up">✏️ Screenshot</button>
+        <label class="rte-file" title="Add a picture from your computer">📎 Picture<input type="file" accept="image/*" hidden></label>
+      </div>
+      <div class="rte-body" contenteditable="true" data-ph="${esc(placeholder || '')}"></div>
+      <div class="rte-hint small faint">Paste screenshots straight in (Cmd/Ctrl+V). Click a picture to mark it up.</div>
+    </div>`;
+    const body = $('.rte-body', host);
+    let uploading = 0; let range = null;
+    const keepRange = () => { const s2 = window.getSelection(); if (s2.rangeCount && body.contains(s2.anchorNode)) range = s2.getRangeAt(0).cloneRange(); };
+    body.addEventListener('keyup', keepRange); body.addEventListener('mouseup', keepRange); body.addEventListener('input', keepRange);
+    const restore = () => { body.focus(); if (range) { const s2 = window.getSelection(); s2.removeAllRanges(); s2.addRange(range); } };
+    async function insertImage(blob, replace) {
+      const ph = replace || document.createElement('img');
+      ph.className = 'rte-uploading'; ph.alt = 'Uploading…';
+      if (!replace) { restore(); const s2 = window.getSelection(); if (s2.rangeCount && body.contains(s2.anchorNode)) { const r = s2.getRangeAt(0); r.collapse(false); r.insertNode(ph); r.setStartAfter(ph); } else body.appendChild(ph); }
+      uploading++;
+      try { const { data, type } = await compressImage(blob); const r = await post('/api/img', { data, type }); ph.src = r.url; ph.className = ''; ph.alt = ''; }
+      catch (e) { ph.remove(); toast('Picture upload failed: ' + e.message); }
+      uploading--;
+    }
+    body.addEventListener('paste', (e) => {
+      const files = Array.from((e.clipboardData || {}).items || []).filter((i) => i.kind === 'file' && /^image\//.test(i.type)).map((i) => i.getAsFile());
+      if (files.length) { e.preventDefault(); keepRange(); files.forEach((f) => insertImage(f)); return; }
+      // Text from elsewhere comes in as text: someone else's styling has no place in an audit item.
+      const html = e.clipboardData && e.clipboardData.getData('text/html');
+      if (html) { e.preventDefault(); document.execCommand('insertHTML', false, cleanRich(html)); }
+    });
+    body.addEventListener('drop', (e) => { const f = [...((e.dataTransfer && e.dataTransfer.files) || [])].filter((x) => /^image\//.test(x.type)); if (f.length) { e.preventDefault(); f.forEach((x) => insertImage(x)); } });
+    body.addEventListener('click', (e) => {
+      const im = e.target.closest('img'); if (!im || !im.src || im.classList.contains('rte-uploading')) return;
+      openAnnotator({ src: im.src, doneLabel: 'Replace picture', onDone: (bl) => insertImage(bl, im) });
+    });
+    $('input[type=file]', host).onchange = (e) => { [...e.target.files].forEach((f) => insertImage(f)); e.target.value = ''; };
+    $$('[data-cmd]', host).forEach((b) => b.addEventListener('mousedown', (e) => e.preventDefault()));
+    $$('[data-cmd]', host).forEach((b) => (b.onclick = () => {
+      const c = b.dataset.cmd;
+      if (c === 'shot') { keepRange(); return openAnnotator({ doneLabel: 'Add to item', onDone: (bl) => insertImage(bl) }); }
+      restore();
+      if (c === 'link') {
+        const url = prompt('Link to (https://…)', 'https://');
+        if (!url || !/^(https?:\/\/|mailto:)\S+$/i.test(url.trim())) return;
+        const s2 = window.getSelection();
+        if (s2.isCollapsed) document.execCommand('insertHTML', false, `<a href="${esc(url.trim())}">${esc(url.trim())}</a>`);
+        else document.execCommand('createLink', false, url.trim());
+        return;
+      }
+      document.execCommand(c);
+    }));
+    return {
+      html: () => cleanRich(body.innerHTML.replace(/<img[^>]*class="rte-uploading"[^>]*>/g, '')),
+      text: () => richText(body.innerHTML),
+      busy: () => uploading > 0,
+      focus: () => body.focus(),
+    };
+  }
+
+  // =====================================================================
   // AUDIT SUMMARY — a note for the group chat
   // =====================================================================
   /*
@@ -5167,113 +5503,151 @@
    */
   const SUM_NAME = /^(TEXT_OTHER_BUSINESS|COPYRIGHT_NAME|SCHEMA_NAME|MAP_OTHER_BUSINESS|MAP_LABEL_OLD|AI_TEXT_OTHER_BUSINESS)$/;
   const SUM_PHONE = /^(TEL_|PHONE_|SMS_|SCHEMA_PHONE)/;
-  const SUM_EMAIL = /^(MAILTO_|EMAIL_|SCHEMA_EMAIL)/;
+  const SUM_EMAIL = /^(MAILTO_(MISMATCH|TEXT_MISMATCH)|EMAIL_|SCHEMA_EMAIL)/;
   const SUM_ADDR = /^(SCHEMA_ADDRESS|MAP_ADDRESS|ADDRESS_)/;
-  const SUM_CROSS = /^(TEL_|PHONE_|SMS_|SCHEMA_PHONE|MAILTO_|EMAIL_|SCHEMA_EMAIL|SCHEMA_ADDRESS|MAP_ADDRESS|ADDRESS_|TEXT_OTHER_BUSINESS|COPYRIGHT_NAME|SCHEMA_NAME|MAP_OTHER_BUSINESS|MAP_LABEL_OLD|NAME_SPELLING|AI_TEXT_OTHER_BUSINESS|AI_TEXT_NAME_VARIANT)/;
-  const sumWhere = (f) => {
-    const p = (x) => (x === '/' ? 'Home' : x);
-    const pages = f.pages && f.pages.length ? f.pages : [f.path || '/'];
-    return pages.length > 1 ? `${p(pages[0])} + ${pages.length - 1} more page${pages.length === 2 ? '' : 's'}` : p(pages[0]);
-  };
+  const SUM_CROSS = /^(TEL_|PHONE_|SMS_|SCHEMA_PHONE|MAILTO_(MISMATCH|TEXT_MISMATCH)|EMAIL_|SCHEMA_EMAIL|SCHEMA_ADDRESS|MAP_ADDRESS|ADDRESS_|TEXT_OTHER_BUSINESS|COPYRIGHT_NAME|SCHEMA_NAME|MAP_OTHER_BUSINESS|MAP_LABEL_OLD|NAME_SPELLING|AI_TEXT_OTHER_BUSINESS|AI_TEXT_NAME_VARIANT)/;
   const sumPhone = (x) => { const m = String(x || '').match(/(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-]?\d{3}[\s.-]?\d{4}/); if (!m) return ''; const d = m[0].replace(/\D/g, '').slice(-10); return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`; };
+  const sumFmt10 = (d) => (String(d).length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(d));
   const sumEmail = (x) => (String(x || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [''])[0];
   const sumCut = (x, n) => { const t = String(x || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
-  /** How a contact value was cross-checked, in a few words. */
-  function sumChecked(s, f) {
-    if (!SUM_CROSS.test(f.code || '') || f.code === 'MAILTO_SHARE_NO_TO' || f.code === 'MAILTO_INVALID') return '';
-    const brief = /brief/.test((s.truth && s.truth.source) || '');
-    const ref = brief ? 'Business Info or the client’s brief' : 'Business Info';
-    const said = ((f.known && f.known.comments) || []).filter((c) => c.fromFound !== false);
-    if (said.length) return `not in ${ref}; the client mentioned it in a comment`;
-    const n = s.ccSearched || 0;
-    return n ? `not in ${ref}, and not mentioned in any of the ${n} comment${n === 1 ? '' : 's'} on this website` : `not in ${ref} (no comments on this website to check against)`;
+  const sumAnd = (list) => (list.length < 2 ? list.join('') : list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1]);
+  /** A copyright line is mostly not the name: "© 2025 Sample Auto Spa. All rights reserved." → "Sample Auto Spa". */
+  const sumBareName = (f) => f.foreignName || sumCut(String(f.found || '').replace(/^"|"$/g, '').replace(/©|\(c\)|copyright/gi, '').replace(/\b(19|20)\d{2}\b/g, '').replace(/all rights reserved\.?/i, '').replace(/^[\s.,|–—-]+|[\s.,|–—-]+$/g, ''), 60);
+  /** Where on a page an item sits, in words a client would use. */
+  function sumSpot(f) {
+    const sel = String(f.selector || ''); const code = String(f.code || '');
+    if (/meta\[name="description"\]/.test(sel)) return 'meta description';
+    if (/(twitter|og):description/.test(sel)) return 'social share description';
+    if (/(twitter|og):title/.test(sel)) return 'social share title';
+    if (/(^|\s|>)title\b/.test(sel) && /head/.test(sel)) return 'page title';
+    if (f.category === 'Schema' || /^SCHEMA_/.test(code)) return 'structured data Google reads';
+    if (/^(TEL_|SMS_)/.test(code)) return 'click-to-call links';
+    if (/^MAILTO_/.test(code)) return 'email links';
+    if (/^MAP_/.test(code)) return 'map';
+    if (/^COPYRIGHT_/.test(code)) return 'copyright line';
+    if (f.location === 'Footer') return 'footer';
+    if (f.location === 'Header') return 'header';
+    if (/side panel|hamburger/i.test(f.location || '')) return 'side menu';
+    return 'page text';
   }
-  /** One audit item as a sentence a non-technical reader follows. */
-  function sumLine(s, f) {
-    const where = sumWhere(f);
-    const why = sumChecked(s, f);
-    const tail = why ? ` — ${why}` : '';
-    const code = String(f.code || '');
-    if (SUM_NAME.test(code)) {
-      // A copyright line is mostly not the name: "© 2025 Sample Auto Spa. All rights reserved." → "Sample Auto Spa".
-      const bare = String(f.found || '').replace(/\u00a9|\(c\)|copyright/gi, '').replace(/\b(19|20)\d{2}\b/g, '').replace(/all rights reserved\.?/i, '').replace(/^[\s.,|\u2013\u2014-]+|[\s.,|\u2013\u2014-]+$/g, '');
-      const n = f.foreignName || sumCut(bare || f.found, 60);
-      return `Different business name "${n}" on ${where} (should be "${f.expected || s.businessName || ''}")${tail}`;
+  /** What an item is ABOUT, so the same problem in many places becomes one entry in the report. */
+  function sumTopic(s, f) {
+    const code = String(f.code || ''); const t = s.truth || {};
+    const bn = (t.names && t.names[0]) || t.businessName || s.businessName || '';
+    if (code === 'NAME_SPELLING' || code === 'AI_TEXT_NAME_VARIANT') {
+      let v = code === 'NAME_SPELLING' ? f.found : f.variant;
+      if (!v && code === 'AI_TEXT_NAME_VARIANT') { const nv = A.nameVariants([{ text: String(f.found || '') }], t)[0]; v = nv && nv.found; }
+      if (v) return { key: 'spell:' + v, kind: 'spell', value: v, expected: (code === 'NAME_SPELLING' && f.expected) || bn };
     }
-    if (code === 'NAME_SPELLING' || code === 'AI_TEXT_NAME_VARIANT') return `Business name spelled "${sumCut(f.found, 50).replace(/^"|"$/g, '')}" on ${where} — Business Info spells it "${f.expected}"`;
-    if (code === 'MAILTO_SHARE_NO_TO') { const pg = (f.pages || [f.path]).length; return `${f.message.replace(/ \u2014 .*$/, '')}, on ${pg} page${pg === 1 ? '' : 's'}`; }
-    if (SUM_PHONE.test(code)) return `Wrong phone number ${sumPhone(f.found) || sumCut(f.found, 40)} on ${where}${tail}`;
-    if (SUM_EMAIL.test(code)) return `${code === 'MAILTO_INVALID' ? 'Broken email link' : 'Wrong email ' + (sumEmail(f.found) || sumCut(f.found, 40))} on ${where}${code === 'MAILTO_INVALID' ? '' : tail}`;
-    if (SUM_ADDR.test(code)) return `Wrong address "${sumCut(f.found, 60)}" on ${where}${tail}`;
-    if (code === 'LINK_BROKEN_INTERNAL') return `Link to a page that doesn't exist (${sumCut(f.found, 50)}) on ${where}`;
-    if (/^LINK_/.test(code)) return `${f.message}${f.found ? ' (' + sumCut(f.found, 50) + ')' : ''} on ${where}`;
-    return `${f.message}${f.found && String(f.found).length < 70 ? ': ' + sumCut(f.found, 60) : ''} on ${where}`;
+    if (SUM_PHONE.test(code) || (code === 'PLACEHOLDER' && sumPhone(f.found))) { const ph = sumPhone(f.found); if (ph) return { key: 'phone:' + ph, kind: 'phone', value: ph, expected: (t.phones || []).map(sumFmt10) }; }
+    if (SUM_EMAIL.test(code)) { const em = sumEmail(f.found); if (em) return { key: 'email:' + em.toLowerCase(), kind: 'email', value: em, expected: t.emails || [] }; }
+    if (SUM_NAME.test(code)) { const n = sumBareName(f); return { key: 'name:' + n.toLowerCase(), kind: 'name', value: n, expected: bn }; }
+    if (SUM_ADDR.test(code)) return { key: 'addr:' + String(f.found || '').toLowerCase(), kind: 'addr', value: sumCut(f.found, 80), expected: '' };
+    if (code === 'MAILTO_SHARE_NO_TO') return { key: 'code:' + code, kind: 'other', value: f.message.replace(/ — .*$/, '') };
+    return { key: 'code:' + code + ':' + f.message + ':' + (String(f.found || '').length < 70 ? f.found : ''), kind: 'other', value: f.message, found: String(f.found || '').length < 70 ? f.found : '' };
+  }
+  /** How a contact value was cross-checked with the client's comments, in a sentence. */
+  function sumCross(s, items, kindWord) {
+    if (!items.some((f) => SUM_CROSS.test(f.code || ''))) return '';
+    const said = items.some((f) => ((f.known && f.known.comments) || []).some((c) => c.fromFound !== false));
+    if (said) return `The client mentioned this ${kindWord} in a comment — check it with them.`;
+    const n = s.ccSearched || 0;
+    return n ? `Not mentioned in any of the ${n} client comment${n === 1 ? '' : 's'} on this website.` : 'There are no client comments on this website to check against.';
   }
   function auditSummary(s, opt = {}) {
     const since = opt.since ? Date.now() - opt.since : 0;
+    const maxPages = opt.pages || 3;
     const when = (f) => Date.parse((f.gone && f.gone.at) || f.statusAt || '') || 0;
-    const all = (s.findings || []).filter((f) => !/^AI_PENDING/.test(f.code || ''));
     const corrected = (f) => (f.gone && f.gone.why === 'check-corrected') || (f.auto && f.auto.why === 'check-corrected');
-    const fixed = all.filter((f) => f.status === 'done' && !corrected(f) && (!since || when(f) >= since));
+    const all = (s.findings || []).filter((f) => !/^AI_PENDING/.test(f.code || '') && !corrected(f));
+    const live = all.filter((f) => f.status !== 'false');
     const falseAl = all.filter((f) => f.status === 'false' && (!since || when(f) >= since));
-    const cleared = all.filter((f) => f.status === 'done' && corrected(f) && (!since || when(f) >= since));
-    const open = all.filter((f) => !f.gone && ['open', 'hold'].includes(f.status));
-    const clar = all.filter((f) => !f.gone && f.status === 'clarification');
     const sc = s.scan || {};
     const pd = (pubInfo[s.id] || {}).d || {};
     const lx = liveOf(s.siteId) || {};
     const domain = pd.domain || lx.domain || (s.verify && s.verify.domain) || '';
     const scans = (s.activity || []).filter((a) => a.type === 'scan' && /completed a scan/.test(a.text || '')).length;
     const brief = /brief/.test((s.truth && s.truth.source) || '');
+    const sevRank = { critical: 0, outdated: 1, warning: 2, info: 3 };
+
+    // Group every item by what it is about.
+    const groups = new Map();
+    live.forEach((f) => {
+      const tp = sumTopic(s, f);
+      const g = groups.get(tp.key) || Object.assign({ items: [] }, tp);
+      g.items.push(f); groups.set(tp.key, g);
+    });
+    const detailed = []; const smallFixed = []; const smallOpen = [];
+    groups.forEach((g) => {
+      const sev = Math.min(...g.items.map((f) => sevRank[f.severity] ?? 3));
+      g.sev = sev;
+      g.done = g.items.filter((f) => f.status === 'done');
+      g.places = g.items.reduce((a, f) => a + ((f.pages && f.pages.length) || 1), 0);
+      g.pages = [...new Set(g.items.flatMap((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/'])))].sort();
+      g.spots = [...new Set(g.items.map(sumSpot))];
+      const inRange = !since || g.done.some((f) => when(f) >= since);
+      const big = sev <= 1 || g.kind !== 'other';
+      if (big) { if (inRange) detailed.push(g); return; }
+      g.items.forEach((f) => { if (f.status === 'done') { if (!since || when(f) >= since) smallFixed.push(f); } else if (!f.gone) smallOpen.push(f); });
+    });
+    detailed.sort((a, b) => (a.sev - b.sev) || (b.places - a.places));
+
     const L = [];
     L.push(`*Audit summary — ${s.businessName || s.siteId}*${domain ? ' (' + domain + ')' : ''}`);
-    L.push(`Audited by ${nameOf(s.assignee || sc.by || s.addedBy, 'the team')}${scans ? ` · ${scans} scan${scans === 1 ? '' : 's'}` : ''}${sc.finishedAt ? ` · last scan ${fmtFull(sc.finishedAt)}` : ''}${since ? ` · changes in the last ${opt.sinceLabel}` : ''}`);
+    L.push(`Audited by ${nameOf(s.assignee || sc.by || s.addedBy, 'the team')}${scans ? ` · ${scans} scan${scans === 1 ? '' : 's'}` : ''}${sc.finishedAt ? ` · last scan ${fmtFull(sc.finishedAt)}` : ''}${since ? ` · fixes in the last ${opt.sinceLabel}` : ''}`);
     L.push('');
     L.push('*What the app checked*');
     if (sc.pages) L.push(`• ${sc.pages} page${sc.pages === 1 ? '' : 's'}, each on desktop, tablet and mobile${sc.externalLinks ? `, plus ${sc.externalLinks} outside links` : ''}${sc.images ? ` and ${sc.images} images` : ''}`);
-    L.push(`• Every phone number, email, address and business name on the site compared with ${brief ? 'Business Info and the client’s brief' : 'Business Info in Duda'}, including the hidden code Google reads`);
+    L.push(`• Every phone number, email, address and business name on the site — in the page text, the meta descriptions and the hidden code Google reads — compared with ${brief ? 'Business Info and the client’s brief' : 'Business Info in Duda'}, which is the source of truth`);
     L.push(`• Anything that didn’t match was cross-checked against the client’s own comments on this website${s.ccSearched ? ` (${s.ccSearched} comment${s.ccSearched === 1 ? '' : 's'})` : ''} before being called wrong`);
-    L.push('• Business name spelling, broken links, SEO titles and descriptions, image alt text, fonts, repeated photos, forms and social links');
+    L.push('• Also: business name spelling, broken links, SEO titles and descriptions, image alt text, fonts, repeated photos, forms and social links');
     L.push('');
-    const crit = fixed.filter((f) => f.severity === 'critical' || f.severity === 'outdated');
-    const rest = fixed.filter((f) => !(f.severity === 'critical' || f.severity === 'outdated'));
-    if (fixed.length) {
-      const rescanned = fixed.filter((f) => f.gone && f.gone.why === 'gone').length;
-      L.push(`*Fixed — ${fixed.length} item${fixed.length === 1 ? '' : 's'}${crit.length ? `, ${crit.length} critical` : ''}*${rescanned ? ` (${rescanned} confirmed gone by a rescan)` : ''}`);
-      crit.sort((a, b) => a.num - b.num).slice(0, opt.max || 15).forEach((f) => L.push(`• ${sumLine(s, f)}${f.gone && f.gone.why === 'gone' ? ' ✓' : ''}`));
-      if (crit.length > (opt.max || 15)) L.push(`• …and ${crit.length - (opt.max || 15)} more critical items`);
-      if (rest.length) {
-        const by = {}; rest.forEach((f) => { by[f.category || 'Other'] = (by[f.category || 'Other'] || 0) + 1; });
-        L.push(`• Also fixed: ${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} (${n})`).join(', ')}`);
-      }
-    } else L.push(since ? '*Fixed* — nothing in this period' : '*Fixed* — nothing yet');
-    // Spelling, as a comparison: what Business Info says against every other way the site writes it.
-    const sp = all.filter((f) => f.code === 'NAME_SPELLING' && f.status !== 'false');
-    if (sp.length) {
-      const by = {};
-      sp.forEach((f) => { const v = by[f.found] || (by[f.found] = { n: 0, items: 0, done: 0 }); v.n += (f.pages && f.pages.length) || 1; v.items++; if (f.status === 'done') v.done++; });
+    if (detailed.length) {
+      const fixedG = detailed.filter((g) => g.done.length === g.items.length).length;
+      L.push(`*What was found* — ${detailed.length} issue${detailed.length === 1 ? '' : 's'}${fixedG ? `, ${fixedG === detailed.length ? 'all' : fixedG} fixed` : ''}`);
+      detailed.forEach((g, i) => {
+        L.push('');
+        const where = `in the ${sumAnd(g.spots)}`;
+        const exp = Array.isArray(g.expected) ? g.expected.filter(Boolean) : [g.expected].filter(Boolean);
+        let head;
+        if (g.kind === 'phone') head = `*Wrong phone number.* Found ${g.value} ${where}. ${exp.length ? `The correct number is ${sumAnd(exp)} (Business Info).` : ''}`;
+        else if (g.kind === 'email') head = `*Wrong email.* Found ${g.value} ${where}. ${exp.length ? `Business Info has ${sumAnd(exp)}.` : ''}`;
+        else if (g.kind === 'name') head = `*Another business’s name.* Found "${g.value}" ${where}. This website is "${exp[0] || s.businessName}".`;
+        else if (g.kind === 'spell') head = `*Business name spelled differently.* Found "${g.value}", but Business Info says "${exp[0]}", which is the official spelling. Found ${where}.`;
+        else if (g.kind === 'addr') head = `*Wrong address.* Found "${g.value}" ${where}.`;
+        else head = `*${g.value}.*${g.found ? ` Found: ${sumCut(g.found, 70)}.` : ''}${g.spots[0] !== 'page text' ? ` In the ${sumAnd(g.spots)}.` : ''}`;
+        L.push(`${i + 1}. ${head.trim()}`);
+        const cross = sumCross(s, g.items, g.kind === 'phone' ? 'number' : g.kind === 'email' ? 'email' : g.kind === 'addr' ? 'address' : 'name');
+        if (cross && g.kind !== 'spell') L.push(`   ${cross}`);
+        if (g.pages.length === 1) L.push(`   Page: ${g.pages[0]}${g.places > 1 ? ` (${g.places} places)` : ''}`);
+        else {
+          L.push(`   Found on these pages${g.places > g.pages.length ? ` (${g.places} places in all)` : ''}:`);
+          g.pages.slice(0, maxPages).forEach((pg, k) => L.push(`   ${String.fromCharCode(97 + k)}. ${pg}`));
+          if (g.pages.length > maxPages) L.push(`   …and ${g.pages.length - maxPages} more page${g.pages.length - maxPages === 1 ? '' : 's'}`);
+        }
+        const n = g.items.length; const d = g.done.length;
+        const confirmed = d && g.done.every((f) => f.gone && f.gone.why === 'gone');
+        const clar = g.items.filter((f) => f.status === 'clarification').length;
+        if (d === n) L.push(`   ✅ Fixed${g.places > 1 ? ` — all ${g.places} places` : ''}${confirmed ? ', confirmed by a rescan' : ''}`);
+        else if (d) L.push(`   ⚠️ ${d} of ${n} fixed so far`);
+        else if (clar) L.push('   ❓ Waiting on the client to confirm');
+        else L.push('   ⏳ Still to fix');
+      });
+    } else L.push(since ? '*What was found* — nothing fixed in this period' : '*What was found* — no contact, name or critical problems ✅');
+    if (smallFixed.length) {
+      const by = {}; smallFixed.forEach((f) => { by[f.category || 'Other'] = (by[f.category || 'Other'] || 0) + 1; });
       L.push('');
-      L.push('*Business name spelling*');
-      L.push(`\u2022 Business Info spells it: "${sp[0].expected}"`);
-      Object.entries(by).forEach(([k, v]) => L.push(`\u2022 The site had: "${k}" \u2014 ${v.n} place${v.n === 1 ? '' : 's'} (${v.done === v.items ? 'fixed' : v.done ? `${v.done} of ${v.items} fixed` : 'still to fix'})`));
+      L.push(`*Smaller fixes* — ${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} (${n})`).join(', ')}`);
     }
-    if (falseAl.length || cleared.length) {
+    if (falseAl.length) {
       L.push('');
-      L.push(`*Checked and ruled out — ${falseAl.length + cleared.length}*${falseAl.length ? ` (${falseAl.length} looked wrong but were confirmed correct for this client)` : ''}`);
+      L.push(`*Checked and ruled out* — ${falseAl.length} item${falseAl.length === 1 ? '' : 's'} looked wrong but were confirmed correct for this client`);
     }
-    L.push('');
-    if (open.length || clar.length) {
-      const oc = open.filter((f) => f.severity === 'critical');
-      L.push(`*Still open — ${open.length}${oc.length ? ` (${oc.length} critical)` : ''}*`);
-      oc.sort((a, b) => a.num - b.num).slice(0, 5).forEach((f) => L.push(`• ${sumLine(s, f)}`));
-      if (oc.length > 5) L.push(`• …and ${oc.length - 5} more critical`);
-      const minor = open.filter((f) => f.severity !== 'critical');
-      if (minor.length) {
-        const by = {}; minor.forEach((f) => { by[f.category || 'Other'] = (by[f.category || 'Other'] || 0) + 1; });
-        L.push(`\u2022 ${oc.length ? 'Also to do' : 'To do'}: ${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} (${n})`).join(', ')}`);
-      }
-      if (clar.length) L.push(`• ${clar.length} waiting on the client to confirm`);
-    } else L.push('*Still open* — nothing. ✅');
+    if (smallOpen.length) {
+      const by = {}; smallOpen.forEach((f) => { by[f.category || 'Other'] = (by[f.category || 'Other'] || 0) + 1; });
+      L.push('');
+      L.push(`*Still to do (minor)* — ${Object.entries(by).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} (${n})`).join(', ')}`);
+    }
     return L.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   }
   function openSummary(s) {
@@ -5283,14 +5657,14 @@
         <div class="small muted">What was checked, what was fixed and what is left, in plain words. Edit anything before copying.</div>
         <div class="two-up" style="margin-top:8px">
           <label class="field">Fixes from<select id="smRange">${ranges.map((r) => `<option value="${r[0]}">${r[1]}</option>`).join('')}</select></label>
-          <label class="field">Critical items listed<select id="smMax"><option value="10">Up to 10</option><option value="15" selected>Up to 15</option><option value="40">Up to 40</option></select></label>
+          <label class="field">Pages listed per issue<select id="smMax"><option value="3" selected>3</option><option value="5">5</option><option value="10">10</option><option value="999">All</option></select></label>
         </div>
         <textarea id="smText" rows="18" class="mono small" style="width:100%"></textarea>
       </div>
       <footer><span class="small faint" id="smNote"></span><span class="spacer"></span><button class="btn primary" id="smCopy">Copy</button></footer>`);
     const draw = () => {
       const r = ranges.find((x) => x[0] === $('#smRange').value) || ranges[0];
-      $('#smText').value = auditSummary(s, { since: r[2], sinceLabel: r[1].replace(/^Last /, '').toLowerCase(), max: Number($('#smMax').value) });
+      $('#smText').value = auditSummary(s, { since: r[2], sinceLabel: r[1].replace(/^Last /, '').toLowerCase(), pages: Number($('#smMax').value) });
     };
     $('#smRange').onchange = draw; $('#smMax').onchange = draw; draw();
     $('#smCopy').onclick = async () => {
