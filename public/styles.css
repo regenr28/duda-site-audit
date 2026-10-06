@@ -901,3 +901,12 @@ table.grid.sm td { padding: 5px 8px; font-size: 13px; }
 .dr-detail.rich ul, .dr-detail.rich ol, .rte-body ul, .rte-body ol { margin: 4px 0; padding-left: 22px; }
 .pv img[data-anno] { cursor: pointer; }
 .dr-detail.rich { white-space: normal; color: var(--text); }
+.v-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; }
+.v-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--panel); }
+.v-pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.v-pill.still { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 45%, transparent); }
+.v-pill.wait { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.v-pill.unk, .v-pill.new { color: var(--muted); }
+.v-details { margin-top: 6px; }
+.v-details summary { cursor: pointer; color: var(--muted); }
+.v-details .v-row { margin-top: 6px; }

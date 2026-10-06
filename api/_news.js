@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-07-livecheck', date: '2026-10-07', audience: 'all', tag: 'Audits',
+    title: 'The live site check is one tidy strip instead of a wall of numbers',
+    what: 'The <b>Live site check</b> box used to list every item number twice: once as \u201cmarked Done after the last publish\u201d and again as \u201cfixed on live site\u201d, which on a big audit filled the screen and contradicted itself.<br><br>It now shows the live domain, when it was published, and <b>one count per outcome</b>: ✓ fixed on live site, ⚠ still on live site, ⏳ waiting for publish, ? couldn\u2019t check, • not checked yet. Each Done item is counted once. An item the live check found fixed is no longer also listed as \u201cnot live yet\u201d. The item numbers are behind <b>Show item numbers</b>. Only <b>still on live site</b> lists its numbers right away, with <b>Reopen these</b>, because it is the one that needs action.',
+    where: ['<b>Walkthrough:</b> open an audit with Done items. The strip is at the top of Audit items. Press <b>🌐 Verify</b>, then read the counts; open <b>Show item numbers</b> only if you need them.'],
+    link: '#/help/verify', linkText: 'Verify on live site',
+  },
+  {
     id: '2026-10-07-markup', date: '2026-10-07', audience: 'all', tag: 'Audits',
     title: 'Mark up screenshots in the app, paste them into items, and a summary the boss can read',
     what: '<b>✏️ Mark up a screenshot.</b> Paste a screenshot, then draw boxes, circles, arrows and text on it, as many as you like. Every shape can be moved, resized or deleted until you\u2019re done. Then <b>Copy picture</b> to paste it anywhere, or put it straight into the item or comment you were writing.<br><br><b>Rich text in items you write by hand.</b> The explanation now takes bold, lists and links, and screenshots pasted straight in with Cmd/Ctrl+V. No more screenshot \u2192 save \u2192 find \u2192 upload.<br><br><b>The summary groups each problem once.</b> The same wrong phone number in 15 meta descriptions is now one entry: what was found, where on the page, what Business Info says is correct, whether the client mentioned it, the pages it was on (a., b., c. and how many more), and whether it is fixed. Spelling reads the same way: <i>Found "Buff & Beyond", but Business Info says "Buff&Beyond", which is the official spelling.</i><br><br><b>Business Info addresses.</b> A Business Info address with only a town (common for businesses that serve an area) used to show as empty. It is now read and shown, with a note that address checks needing a street or ZIP are skipped. Social accounts listed twice are listed once.',

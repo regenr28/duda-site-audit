@@ -4056,6 +4056,11 @@
   function refreshVerifyPanel(s) {
     refreshSiteHead(s); const el = $('#verifyPanel'); if (el) { el.outerHTML = verifyPanel(s); bindVerify($('#verifyPanel'), s); } }
   const itemChips = (list, s) => list.sort((a, b) => a.num - b.num).map((f) => `<a class="vchip" href="#/site/${esc(s.id)}/item/${f.num}" title="${esc(f.message)}">#${f.num}</a>`).join('');
+  /**
+   * The live-site check, as one compact strip: where the site is published, a count for each
+   * outcome, and the item numbers folded away until somebody asks for them. Hundreds of chips on
+   * every visit told nobody anything; the counts do, and the numbers are one click away.
+   */
   function verifyPanel(s) {
     const f = (s.findings || []).filter((x) => !/^AI_PENDING/.test(x.code));
     if (!f.length) return '';
@@ -4067,39 +4072,50 @@
     const busy = !!state.scanning[s.id];
     const published = pd && pd.publishedAt ? new Date(pd.publishedAt) : null;
     const notLive = pd && (!pd.domain || /NOT_PUBLISHED|UNPUBLISHED/i.test(pd.publishStatus || ''));
-    const afterPub = published ? done.filter((x) => x.statusAt && new Date(x.statusAt) > published) : [];
+    const res = (v && v.results) || {};
+    // Each Done item lands in exactly one group. Marked Done after the last publish (and not already
+    // seen fixed on the live site) means the fix can't be live yet — that explains a "still there",
+    // so it is counted as waiting, not as a failure, and is never offered for reopening.
+    const waiting = published ? done.filter((x) => x.statusAt && new Date(x.statusAt) > published && res[x.id] !== 'ok') : [];
+    const isW = new Set(waiting.map((x) => x.id));
+    const ok = done.filter((x) => res[x.id] === 'ok');
+    const still = done.filter((x) => res[x.id] === 'still' && !isW.has(x.id));
+    const unk = done.filter((x) => res[x.id] === 'unknown' && !isW.has(x.id));
+    const unchecked = done.filter((x) => !(x.id in res) && !isW.has(x.id));
     const pubLine = pi.loading && !pd ? '<span class="faint">Checking when it was last published…</span>'
-      : pi.err ? `<span class="faint">Couldn't get the publish date from Duda.</span>`
-      : notLive ? '<b>Not published yet</b> in Duda, so there is no live site to check.'
-      : pd ? `Last published in Duda: <b>${esc(fmtFull(pd.publishedAt))}</b> <span class="faint">(${esc(relTime(pd.publishedAt))})</span> on <b>${esc(pd.domain)}</b>` : '';
-    const head = !open.length
-      ? `<b>🎉 All items are cleared.</b> Next: publish the site in Duda, then verify the fixes on the live site.`
-      : `<b>🌐 Live site check</b>`;
+      : pi.err ? '<span class="faint">Couldn’t get the publish date from Duda.</span>'
+      : notLive ? '<b>Not published yet</b> — nothing live to check.'
+      : pd ? `<b>${esc(pd.domain)}</b> <span class="faint">· published ${esc(fmtFull(pd.publishedAt))} (${esc(relTime(pd.publishedAt))})</span>` : '';
     const canVerify = done.length && !busy && !otherClaim(s.id) && !notLive;
-    const btn = `<button class="btn ${!open.length ? 'primary' : ''} sm" data-verify ${canVerify ? '' : 'disabled'} title="${done.length ? 'Scan the published website and check the items marked Done' : 'Mark fixed items as Done first'}">🌐 Verify ${done.length} Done item${done.length === 1 ? '' : 's'} on live site</button>`;
-    let results = '';
-    if (v) {
-      const by = (t) => done.filter((x) => v.results[x.id] === t);
-      const ok = by('ok'), still = by('still'), unk = by('unknown');
-      const newer = done.filter((x) => !(x.id in v.results));
-      results = `<div class="v-results"><div class="small">Last check: <b>${esc(fmtFull(v.at))}</b> by ${esc(v.byName || nameOf(v.by))}, ${v.pages || 0} pages on ${esc(v.domain)}${v.publishedAt ? ` <span class="faint">(site as published ${esc(fmtFull(v.publishedAt))})</span>` : ''}</div>
-        ${ok.length ? `<div class="v-row"><span class="v-ok-t">✓ Fixed on live site (${ok.length})</span> ${itemChips(ok, s)}</div>` : ''}
-        ${still.length ? `<div class="v-row"><span class="v-still-t">⚠ Marked Done but still on live site (${still.length})</span> ${itemChips(still, s)} <button class="btn sm" data-vreopen>Reopen these ${still.length}</button></div>` : ''}
-        ${unk.length ? `<div class="v-row"><span class="faint">? Couldn't check (AI busy) (${unk.length})</span> ${itemChips(unk, s)}</div>` : ''}
-        ${!ok.length && !still.length && !unk.length ? `<div class="small faint">No items were marked Done at the time of this check.</div>` : ''}
-        ${newer.length ? `<div class="small v-warn">${newer.length} item(s) were marked Done after this check: ${itemChips(newer, s)} Run it again to verify them.</div>` : ''}</div>`;
-    }
-    return `<div class="note ${!open.length ? 'good' : 'unk'} verify-panel" id="verifyPanel">
-      <div class="row-between" style="align-items:center;gap:12px"><div>${head}</div>${btn}</div>
-      <div class="small muted" style="margin-top:4px">Scans the <b>published</b> website on Desktop, Tablet and Mobile and checks only the items marked <b>Done</b>: are they fixed on the live site too? Open, On hold, For clarification and False alarm items are not checked. <span class="faint">${done.length} Done · ${open.length} still open.</span></div>
-      <div class="small" style="margin-top:6px">${pubLine}</div>
-      ${afterPub.length ? `<div class="small v-warn">⚠ ${afterPub.length} item(s) were marked Done <b>after</b> the last publish, so those fixes aren't live yet. Publish in Duda first: ${itemChips(afterPub, s)}</div>` : ''}
-      ${results}</div>`;
+    const btn = `<button class="btn ${!open.length ? 'primary' : ''} sm" data-verify ${canVerify ? '' : 'disabled'} title="Scan the published website and check every item marked Done">🌐 Verify ${done.length} Done item${done.length === 1 ? '' : 's'}</button>`;
+    const pill = (cls, icon, n, label, title) => (n ? `<span class="v-pill ${cls}" title="${esc(title)}">${icon} <b>${n}</b> ${label}</span>` : '');
+    const pills = [
+      pill('ok', '✓', ok.length, 'fixed on live site', 'The last live check found these gone from the published website.'),
+      pill('still', '⚠', still.length, 'still on live site', 'Marked Done, but the published website still has them.'),
+      pill('wait', '⏳', waiting.length, 'waiting for publish', 'Marked Done after the last publish. Publish in Duda, then verify.'),
+      pill('unk', '?', unk.length, 'couldn’t check', 'The live check could not judge these (usually the AI was busy).'),
+      pill('new', '•', unchecked.length, 'not checked yet', 'Marked Done since the last live check.'),
+    ].join('');
+    const allGood = done.length && ok.length === done.length && !open.length;
+    const head = allGood ? `<b>✅ All ${done.length} Done items are fixed on the live site.</b>`
+      : !open.length ? '<b>🎉 All items are cleared.</b> Publish in Duda, then verify on the live site.'
+      : '<b>🌐 Live site</b>';
+    const row = (label, list, extra = '') => (list.length ? `<div class="v-row"><span class="small muted">${label} (${list.length})</span> ${itemChips(list, s)}${extra}</div>` : '');
+    const anyList = ok.length + still.length + waiting.length + unk.length + unchecked.length;
+    return `<div class="note ${allGood || !open.length ? 'good' : 'unk'} verify-panel" id="verifyPanel">
+      <div class="row-between" style="align-items:center;gap:12px;flex-wrap:wrap">
+        <div>${head} <span class="small">${pubLine}</span></div>${btn}</div>
+      ${pills ? `<div class="v-pills">${pills}${v ? `<span class="small faint">Last check ${esc(fmtFull(v.at))} by ${esc(v.byName || nameOf(v.by))} · ${v.pages || 0} pages</span>` : '<span class="small faint">Not checked on the live site yet.</span>'}</div>` : ''}
+      ${still.length ? `<div class="v-row" style="margin-top:6px"><span class="v-still-t">⚠ Still on the live site:</span> ${itemChips(still.slice(0, 30), s)}${still.length > 30 ? ` <span class="faint small">+${still.length - 30} more</span>` : ''} <button class="btn sm" data-vreopen data-ids="${esc(still.map((x) => x.id).join(','))}">Reopen these ${still.length}</button></div>` : ''}
+      ${anyList ? `<details class="v-details"><summary class="small">Show item numbers</summary>
+        ${row('✓ Fixed on live site', ok)}${row('⏳ Waiting for publish', waiting)}${row('? Couldn’t check', unk)}${row('• Not checked yet', unchecked)}
+        <div class="small faint" style="margin-top:6px">The live check scans the <b>published</b> website on Desktop, Tablet and Mobile, and only looks at items marked <b>Done</b>. ${done.length} Done · ${open.length} still open.</div>
+      </details>` : ''}</div>`;
   }
   function bindVerify(root, s) {
     if (!root) return;
     const b = $('[data-verify]', root); if (b) b.onclick = () => verifyLive(s);
-    const r = $('[data-vreopen]', root); if (r) r.onclick = () => { const ids = s.findings.filter((x) => x.status === 'done' && s.verify.results[x.id] === 'still').map((x) => x.id); if (confirm(`Reopen ${ids.length} item(s)?`)) setFinding(s, ids, { status: 'open' }); };
+    const r = $('[data-vreopen]', root); if (r) r.onclick = () => { const ids = (r.dataset.ids || '').split(',').filter(Boolean); if (confirm(`Reopen ${ids.length} item(s)?`)) setFinding(s, ids, { status: 'open' }); };
     loadPubInfo(s);
   }
 

@@ -590,15 +590,17 @@ export const HELP_SECTIONS = [
 <h4>How to use it</h4>
 <ol>
 <li>Fix items in the Duda editor and mark them <b>Done</b>.</li>
-<li><b>Publish</b> the site in Duda. The box shows <b>Last published in Duda</b> with the date and time, and warns you (with the item numbers) if items were marked Done after the last publish.</li>
-<li>Click <b>🌐 Verify N Done items on live site</b>. The button is greyed out while nothing is marked Done.</li>
+<li><b>Publish</b> the site in Duda. The box shows the live domain and when it was last published.</li>
+<li>Click <b>🌐 Verify N Done items</b>. The button is greyed out while nothing is marked Done.</li>
 </ol>
 <h4>Reading the result</h4>
+<p>The result is a row of counts, and each Done item is in exactly one of them. <b>Show item numbers</b> opens the full lists.</p>
 <ul>
-<li><b>✓ Fixed on live site</b>: the item numbers that are really gone. Click a number to open the item.</li>
-<li><b>⚠ Marked Done but still on live site</b>: publish again, or click <b>Reopen these</b> to send them back to Open.</li>
-<li><b>? Couldn't check</b>: the AI was busy for an AI-flagged item. Try again later.</li>
-<li>If items were marked Done after the check, the box lists them so you can run it again.</li>
+<li><b>✓ fixed on live site</b>: really gone from the published website.</li>
+<li><b>⚠ still on live site</b>: the item numbers are shown right away, with <b>Reopen these</b>, because this one needs action.</li>
+<li><b>⏳ waiting for publish</b>: marked Done after the last publish, so the fix can't be live yet. Publish, then verify again. These are never offered for reopening.</li>
+<li><b>? couldn't check</b>: the AI was busy for an AI-flagged item. Try again later.</li>
+<li><b>• not checked yet</b>: marked Done since the last live check.</li>
 </ul>
 <p>When every item is Done or False alarm, the box says <b>🎉 All items are cleared</b>. The result is saved on the page and in the Activity log. Only one live check or scan per website runs at a time.</p>`,
   },
