@@ -274,8 +274,10 @@ export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.na
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
-  const raws = await redis(...emails.map((e) => ['GET', P + 'user:' + e]));
-  return raws.map((r) => ownerFix(jparse(r))).filter(Boolean);
+  // One MGET, not one GET per member: a pipeline of N GETs is billed as N commands, an MGET as one.
+  // This runs on most page loads (and twice per comment-list load), so it was a large share of the month.
+  const [raws] = await redis(['MGET', ...emails.map((e) => P + 'user:' + e)]);
+  return (raws || []).map((r) => ownerFix(jparse(r))).filter(Boolean);
 }
 /** Decide role/status for a brand-new account. */
 export async function initialAccess(email) {

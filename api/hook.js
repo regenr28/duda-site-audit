@@ -219,7 +219,11 @@ export default async function handler(req, res) {
 
   if (touched) {
     cmds.push(['LPUSH', P + 'hooklog', JSON.stringify({ at: now(), n: touched, types: events.map((e) => str(e.event_type)).slice(0, 8), verified })],
-      ['LTRIM', P + 'hooklog', 0, LOG_KEEP - 1], ['INCR', P + 'ver:cmt']);
+      ['LTRIM', P + 'hooklog', 0, LOG_KEEP - 1]);
+    // Only a comment event moves the comment version. Every open tab reloads the whole comment list
+    // when this number changes, so bumping it for publishes and form submissions too made each of
+    // those cost a full reload in every open browser.
+    if (sawComment) cmds.push(['INCR', P + 'ver:cmt']);
     try { await redis(...cmds); } catch (e) { res.status(500).json({ error: 'store' }); return; }
     // Nudge every open browser so a comment appears in a second rather than on the next heartbeat.
     if (sawComment) { try { await ablyPublish(commentsChannel(), 'cmt', { at: now() }); } catch (e) { /* the heartbeat still catches it */ } }

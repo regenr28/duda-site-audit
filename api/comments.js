@@ -17,6 +17,7 @@ const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const WAIT_HOURS = Number(process.env.COMMENT_WAIT_HOURS || 24);
 const NAME_LOOKUPS = 8;   // Duda calls per request, so a first load never crawls
 const DUDA_LOOKUPS = 10;  // account-type lookups per request, same reason
+const NAME_RETRY_MS = 86400000;  // a website Duda gave no name for is asked about again after a day
 
 function pairs(arr, json) {
   const o = {};
@@ -52,11 +53,13 @@ const nameEntry = (name, published) => JSON.stringify({ n: name || '-', p: publi
  * Cached for a month, and a "no such account" is cached for a day so an unknown address does not
  * cost a Duda call on every page load.
  */
-async function dudaAccountType(email) {
+async function dudaAccountType(email, { cacheChecked = false } = {}) {
   const e = String(email || '').toLowerCase().trim();
   if (!e) return '';
   const key = P + 'dudaacct:' + e;
-  try { const [hit] = await redis(['GET', key]); if (hit) return hit === '-' ? '' : hit; } catch (x) { /* ask Duda instead */ }
+  if (!cacheChecked) {
+    try { const [hit] = await redis(['GET', key]); if (hit) return hit === '-' ? '' : hit; } catch (x) { /* ask Duda instead */ }
+  }
   let type = '';
   try {
     const a = await duda('/accounts/' + encodeURIComponent(e));
@@ -75,11 +78,19 @@ async function dudaAccountType(email) {
 export async function dudaTypes(emails, budget = DUDA_LOOKUPS) {
   const out = {};
   const todo = [];
-  for (const raw of [...new Set(emails.filter(Boolean).map((x) => String(x).toLowerCase().trim()))]) {
-    try { const [hit] = await redis(['GET', P + 'dudaacct:' + raw]); if (hit) { out[raw] = hit === '-' ? '' : hit; continue; } } catch (x) { /* ask */ }
-    todo.push(raw);
-  }
-  for (const e of todo.slice(0, budget)) out[e] = await dudaAccountType(e);
+  const uniq = [...new Set(emails.filter(Boolean).map((x) => String(x).toLowerCase().trim()).filter(Boolean))];
+  if (!uniq.length) return out;
+  // Every cached answer in ONE command. This used to be one GET per author, one round trip each —
+  // every author on every website's recent comments, on every comment-list load — and it was most
+  // of the month's database commands on its own.
+  let hits = [];
+  try { [hits] = await redis(['MGET', ...uniq.map((e) => P + 'dudaacct:' + e)]); } catch (x) { hits = []; }
+  uniq.forEach((e, i) => {
+    const hit = hits && hits[i];
+    if (hit) out[e] = hit === '-' ? '' : hit;
+    else todo.push(e);
+  });
+  for (const e of todo.slice(0, budget)) out[e] = await dudaAccountType(e, { cacheChecked: true });
   return out;
 }
 
@@ -297,7 +308,10 @@ export default async function handler(req, res) {
         const nameOf = (id) => (sites[id] && sites[id].name) || cachedName(nameMap[id]);
 
         // Fill in a few missing business names from Duda, so the list reads as names not IDs.
-        const unknown = Object.keys(sites).filter((id) => !nameOf(id)).slice(0, NAME_LOOKUPS);
+        // A website Duda has no name for would otherwise be asked about again on every load, forever
+        // (8 Duda calls and their writes each time). Ask at most once a day per website.
+        const triedRecently = (id) => { const t = Date.parse((sites[id] || {}).nameTried || ''); return t && Date.now() - t < NAME_RETRY_MS; };
+        const unknown = Object.keys(sites).filter((id) => !nameOf(id) && !triedRecently(id)).slice(0, NAME_LOOKUPS);
         if (unknown.length) {
           const got = await Promise.allSettled(unknown.map((id) => duda(`/sites/multiscreen/${id}`)));
           const cmds = [];
@@ -305,7 +319,7 @@ export default async function handler(req, res) {
             const id = unknown[k];
             const d = g.status === 'fulfilled' ? g.value : null;
             const nm = (d && ((d.site_business_info && d.site_business_info.business_name) || d.site_alternate_name)) || '';
-            const w = Object.assign({}, sites[id], { name: nm, needName: false,
+            const w = Object.assign({}, sites[id], { name: nm, needName: false, nameTried: now(),
               published: (d && d.last_published_date) || (sites[id] || {}).published || '',
               domain: String((d && d.site_domain) || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') });
             if (d === null && g.status !== 'fulfilled') w.gone = true;
