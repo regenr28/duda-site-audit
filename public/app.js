@@ -502,7 +502,9 @@
     // A verdict is about a specific audit item, so it opens the item, not the queue.
     if (/^fa-/.test(n.kind)) return n.siteId && n.findingNum ? `#/site/${encodeURIComponent(n.siteId)}/item/${n.findingNum}` : '#/suggestions/false-alarms';
     if (n.kind === 'site-removed') return '#/removed';
-    if (n.kind === 'comment-waiting') return '#/comments';
+    // Opens that website's conversations, the same place the Slack message links to. Only the
+    // many-websites roll-up has no single website, so it opens the list.
+    if (n.kind === 'comment-waiting') return n.dudaSite ? '#/comments/' + encodeURIComponent(n.dudaSite) : '#/comments';
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   }
@@ -4630,6 +4632,8 @@
     const picked = shown.filter((f) => pick.ids.has(f.id));
     const pickedRe = picked.filter(canRecheck);
     const allPicked = shown.length > 0 && picked.length === shown.length;
+    // Where the selection bar should stop when it sticks: just below the top bar, whatever its height.
+    { const tb = $('.topbar'); if (tb) document.documentElement.style.setProperty('--topbar-h', tb.offsetHeight + 'px'); }
     const socials = Object.entries(t.socials || {}).map(([k, v]) => {
       const links = (t.socialLinks || {})[k] || [];
       const items = v.map((h, i) => { const u = A.socialUrl(k, links[i] || h); const label = k === 'google_my_business' ? (A.placeNameFromUrl(u) || h) : (h || links[i]); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)} ↗</a>` : esc(label); });
