@@ -143,6 +143,16 @@ export const HELP_SECTIONS = [
 <li><b>Fixing one of several identical items</b> (say the 2nd of five links) changes the others' CSS selectors. Those are recognised as the same items: they keep their numbers and statuses, and are not counted as fixed or new.</li>
 <li>Items written by hand are never closed this way. No scan can see them, so only a person can close them.</li>
 </ul>
+<h3>Recheck just a few items</h3>
+<p>Fixed one or two things and don't want to wait for the whole website? <b>⟳ Recheck</b> scans only the pages those items are on (Desktop, Tablet and Mobile, plus the home page) and checks whether they are still there.</p>
+<ul>
+<li><b>One item:</b> press <b>⟳ Recheck</b> under its status in the list, or <b>⟳ Recheck this item</b> in its side panel.</li>
+<li><b>Several:</b> tick them in the list and press <b>⟳ Recheck</b> in the bar that appears.</li>
+<li>Gone → closed as <b>Done</b>, labelled <b>✓ Fixed · rechecked</b>. Still there → stays as it is, labelled <b>⟳ Still there · rechecked</b>. An item someone marked <b>Done</b> that is still there reopens, just like a rescan.</li>
+<li>It checks the editor preview, like Rescan, so a fix shows up before you publish. It only judges the items you picked; anything new on those pages appears on the next full Rescan.</li>
+<li>Some items can't be rechecked on their own, because the check compares the whole website: duplicate titles or descriptions, fonts, repeated photos, the favicon, broken internal links, and another business's name found on one page and searched for everywhere. Use <b>Rescan</b> for those. False alarms, items written by hand and AI check pending items aren't rechecked either.</li>
+<li>AI items use the same AI check as a scan. If the AI is out of credits, they are reported as couldn't check and left as they are.</li>
+</ul>
 <h3>When new checks are added</h3>
 <p>The check list grows over time. A finished audit is <b>never</b> changed behind your back: it keeps exactly the items it was given, and no new item appears until somebody rescans that website. A <b>Complete</b> audit stays Complete.</p>
 <ul>
@@ -206,6 +216,12 @@ export const HELP_SECTIONS = [
 <tr><td><b>False alarm</b></td><td>Not actually a problem. You're asked why — that reason becomes a comment on the item and a <a href="#/help/suggest">report against the check</a> you can follow. You can also approve the value so it's never flagged again.</td></tr>
 </tbody></table>
 <p class="small muted">Rule of thumb: someone <i>inside</i> the team can answer → For clarification. Waiting on someone <i>outside</i> → On hold. Only Done and False alarm count as cleared.</p>
+<h3>Changing several items at once</h3>
+<ul>
+<li>Tick the box at the start of each row (or the box in the header for every item shown). A bar appears with <b>Set status…</b>, <b>Assign to…</b> and <b>⟳ Recheck</b>.</li>
+<li><b>False alarm</b> asks for the reason once, and that reason goes on every selected item. <b>For clarification</b> asks its question once, posted on the first item.</li>
+<li>Only rows you can see are selected: changing a filter drops any ticked row it hides.</li>
+</ul>
 <h3>Asking for clarification</h3>
 <p>An item parked on "For clarification" without saying what the question is leaves the work stuck quietly, so picking that status asks for the question up front.</p>
 <ul>

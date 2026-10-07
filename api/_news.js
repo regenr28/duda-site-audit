@@ -4,6 +4,17 @@
 
 export const NEWS = [
   {
+    id: '2026-10-08-bulk-recheck', date: '2026-10-08', audience: 'all', tag: 'Audits',
+    title: 'Change several audit items at once, and recheck a fix without rescanning everything',
+    what: '<b>Several at once.</b> Tick the audit items you want, then set their status or assignee together from the bar that appears. Marking them <b>False alarm</b> asks for the reason once and puts it on every one of them.<br><br><b>⟳ Recheck.</b> Fixed something in the editor? Recheck just that item (or the ones you ticked). It scans only the pages they are on, on every device, so it takes seconds instead of a full Rescan. Gone items close as Done; anything still there says so.',
+    where: [
+      '<b>Walkthrough — several at once:</b> open an audit, tick the box at the start of a few rows, then pick from <b>Set status…</b> or <b>Assign to…</b> in the bar above the list.',
+      '<b>Walkthrough — recheck:</b> fix an item in the Duda editor, then press <b>⟳ Recheck</b> under its status (or <b>⟳ Recheck this item</b> in its side panel). Ticked several? Use <b>⟳ Recheck</b> in the bar.',
+      'Checks that compare the whole website, like duplicate titles, still need a full Rescan; those items say so.',
+    ],
+    link: '#/help/scan', linkText: 'Recheck just a few items',
+  },
+  {
     id: '2026-10-07-livecheck', date: '2026-10-07', audience: 'all', tag: 'Audits',
     title: 'The live site check is one tidy strip instead of a wall of numbers',
     what: 'The <b>Live site check</b> box used to list every item number twice: once as \u201cmarked Done after the last publish\u201d and again as \u201cfixed on live site\u201d, which on a big audit filled the screen and contradicted itself.<br><br>It now shows the live domain, when it was published, and <b>one count per outcome</b>: ✓ fixed on live site, ⚠ still on live site, ⏳ waiting for publish, ? couldn\u2019t check, • not checked yet. Each Done item is counted once. An item the live check found fixed is no longer also listed as \u201cnot live yet\u201d. The item numbers are behind <b>Show item numbers</b>. Only <b>still on live site</b> lists its numbers right away, with <b>Reopen these</b>, because it is the one that needs action.',

@@ -31,6 +31,9 @@ async function loadSite(id) {
     f.assignee = s.assignee !== undefined ? s.assignee : (f.assignee || '');
     f.statusBy = s.updatedBy || ''; f.statusAt = s.updatedAt || '';
     if (s.auto) f.auto = { why: s.auto, at: s.autoAt || '', ref: s.autoRef || '', note: s.autoNote || '' };
+    // The last quick recheck of this one item ({at, by, r: 'gone' | 'still'}). Any later status change
+    // writes a fresh state without it, so it never outlives the decision it was about.
+    if (s.rc) f.recheck = s.rc;
     f.num = nums[f.id] ? Number(nums[f.id]) : f.num || null;
     f.comments = cCount[f.id] || 0;
     delete f.done;
@@ -459,7 +462,9 @@ export default async function handler(req, res) {
         const corrected = new Set([].concat(b.corrected || []).map(String));
         const KEEP_GONE_MS = 45 * 86400000;
         const closing = []; let fixedN = 0; let correctedN = 0;
-        const autoClosed = (st) => st && st.status === 'done' && ['rescan-gone', 'check-corrected'].includes(st.auto);
+        // 'recheck-gone': closed by a quick recheck of selected items. It is the same claim as a rescan
+        // closing it, so if a full scan finds it again it reopens the same way.
+        const autoClosed = (st) => st && st.status === 'done' && ['rescan-gone', 'check-corrected', 'recheck-gone'].includes(st.auto);
         before.forEach((f) => {
           if (nowIds.has(f.id) || taken.has(f.id)) return;
           // Already closed by this mechanism on an earlier scan: carried along until it ages out.
@@ -474,7 +479,7 @@ export default async function handler(req, res) {
           // A decision somebody already made stands. Only items still open are closed.
           if (cur.status === 'done' || cur.status === 'false') return;
           closing.push(f.id, JSON.stringify(Object.assign({}, cur, { status: 'done', updatedBy: me.email, updatedAt: now(),
-            auto: why === 'check-corrected' ? 'check-corrected' : 'rescan-gone' })));
+            auto: why === 'check-corrected' ? 'check-corrected' : 'rescan-gone', rc: undefined })));
           if (why === 'check-corrected') correctedN++; else fixedN++;
         });
         // The other way round: an item this mechanism closed is back on the website. The fix didn't
@@ -491,7 +496,7 @@ export default async function handler(req, res) {
           const from = movedFrom[f.id];
           const cur = from ? prevSt[from.id] : prevSt[f.id];
           if (autoClosed(cur)) {
-            closing.push(f.id, JSON.stringify(Object.assign({}, cur, { status: 'open', updatedBy: me.email, updatedAt: now(), auto: 'came-back' })));
+            closing.push(f.id, JSON.stringify(Object.assign({}, cur, { status: 'open', updatedBy: me.email, updatedAt: now(), auto: 'came-back', rc: undefined })));
             backN++;
           } else if (cur && cur.status === 'done' && !/^AI_PENDING/.test(String(f.code))) {
             closing.push(f.id, JSON.stringify({ status: 'open', assignee: cur.assignee || '', updatedBy: me.email, updatedAt: now(),
@@ -1024,6 +1029,57 @@ export default async function handler(req, res) {
           }
         }
         return res.status(200).json(await saveIndex(b.siteId));
+      }
+      case 'recheck': {
+        // The result of rechecking a few selected items, from the browser that rescanned just their
+        // pages. Same rules as a full rescan, applied only to these items:
+        //   gone  + still open          → closed as Done ('recheck-gone'), so a later scan can reopen it
+        //   still + somebody marked Done → reopened ('still-there'), and whoever marked it Done is told
+        //   anything else               → status left alone; the result is recorded so the row can say so
+        // False alarms, hand-written items and "AI check pending" items are never judged here.
+        if (await denyUnless(res, me, 'item.status', 'Your role does not allow changing audit item statuses.')) return;
+        const l = await loadSite(b.siteId); if (!l) return res.status(404).json({ error: 'Not found' });
+        const results = b.results && typeof b.results === 'object' ? b.results : {};
+        const [rawSt] = await redis(['HGETALL', P + 'fstate:' + b.siteId]);
+        const prev = pairs(rawSt, true);
+        const at = now();
+        const writes = []; const fixed = []; const still = []; const stillBy = {};
+        l.site.findings.forEach((f) => {
+          const r = results[f.id];
+          if (!['gone', 'still'].includes(r) || f.gone || f.manual || /^AI_PENDING/.test(String(f.code))) return;
+          const cur = Object.assign({ status: f.status, assignee: f.assignee || '' }, prev[f.id] || {});
+          if (cur.status === 'false') return;
+          const rc = { at, by: me.email, r };
+          if (r === 'gone' && cur.status !== 'done') {
+            writes.push(f.id, JSON.stringify(Object.assign({}, cur, { status: 'done', updatedBy: me.email, updatedAt: at, auto: 'recheck-gone', rc })));
+            fixed.push(f.num);
+          } else if (r === 'still' && cur.status === 'done') {
+            writes.push(f.id, JSON.stringify({ status: 'open', assignee: cur.assignee || '', updatedBy: me.email, updatedAt: at,
+              auto: 'still-there', autoRef: cur.updatedBy || '', autoAt: cur.updatedAt || '', rc }));
+            const who = cur.updatedBy || '';
+            (stillBy[who] = stillBy[who] || []).push(Number(f.num) || 0);
+          } else {
+            writes.push(f.id, JSON.stringify(Object.assign({}, cur, { rc })));
+            if (r === 'still') still.push(f.num);
+          }
+        });
+        if (writes.length) await redis(['HSET', P + 'fstate:' + b.siteId, ...writes]);
+        const tag = (ns) => ns.slice().sort((a, c) => a - c).map((n) => '#' + n).join(', ');
+        const reopened = Object.values(stillBy).flat();
+        if (fixed.length) await log(b.siteId, me, 'item-status', `rechecked ${tag(fixed)}: no longer on the website — closed as Done`);
+        if (reopened.length) {
+          await log(b.siteId, me, 'item-status', `rechecked ${tag(reopened)}: marked Done but still on the website — reopened`);
+          const where = l.site.businessName || l.site.siteId || 'a website';
+          for (const [who, ns] of Object.entries(stillBy)) {
+            if (!who || who === me.email) continue;
+            await notifyUser(who, {
+              kind: 'challenge', by: me.email, byName: me.name,
+              text: `${me.name} rechecked ${where}: ${ns.length === 1 ? '#' + ns[0] + ', which you marked Done, is' : ns.length + ' items you marked Done (' + tag(ns) + ') are'} still on the website, so ${ns.length === 1 ? 'it was' : 'they were'} reopened.`,
+              link: `#/site/${b.siteId}/findings${ns.length === 1 ? '/' + ns[0] : ''}`,
+            }).catch(() => {});
+          }
+        }
+        return res.status(200).json(Object.assign(await saveIndex(b.siteId), { recheck: { fixed: fixed.length, reopened: reopened.length, still: still.length } }));
       }
       case 'comment': {
         const l = await loadSite(b.siteId); if (!l) return res.status(404).json({ error: 'Not found' });

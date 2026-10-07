@@ -264,6 +264,14 @@ body.auth-mode .topbar .brand { display: none; }
 .item-ref { font-family: var(--mono); font-weight: 600; background: var(--accent-soft); padding: 0 5px; border-radius: 5px; }
 .mention { background: var(--accent-soft); color: var(--accent); font-weight: 600; padding: 0 4px; border-radius: 5px; }
 table.findings tr.row-link td { cursor: pointer; }
+/* Selecting several audit items at once */
+table.findings .pick-col { width: 28px; padding-right: 0; cursor: default; }
+table.findings .pick-col input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
+table.findings tr.picked td { background: var(--accent-soft); }
+.bulkbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 10px; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+.bulkbar select { max-width: 200px; }
+.recheck-btn { margin-top: 6px; }
 .fs-open { background: var(--panel-2); color: var(--text); }
 .fs-clarification { background: var(--query-soft); color: var(--query); }
 .fs-done { background: var(--ok-soft); color: var(--ok); }

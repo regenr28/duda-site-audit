@@ -3998,6 +3998,118 @@
     } catch (e) { console.error(e); toast('Live check failed: ' + (e.message || e)); }
     finally { clearInterval(beat); releaseScan([s.id]); state.verifying = null; delete state.scanning[s.id]; if (state.current && state.current.id === s.id) { await loadSite(s.id); renderSite(); } }
   }
+  // =====================================================================
+  // RECHECK SELECTED ITEMS: rescan only the pages behind a few audit items, and judge only those items.
+  // =====================================================================
+  // Checks that compare the whole website (duplicate titles across pages, the font system, repeated
+  // photos, the favicon, a name found on one page and searched for on every other) cannot be judged
+  // from a few pages: they would vanish simply because the rest was not read. Those need a full Rescan.
+  const RECHECK_SITE_WIDE = /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_[A-Z_]+|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR)$/;
+  const RECHECK_MAX_PAGES = 12;
+  // Rows ticked in the audit items table, for acting on several at once.
+  const pick = { site: '', ids: new Set() };
+  function recheckWhyNot(f) {
+    if (f.gone) return 'already closed by a rescan';
+    if (f.manual) return 'written by hand, so no scan can see it';
+    if (/^AI_PENDING/.test(f.code)) return 'waiting for the AI — it resumes on its own';
+    if (f.status === 'false') return 'marked False alarm';
+    if (RECHECK_SITE_WIDE.test(f.code)) return 'compares the whole website — use Rescan';
+    return '';
+  }
+  const canRecheck = (f) => !recheckWhyNot(f);
+  const recheckPages = (f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).map((p) => A.normalizePath(p));
+  const looseKey = (f) => [f.code, f.found || '', f.message, (f.pages && f.pages.length > 1) ? '*' : (f.path || '/')].join('|');
+
+  async function recheckItems(s, ids) {
+    if (!can('item.status')) return toast('Your role does not allow changing audit item statuses.');
+    if (state.scanning[s.id] || state.verifying) return toast('This website is already being scanned. Try again when it finishes.');
+    const picked = (s.findings || []).filter((f) => ids.includes(f.id));
+    const items = picked.filter(canRecheck);
+    const skipped = picked.filter((f) => !canRecheck(f));
+    if (!items.length) {
+      return toast(skipped.length === 1 ? `#${skipped[0].num} can't be rechecked on its own: ${recheckWhyNot(skipped[0])}.` : `None of these can be rechecked on their own (${[...new Set(skipped.map(recheckWhyNot))].join('; ')}).`);
+    }
+    const paths = [...new Set(items.flatMap(recheckPages))];
+    if (paths.length > RECHECK_MAX_PAGES && !confirm(`These items are on ${paths.length} pages. A full Rescan may be just as quick.\n\nRecheck them anyway?`)) return;
+    const got = await store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => ({ ok: [] }));
+    if (!(got.ok || []).includes(s.id)) return toast(claimText((got.taken || [])[0] || {}) + '. Try again when it finishes.');
+    const beat = setInterval(() => store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => {}), 60000);
+    const label = items.length === 1 ? `#${items[0].num}` : `${items.length} items`;
+    state.scanning[s.id] = { done: 0, total: 0, message: `Rechecking ${label} on ${paths.length} page${paths.length === 1 ? '' : 's'}…` };
+    renderSite();
+    const log = [];
+    try {
+      // SEO settings (noindex) come from Duda, as in a normal scan. Without them a noindex item would
+      // look fixed only because the setting wasn't read, so those are left unjudged instead.
+      const pagesMeta = {}; let metaOk = true;
+      try { const meta = await api('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); }
+      catch (e) { metaOk = false; }
+      const host = s.host;
+      const needLinks = items.some((f) => /^(LINK_|IMAGE_BROKEN)/.test(f.code));
+      const needAI = items.some((f) => /^AI_/.test(f.code) || f.ai);
+      const res = await A.runScan({
+        siteId: s.siteId, allow: s.allow || [], host, truth: A.truthWithout(s.truth, s.allow), pagesMeta,
+        // Only these pages (plus the home page, which every scan reads first): the page cap stops the crawl there.
+        seedPaths: paths, maxPages: paths.length + (paths.includes('/') ? 0 : 1), concurrency: 4,
+        fetchPage: async (path, device) => {
+          const q = new URLSearchParams({ host, site: s.siteId, path, device });
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try { const r = await api('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
+            await new Promise((ok) => setTimeout(ok, 800 * (attempt + 1)));
+          }
+        },
+        // Links and pictures are only checked when one of the items is about a link or a picture.
+        ...(needLinks ? { checkUrls: (urls) => post('/api/check', { urls }) } : {}),
+        onProgress: (p) => { state.scanning[s.id] = Object.assign({}, p, { message: `Rechecking ${label} · ${p.message}` }); renderProgress(s.id); },
+      });
+      let aiGap = false;
+      if (needAI) {
+        // Same AI checks as a scan. Answers are cached, so text nobody changed costs nothing.
+        res.aiSkip = new Set();
+        const aiAlt = await aiAltCheck(res, s.id, log);
+        const aiText = await aiTextCheck(res, s.id, log, aiAlt && aiAlt.paused);
+        aiGap = !state.ai || !state.ai.enabled || !!((aiAlt && (aiAlt.paused || (aiAlt.pending || []).length)) || (aiText && (aiText.paused || (aiText.pending || []).length)));
+      }
+      const fresh = A.filterAllowed(res.findings, s.allow);
+      const failedPages = new Set((res.pages || []).filter((p) => p.error || p.notFound).map((p) => A.normalizePath(p.path)));
+      const ids0 = new Set(fresh.map((x) => x.id)); const loose0 = new Set(fresh.map(looseKey));
+      // The same check still flagging the same element, with different wording, is not a fix.
+      const near = new Set(fresh.map((x) => [x.code, x.selector, x.path].join('|')));
+      const results = {}; const unknown = [];
+      items.forEach((f) => {
+        if (recheckPages(f).some((p) => failedPages.has(p))) { unknown.push(f); return; }
+        if (!metaOk && /NOINDEX/.test(f.code)) { unknown.push(f); return; }
+        const present = ids0.has(f.id) || loose0.has(looseKey(f)) || near.has([f.code, f.selector, f.path].join('|'));
+        if (!present && (/^AI_/.test(f.code) || f.ai) && aiGap) { unknown.push(f); return; }
+        results[f.id] = present ? 'still' : 'gone';
+      });
+      let out = { fixed: 0, reopened: 0, still: 0 };
+      if (Object.keys(results).length) {
+        const sum = await store({ op: 'recheck', siteId: s.id, results });
+        upsertSummary(sum); out = sum.recheck || out;
+      }
+      const stillN = Object.values(results).filter((r) => r === 'still').length;
+      const parts = [];
+      if (out.fixed) parts.push(`${out.fixed} fixed — closed as Done`);
+      if (stillN) parts.push(`${stillN} still there${out.reopened ? ` (${out.reopened} reopened)` : ''}`);
+      if (unknown.length) parts.push(`${unknown.length} couldn't be checked${aiGap ? ' (AI unavailable right now)' : ''}`);
+      if (skipped.length) parts.push(`${skipped.length} skipped`);
+      toast(`Recheck ${label}: ${parts.join(' · ') || 'nothing changed'}`);
+    } catch (e) { console.error(e); toast('Recheck failed: ' + (e.message || e)); }
+    finally {
+      clearInterval(beat); releaseScan([s.id]); delete state.scanning[s.id];
+      if (state.current && state.current.id === s.id) { await loadSite(s.id); renderSite(); }
+    }
+  }
+  /** What the last quick recheck said about this item, while it still describes the item's current status. */
+  function recheckBadge(f) {
+    const r = f.recheck; if (!r || !r.at) return '';
+    const when = esc(fmtWhen(Date.parse(r.at)));
+    const who = esc(nameOf(r.by, 'someone'));
+    if (r.r === 'gone' && f.status === 'done' && f.auto && f.auto.why === 'recheck-gone') return `<span class="badge v-ok" title="Rechecked by ${who}: no longer on the website">✓ Fixed · rechecked ${when}</span>`;
+    if (r.r === 'still' && f.status !== 'done') return `<span class="badge v-still" title="Rechecked by ${who}: still on the website">⟳ Still there · rechecked ${when}</span>`;
+    return '';
+  }
   function verifyBadge(s, f) {
     const v = s.verify && s.verify.results && s.verify.results[f.id];
     if (f.status !== 'done') return '';
@@ -4511,6 +4623,13 @@
     const cats = [...new Set(findings.map((f) => f.category))].sort();
     const locs = [...new Set(findings.map((f) => f.location))].sort();
     const shown = filteredFindings(s);
+    // Ticked rows belong to one website and only ever cover rows on screen: changing the filters or
+    // the website drops anything that is no longer visible, so an action never reaches a hidden item.
+    if (pick.site !== s.id) { pick.site = s.id; pick.ids = new Set(); }
+    { const vis = new Set(shown.map((f) => f.id)); [...pick.ids].forEach((id) => { if (!vis.has(id)) pick.ids.delete(id); }); }
+    const picked = shown.filter((f) => pick.ids.has(f.id));
+    const pickedRe = picked.filter(canRecheck);
+    const allPicked = shown.length > 0 && picked.length === shown.length;
     const socials = Object.entries(t.socials || {}).map(([k, v]) => {
       const links = (t.socialLinks || {})[k] || [];
       const items = v.map((h, i) => { const u = A.socialUrl(k, links[i] || h); const label = k === 'google_my_business' ? (A.placeNameFromUrl(u) || h) : (h || links[i]); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(label)} ↗</a>` : esc(label); });
@@ -4603,14 +4722,22 @@
           <div><b>No audit items match these filters.</b></div>
           <div class="small muted" style="margin:6px 0 10px">This website has ${findings.length} audit item${findings.length === 1 ? '' : 's'}${activeFilters(ff).length ? `, hidden by: <b>${esc(activeFilters(ff).join(', '))}</b>` : ''}.</div>
           <button class="btn sm primary" id="ffClear">Clear filters</button></div>` : `
+        ${picked.length ? `<div class="bulkbar" id="bulkBar">
+          <b>${picked.length} selected</b>
+          ${can('item.status') ? `<select id="bulkSt" title="Set the status of every selected item"><option value="">Set status…</option>${FSTATUS.map((x) => `<option value="${x.v}">${x.label}</option>`).join('')}</select>` : ''}
+          ${can('item.assign') ? `<select id="bulkWho" title="Assign every selected item"><option value="__">Assign to…</option>${userOptions('__none', 'Unassigned')}</select>` : ''}
+          ${can('item.status') ? `<button class="btn sm" id="bulkRe" ${pickedRe.length ? '' : 'disabled'} title="${pickedRe.length ? 'Rescan only the pages these items are on, and check whether they are still there' : 'None of the selected items can be rechecked on their own'}">⟳ Recheck ${pickedRe.length}${pickedRe.length < picked.length ? ` of ${picked.length}` : ''}</button>` : ''}
+          <span class="spacer"></span><button class="linkbtn" id="bulkClear">Clear selection</button>
+        </div>` : ''}
         <div class="table-wrap"><table class="grid findings">
-          <thead><tr><th>ID</th><th>Status</th><th>Severity</th><th>Page / path</th><th>Where</th><th>Unique CSS selector</th><th>Finding</th><th title="Comments">💬</th><th>Assignee</th></tr></thead>
+          <thead><tr><th class="pick-col"><input type="checkbox" id="pickAll" ${allPicked ? 'checked' : ''} title="Select every item shown"></th><th>ID</th><th>Status</th><th>Severity</th><th>Page / path</th><th>Where</th><th>Unique CSS selector</th><th>Finding</th><th title="Comments">💬</th><th>Assignee</th></tr></thead>
           <tbody>${shown.map((f) => {
             const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
             const closed = f.status === 'done' || f.status === 'false';
-            return `<tr class="row-link ${closed ? 'done' : ''}" data-item="${f.num}">
+            return `<tr class="row-link ${closed ? 'done' : ''} ${pick.ids.has(f.id) ? 'picked' : ''}" data-item="${f.num}">
+              <td class="pick-col" data-stop><input type="checkbox" data-pick="${esc(f.id)}" ${pick.ids.has(f.id) ? 'checked' : ''} aria-label="Select #${f.num}"></td>
               <td><a class="item-id" href="#/site/${esc(s.id)}/item/${f.num}">#${f.num}</a></td>
-              <td data-stop>${statusSelect(f, 'data-fst')}</td>
+              <td data-stop>${statusSelect(f, 'data-fst')}${can('item.status') && canRecheck(f) ? `<div><button class="linkbtn recheck-btn" data-recheck="${esc(f.id)}" title="Rescan only ${recheckPages(f).length === 1 ? 'this page' : 'these ' + recheckPages(f).length + ' pages'} and check whether this item is still there">⟳ Recheck</button></div>` : ''}</td>
               <td><span class="badge sev-${f.severity}">${esc(f.severity)}</span><div class="small faint" style="margin-top:4px">${esc(f.category)}</div></td>
               <td style="max-width:200px" data-stop><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small" title="Open ${esc(A.DEVICE_LABEL[dev])} preview">${esc(f.path)}</a>
                 ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more pages</div>` : ''}</td>
@@ -4620,7 +4747,7 @@
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
               <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
-                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}</td>
+                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
               <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
             </tr>`;
@@ -4661,6 +4788,28 @@
     $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
+    // Several at once. Each goes through setFinding like a single change, so False alarm still asks for
+    // one reason (applied to every selected item) and For clarification still asks its one question.
+    $$('[data-pick]', body).forEach((cb) => (cb.onchange = () => { if (cb.checked) pick.ids.add(cb.dataset.pick); else pick.ids.delete(cb.dataset.pick); renderSite(); }));
+    if ($('#pickAll', body)) $('#pickAll', body).onchange = (e) => { if (e.target.checked) shown.forEach((f) => pick.ids.add(f.id)); else pick.ids.clear(); renderSite(); };
+    if ($('#bulkClear', body)) $('#bulkClear', body).onclick = () => { pick.ids.clear(); renderSite(); };
+    if ($('#bulkSt', body)) $('#bulkSt', body).onchange = async (e) => {
+      const v = e.target.value; if (!v) return;
+      const ids = picked.filter((f) => f.status !== v).map((f) => f.id);
+      if (!ids.length) { toast(`Already ${FLABEL[v]}`); e.target.value = ''; return; }
+      // Plain statuses save straight away; False alarm and For clarification open their dialog first.
+      if (v !== 'false' && v !== 'clarification') pick.ids.clear();
+      await setFinding(s, ids, { status: v });
+    };
+    if ($('#bulkWho', body)) $('#bulkWho', body).onchange = async (e) => {
+      const v = e.target.value; if (v === '__') return;
+      const ids = picked.filter((f) => (f.assignee || '') !== v).map((f) => f.id);
+      if (!ids.length) { toast('Already assigned'); e.target.value = '__'; return; }
+      pick.ids.clear();
+      await setFinding(s, ids, { assignee: v });
+    };
+    if ($('#bulkRe', body)) $('#bulkRe', body).onclick = () => recheckItems(s, picked.map((f) => f.id));
+    $$('[data-recheck]', body).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); recheckItems(s, [b.dataset.recheck]); }));
     if ($('#ffAdd', body)) $('#ffAdd', body).onclick = () => openAddItem(s);
     if ($('#ffClear', body)) $('#ffClear', body).onclick = () => { clearFilters(); renderSite(); };
     // A filtered list that doesn't say it is filtered is how "critical is empty, but there's 5"
@@ -4978,6 +5127,11 @@
         <div class="k" style="margin-top:14px">Status</div>
         <div class="status-btns">${FSTATUS.map((x) => `<button class="sbtn fs-${x.v} ${f.status === x.v ? 'on' : ''}" data-set="${x.v}">${x.label}</button>`).join('')}</div>
         ${f.statusBy ? `<div class="small faint" style="margin-top:4px">Last changed by ${esc(nameOf(f.statusBy))} · ${esc(fmtFull(f.statusAt))}</div>` : ''}
+        ${recheckBadge(f) ? `<div style="margin-top:6px">${recheckBadge(f)}</div>` : ''}
+        ${can('item.status') ? (canRecheck(f)
+          ? `<div style="margin-top:8px"><button class="btn sm" id="drRecheck" title="Rescan only ${recheckPages(f).length === 1 ? 'this page' : 'these ' + recheckPages(f).length + ' pages'} (Desktop, Tablet and Mobile) and check whether this item is still there">⟳ Recheck this item</button>
+              <span class="small faint">Fixed it in the editor? Checks ${recheckPages(f).length === 1 ? 'just this page' : 'just these ' + recheckPages(f).length + ' pages'}, not the whole website.</span></div>`
+          : `<div class="small faint" style="margin-top:8px">Can't be rechecked on its own: ${esc(recheckWhyNot(f))}.</div>`) : ''}
         ${['done', 'false'].includes(f.status || '') && can('item.status') ? `<button class="linkbtn" id="drChallenge" style="margin-top:6px"
           title="Reopen it and tell whoever closed it why">↺ This is not ${f.status === 'done' ? 'done' : 'a false alarm'} — reopen it</button>` : ''}
         ${f.manual && (f.by === state.me.email || can('item.add')) ? `<button class="linkbtn danger" id="drRmItem" style="margin-top:6px;margin-left:10px">Remove this item</button>` : ''}
@@ -5009,6 +5163,7 @@
     };
     $$('[data-set]', d).forEach((b) => (b.onclick = () => { if (b.dataset.set !== f.status) setFinding(s, [f.id], { status: b.dataset.set }); }));
     if ($('#drChallenge', d)) $('#drChallenge', d).onclick = () => openChallenge(s, f);
+    if ($('#drRecheck', d)) $('#drRecheck', d).onclick = () => recheckItems(s, [f.id]);
     if ($('#drRmItem', d)) $('#drRmItem', d).onclick = async () => {
       if (!confirm('Remove this item? It was written by hand, so nothing will bring it back.')) return;
       try { await store({ op: 'removeItem', siteId: s.id, findingId: f.id }); closeDrawer(true); state.sitesVer = ''; await loadSite(s.id).catch(() => {}); renderSite(); }
