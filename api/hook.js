@@ -24,6 +24,8 @@ import crypto from 'node:crypto';
 import { redis, P, now, newId, jparse, ablyPublish, commentsChannel, unescapeHtml } from './_lib.js';
 import { enqueue } from './_queue.js';
 import { normalise, readFields, liveLeadAdd, addLeads, usingSql } from './_leads.js';
+import { evLine, evCmds } from './_pubhist.js';
+import { certificateFailed } from './_domains.js';
 
 const MAX_COMMENTS = 60;      // per conversation, oldest dropped
 
@@ -103,6 +105,8 @@ export default async function handler(req, res) {
   let sawComment = false;
   const queued = [];   // websites that just went live and want their form history
   const liveSql = [];  // live enquiries bound for the analysis database
+  const historyLines = []; // publish history for the Trends tab
+  const certFails = [];    // security certificates Duda could not issue
 
   for (const ev of events) {
     const type = str(ev.event_type).toUpperCase();
@@ -186,6 +190,26 @@ export default async function handler(req, res) {
     if (type === 'SITE_CREATED') patch.created = at;
     cmds.push(['HSET', P + 'watch', siteId, JSON.stringify(watchPatch(jparse(rawW), siteId, at, patch))]);
 
+    // The publish history behind the Trends tab. Duda's own flags say what kind of publish this was:
+    // first_publish = a launch, republish = an update to a live website, neither = live again after
+    // being unpublished.
+    const ms = Date.parse(at);
+    if (type === 'PUBLISH') {
+      const kind = d.first_publish === true ? 'L' : d.republish === true ? 'R' : (d.first_publish === false && d.republish === false) ? 'B' : 'P';
+      historyLines.push([ms, evLine(kind, siteId, ms, 'w')]);
+    }
+    if (type === 'UNPUBLISH') historyLines.push([ms, evLine('U', siteId, ms, 'w')]);
+    if (type === 'DOMAIN_UPDATED') {
+      historyLines.push([ms, evLine('D', siteId, ms, 'w', str(d.domain))]);
+      // A new address deserves a fresh look, rather than waiting a week for the next check.
+      cmds.push(['HDEL', P + 'domstat', siteId]);
+    }
+    // Duda tried to issue the website's security certificate and could not: visitors are about to
+    // see a browser warning. Admins are told straight away (after the delivery is answered).
+    if (type === 'CERTIFICATE_CREATED' && str(d.deployment_status).toUpperCase() === 'FAILED') {
+      certFails.push({ siteId, domains: [].concat(d.domains || []).map(str).filter(Boolean).slice(0, 5), at });
+    }
+
     if (type === 'CONTACT_FORM_SENT_V2') {
       // Proof that a form really submitted — one of the QA checklist items.
       const f = d.form_data || d || {};
@@ -218,6 +242,7 @@ export default async function handler(req, res) {
   for (const [site, lead] of liveSql) await addLeads(site, [lead]).catch(() => {});
 
   if (touched) {
+    cmds.push(...evCmds(historyLines));
     cmds.push(['LPUSH', P + 'hooklog', JSON.stringify({ at: now(), n: touched, types: events.map((e) => str(e.event_type)).slice(0, 8), verified })],
       ['LTRIM', P + 'hooklog', 0, LOG_KEEP - 1]);
     // Only a comment event moves the comment version. Every open tab reloads the whole comment list
@@ -228,5 +253,6 @@ export default async function handler(req, res) {
     // Nudge every open browser so a comment appears in a second rather than on the next heartbeat.
     if (sawComment) { try { await ablyPublish(commentsChannel(), 'cmt', { at: now() }); } catch (e) { /* the heartbeat still catches it */ } }
   }
+  for (const f of certFails) await certificateFailed(f).catch(() => {});
   res.status(200).json({ ok: true, handled: touched });
 }

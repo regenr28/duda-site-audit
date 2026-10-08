@@ -4,6 +4,23 @@
 
 export const NEWS = [
   {
+    id: '2026-10-08-trends', date: '2026-10-08', audience: 'all', tag: 'Live DR Sites',
+    title: 'Trends: launches, unpublished websites and comebacks over time, and a daily check of every domain',
+    what: '<b>📈 Trends</b> is a new tab on Live DR Sites. See how many websites <b>launched</b>, were <b>unpublished</b>, <b>came back</b>, or were <b>re-published</b>, by week, month or year, over any date range. There is also how many websites are live over time, how long a website takes to launch, how many were audited before launch, and the health of every live domain. Click a period on a chart to see exactly which websites.<br><br><b>Domains are now checked every day</b>, and each check also reads the security certificate, the domain registration date and the speed. Expiring ones show a ⚠ on the list.',
+    where: [
+      '<b>Walkthrough:</b> open <b>Live DR Sites</b> → <b>📈 Trends</b>. Pick <b>Last 12 months</b> and <b>Monthly</b>, hover the lines, then click the latest month to list its websites.',
+      'On the list, the <b>Certificate or domain expiring</b> filter shows the websites that need renewing soon.',
+    ],
+    link: '#/live/trends', linkText: 'Open Trends',
+  },
+  {
+    id: '2026-10-08-domain-alerts', date: '2026-10-08', audience: 'admin', tag: 'Admin',
+    title: 'You are told when a live domain stops working',
+    what: 'When a domain that worked stops working (checked twice first, so a blip is never reported), a new launch has a broken domain, a certificate or registration is about to run out, or Duda cannot issue a certificate, every admin is told on the bell, as a pop-up and on Slack. You are told again when it works.',
+    where: ['Clicking the alert opens Live DR Sites on that website. Turn them off under your account → Notifications → <b>Domain problems on live websites</b>.'],
+    link: '#/help/live', linkText: 'How domain checks work',
+  },
+  {
     id: '2026-10-08-bulk-recheck', date: '2026-10-08', audience: 'all', tag: 'Audits',
     title: 'Change several audit items at once, and recheck a fix without rescanning everything',
     what: '<b>Several at once.</b> Tick the audit items you want, then set their status or assignee together from the bar that appears. Marking them <b>False alarm</b> asks for the reason once and puts it on every one of them.<br><br><b>⟳ Recheck.</b> Fixed something in the editor? Recheck just that item (or the ones you ticked). It scans only the pages they are on, on every device, so it takes seconds instead of a full Rescan. Gone items close as Done; anything still there says so.',

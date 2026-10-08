@@ -442,6 +442,8 @@ export const NOTIFY_GROUPS = [
     desc: 'Somebody reports an audit item as a false alarm, or answers a report you made.' },
   { key: 'suggestions', label: 'Feature suggestions', kinds: ['suggestion', 'suggestion-status', 'suggestion-comment'], channels: ['bell', 'popup', 'slack', 'email'],
     desc: 'A suggestion is sent, answered, or commented on.' },
+  { key: 'domains', label: 'Domain problems on live websites', kinds: ['domain-problem', 'domain-expiring', 'domain-ok'], channels: ['bell', 'popup', 'slack'], admin: true,
+    desc: 'A live website\'s domain stops working, its security certificate or registration is about to run out, or it works again.' },
   { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
     desc: 'Someone signs up and needs approving, or an audit is removed from the list.' },
   { key: 'projects', label: 'Projects you are on', kinds: ['project-assign', 'project-late', 'project-note'], channels: ['bell', 'popup', 'slack', 'email'],
@@ -498,6 +500,9 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'false-alarm': 'marked an audit item as False alarm', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed',
   'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened a website you completed', 'site-removed': 'removed an audit from the Audits list',
   'comment-waiting': 'has client comments waiting for an answer',
+  'domain-problem': 'has a domain problem',
+  'domain-expiring': 'has a domain that needs renewing',
+  'domain-ok': 'is working again',
   access: 'changed what you can do',
   test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
@@ -583,6 +588,7 @@ function notifLink(n) {
   if (/^fa-/.test(n.kind)) return n.siteId && n.findingNum ? `${base}/#/site/${encodeURIComponent(n.siteId)}/item/${n.findingNum}` : base + '/#/suggestions/false-alarms';
   if (/^suggestion/.test(n.kind || '')) return base + '/#/suggestions';
   if (n.kind === 'comment-waiting' && n.dudaSite) return `${base}/#/comments/${encodeURIComponent(n.dudaSite)}`;
+  if (/^domain-/.test(n.kind || '')) return n.dudaSite ? `${base}/#/live/site/${encodeURIComponent(n.dudaSite)}` : `${base}/#/live/problems`;
   if (n.siteId) return `${base}/#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   return base;
 }

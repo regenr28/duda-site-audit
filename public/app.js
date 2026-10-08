@@ -492,7 +492,7 @@
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
   }
-  const NOTIF_TEXT = { 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
+  const NOTIF_TEXT = { 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
@@ -504,6 +504,8 @@
     if (n.kind === 'site-removed') return '#/removed';
     // Opens that website's conversations, the same place the Slack message links to. Only the
     // many-websites roll-up has no single website, so it opens the list.
+    // A domain alert opens Live DR Sites on that one website (or on every domain problem, for a round-up).
+    if (/^domain-/.test(n.kind)) return n.dudaSite ? '#/live/site/' + encodeURIComponent(n.dudaSite) : '#/live/problems';
     if (n.kind === 'comment-waiting') return n.dudaSite ? '#/comments/' + encodeURIComponent(n.dudaSite) : '#/comments';
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
@@ -517,6 +519,7 @@
     { key: 'talk', label: 'Mentions & replies', has: (n) => ['mention', 'reply', 'assign'].includes(n.kind) },
     { key: 'scans', label: 'Scans', has: (n) => ['scan-done', 'rescan-done'].includes(n.kind) },
     { key: 'audits', label: 'Audits', has: (n) => ['site-assign', 'site-unassign', 'site-reopen', 'site-removed', 'false-alarm', 'fa-status', 'fa-note'].includes(n.kind) },
+    { key: 'domains', label: 'Domains', has: (n) => /^domain-/.test(n.kind) },
     { key: 'admin', label: 'Admin', has: (n) => n.kind === 'signup' || /^suggestion/.test(n.kind) },
   ];
   let notifTab = 'all';
@@ -2741,9 +2744,32 @@
   const domProblem = (d) => d && !['ok', 'nodomain'].includes(d.status);
   const DOM_CLS = { ok: 'scan-complete', nodomain: '', redirect: 'sev-critical', hijacked: 'sev-critical', notduda: 'sev-critical', dns: 'sev-critical', http: 'sev-critical', down: 'sev-critical', ssl: 'sev-warning', timeout: 'sev-warning', error: 'sev-warning' };
   const DOM_ICON = { ok: '✓', redirect: '↪', hijacked: '⛔', notduda: '⚠', dns: '⛔', http: '⛔', down: '⛔', ssl: '🔓', timeout: '⏱', error: '⚠', nodomain: '–' };
+  /** Days until a date (ms), counted from now. */
+  const daysTo = (ms) => Math.floor((ms - Date.now()) / 86400000);
+  /** The certificate's days left, corrected for how long ago it was read. */
+  const sslDays = (d) => (d && d.ssl ? d.ssl.days - Math.floor((Date.now() - (d.checkedAt || Date.now())) / 86400000) : null);
+  /** Things that work today but need someone before they stop working. */
+  function domWarnings(d) {
+    if (!d) return [];
+    const out = [];
+    const sd = sslDays(d);
+    if (d.status === 'ok' && sd !== null && sd <= 14) out.push({ k: 'ssl', t: sd < 0 ? 'Certificate expired' : `Certificate: ${sd} day${sd === 1 ? '' : 's'} left`, tip: 'Duda renews certificates on its own about a month ahead. This close to the end, renewal is failing; usually the DNS no longer points at Duda.' });
+    if (d.reg && d.reg.expires) { const rd = daysTo(d.reg.expires); if (rd <= 30) out.push({ k: 'reg', t: rd < 0 ? 'Domain expired' : `Domain renews in ${rd} day${rd === 1 ? '' : 's'}`, tip: `The client renews ${d.reg.name || 'the domain'} with their registrar${d.reg.registrar ? ` (${d.reg.registrar})` : ''}. Expires ${fmtFull(new Date(d.reg.expires).toISOString())}.` }); }
+    if (d.status === 'ok' && d.ms > 6000) out.push({ k: 'slow', t: `Slow: ${(d.ms / 1000).toFixed(1)}s`, tip: 'The home page took more than 6 seconds to answer.' });
+    return out;
+  }
+  const domExpiring = (d) => domWarnings(d).some((w) => w.k === 'ssl' || w.k === 'reg');
   function domBadge(d) {
     if (!d) return '<span class="faint small">Not checked</span>';
-    return `<span class="badge ${DOM_CLS[d.status] || ''}" title="${esc((d.detail || '') + (d.checkedAt ? '\nChecked ' + fmtFull(new Date(d.checkedAt).toISOString()) : ''))}">${DOM_ICON[d.status] || ''} ${esc(d.label || d.status)}</span>${domProblem(d) ? `<div class="small faint dom-detail">${esc(d.detail || '')}</div>` : ''}`;
+    const sd = sslDays(d);
+    const facts = [d.detail || '',
+      d.ms ? `Answered in ${(d.ms / 1000).toFixed(1)}s` : '',
+      sd !== null ? `Security certificate: ${sd < 0 ? 'expired' : sd + ' days left'}${d.ssl.issuer ? ' (' + d.ssl.issuer + ')' : ''}` : '',
+      d.reg && d.reg.expires ? `Domain registration: renews by ${fmtFull(new Date(d.reg.expires).toISOString())}${d.reg.registrar ? ' · ' + d.reg.registrar : ''}` : '',
+      d.downSince && domProblem(d) ? `Not working since ${fmtFull(new Date(d.downSince).toISOString())}` : '',
+      d.checkedAt ? 'Checked ' + fmtFull(new Date(d.checkedAt).toISOString()) : ''].filter(Boolean).join('\n');
+    return `<span class="badge ${DOM_CLS[d.status] || ''}" title="${esc(facts)}">${DOM_ICON[d.status] || ''} ${esc(d.label || d.status)}</span>${domProblem(d) ? `<div class="small faint dom-detail">${esc(d.detail || '')}</div>` : ''}`
+      + domWarnings(d).map((w) => `<div><span class="badge sev-warning dom-warn" title="${esc(w.tip)}">⚠ ${esc(w.t)}</span></div>`).join('');
   }
   let liveDraw = null;
   const liveRedraw = () => { if (liveDraw) return; liveDraw = setTimeout(() => { liveDraw = null; if (route().name === 'live' && document.activeElement !== $('#liveQ')) renderLive(); }, 600); };
@@ -2863,6 +2889,7 @@
     return `<div class="tabs" style="margin-bottom:14px">
       <a href="#/live" data-ltab="published" class="${which === 'published' ? 'on' : ''}">Live DR Sites${live.data ? ` <span class="tcount">${live.data.count}</span>` : ''}</a>
       <a href="#/live/unpublished" data-ltab="unpublished" class="${which === 'unpublished' ? 'on' : ''}">Not published yet${n !== '' ? ` <span class="tcount">${n}</span>` : ''}</a>
+      <a href="#/live/trends" data-ltab="trends" class="${which === 'trends' ? 'on' : ''}">📈 Trends</a>
     </div>`;
   }
   /**
@@ -2941,7 +2968,7 @@
     if (!cmt.sites && !cmt.loading) loadCommentSites(true).then(() => { if (route().name === 'live' && live.tab === 'unpublished') renderDrafts(); }).catch(() => {});
   }
   function bindLiveTabs() {
-    $$('[data-ltab]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = a.dataset.ltab; live.page = 0; location.hash = a.dataset.ltab === 'unpublished' ? '#/live/unpublished' : '#/live'; }));
+    $$('[data-ltab]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = a.dataset.ltab; live.page = 0; location.hash = a.dataset.ltab === 'unpublished' ? '#/live/unpublished' : a.dataset.ltab === 'trends' ? '#/live/trends' : '#/live'; }));
   }
 
   /** A date as an ISO string, or '' — a missing or malformed one must never take a whole page down. */
@@ -3093,6 +3120,442 @@
     if (!q || !q.pending) return '';
     return `<span class="small live-q"><span class="spin-dot"></span> Fetching form submissions in the background — <b>${q.pending}</b> website${q.pending === 1 ? '' : 's'} to go. You can carry on; it looks after itself.</span>`;
   }
+  // =====================================================================
+  // TRENDS: launches, unpublishes, comebacks and domain health over time (Live DR Sites → 📈 Trends)
+  // =====================================================================
+  // One request brings every website's dates and every recorded change; everything below is worked
+  // out here, so switching between a week, a month, a year or any date range asks nothing of the server.
+  const trends = { data: null, loading: false, error: '', preset: '12m', gran: 'month', from: '', to: '', custom: true, table: false, focus: -1 };
+  const DAY_MS = 86400000;
+  // Each kind of change keeps one colour in every chart (blue is always "launched", and so on).
+  const TSERIES = {
+    L: { label: 'Launched', color: 'var(--viz-1)' },
+    U: { label: 'Unpublished', color: 'var(--viz-2)' },
+    B: { label: 'Came back', color: 'var(--viz-3)' },
+    R: { label: 'Re-published', color: 'var(--viz-7)' },
+    live: { label: 'Live websites', color: 'var(--viz-6)' },
+    days: { label: 'Days to launch', color: 'var(--viz-ink)' },
+  };
+  const TPRESETS = [['30d', 'Last 30 days', 'week'], ['90d', 'Last 90 days', 'week'], ['12m', 'Last 12 months', 'month'], ['ytd', 'This year', 'month'], ['all', 'All time', 'auto'], ['custom', 'Custom…', '']];
+
+  async function loadTrends(force) {
+    if (trends.loading) return;
+    trends.loading = true; trends.error = '';
+    if (route().name === 'live' && live.tab === 'trends') renderTrends();
+    try { trends.data = await api('/api/dudasites?op=stats' + (force ? '&t=' + Date.now() : '')); }
+    catch (e) { trends.error = e.message; }
+    finally { trends.loading = false; if (route().name === 'live' && live.tab === 'trends') renderTrends(); }
+  }
+
+  // ---- periods ----
+  function bucketStart(ms, g) {
+    const d = new Date(ms); d.setHours(0, 0, 0, 0);
+    if (g === 'week') d.setDate(d.getDate() - ((d.getDay() + 6) % 7));    // weeks start on Monday
+    else if (g === 'month') d.setDate(1);
+    else d.setMonth(0, 1);
+    return d.getTime();
+  }
+  function bucketNext(ms, g) {
+    const d = new Date(ms);
+    if (g === 'week') d.setDate(d.getDate() + 7); else if (g === 'month') d.setMonth(d.getMonth() + 1); else d.setFullYear(d.getFullYear() + 1);
+    return d.getTime();
+  }
+  function bucketLabel(ms, g, long) {
+    const d = new Date(ms);
+    if (g === 'year') return String(d.getFullYear());
+    if (g === 'month') return d.toLocaleDateString(undefined, long ? { month: 'long', year: 'numeric' } : { month: 'short', year: '2-digit' });
+    const end = new Date(bucketNext(ms, g) - DAY_MS);
+    return long ? `Week of ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} – ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+      : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  /** The date range the filters describe, and the period size actually used (never more than 120 points). */
+  function trendRange(d) {
+    const now = Date.now();
+    const today = new Date(); today.setHours(23, 59, 59, 999);
+    let from; let to = today.getTime();
+    const earliest = Math.min(...d.sites.map((x) => x.f).filter(Boolean), now);
+    if (trends.preset === '30d') from = now - 29 * DAY_MS;
+    else if (trends.preset === '90d') from = now - 89 * DAY_MS;
+    else if (trends.preset === '12m') { const x = new Date(); x.setMonth(x.getMonth() - 11, 1); from = x.getTime(); }
+    else if (trends.preset === 'ytd') from = new Date(new Date().getFullYear(), 0, 1).getTime();
+    else if (trends.preset === 'all') from = earliest;
+    else {
+      from = Date.parse(trends.from + 'T00:00:00') || now - 89 * DAY_MS;
+      to = Date.parse(trends.to + 'T23:59:59') || to;
+      if (to < from) [from, to] = [to - DAY_MS + 1, from + DAY_MS - 1];
+    }
+    from = new Date(new Date(from).setHours(0, 0, 0, 0)).getTime();
+    let g = trends.gran;
+    if (g === 'auto') g = to - from > 4 * 365 * DAY_MS ? 'year' : 'month';
+    const span = (gg) => { let n = 0; for (let s = bucketStart(from, gg); s <= to && n < 999; s = bucketNext(s, gg)) n++; return n; };
+    let bumped = '';
+    if (g === 'week' && span('week') > 120) { g = 'month'; bumped = 'week'; }
+    if (g === 'month' && span('month') > 120) { g = 'year'; bumped = bumped || 'month'; }
+    return { from, to, g, bumped };
+  }
+  function makeBuckets(from, to, g) {
+    const out = [];
+    for (let s = bucketStart(from, g); s <= to && out.length < 130; s = bucketNext(s, g)) out.push({ s, e: bucketNext(s, g) });
+    return out;
+  }
+  const median = (arr) => { if (!arr.length) return null; const a = arr.slice().sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+
+  /** Every number on the page, for the chosen range. */
+  function computeTrends(d) {
+    const { from, to, g, bumped } = trendRange(d);
+    const B = makeBuckets(from, to, g);
+    const all = d.sites;
+    const sites = trends.custom ? all.filter((x) => x.dm) : all;
+    const byId = new Map(sites.map((x) => [x.id, x]));
+    const allById = new Map(all.map((x) => [x.id, x]));
+    // Changes for websites we no longer know anything about (deleted outright) count only when the
+    // custom-domain filter is off, since there is no way to tell whether they had one.
+    const known = (id) => byId.has(id) || (!trends.custom && !allById.has(id));
+    const ev = d.events.filter((e) => known(e[1])).map((e) => ({ t: e[0], s: e[1], at: e[2], approx: !!e[3] }));
+    const at = (ms) => { if (ms < B[0].s || ms >= B[B.length - 1].e) return -1; let lo = 0, hi = B.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (B[m].s <= ms) lo = m; else hi = m - 1; } return lo; };
+    const tracked = (b) => b.e > d.since;
+    const setsOf = () => B.map(() => new Set());
+    const L = setsOf(); const U = setsOf(); const Bk = setsOf(); const R = setsOf(); const days = B.map(() => []);
+    sites.forEach((x) => { if (!x.f) return; const i = at(x.f); if (i < 0) return; L[i].add(x.id); if (x.c && x.f >= x.c) days[i].push((x.f - x.c) / DAY_MS); });
+    ev.forEach((e) => { const i = at(e.at); if (i < 0) return; if (e.t === 'U') U[i].add(e.s); else if (e.t === 'B') Bk[i].add(e.s); else if (e.t === 'R') R[i].add(e.s); });
+    // When each website stopped being live (for the "live over time" line): its last recorded unpublish,
+    // or for one that left before records began, its last publish — the last moment it is known to have been up.
+    const lastOff = {}; ev.forEach((e) => { if (e.t === 'U') lastOff[e.s] = Math.max(lastOff[e.s] || 0, e.at); });
+    const endOf = (x) => (x.live ? Infinity : (lastOff[x.id] || x.l || x.f));
+    const liveAt = (t) => sites.reduce((n, x) => n + (x.f && x.f <= t && endOf(x) > t ? 1 : 0), 0);
+    const now = Date.now();
+    const series = {
+      L: L.map((s) => s.size),
+      U: U.map((s, i) => (tracked(B[i]) ? s.size : null)),
+      B: Bk.map((s, i) => (tracked(B[i]) ? s.size : null)),
+      R: R.map((s, i) => (tracked(B[i]) ? s.size : null)),
+      live: B.map((b) => liveAt(Math.min(b.e - 1, now))),
+      days: days.map((a) => { const m = median(a); return m === null ? null : Math.round(m); }),
+    };
+    const sets = { L, U, B: Bk, R };
+    // Totals for the whole range (unique websites, not a sum of periods).
+    const inRange = (ms) => ms >= from && ms <= to;
+    const uniq = (t) => new Set(ev.filter((e) => e.t === t && inRange(e.at)).map((e) => e.s));
+    const launched = sites.filter((x) => x.f && inRange(x.f));
+    const len = to - from;
+    const launchedBefore = sites.filter((x) => x.f && x.f >= from - len && x.f < from).length;
+    const unpub = uniq('U'); const back = uniq('B'); const rep = uniq('R');
+    const stillOff = [...unpub].filter((id) => { const x = allById.get(id); return !x || !x.live; });
+    const forGood = stillOff.filter((id) => (lastOff[id] || now) < now - 30 * DAY_MS);
+    const liveSites = sites.filter((x) => x.live);
+    const audits = new Map(state.sites.map((a) => [String(a.siteId || '').toLowerCase(), a]));
+    const auditedFirst = launched.filter((x) => { const a = audits.get(String(x.id).toLowerCase()); return a && Date.parse(a.createdAt) <= x.f; }).length;
+    const launchDays = launched.filter((x) => x.c && x.f >= x.c).map((x) => (x.f - x.c) / DAY_MS);
+    const withDom = all.filter((x) => x.live && x.dm);
+    const health = {};
+    withDom.forEach((x) => { const k = !x.ds ? 'unchecked' : x.ds; health[k] = (health[k] || 0) + 1; });
+    const expiring = withDom.filter((x) => (x.sd !== undefined && x.sd <= 14 && x.ds === 'ok') || (x.re && x.re - now <= 30 * DAY_MS)).length;
+    return {
+      from, to, g, bumped, B, series, sets, sites, byId: allById, ev,
+      tiles: {
+        live: liveSites.length, liveNoDomain: all.filter((x) => x.live && !x.dm).length,
+        launched: launched.length, launchedBefore, unpub: unpub.size, stillOff: stillOff.length, forGood: forGood.length,
+        back: back.size, rep: rep.size, net: launched.length + back.size - unpub.size,
+        medianDays: launchDays.length ? Math.round(median(launchDays)) : null,
+        audited: auditedFirst, stale: liveSites.filter((x) => x.l && x.l < now - 365 * DAY_MS).length,
+        problems: withDom.filter((x) => x.ds && !['ok', 'nodomain'].includes(x.ds)).length, expiring,
+        trackedFromInRange: d.since > from,
+      },
+      health, withDom: withDom.length,
+    };
+  }
+
+  // ---- the chart kit: SVG drawn to the width it is given, one shared tooltip ----
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  function niceMax(v) {
+    if (!(v > 0)) return 4;
+    const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p;
+    const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    const m = step * p; return m < 4 && Number.isInteger(v) ? 4 : m;
+  }
+  function ticks(max) {
+    const raw = max / 4; const p = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+    const step = [1, 2, 2.5, 5, 10].map((k) => k * p).find((s) => s >= raw) || raw;
+    const out = []; for (let v = 0; v <= max + 1e-9; v += step) out.push(Math.round(v * 100) / 100); return out;
+  }
+  const fmtN = (v) => (v === null || v === undefined ? '—' : Number(v).toLocaleString());
+  function tip(wrap) {
+    let t = wrap.querySelector('.viz-tip');
+    if (!t) { t = document.createElement('div'); t.className = 'viz-tip'; t.setAttribute('role', 'status'); wrap.appendChild(t); }
+    return t;
+  }
+  /** Tooltip rows are built from text nodes: names come from Duda, so they never become HTML. */
+  function showTip(wrap, x, y, title, rows) {
+    const t = tip(wrap); t.textContent = '';
+    const h = document.createElement('div'); h.className = 'viz-tip-h'; h.textContent = title; t.appendChild(h);
+    rows.forEach((r) => {
+      const row = document.createElement('div'); row.className = 'viz-tip-r';
+      if (r.color) { const k = document.createElement('span'); k.className = r.bar ? 'viz-key-bar' : 'viz-key-line'; k.style.background = r.color; row.appendChild(k); }
+      const v = document.createElement('b'); v.textContent = r.value; row.appendChild(v);
+      const l = document.createElement('span'); l.className = 'viz-tip-l'; l.textContent = ' ' + r.label; row.appendChild(l);
+      t.appendChild(row);
+    });
+    t.style.display = 'block';
+    const W = wrap.clientWidth; const tw = t.offsetWidth;
+    t.style.left = Math.max(4, Math.min(W - tw - 4, x + 14 > W - tw ? x - tw - 14 : x + 14)) + 'px';
+    t.style.top = Math.max(0, y - 10) + 'px';
+  }
+  const hideTip = (wrap) => { const t = wrap.querySelector('.viz-tip'); if (t) t.style.display = 'none'; };
+  function el(tag, attrs, parent) { const n = document.createElementNS(SVGNS, tag); Object.entries(attrs || {}).forEach(([k, v]) => n.setAttribute(k, v)); if (parent) parent.appendChild(n); return n; }
+  function axes(svg, { W, H, M, max, labels, xAt, yFmt }) {
+    const y = (v) => M.t + (H - M.t - M.b) * (1 - v / max);
+    ticks(max).forEach((v) => {
+      el('line', { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), class: v === 0 ? 'viz-base' : 'viz-grid' }, svg);
+      const t = el('text', { x: M.l - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'viz-axis' }, svg); t.textContent = yFmt ? yFmt(v) : fmtN(v);
+    });
+    // As many period labels as fit without touching.
+    const every = Math.max(1, Math.ceil(labels.length / Math.max(1, Math.floor((W - M.l - M.r) / 64))));
+    const last = labels.length - 1;
+    const show = labels.map((_, i) => i % every === 0);
+    // The latest period is the one people look for, so it gets its label — moving the one before it
+    // out of the way if the two would touch.
+    if (!show[last]) { const prev = last - (last % every); if (last - prev < every * 0.6) show[prev] = false; show[last] = true; }
+    labels.forEach((lab, i) => { if (!show[i]) return; const t = el('text', { x: xAt(i), y: H - 8, 'text-anchor': 'middle', class: 'viz-axis' }, svg); t.textContent = lab; });
+    return y;
+  }
+  /** Lines over time. series: [{ key, values }] (null = not recorded for that period). */
+  function drawLines(wrap, { B, g, series, area, yFmt, onPick, focus }) {
+    const holder = wrap.querySelector('.viz-plot'); holder.textContent = '';
+    const W = Math.max(280, holder.clientWidth); const H = 230;
+    const M = { l: 40, r: 96, t: 12, b: 30 };
+    const svg = el('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, class: 'viz-svg', role: 'img' }, holder);
+    const n = B.length;
+    const xAt = (i) => M.l + (n === 1 ? (W - M.l - M.r) / 2 : (W - M.l - M.r) * i / (n - 1));
+    const max = niceMax(Math.max(0, ...series.flatMap((s) => s.values.filter((v) => v !== null))));
+    const y = axes(svg, { W, H, M, max, labels: B.map((b) => bucketLabel(b.s, g)), xAt, yFmt });
+    if (focus >= 0 && focus < n) el('rect', { x: xAt(focus) - 10, y: M.t, width: 20, height: H - M.t - M.b, class: 'viz-focus' }, svg);
+    const ends = [];
+    series.forEach((s) => {
+      const color = TSERIES[s.key].color;
+      let seg = []; const segs = [];
+      s.values.forEach((v, i) => { if (v === null) { if (seg.length) segs.push(seg); seg = []; } else seg.push([xAt(i), y(v)]); });
+      if (seg.length) segs.push(seg);
+      segs.forEach((pts) => {
+        if (area && pts.length > 1) el('path', { d: `M${pts[0][0]},${y(0)} ` + pts.map((p) => `L${p[0]},${p[1]}`).join(' ') + ` L${pts[pts.length - 1][0]},${y(0)} Z`, fill: color, class: 'viz-area' }, svg);
+        el('path', { d: pts.map((p, k) => `${k ? 'L' : 'M'}${p[0]},${p[1]}`).join(' '), stroke: color, class: 'viz-line' }, svg);
+        if (pts.length === 1) el('circle', { cx: pts[0][0], cy: pts[0][1], r: 4, fill: color, class: 'viz-dot' }, svg);
+      });
+      let li = -1; s.values.forEach((v, i) => { if (v !== null) li = i; });
+      if (li >= 0) { el('circle', { cx: xAt(li), cy: y(s.values[li]), r: 4, fill: color, class: 'viz-dot' }, svg); ends.push({ y: y(s.values[li]), x: xAt(li), text: `${TSERIES[s.key].label} ${fmtN(s.values[li])}` }); }
+    });
+    // End labels only when they don't collide; otherwise the legend and the tooltip carry the names.
+    ends.sort((a, b) => a.y - b.y);
+    if (!ends.some((e, i) => i && e.y - ends[i - 1].y < 14)) ends.forEach((e) => { const t = el('text', { x: e.x + 8, y: e.y + 4, class: 'viz-end' }, svg); t.textContent = series.length > 1 ? e.text : e.text.replace(/^.* (?=[^ ]+$)/, ''); });
+    const cross = el('line', { x1: 0, x2: 0, y1: M.t, y2: H - M.b, class: 'viz-cross', visibility: 'hidden' }, svg);
+    const hit = el('rect', { x: M.l - 12, y: 0, width: W - M.l - M.r + 24, height: H, fill: 'transparent', tabindex: '0', class: 'viz-hit' }, svg);
+    const pickAt = (px) => Math.max(0, Math.min(n - 1, Math.round(n === 1 ? 0 : (px - M.l) / ((W - M.l - M.r) / (n - 1)))));
+    const show = (i) => {
+      cross.setAttribute('x1', xAt(i)); cross.setAttribute('x2', xAt(i)); cross.setAttribute('visibility', 'visible');
+      showTip(wrap, xAt(i), 10, bucketLabel(B[i].s, g, true), series.map((s) => ({ color: TSERIES[s.key].color, value: s.values[i] === null ? 'not recorded yet' : (yFmt ? yFmt(s.values[i]) : fmtN(s.values[i])), label: TSERIES[s.key].label })));
+    };
+    let cur = n - 1;
+    hit.addEventListener('pointermove', (e) => { const r = svg.getBoundingClientRect(); cur = pickAt(e.clientX - r.left); show(cur); });
+    hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); hideTip(wrap); });
+    hit.addEventListener('focus', () => show(cur));
+    hit.addEventListener('blur', () => { cross.setAttribute('visibility', 'hidden'); hideTip(wrap); });
+    hit.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { cur = Math.max(0, Math.min(n - 1, cur + (e.key === 'ArrowLeft' ? -1 : 1))); show(cur); e.preventDefault(); } if (e.key === 'Enter' && onPick) onPick(cur); });
+    if (onPick) { hit.style.cursor = 'pointer'; hit.addEventListener('click', (e) => { const r = svg.getBoundingClientRect(); onPick(pickAt(e.clientX - r.left)); }); }
+  }
+  /** Columns side by side per period. */
+  function drawColumns(wrap, { B, g, series, onPick, focus }) {
+    const holder = wrap.querySelector('.viz-plot'); holder.textContent = '';
+    const W = Math.max(280, holder.clientWidth); const H = 230;
+    const M = { l: 40, r: 12, t: 12, b: 30 };
+    const svg = el('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, class: 'viz-svg', role: 'img' }, holder);
+    const n = B.length; const band = (W - M.l - M.r) / n;
+    const xAt = (i) => M.l + band * i + band / 2;
+    const max = niceMax(Math.max(0, ...series.flatMap((s) => s.values.filter((v) => v !== null))));
+    const y = axes(svg, { W, H, M, max, labels: B.map((b) => bucketLabel(b.s, g)), xAt });
+    const k = series.length; const gap = 2;
+    const bw = Math.max(2, Math.min(24, (band * 0.72 - gap * (k - 1)) / k));
+    for (let i = 0; i < n; i++) {
+      if (i === focus) el('rect', { x: M.l + band * i + 1, y: M.t, width: band - 2, height: H - M.t - M.b, class: 'viz-focus' }, svg);
+      const x0 = xAt(i) - (bw * k + gap * (k - 1)) / 2;
+      series.forEach((s, j) => {
+        const v = s.values[i]; if (!v) return;
+        const h = y(0) - y(v); const x = x0 + j * (bw + gap); const r = Math.min(4, bw / 2, h);
+        // Rounded at the data end only, square at the baseline.
+        el('path', { d: `M${x},${y(0)} V${y(v) + r} Q${x},${y(v)} ${x + r},${y(v)} H${x + bw - r} Q${x + bw},${y(v)} ${x + bw},${y(v) + r} V${y(0)} Z`, fill: TSERIES[s.key].color, class: 'viz-bar' }, svg);
+      });
+      const hit = el('rect', { x: M.l + band * i, y: M.t, width: band, height: H - M.t - M.b + 18, fill: 'transparent', tabindex: '0', class: 'viz-hit' }, svg);
+      const show = () => {
+        const rows = series.map((s) => ({ color: TSERIES[s.key].color, bar: true, value: s.values[i] === null ? 'not recorded yet' : fmtN(s.values[i]), label: TSERIES[s.key].label }));
+        const a = series[0].values[i]; const b2 = series[1] && series[1].values[i];
+        if (series.length === 2 && a !== null && b2 !== null && b2 !== undefined) rows.push({ value: (a - b2 > 0 ? '+' : '') + (a - b2), label: 'net' });
+        showTip(wrap, xAt(i), 10, bucketLabel(B[i].s, g, true), rows);
+      };
+      hit.addEventListener('pointerenter', show); hit.addEventListener('focus', show);
+      hit.addEventListener('pointerleave', () => hideTip(wrap)); hit.addEventListener('blur', () => hideTip(wrap));
+      if (onPick) { hit.style.cursor = 'pointer'; hit.addEventListener('click', () => onPick(i)); hit.addEventListener('keydown', (e) => { if (e.key === 'Enter') onPick(i); }); }
+    }
+  }
+
+  // ---- the page ----
+  function renderTrends() {
+    const d = trends.data;
+    if (!d && !trends.loading && !trends.error) { loadTrends(false); }
+    const presetBtns = TPRESETS.map(([k, label]) => `<button class="chipbtn ${trends.preset === k ? 'active' : ''}" data-tpre="${k}">${label}</button>`).join('');
+    const head = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">How the account is growing: launches, websites switched off, comebacks, and the health of every live domain.</div></div>
+        <div class="live-acts"><div class="live-act"><button class="btn" id="trReload" ${trends.loading ? 'disabled' : ''}>${trends.loading ? 'Loading…' : '↻ Reload'}</button></div></div></div>
+      ${liveTabs('trends')}`;
+    if (!d) {
+      $('#view').innerHTML = head + (trends.error ? `<div class="note bad">${esc(trends.error)}</div>` : '<div class="empty">Reading every website\'s history… the first time can take a minute while the lists are pulled from Duda.</div>');
+      bindLiveTabs(); if ($('#trReload')) $('#trReload').onclick = () => loadTrends(true);
+      return;
+    }
+    const T = computeTrends(d);
+    const t = T.tiles;
+    const pct = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '—');
+    const delta = t.launched - t.launchedBefore;
+    const sinceTxt = new Date(d.since).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const tile = (label, value, sub, extra) => `<div class="tr-tile ${extra || ''}"><div class="tr-tile-l">${label}</div><div class="tr-tile-v">${value}</div>${sub ? `<div class="tr-tile-s">${sub}</div>` : ''}</div>`;
+    const legend = (keys) => `<div class="viz-legend">${keys.map((k) => `<span><i class="viz-key-line" style="background:${TSERIES[k].color}"></i>${TSERIES[k].label}</span>`).join('')}</div>`;
+    const legendBars = (keys) => `<div class="viz-legend">${keys.map((k) => `<span><i class="viz-key-bar" style="background:${TSERIES[k].color}"></i>${TSERIES[k].label}</span>`).join('')}</div>`;
+    const gLabel = { week: 'week', month: 'month', year: 'year' }[T.g];
+    const HEALTH = [
+      ['ok', '✓ Working', 'var(--status-good)'],
+      ['wrong', '⛔ Shows another website', 'var(--status-critical)', ['redirect', 'hijacked', 'notduda']],
+      ['dns', '⛔ Domain not resolving (DNS)', 'var(--status-critical)', ['dns']],
+      ['down', '⛔ Not loading or erroring', 'var(--status-critical)', ['http', 'down', 'error']],
+      ['ssl', '🔓 Security certificate problem', 'var(--status-serious)', ['ssl']],
+      ['timeout', '⏱ Not responding in time', 'var(--status-warning)', ['timeout']],
+      ['unchecked', '– Not checked yet', 'var(--viz-muted)', ['unchecked']],
+    ].map(([k, label, color, keys]) => ({ k, label, color, n: (keys || [k]).reduce((a, s) => a + (T.health[s] || 0), 0) })).filter((r) => r.n || r.k === 'ok');
+    const hMax = Math.max(1, ...HEALTH.map((r) => r.n));
+    const focus = trends.focus >= 0 && trends.focus < T.B.length ? trends.focus : -1;
+
+    $('#view').innerHTML = head + `
+      <div class="tr-filters">
+        <span class="chips">${presetBtns}</span>
+        ${trends.preset === 'custom' ? `<span class="tr-dates"><input type="date" id="trFrom" value="${esc(trends.from)}"> – <input type="date" id="trTo" value="${esc(trends.to)}"></span>` : ''}
+        <select id="trGran" title="One point per…"><option value="week" ${trends.gran === 'week' ? 'selected' : ''}>Weekly</option><option value="month" ${trends.gran === 'month' ? 'selected' : ''}>Monthly</option><option value="year" ${trends.gran === 'year' ? 'selected' : ''}>Yearly</option>${trends.preset === 'all' ? `<option value="auto" ${trends.gran === 'auto' ? 'selected' : ''}>Automatic</option>` : ''}</select>
+        <label class="check-row tr-custom"><input type="checkbox" id="trCustom" ${trends.custom ? 'checked' : ''}> Only websites with a custom domain</label>
+      </div>
+      ${T.bumped ? `<div class="small muted" style="margin:-4px 0 10px">Too many ${T.bumped}s to draw for this range, so it is shown by ${gLabel}.</div>` : ''}
+      ${!d.hasFirst ? '<div class="note bad">Duda did not send launch dates with the website list, so launches can\'t be counted. Press Reload; if it stays like this, tell the app owner.</div>' : ''}
+
+      <div class="tr-tiles">
+        ${tile('Live now', fmtN(t.live), trends.custom && t.liveNoDomain ? `+ ${fmtN(t.liveNoDomain)} on a Duda address only` : '')}
+        ${tile('Launched', fmtN(t.launched), `${delta === 0 ? 'Same as' : `${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)} vs`} the period before`)}
+        ${tile('Unpublished', fmtN(t.unpub), t.unpub ? `${fmtN(t.stillOff)} still off · ${fmtN(t.forGood)} off 30+ days` : (t.trackedFromInRange ? `Recorded from ${sinceTxt}` : ''))}
+        ${tile('Came back', fmtN(t.back), 'Live again after being unpublished')}
+        ${tile('Net change', (t.net > 0 ? '+' : '') + fmtN(t.net), 'Launched + came back − unpublished')}
+        ${tile('Re-published', fmtN(t.rep), 'Live websites updated at least once', '')}
+        ${tile('Days to launch', t.medianDays === null ? '—' : fmtN(t.medianDays), 'Median, from created in Duda to live')}
+        ${tile('Audited before launch', pct(t.audited, t.launched), t.launched ? `${fmtN(t.audited)} of ${fmtN(t.launched)} launched` : '')}
+        ${tile('Domain problems', `<a href="#/live/problems">${fmtN(t.problems)}</a>`, t.expiring ? `${fmtN(t.expiring)} certificate or domain expiring` : 'Right now', t.problems ? 'tr-bad' : '')}
+        ${tile('Not updated in a year', fmtN(t.stale), 'Live, last published 12+ months ago')}
+      </div>
+      ${t.trackedFromInRange ? `<div class="small muted tr-note">Launches come from Duda's own dates and go back to the start. Unpublishes, comebacks and re-publishes are recorded as they happen, from <b>${sinceTxt}</b>; earlier periods show as not recorded.</div>` : ''}
+
+      <div class="tr-grid">
+        <section class="panel panel-pad tr-card tr-wide" id="trMain">
+          <div class="row-between"><h2>Launched, unpublished and came back <span class="faint small">per ${gLabel}</span></h2><button class="linkbtn" id="trTable">${trends.table ? 'Show chart' : 'Show as table'}</button></div>
+          ${legend(['L', 'U', 'B'])}
+          ${trends.table ? `<div class="table-wrap"><table class="grid tr-table"><thead><tr><th>${esc(gLabel[0].toUpperCase() + gLabel.slice(1))}</th><th>Launched</th><th>Unpublished</th><th>Came back</th><th>Re-published</th><th>Live at end</th><th>Days to launch</th></tr></thead><tbody>
+            ${T.B.map((b, i) => `<tr><td>${esc(bucketLabel(b.s, T.g, true))}</td>${['L', 'U', 'B', 'R', 'live', 'days'].map((k) => `<td class="num">${T.series[k][i] === null ? '<span class="faint">—</span>' : fmtN(T.series[k][i])}</td>`).join('')}</tr>`).reverse().join('')}</tbody></table></div>`
+            : '<div class="viz-wrap"><div class="viz-plot"></div></div><div class="small faint">Hover for the numbers · click a period to see which websites</div>'}
+        </section>
+        <section class="panel panel-pad tr-card" id="trBars">
+          <h2>Launched vs unpublished <span class="faint small">per ${gLabel}</span></h2>
+          ${legendBars(['L', 'U'])}
+          <div class="viz-wrap"><div class="viz-plot"></div></div>
+        </section>
+        <section class="panel panel-pad tr-card" id="trRep">
+          <h2>Websites re-published <span class="faint small">active websites per ${gLabel}</span></h2>
+          <div class="viz-wrap"><div class="viz-plot"></div></div>
+        </section>
+        <section class="panel panel-pad tr-card" id="trLive">
+          <h2>Live websites over time <span class="faint small">estimated</span></h2>
+          <div class="viz-wrap"><div class="viz-plot"></div></div>
+          <div class="small faint">A website that left before records began is counted as live until its last publish.</div>
+        </section>
+        <section class="panel panel-pad tr-card" id="trDays">
+          <h2>Days from created to launch <span class="faint small">median per ${gLabel}</span></h2>
+          <div class="viz-wrap"><div class="viz-plot"></div></div>
+        </section>
+        <section class="panel panel-pad tr-card tr-wide" id="trFocus">${trendFocus(T, focus)}</section>
+        <section class="panel panel-pad tr-card" id="trHealth">
+          <h2>Domain health right now <span class="faint small">${fmtN(T.withDom)} live custom domains</span></h2>
+          <div class="hbars">${HEALTH.map((r) => `<button class="hbar" data-hk="${r.k}" title="Show these on the list">
+            <span class="hbar-l">${esc(r.label)}</span><span class="hbar-track"><span class="hbar-fill" style="width:${Math.max(r.n ? 2 : 0, (r.n / hMax) * 100)}%;background:${r.color}"></span></span><b class="hbar-v">${fmtN(r.n)}</b></button>`).join('')}</div>
+          ${t.expiring ? `<button class="linkbtn" id="trExp" style="margin-top:8px">⚠ ${fmtN(t.expiring)} with a certificate or domain registration running out →</button>` : ''}
+          <div class="small faint" style="margin-top:8px">Checked once a day. Admins are told when a domain that worked stops working, comes back, or is about to expire.</div>
+        </section>
+        <section class="panel panel-pad tr-card" id="trRecent">${trendRecent(T)}</section>
+      </div>`;
+
+    bindLiveTabs();
+    $('#trReload').onclick = () => loadTrends(true);
+    $$('[data-tpre]').forEach((b) => (b.onclick = () => {
+      trends.preset = b.dataset.tpre; trends.focus = -1;
+      const p = TPRESETS.find((x) => x[0] === trends.preset);
+      if (p && p[2]) trends.gran = p[2];
+      if (trends.preset === 'custom' && !trends.from) { const x = new Date(Date.now() - 89 * DAY_MS); trends.from = x.toISOString().slice(0, 10); trends.to = new Date().toISOString().slice(0, 10); }
+      renderTrends();
+    }));
+    if ($('#trFrom')) $('#trFrom').onchange = (e) => { trends.from = e.target.value; trends.focus = -1; renderTrends(); };
+    if ($('#trTo')) $('#trTo').onchange = (e) => { trends.to = e.target.value; trends.focus = -1; renderTrends(); };
+    $('#trGran').onchange = (e) => { trends.gran = e.target.value; trends.focus = -1; renderTrends(); };
+    $('#trCustom').onchange = (e) => { trends.custom = e.target.checked; renderTrends(); };
+    $('#trTable').onclick = () => { trends.table = !trends.table; renderTrends(); };
+    const pick = (i) => { trends.focus = trends.focus === i ? -1 : i; renderTrends(); const f = $('#trFocus'); if (f && trends.focus >= 0) f.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
+    $$('[data-hk]').forEach((b) => (b.onclick = () => {
+      live.tab = 'published'; live.q = ''; live.page = 0; live.audit = '';
+      live.dom = b.dataset.hk === 'ok' ? 'ok' : b.dataset.hk === 'unchecked' ? 'none' : 'problem';
+      location.hash = '#/live';
+    }));
+    if ($('#trExp')) $('#trExp').onclick = () => { live.tab = 'published'; live.q = ''; live.dom = 'expiring'; live.page = 0; location.hash = '#/live'; };
+    $$('[data-tsite]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = 'published'; live.q = a.dataset.tsite; live.dom = ''; live.audit = ''; live.page = 0; location.hash = '#/live'; }));
+    if ($('#trFocusClose')) $('#trFocusClose').onclick = () => { trends.focus = -1; renderTrends(); };
+
+    const draw = () => {
+      if (route().name !== 'live' || live.tab !== 'trends') return;
+      const S = (keys) => keys.map((k) => ({ key: k, values: T.series[k] }));
+      if (!trends.table) drawLines($('#trMain .viz-wrap'), { B: T.B, g: T.g, series: S(['L', 'U', 'B']), onPick: pick, focus });
+      drawColumns($('#trBars .viz-wrap'), { B: T.B, g: T.g, series: S(['L', 'U']), onPick: pick, focus });
+      drawLines($('#trRep .viz-wrap'), { B: T.B, g: T.g, series: S(['R']), onPick: pick, focus });
+      drawLines($('#trLive .viz-wrap'), { B: T.B, g: T.g, series: S(['live']), area: true });
+      drawLines($('#trDays .viz-wrap'), { B: T.B, g: T.g, series: S(['days']), yFmt: (v) => fmtN(v) + 'd' });
+    };
+    draw();
+    trends.redraw = draw;
+  }
+  // Charts are drawn to the width they have, so a resized window draws them again.
+  let trResize = null;
+  window.addEventListener('resize', () => { clearTimeout(trResize); trResize = setTimeout(() => { if (trends.redraw && route().name === 'live' && live.tab === 'trends') trends.redraw(); }, 200); });
+
+  /** The websites behind one period on the charts. */
+  function trendFocus(T, i) {
+    if (i < 0) return '<h2>Which websites</h2><div class="small muted">Click a period on any of the charts above to list the websites launched, unpublished, back or re-published in it.</div>';
+    const b = T.B[i];
+    const nameOf2 = (id) => { const x = T.byId.get(id); return x ? (x.n || x.dm || id) : id; };
+    const group = (key, ids) => {
+      const list = [...ids];
+      if (T.series[key][i] === null) return `<div class="tr-fgroup"><h3><i class="viz-key-bar" style="background:${TSERIES[key].color}"></i>${TSERIES[key].label}</h3><div class="small faint">Not recorded for this period.</div></div>`;
+      return `<div class="tr-fgroup"><h3><i class="viz-key-bar" style="background:${TSERIES[key].color}"></i>${TSERIES[key].label} <span class="tcount">${list.length}</span></h3>
+        ${list.length ? `<ul class="tr-list">${list.slice(0, 40).map((id) => { const x = T.byId.get(id); return `<li><a href="#" data-tsite="${esc(id)}">${esc(nameOf2(id))}</a>${x && x.dm ? ` <span class="small faint">${esc(x.dm)}</span>` : ''}${x && !x.live && key !== 'U' ? ' <span class="badge subtle">now off</span>' : ''}</li>`; }).join('')}${list.length > 40 ? `<li class="faint">…and ${list.length - 40} more</li>` : ''}</ul>` : '<div class="small faint">None.</div>'}</div>`;
+    };
+    return `<div class="row-between"><h2>${esc(bucketLabel(b.s, T.g, true))}</h2><button class="linkbtn" id="trFocusClose">Close</button></div>
+      <div class="tr-fgrid">${group('L', T.sets.L[i])}${group('U', T.sets.U[i])}${group('B', T.sets.B[i])}${group('R', T.sets.R[i])}</div>`;
+  }
+  /** The latest changes in the range, newest first. */
+  function trendRecent(T) {
+    const inR = (ms) => ms >= T.from && ms <= T.to;
+    const rows = [];
+    T.sites.forEach((x) => { if (x.f && inR(x.f)) rows.push({ t: 'L', s: x.id, at: x.f }); });
+    T.ev.forEach((e) => { if ((e.t === 'U' || e.t === 'B') && inR(e.at)) rows.push(e); });
+    rows.sort((a, b) => b.at - a.at);
+    const word = { L: 'Launched', U: 'Unpublished', B: 'Came back' };
+    return `<h2>Latest changes</h2>${rows.length ? `<ul class="tr-recent">${rows.slice(0, 18).map((r) => { const x = T.byId.get(r.s); return `<li><i class="viz-key-bar" style="background:${TSERIES[r.t].color}"></i>
+        <span class="tr-r-w">${word[r.t]}</span><a href="#" data-tsite="${esc(r.s)}">${esc((x && (x.n || x.dm)) || r.s)}</a><span class="small faint tr-r-d">${esc(new Date(r.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}${r.approx ? ' (about)' : ''}</span></li>`; }).join('')}</ul>` : '<div class="small muted">Nothing launched, unpublished or back in this range.</div>'}`;
+  }
+
   function renderLive() {
     const d = live.data;
     if (!d && !live.loading && !live.error) { loadLive(false); }
@@ -3112,11 +3575,13 @@
     if (live.dom === 'problem') list = list.filter((x) => domProblem(x.dom));
     if (live.dom === 'ok') list = list.filter((x) => x.dom && x.dom.status === 'ok');
     if (live.dom === 'none') list = list.filter((x) => !x.dom);
+    if (live.dom === 'expiring') list = list.filter((x) => domExpiring(x.dom));
     list = list.slice().sort((a, b) => live.sort === 'domain' ? (domProblem(b.dom) ? 1 : 0) - (domProblem(a.dom) ? 1 : 0) || String(b.published).localeCompare(String(a.published)) : live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
     const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
     const shown = list.slice(live.page * PER, live.page * PER + PER);
     const host = editorHostOr();
     if (live.tab === 'unpublished') return renderDrafts();
+    if (live.tab === 'trends') return renderTrends();
     $('#view').innerHTML = `<div class="page-head"><div><h1>Live DR Sites</h1><div class="muted">Every published website in the Duda account. Pick one to audit.</div></div>
         <div class="live-acts">
           ${can('leads.import') ? `<div class="live-act"><button class="btn" id="liveLeads" ${live.leadJob || !d ? 'disabled' : ''} title="Fetch form submissions from Duda for the websites currently listed">${live.leadJob ? 'Fetching…' : '✉️ Get form submissions'}</button>${runStamp('leads')}</div>` : ''}
@@ -3133,7 +3598,7 @@
       <div class="panel"><div class="toolbar">
         <input type="search" id="liveQ" placeholder="Search by name, site ID, domain or label…" value="${esc(live.q)}" style="flex:1;min-width:220px">
         <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option><option value="leads" ${live.audit === 'leads' ? 'selected' : ''}>With enquiries (${all.filter((x) => (state.leadSums[String(x.id)] || {}).total).length})</option></select>
-        <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
+        <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="expiring" ${live.dom === 'expiring' ? 'selected' : ''}>Certificate or domain expiring (${all.filter((x) => domExpiring(x.dom)).length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
         <select id="liveSort"><option value="published">Recently published first</option><option value="domain" ${live.sort === 'domain' ? 'selected' : ''}>Domain problems first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
       </div>
       ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}
@@ -3319,7 +3784,8 @@
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'projects') return { name: 'projects' };
     if (parts[0] === 'project' && parts[1]) return { name: 'project', id: decodeURIComponent(parts[1]) };
-    if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : 'published' };
+    if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : parts[1] === 'trends' ? 'trends' : 'published',
+      site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', problems: parts[1] === 'problems' };
     // A website's profile addressed by its DUDA site id, so it works for one that has no record.
     if (parts[0] === 'dr' && parts[1]) return { name: 'dr', siteId: decodeURIComponent(parts[1]) };
     // …/false-alarms/<key> comes from a notification: open the queue ON that report, not at the top of a list of 40.
@@ -3380,7 +3846,16 @@
     }
     if (r.name === 'projects') { if (!can('project.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include projects.</div>'; return; } return renderProjects(); }
     if (r.name === 'project') { if (!can('project.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include projects.</div>'; return; } return renderProject(r.id); }
-    if (r.name === 'live') { live.tab = r.tab; return renderLive(); }
+    if (r.name === 'live') {
+      live.tab = r.tab;
+      // From a domain alert: show that one website (or every domain problem), then settle on the plain
+      // address so the filter can be changed by hand without the link putting it back.
+      if (r.site || r.problems) {
+        live.q = r.site || ''; live.dom = r.problems ? 'problem' : ''; live.audit = ''; live.page = 0;
+        history.replaceState(null, '', '#/live');
+      }
+      return renderLive();
+    }
     if (r.name === 'dr') { if (!can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; } return renderDrProfile(r.siteId); }
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();

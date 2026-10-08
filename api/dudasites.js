@@ -7,13 +7,14 @@
 import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, learnEditorHost } from './_lib.js';
 import { enqueue } from './_queue.js';
 import { markRun, lastRuns } from './leadq.js';
+import { checkDomain, checkAndStore, DOMS } from './_domains.js';
+import { evCmds, diffEvents, seedFromFeeds, readEvents, settleEvents } from './_pubhist.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const KEY = P + 'dudasites';
 const KEY_UN = P + 'dudadrafts';   // websites not published yet — the ones clients comment on
 const MAX_AGE = 6 * 3600 * 1000;
 const NAMES = P + 'dudanames';   // hash: site id → business name
-const DOMS = P + 'domstat';      // hash: site id → domain check result
 
 async function duda(path) {
   const user = process.env.DUDA_API_USERNAME, pass = process.env.DUDA_API_PASSWORD;
@@ -29,6 +30,8 @@ const slim = (x) => ({
   domain: String(x.site_domain || '').replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
   defaultDomain: String(x.site_default_domain || '').replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
   published: x.last_published_date || '',
+  // When it first went live: the launch date the Trends tab counts. Empty for a website never published.
+  first: x.first_published_date || '',
   created: x.creation_date || '',
   labels: (x.labels || []).map((l) => (typeof l === 'string' ? l : l && (l.name || l.label))).filter(Boolean).slice(0, 6),
 });
@@ -63,58 +66,110 @@ async function businessName(id) {
   } catch (e) { return null; }
 }
 
-// ---------- domain health ----------
-const norm = (h) => String(h || '').toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
-const DUDA_MARK = /cdn-website\.com|multiscreensite\.com|dmRoot|dmBody|dudaone|data-page-alias/i;
-const BAD_CONTENT = /\b(casino|slots?|poker|betting|sportsbook|judi|togel|gambl\w*|viagra|cialis|escort|porn\w*|crypto ?casino)\b|domain (is )?for sale|buy this domain|this domain (name )?(is|may be) for sale|parked (free|domain)|hugedomains|sedo\.com|dan\.com|afternic/i;
-function textOf(html) { return String(html).replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 4000); }
-async function checkDomain(domain) {
-  const out = { domain, checkedAt: Date.now() };
-  const hops = [];
-  let url = (process.env.DOMAIN_CHECK_PROTOCOL || 'https') + '://' + domain + '/';
-  let r = null, body = '';
-  for (let i = 0; i < 6; i++) {
-    try {
-      r = await fetchWithTimeout(url, { redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SiteAuditor/1.0; domain health check)', Accept: 'text/html' } }, 9000);
-    } catch (e) {
-      const m = String((e && e.cause && (e.cause.code || e.cause.message)) || e.message || e);
-      if (i === 0 && url.startsWith('https://') && /CERT|SSL|TLS|certificate|self.signed|ERR_TLS|UNABLE_TO_VERIFY|EPROTO/i.test(m)) { out.sslError = true; url = 'http://' + domain + '/'; continue; }
-      if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) return Object.assign(out, { status: 'dns', label: "Domain doesn't resolve (DNS)", detail: 'The domain has no working DNS record. It may have expired or its DNS was changed.' });
-      if (/abort|timeout|ETIMEDOUT/i.test(m)) return Object.assign(out, { status: 'timeout', label: 'Not responding', detail: 'The domain did not respond within 9 seconds.' });
-      if (/ECONNREFUSED|ECONNRESET/i.test(m)) return Object.assign(out, { status: 'down', label: 'Connection refused', detail: m.slice(0, 120) });
-      return Object.assign(out, { status: 'error', label: 'Could not open', detail: m.slice(0, 160) });
-    }
-    if (r.status >= 300 && r.status < 400 && r.headers.get('location')) {
-      const next = new URL(r.headers.get('location'), url).href; hops.push(next); url = next; continue;
-    }
-    body = r.status < 400 ? (await r.text().catch(() => '')).slice(0, 300000) : '';
-    // Meta-refresh or tiny script redirects (common with hijacked domains)
-    const meta = body.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]+content=["'][^"']*url=([^"'>\s]+)/i);
-    const js = body.length < 8000 && body.match(/(?:window\.|document\.)?location(?:\.href)?\s*=\s*["'](https?:\/\/[^"']+)["']/i);
-    const target = (meta && meta[1]) || (js && js[1]);
-    if (target && i < 5) { try { const next = new URL(target, url).href; if (norm(new URL(next).host) !== norm(new URL(url).host)) { hops.push(next); url = next; continue; } } catch (e) { /* ignore */ } }
-    break;
+export const _test = { checkDomain };
+
+// Bumped when a website row gains a field the Trends tab needs, so an older cached list is pulled again.
+const LIST_V = 2;
+
+/**
+ * One of the two lists (published, or not published), from the cache or freshly from Duda.
+ * Refreshing the published list also compares it with the last pull and writes down any website that
+ * appeared or disappeared — that is how the Trends tab still knows about a website deleted outright,
+ * or a change while the Duda connection was off.
+ */
+async function loadList(scope, me, force) {
+  const drafts = scope === 'unpublished';
+  const key = drafts ? KEY_UN : KEY;
+  const [raw] = await redis(['GET', key]);
+  let data = unpackJSON(raw);
+  if (data && !force && Date.now() - data.at < MAX_AGE && data.v === LIST_V) return data;
+  // Someone else refreshing right now? Serve the cached copy instead of hitting Duda twice
+  const [lock] = await redis(['SET', key + ':lock', '1', 'NX', 'PX', 60000]);
+  if (lock !== 'OK' && data) return Object.assign({}, data, { refreshing: true });
+  try {
+    const sites = await fetchAll(drafts ? 'UNPUBLISHED' : 'PUBLISHED');
+    // Remember when and by whom the list was pulled (manual refresh vs automatic 6-hour refresh)
+    const next = { v: LIST_V, at: Date.now(), by: me.email, byName: me.name, manual: !!force, count: sites.length, sites, scope: drafts ? 'unpublished' : 'published' };
+    const cmds = [['SET', key, packJSON(next)], ['DEL', key + ':lock']];
+    if (!drafts && data && data.sites) cmds.push(...evCmds(diffEvents(data.sites, sites, data.at)));
+    await redis(...cmds);
+    await markRun('pull', me, !!force, { count: sites.length, scope: next.scope });
+    // Every published website should have its form history. Anything already pulled or already
+    // waiting is ignored, so this is just "keep the queue in step with the account".
+    if (!drafts) await enqueue(sites.map((x) => x.id), 'listed').catch(() => {});
+    return next;
+  } catch (e) {
+    await redis(['DEL', key + ':lock']).catch(() => {});
+    throw e;
   }
-  const finalUrl = url; let finalHost = ''; try { finalHost = new URL(finalUrl).host; } catch (e) { /* ignore */ }
-  Object.assign(out, { code: r ? r.status : 0, finalUrl: finalUrl.slice(0, 300), hops: hops.length });
-  const title = ((body.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '').trim().slice(0, 140);
-  if (title) out.title = title;
-  const spam = BAD_CONTENT.test(title + ' ' + textOf(body));
-  if (norm(finalHost) !== norm(domain)) return Object.assign(out, { status: spam ? 'hijacked' : 'redirect', label: `Redirects to ${norm(finalHost) || 'another site'}${spam ? ' (spam / gambling site)' : ''}`, detail: `Opening ${domain} ends up on ${finalUrl}${title ? ` ("${title}")` : ''}. Fix the domain before auditing.` });
-  if (r && r.status === 404) return Object.assign(out, { status: 'http', label: '404 Not found', detail: 'The home page returns 404.' });
-  if (r && r.status >= 500) return Object.assign(out, { status: 'http', label: `Server error ${r.status}`, detail: 'The server behind the domain returns an error.' });
-  if (r && r.status >= 400) return Object.assign(out, { status: 'http', label: `Error ${r.status}`, detail: `The home page returns HTTP ${r.status}.` });
-  const text = textOf(body);
-  if (BAD_CONTENT.test(title + ' ' + text) && !DUDA_MARK.test(body)) return Object.assign(out, { status: 'hijacked', label: 'Shows unrelated content', detail: `The domain loads a page that isn't this website${title ? ` ("${title}")` : ''} and looks like spam, gambling or a parked domain.` });
-  if (!DUDA_MARK.test(body)) return Object.assign(out, { status: 'notduda', label: 'Not pointing to this website', detail: `The domain loads, but not the Duda website${title ? ` ("${title}")` : ''}. Its DNS may point to another host.` });
-  if (out.sslError) return Object.assign(out, { status: 'ssl', label: 'SSL certificate problem', detail: 'The site only works over http://, the security certificate is missing or invalid.' });
-  return Object.assign(out, { status: 'ok', label: 'Working', detail: hops.length ? `Loads after ${hops.length} redirect(s) on the same domain.` : 'Loads normally.' });
 }
 
-export const _test = { checkDomain };
+/** The domain-check list: every published website, with the date it first went live. */
+const checkRows = (list) => (list.sites || []).map((x) => ({ id: x.id, name: x.name, domain: x.domain, first: Date.parse(x.first) || 0 }));
+
+/**
+ * Once a day (Vercel's scheduler, see vercel.json), with nobody needing to have the app open: pull the
+ * list, and check every live domain not checked in the last 20 hours, oldest first, until the time
+ * runs out. Anybody can call this address; it does nothing more than once in 20 hours, so calling it
+ * by hand changes nothing but the hour. With CRON_SECRET set, only Vercel's scheduler may call it.
+ */
+async function sweep(req, res) {
+  const secret = process.env.CRON_SECRET;
+  if (secret && String(req.headers.authorization || '') !== 'Bearer ' + secret) return res.status(401).json({ error: 'Not allowed' });
+  const [gate] = await redis(['SET', P + 'domsweep', new Date().toISOString(), 'NX', 'EX', 20 * 3600]);
+  if (gate !== 'OK') return res.status(200).json({ skipped: 'already ran in the last 20 hours' });
+  const bot = { email: '', name: 'Daily check' };
+  const list = await loadList('published', bot, false);
+  const [doms, names] = await redis(['HGETALL', DOMS], ['HGETALL', NAMES]);
+  const last = {}; for (let i = 0; doms && i < doms.length; i += 2) { const v = jparse(doms[i + 1]); last[doms[i]] = (v && v.domain && v.checkedAt) || 0; }
+  const nm = {}; for (let i = 0; names && i < names.length; i += 2) { const v = String(names[i + 1] || ''); const j = v.startsWith('{') ? jparse(v) : null; nm[names[i]] = (j ? j.n : v) || ''; }
+  const due = checkRows(list).filter((x) => x.domain && Date.now() - (last[x.id] || 0) > 20 * 3600000)
+    .map((x) => Object.assign(x, { name: x.name || (nm[x.id] !== '-' ? nm[x.id] : '') }))
+    .sort((a, b) => (last[a.id] || 0) - (last[b.id] || 0));
+  const out = await checkAndStore(due, { budgetMs: 95000, concurrency: 12 });
+  await markRun('domains', bot, false, { count: Object.keys(out).length });
+  return res.status(200).json({ checked: Object.keys(out).length, due: due.length });
+}
+
+/**
+ * Everything the Trends tab draws, in one answer. The charts are drawn and re-cut (week, month,
+ * year, any date range) in the browser, so changing the range never asks the server again.
+ */
+async function stats(me) {
+  const [pub, un] = await Promise.all([loadList('published', me, false), loadList('unpublished', me, false).catch(() => null)]);
+  await seedFromFeeds().catch(() => {});
+  const [{ since, events }, [names, doms]] = await Promise.all([readEvents(), redis(['HGETALL', NAMES], ['HGETALL', DOMS])]);
+  const nm = {}; for (let i = 0; names && i < names.length; i += 2) { const v = String(names[i + 1] || ''); const j = v.startsWith('{') ? jparse(v) : null; nm[names[i]] = (j ? j.n : v) || ''; }
+  const dm = {}; for (let i = 0; doms && i < doms.length; i += 2) dm[doms[i]] = jparse(doms[i + 1]);
+  const ms = (v) => Date.parse(v) || 0;
+  const row = (x, live) => {
+    const d = live ? dm[x.id] : null;
+    const r = { id: x.id, n: x.name || (nm[x.id] && nm[x.id] !== '-' ? nm[x.id] : ''), dm: x.domain || '', c: ms(x.created), f: ms(x.first), l: ms(x.published), live: live ? 1 : 0 };
+    if (d && (!x.domain || d.domain === x.domain || d.status === 'nodomain')) {
+      r.ds = d.status; r.dl = d.label;
+      if (d.ssl) r.sd = d.ssl.days - Math.floor((Date.now() - (d.checkedAt || Date.now())) / 86400000);
+      if (d.reg && d.reg.expires) r.re = d.reg.expires;
+      if (d.ms) r.ms = d.ms;
+    }
+    return r;
+  };
+  const sites = (pub.sites || []).map((x) => row(x, true));
+  const unRows = ((un && un.sites) || []).filter((x) => x.first);   // was live once: the ones that left
+  sites.push(...unRows.map((x) => row(x, false)));
+  const firstPub = {}; sites.forEach((x) => { if (x.f) firstPub[x.id] = x.f; });
+  const settled = settleEvents(events, firstPub).map((e) => [e.t, e.s, e.at, e.src === 's' ? 1 : 0]);
+  return {
+    at: Date.now(), listAt: pub.at, since, sites, events: settled,
+    drafts: un ? Math.max(0, (un.count || 0) - unRows.length) : null,
+    hasFirst: (pub.sites || []).some((x) => x.first),
+  };
+}
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
+  if (req.method === 'GET' && req.query.op === 'sweep') {
+    try { return await sweep(req, res); } catch (e) { return res.status(500).json({ error: String(e.message || e) }); }
+  }
   const me = await requireUser(req, res);
   if (!me) return;
   if (req.method === 'POST') {
@@ -139,10 +194,12 @@ export default async function handler(req, res) {
       if (b.op === 'domains') {
         // Only domains from our own Duda list are checked (never arbitrary URLs)
         const pick = ids.slice(0, 10);
-        const results = await Promise.all(pick.map((id) => { const x = known.get(id); return x.domain ? checkDomain(x.domain) : Promise.resolve({ status: 'nodomain', label: 'No custom domain', detail: 'This site is only on its Duda address.', checkedAt: Date.now() }); }));
-        const out = {}; pick.forEach((id, j) => { out[id] = results[j]; });
-        const flat = [].concat(...Object.entries(out).map(([k, v]) => [k, JSON.stringify(v)]));
-        if (flat.length) await redis(['HSET', DOMS, ...flat]);
+        const [names] = await redis(['HMGET', NAMES, ...(pick.length ? pick : ['-'])]);
+        const rows = checkRows({ sites: pick.map((id) => known.get(id)) }).map((x, i) => {
+          const v = String((names || [])[i] || ''); const j = v.startsWith('{') ? jparse(v) : null; const n = (j ? j.n : v) || '';
+          return Object.assign(x, { name: x.name || (n !== '-' ? n : '') });
+        });
+        const out = await checkAndStore(rows);
         await markRun('domains', me, true, { count: pick.length });
         return res.status(200).json({ domains: out });
       }
@@ -150,28 +207,11 @@ export default async function handler(req, res) {
     } catch (e) { return res.status(500).json({ error: String(e.message || e) }); }
   }
   try {
+    if (req.query.op === 'stats') return res.status(200).json(await stats(me));
     // Not-yet-published websites: the ones clients are commenting on before launch. Kept in its own
     // cache and only fetched when somebody asks, so it costs nothing on a normal day.
     const drafts = req.query.scope === 'unpublished';
-    const key = drafts ? KEY_UN : KEY;
-    const [raw] = await redis(['GET', key]);
-    let data = unpackJSON(raw);
-    if (!(data && !req.query.refresh && Date.now() - data.at < MAX_AGE)) {
-      // Someone else refreshing right now? Serve the cached copy instead of hitting Duda twice
-      const [lock] = await redis(['SET', key + ':lock', '1', 'NX', 'PX', 60000]);
-      if (lock !== 'OK' && data) data = Object.assign({}, data, { refreshing: true });
-      else {
-        const sites = await fetchAll(drafts ? 'UNPUBLISHED' : 'PUBLISHED');
-        // Remember when and by whom the list was pulled (manual refresh vs automatic 6-hour refresh)
-        data = { at: Date.now(), by: me.email, byName: me.name, manual: !!req.query.refresh, count: sites.length, sites };
-        data.scope = drafts ? 'unpublished' : 'published';
-        await redis(['SET', key, packJSON(data)], ['DEL', key + ':lock']);
-        await markRun('pull', me, !!req.query.refresh, { count: sites.length, scope: data.scope });
-        // Every published website should have its form history. Anything already pulled or already
-        // waiting is ignored, so this is just "keep the queue in step with the account".
-        if (!drafts) await enqueue(sites.map((x) => x.id), 'listed').catch(() => {});
-      }
-    }
+    const data = Object.assign({}, await loadList(drafts ? 'unpublished' : 'published', me, !!req.query.refresh));
     // Merge remembered business names and domain checks
     // One extra command: whether the form-history catch-up has work, so opening this page (or a pull
     // that just queued 700 websites) starts it at once instead of waiting for the next heartbeat.
@@ -183,7 +223,6 @@ export default async function handler(req, res) {
     data.sites = data.sites.map((x) => { const m = nm[x.id]; const fresh = m && (m.p === null || m.p === (x.published || '')); return Object.assign({}, x, { name: x.name || (m && m.n !== '-' ? m.n : ''), nameChecked: !!(x.name || fresh), dom: dm[x.id] && (!x.domain || dm[x.id].domain === x.domain || dm[x.id].status === 'nodomain') ? dm[x.id] : null }); });
     return res.status(200).json(data);
   } catch (e) {
-    await redis(['DEL', KEY + ':lock'], ['DEL', KEY_UN + ':lock']).catch(() => {});
     return res.status(502).json({ error: String(e.message || e) });
   }
 }
