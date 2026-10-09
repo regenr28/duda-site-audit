@@ -1839,6 +1839,8 @@
     const prefs = lsGet('dsa-mk-prefs', {}) || {};
     Object.assign(mk, {
       on: true, site, readonly: !!opts.readonly, team: !!opts.team, focus: opts.focus || '', fixedCap: opts.capId || '',
+      // Live: the client browses their website as it is; a drawing tool freezes what they see into a picture.
+      mode: opts.capId || opts.readonly ? 'mark' : 'live', livePath: opts.path || '/', liveLinks: [], liveZoom: 0, liveReady: false, frameSeq: 0,
       device: opts.device || (prefs.device in MK_DEV ? prefs.device : 'desktop'), path: opts.path || '/',
       cap: null, els: [], marks: [], orphans: [], tickets: opts.tickets || null, quota: null, preview: false,
       s: 1, tx: 0, ty: 0, tool: opts.readonly ? 'move' : 'move', sel: '', hideSent: false, hideAll: false,
@@ -1847,19 +1849,21 @@
     document.documentElement.classList.add('mk-lock');
     const root = document.createElement('div');
     root.id = 'mkRoot';
-    root.innerHTML = `<div class="mk${mk.readonly ? ' ro' : ''}" id="mk" role="dialog" aria-label="Mark what to change">
+    root.innerHTML = `<div class="mk${mk.readonly ? ' ro' : ''} m-${mk.mode}" id="mk" role="dialog" aria-label="Mark what to change">
       <div class="mk-top">
         <button class="mk-ib" id="mkClose" aria-label="Close" title="Close">✕</button>
         <div class="mk-title"><b>${mk.readonly ? 'Where the client marked it' : 'Mark what to change'}</b><span class="mk-sub" id="mkSub">${esc(site.name || '')}</span></div>
         <span class="mk-sp"></span><span class="mk-quota" id="mkQuota"></span>
       </div>
       ${mk.readonly ? '' : `<div class="mk-bar">
+        <button class="btn sm mk-browse" id="mkBrowse" title="Go back to your website and keep browsing">← Browse</button>
         <select id="mkPage" aria-label="Page"></select>
         <div class="mk-seg" id="mkDev" role="group" aria-label="Screen">${Object.entries(MK_DEV).map(([k, v]) => `<button data-dev="${k}" class="${mk.device === k ? 'on' : ''}">${v}</button>`).join('')}</div>
-        <button class="mk-ib" id="mkRefresh" title="Take a new picture of this page" aria-label="Take a new picture">↻</button>
+        <button class="mk-ib" id="mkRefresh" title="Reload this page" aria-label="Reload this page">↻</button>
         <label class="mk-upl" title="Mark up a screenshot you took yourself — for a menu, a slider or anything that only shows when you tap">📷<span> My screenshot</span><input type="file" id="mkFile" accept="image/*" hidden></label>
       </div>`}
       <div class="mk-stage" id="mkStage">
+        ${mk.readonly ? '' : `<div class="mk-live" id="mkLive"><div class="mk-live-in" id="mkLiveIn"><iframe id="mkFrame" title="Your website" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe></div></div>`}
         <div class="mk-world" id="mkWorld"></div>
         <svg class="mk-ov" id="mkOv" aria-hidden="true"></svg>
         <div class="mk-msg" id="mkMsg"></div>
@@ -1878,13 +1882,20 @@
     mkBindStage();
     mkBindSheet();
     if (!mk.readonly) {
-      $('#mkDev').onclick = (e) => { const b = e.target.closest('[data-dev]'); if (!b || b.dataset.dev === mk.device) return; mk.device = b.dataset.dev; mk.fixedCap = ''; lsSet('dsa-mk-prefs', { device: mk.device }); $$('#mkDev [data-dev]').forEach((x) => x.classList.toggle('on', x === b)); mkLoad(false); };
-      $('#mkPage').onchange = (e) => { if (!e.target.value) return; mk.path = e.target.value; mk.fixedCap = ''; mkLoad(false); };
-      $('#mkRefresh').onclick = () => { mk.fixedCap = ''; mkLoad(true); };
+      $('#mkDev').onclick = (e) => { const b = e.target.closest('[data-dev]'); if (!b || (b.dataset.dev === mk.device && mk.mode === 'live')) return; mk.device = b.dataset.dev; mk.fixedCap = ''; lsSet('dsa-mk-prefs', { device: mk.device }); $$('#mkDev [data-dev]').forEach((x) => x.classList.toggle('on', x === b)); mkLive(mk.livePath, true); };
+      $('#mkPage').onchange = (e) => { if (!e.target.value) return; mk.fixedCap = ''; mkLive(e.target.value, true); };
+      $('#mkRefresh').onclick = () => { mk.fixedCap = ''; mkLive(mk.livePath, true); };
+      $('#mkBrowse').onclick = () => { mkCloseCompose(); mkLive(mk.livePath, !mk.liveReady); };
+      window.addEventListener('message', mkOnMsg);
       $('#mkFile').onchange = (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) mkUpload(f); };
       // On a finger lifting as well as on click: a phone can swallow the click of a tap that comes
       // straight after moving the page, and a tool button that sometimes does nothing feels broken.
-      const pickTool = (e) => { const b = e.target.closest('[data-tool]'); if (b) mkTool(b.dataset.tool); };
+      const pickTool = (e) => {
+        const b = e.target.closest('[data-tool]'); if (!b) return;
+        // While browsing, picking a drawing tool freezes what is on screen and opens it for marking.
+        if (mk.mode === 'live' && b.dataset.tool !== 'move') { mkFreeze(b.dataset.tool); return; }
+        mkTool(b.dataset.tool);
+      };
       $('#mkTools').onclick = pickTool; $('#mkTools').addEventListener('pointerup', pickTool);
     }
     window.addEventListener('resize', mkResize);
@@ -1892,7 +1903,7 @@
     document.addEventListener('keydown', mkKey, true);
     mk.timer = setInterval(mkRetryAll, 20000);
     mkTool(mk.tool);
-    mkLoad(false);
+    if (mk.mode === 'live') { mkLive(mk.livePath, true); mkLoadMine(); } else mkLoad(false);
   }
   function closeMarker(silent) {
     if (!mk.on) return;
@@ -1901,6 +1912,7 @@
     window.removeEventListener('resize', mkResize);
     window.removeEventListener('online', mkRetryAll);
     document.removeEventListener('keydown', mkKey, true);
+    window.removeEventListener('message', mkOnMsg);
     document.documentElement.classList.remove('mk-lock');
     const r = $('#mkRoot'); if (r) r.remove();
     if (silent) return;
@@ -1915,6 +1927,7 @@
   }
   /** Get the picture (reusing a fresh one), its element map, and what was already sent. */
   async function mkLoad(fresh) {
+    if (mk.mode !== 'mark') mkSetMode('mark');
     const site = mk.site; const token = (mk.loadToken = (mk.loadToken || 0) + 1);
     mk.loading = true; mk.cap = null; mk.marks = []; mk.orphans = []; mk.sel = ''; mkCloseCompose();
     $('#mkWorld').innerHTML = ''; mkReq(); mkLayers();
@@ -1926,7 +1939,6 @@
         catch (e) { if (mk.readonly) throw new Error('The picture this was marked on has expired (pictures are kept for two months).'); mk.fixedCap = ''; }
       }
       if (!cap && !mk.readonly) {
-        if (!fresh && mk.device === 'desktop' && mk.path === '/' && mk.warm[site.id]) { cap = await mk.warm[site.id]; mk.warm[site.id] = null; }
         if (!cap && !fresh) cap = (await capi(`/api/capture?op=latest&site=${encodeURIComponent(site.id)}&device=${mk.device}&path=${encodeURIComponent(mk.path)}`)).cap;
         for (let i = 0; !cap && i < 40; i++) {
           if (token !== mk.loadToken || !mk.on) return;
@@ -1938,6 +1950,17 @@
       }
       if (token !== mk.loadToken || !mk.on) return;
       if (!cap) throw new Error('This page could not be opened. Please try again in a minute.');
+      await mkShowCap(cap, token);
+    } catch (e) {
+      if (token !== mk.loadToken) return;
+      mk.loading = false;
+      mkMsg(`${esc(e.message || 'This page could not be opened.')}<div class="mk-msg-a"><button class="btn sm primary" id="mkAgain">Try again</button></div>`);
+      const a = $('#mkAgain'); if (a) a.onclick = () => mkLoad(!!fresh);
+    }
+  }
+  /** Put a picture on screen with its marks: what was sent from it before, and drafts kept on this device. */
+  async function mkShowCap(cap, token) {
+      const site = mk.site;
       const [mapR, mine] = await Promise.all([
         cap.hasMap ? api(`/api/capture?op=map&cap=${encodeURIComponent(cap.id)}`).catch(() => ({ els: [] })) : Promise.resolve({ els: [] }),
         mk.readonly ? Promise.resolve(null) : capi(`/api/tickets?op=mine&site=${encodeURIComponent(site.id)}`).catch(() => null),
@@ -1955,12 +1978,6 @@
       if (mk.focus) { const f = mk.marks.find((m) => m.ticket && m.ticket.id === mk.focus); if (f) { mkSelect(f.lid); mkCenter(f); mkOpenCompose(f); } }
       mkHint();
       if (mk.marks.some((m) => m.status === 'failed' && m.retry)) mkRetryAll();
-    } catch (e) {
-      if (token !== mk.loadToken) return;
-      mk.loading = false;
-      mkMsg(`${esc(e.message || 'This page could not be opened.')}<div class="mk-msg-a"><button class="btn sm primary" id="mkAgain">Try again</button></div>`);
-      const a = $('#mkAgain'); if (a) a.onclick = () => mkLoad(!!fresh);
-    }
   }
   function mkPages() {
     if (!mk.cap) return;
@@ -1984,6 +2001,116 @@
     el.className = 'mk-quota' + (q.left ? '' : ' out');
     el.textContent = mk.preview ? 'Preview — nothing is sent' : q.left ? `${q.left} of ${q.limit} left today` : `Daily limit reached · resets ${reset}`;
     el.title = q.left ? `You can send ${q.limit} requests a day. The count starts again at ${reset}.` : `You have used today's ${q.limit} requests. You can keep marking — your drafts wait here and can be sent after ${reset}.`;
+  }
+
+  // ---------------------------------------------------------------- browsing the website live
+  const MK_SIZE = { desktop: [1920, 1000], tablet: [820, 1180], mobile: [390, 844] };
+  function mkSetMode(m) {
+    mk.mode = m;
+    const root = $('#mk'); if (!root) return;
+    root.classList.toggle('m-live', m === 'live'); root.classList.toggle('m-mark', m === 'mark');
+    if (m === 'live') { mk.sel = ''; mkTool('move'); }
+    mkHint(); mkReq();
+  }
+  /** Their quota and what they already sent, without needing a picture. */
+  async function mkLoadMine() {
+    if (mk.readonly) return;
+    try { const mine = await capi(`/api/tickets?op=mine&site=${encodeURIComponent(mk.site.id)}`); mk.tickets = mine.tickets || []; mk.quota = mine.quota; mk.preview = !!mine.preview; mkQuota(); } catch (e) { /* shown when sending */ }
+  }
+  /** Show the website itself. `reload` loads `path` afresh; otherwise the page they left is still there as they left it. */
+  function mkLive(path, reload) {
+    if (mk.readonly || !$('#mkFrame')) return;
+    mkSetMode('live'); mkMsg('');
+    mk.livePath = path || '/';
+    if (reload) {
+      mk.liveReady = false; const seq = ++mk.frameSeq;
+      $('#mkFrame').src = `/api/live?site=${encodeURIComponent(mk.site.id)}&device=${mk.device}&path=${encodeURIComponent(mk.livePath)}`;
+      mkMsg('Opening your page…', true);
+      setTimeout(() => { if (mk.on && seq === mk.frameSeq && !mk.liveReady && mk.mode === 'live') mkMsg(''); }, 15000);
+    }
+    mkLiveSize(); mkLivePages();
+    $('#mkSub').textContent = `${mk.site.name || ''} · ${pageName(mk.livePath)} · ${MK_DEV[mk.device]}`;
+  }
+  /** The page is drawn at the device's real size (desktop 1920 × 1000) and scaled to fit; + and − zoom it. */
+  function mkLiveSize(z) {
+    const st = $('#mkStage'), inn = $('#mkLiveIn'), fr = $('#mkFrame'); if (!st || !inn || !fr) return;
+    const [w, h] = MK_SIZE[mk.device];
+    const fit = Math.min(1, st.clientWidth / w);
+    mk.liveZoom = z ? Math.max(fit * 0.6, Math.min(2, z)) : fit;
+    fr.style.width = w + 'px'; fr.style.height = h + 'px'; fr.style.transform = `scale(${mk.liveZoom})`;
+    inn.style.width = Math.round(w * mk.liveZoom) + 'px'; inn.style.height = Math.round(h * mk.liveZoom) + 'px';
+    const zl = $('#mkZl'); if (zl) zl.textContent = Math.abs(mk.liveZoom - fit) < 0.005 ? 'Fit' : Math.round(mk.liveZoom * 100) + '%';
+  }
+  function mkLivePages() {
+    const sel = $('#mkPage'); if (!sel) return;
+    const seen = new Set(); const opts = [];
+    const add = (p, t) => { if (!p || seen.has(p)) return; seen.add(p); opts.push({ p, t }); };
+    add('/', 'Home page'); add(mk.livePath, '');
+    mk.liveLinks.forEach((l) => add(l.p, l.t));
+    (lsGet('dsa-mk-pages:' + mk.site.id, []) || []).forEach((l) => add(l.p, l.t));
+    if (mk.liveLinks.length) lsSet('dsa-mk-pages:' + mk.site.id, opts.slice(0, 80));
+    sel.innerHTML = opts.map((o) => `<option value="${esc(o.p)}"${o.p === mk.livePath ? ' selected' : ''}>${esc(o.p === '/' ? 'Home page' : (o.t ? o.t + ' — ' : '') + o.p)}</option>`).join('');
+  }
+  /** Messages from the helper inside their page. Only the frame we made is listened to. */
+  function mkOnMsg(e) {
+    const fr = $('#mkFrame');
+    if (!mk.on || !fr || e.source !== fr.contentWindow || !e.data || e.data.dsa !== 1) return;
+    const d = e.data;
+    if (d.t === 'ready') {
+      mk.liveReady = true; mk.livePath = d.path || mk.livePath;
+      if (Array.isArray(d.links)) mk.liveLinks = d.links.slice(0, 80).map((l) => ({ p: String(l.p || ''), t: String(l.t || '').slice(0, 60) })).filter((l) => /^\//.test(l.p));
+      if (mk.mode === 'live') { mkMsg(''); mkLivePages(); mkHint(); }
+    } else if (d.t === 'nav' && typeof d.path === 'string') mkLive(d.path, true);
+    else if (d.t === 'blocked') toast(d.why === 'form' ? 'Forms are switched off here, so nothing is sent from this preview.' : d.why === 'link' ? 'Phone and email links are switched off here.' : 'Links to other websites are switched off here.');
+    else if (d.t === 'state' && mk.stateWait && d.id === mk.stateWait.id) { mk.stateWait.ok(d); mk.stateWait = null; }
+  }
+  function mkAskState() {
+    const fr = $('#mkFrame');
+    return new Promise((ok) => {
+      if (!fr || !fr.contentWindow || !mk.liveReady) return ok(null);
+      const id = Math.random().toString(36).slice(2);
+      mk.stateWait = { id, ok };
+      fr.contentWindow.postMessage({ dsa: 'state', id }, '*');
+      setTimeout(() => { if (mk.stateWait && mk.stateWait.id === id) { mk.stateWait = null; ok(null); } }, 1200);
+    });
+  }
+  /** Freeze: the server opens the same page, repeats what they did, and takes the picture. */
+  async function mkFreeze(tool) {
+    if (mk.freezing) return;
+    mk.freezing = true;
+    const token = (mk.loadToken = (mk.loadToken || 0) + 1);
+    mkMsg('Freezing this view so you can mark it…<div class="small">This takes a few seconds.</div>', true);
+    $('#mk').classList.add('freezing');
+    try {
+      const st = (await mkAskState()) || { path: mk.livePath, y: 0, actions: [], hover: '' };
+      const path = st.path || mk.livePath;
+      let cap = null;
+      for (let i = 0; !cap && i < 30; i++) {
+        if (token !== mk.loadToken || !mk.on) return;
+        const r = await cpost('/api/capture', { op: 'shoot', site: mk.site.id, device: mk.device, path, fresh: true,
+          replay: { y: st.y || 0, actions: st.actions || [], hover: mk.device === 'desktop' ? st.hover || '' : '' } });
+        if (r.cap) cap = r.cap;
+        else if (r.busy) { mkMsg('Someone else is opening this page right now — one moment…', true); await new Promise((ok) => setTimeout(ok, 3000)); }
+        else break;
+      }
+      if (!cap) throw new Error('This view could not be frozen. Please try again in a minute.');
+      if (token !== mk.loadToken || !mk.on) return;
+      mk.cap = null; mk.marks = []; mk.orphans = []; mk.sel = ''; mkCloseCompose();
+      mkSetMode('mark');
+      await mkShowCap(cap, token);
+      // Open where they were looking.
+      const sy = cap.scrollY || st.y || 0;
+      if (sy) { mk.ty = -sy * mk.s; mkClamp(); mkApply(); }
+      mkTool(tool);
+    } catch (e) {
+      if (token !== mk.loadToken) return;
+      mkMsg(`${esc(e.message || 'This view could not be frozen.')}<div class="mk-msg-a"><button class="btn sm primary" id="mkAgain">Try again</button> <button class="btn sm" id="mkBack">Keep browsing</button></div>`);
+      const a = $('#mkAgain'); if (a) a.onclick = () => mkFreeze(tool);
+      const b = $('#mkBack'); if (b) b.onclick = () => mkMsg('');
+    } finally {
+      mk.freezing = false;
+      const r = $('#mk'); if (r) r.classList.remove('freezing');
+    }
   }
 
   // ---------------------------------------------------------------- the picture
@@ -2026,7 +2153,7 @@
     const px = (x - mk.tx) / mk.s, py = (y - mk.ty) / mk.s;
     mk.s = ns; mk.tx = x - px * ns; mk.ty = y - py * ns; mkClamp(); mkApply();
   }
-  function mkResize() { if (mk.cap) { mkClamp(); mkApply(); } }
+  function mkResize() { if (mk.mode === 'live') { mkLiveSize(); return; } if (mk.cap) { mkClamp(); mkApply(); } }
   function mkCenter(m) {
     const st = $('#mkStage'); const b = mkBox(m);
     const fit = mkFitScale();
@@ -2040,11 +2167,13 @@
   const mkBox = (m) => (m.kind === 'arrow'
     ? { x: Math.min(m.geo.x1, m.geo.x2), y: Math.min(m.geo.y1, m.geo.y2), w: Math.abs(m.geo.x2 - m.geo.x1), h: Math.abs(m.geo.y2 - m.geo.y1) }
     : m.geo);
-  const mkDraftKey = () => `dsa-mk:${mk.site.id}:${mk.cap.id}`;
+  // Drafts belong to a page on a device, not to one picture of it: every freeze is a new picture,
+  // and a half-written mark must still be there after the next one.
+  const mkDraftKey = () => (mk.cap.kind === 'upload' ? `dsa-mk:${mk.site.id}:up:${mk.cap.id}` : `dsa-mk:${mk.site.id}:${mk.cap.device}:${mk.cap.path}`);
   function mkSave() {
     if (!mk.cap || mk.readonly) return;
     const keep = mk.marks.filter((m) => m.status !== 'sent').map((m) => ({ lid: m.lid, cid: m.cid, kind: m.kind, geo: m.geo, el: m.el, sel: m.sel, text: m.text, locked: m.locked, hidden: m.hidden,
-      created: m.created, status: m.status === 'sending' ? 'failed' : m.status, retry: m.status === 'sending' ? true : m.retry, err: m.err || '' }));
+      created: m.created, status: m.status === 'sending' ? 'failed' : m.status, retry: m.status === 'sending' ? true : m.retry, err: m.err || '', cap: mk.cap.id }));
     lsSet(mkDraftKey(), keep.length ? keep : null);
     const ui = {}; mk.marks.filter((m) => m.status === 'sent' && (m.locked || m.hidden)).forEach((m) => { ui[m.ticket.id] = { l: !!m.locked, h: !!m.hidden }; });
     lsSet(`dsa-mk-ui:${mk.site.id}`, Object.keys(ui).length ? ui : null);
@@ -2055,7 +2184,17 @@
       if (!d || !d.geo || mk.marks.some((m) => m.cid === d.cid)) return;
       // A request whose send was interrupted may have arrived after all: it is then already in the list.
       if (mk.tickets && d.status === 'failed' && mk.marks.some((m) => m.status === 'sent' && m.ticket.text === d.text && m.kind === d.kind)) return;
-      mk.marks.push(Object.assign({ status: 'draft' }, d));
+      const m = Object.assign({ status: 'draft' }, d);
+      // Made on an earlier picture: follow the element it was on, in case the page moved since.
+      if (d.cap && d.cap !== mk.cap.id && d.el && d.el.s && d.el.r) {
+        const now = mk.els.find((e) => e.s === d.el.s);
+        if (now) {
+          const dx = now.r[0] - d.el.r[0], dy = now.r[1] - d.el.r[1];
+          m.geo = m.kind === 'arrow' ? { x1: m.geo.x1 + dx, y1: m.geo.y1 + dy, x2: m.geo.x2 + dx, y2: m.geo.y2 + dy } : Object.assign({}, m.geo, { x: m.geo.x + dx, y: m.geo.y + dy });
+          m.el = Object.assign({}, d.el, { r: now.r });
+        }
+      }
+      mk.marks.push(m);
     });
     mk.marks.sort((a, b) => a.created - b.created);
   }
@@ -2197,7 +2336,7 @@
       g = { mode: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: mk.s, mx0: (a.x + b.x) / 2, my0: (a.y + b.y) / 2, tx0: mk.tx, ty0: mk.ty };
     };
     st.addEventListener('pointerdown', (e) => {
-      if (!mk.cap || e.target.closest('.mk-zoom') || e.target.closest('.mk-msg-in')) return;
+      if (mk.mode === 'live' || !mk.cap || e.target.closest('.mk-zoom') || e.target.closest('.mk-msg-in')) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
       try { st.setPointerCapture(e.pointerId); } catch (x) { /* fine */ }
@@ -2283,7 +2422,7 @@
     st.addEventListener('pointerup', end);
     st.addEventListener('pointercancel', end);
     st.addEventListener('wheel', (e) => {
-      if (!mk.cap) return;
+      if (mk.mode === 'live' || !mk.cap) return;
       e.preventDefault();
       const p = local(e);
       if (e.ctrlKey || e.metaKey) mkZoomAt(Math.exp(-e.deltaY * 0.01), p.x, p.y);
@@ -2293,6 +2432,7 @@
     $$('.mk-zoom [data-z]', st).forEach((b) => (b.onclick = (e) => {
       e.stopPropagation();
       const W = st.clientWidth / 2, H = st.clientHeight / 2;
+      if (mk.mode === 'live') { mkLiveSize(b.dataset.z === 'fit' ? 0 : mk.liveZoom * (b.dataset.z === '+' ? 1.4 : 1 / 1.4)); return; }
       if (b.dataset.z === 'fit') mkFit(); else mkZoomAt(b.dataset.z === '+' ? 1.4 : 1 / 1.4, W, H);
     }));
   }
@@ -2338,6 +2478,11 @@
   }
   function mkHint() {
     const h = $('#mkHint'); if (!h) return;
+    if (mk.mode === 'live' && !mk.readonly) {
+      h.hidden = false; h.textContent = 'Browse your website as usual — open menus and pop-ups. When you see what should change, pick a tool to mark it.';
+      clearTimeout(mkHint.t); mkHint.t = setTimeout(() => { const x = $('#mkHint'); if (x) x.hidden = true; }, 7000);
+      return;
+    }
     if (mk.readonly || !mk.cap) { h.hidden = true; return; }
     const t = MK_TOOLS.find((x) => x.k === mk.tool);
     h.hidden = false; h.textContent = (mk.marks.length ? '' : 'Pick a tool, then mark the page. ') + (t ? t.hint : '');
@@ -2638,7 +2783,6 @@
     return state.cl.tkq[site.id];
   }
   async function clRequests(el, site) {
-    tkPrewarm(site);
     el.innerHTML = clHead(site, 'Tickets', 'Your questions and change requests for this website.') + tkCta(site) + '<div class="empty">Loading…</div>';
     tkBindSend(site);
     let d; try { d = await capi(`/api/tickets?op=mine&site=${encodeURIComponent(site.id)}`); } catch (e) { el.innerHTML = clHead(site, 'Tickets', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
@@ -3045,7 +3189,6 @@
     </div>`;
 
     if (section === 'dashboard') {
-      tkPrewarm(site);
       el.innerHTML = clHead(site, 'Dashboard', `Where your enquiries come from, over the last ${state.cl.months} months.`) + tkCta() + tiles
         + `<div class="cl-card"><div class="cl-card-h">Enquiries each month</div>${barChart(d.series || [])}</div>
            <div class="cl-two">

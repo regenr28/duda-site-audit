@@ -1204,3 +1204,23 @@ html.mk-lock, html.mk-lock body { overflow: hidden; overscroll-behavior: none; }
   .modal-back.sheet { place-items: end center; padding: 0; }
   .modal.sheet { width: 100%; max-width: none; border-radius: 16px 16px 0 0; max-height: 92vh; padding-bottom: env(safe-area-inset-bottom); }
 }
+
+/* ---------- live browsing inside the marking screen ---------- */
+.mk-live { position: absolute; inset: 0; overflow: auto; -webkit-overflow-scrolling: touch; background: #d6d9de; }
+@media (prefers-color-scheme: dark) { .mk-live { background: #0b0d10; } }
+.mk-live-in { position: relative; margin: 0 auto; box-shadow: 0 2px 18px rgba(0,0,0,.25); background: #fff; }
+.mk-live iframe { position: absolute; left: 0; top: 0; border: 0; background: #fff; transform-origin: 0 0; display: block; }
+.mk.m-live .mk-stage { touch-action: auto; cursor: auto; }
+.mk.m-live .mk-world, .mk.m-live .mk-ov, .mk.m-live .mk-grip, .mk.m-live .mk-layers, .mk.m-live .mk-browse { display: none; }
+.mk.m-mark .mk-live { visibility: hidden; pointer-events: none; }
+.mk.m-live .mk-tools button[data-tool="move"] { display: none; }
+.mk.m-live .mk-tools { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.mk.freezing .mk-live { filter: brightness(.8) blur(1px); pointer-events: none; }
+.mk-browse { flex: none; }
+@media (max-width: 520px) {
+  .mk-bar { gap: 6px; padding: 6px 8px; }
+  .mk-bar select { max-width: 30vw; }
+  .mk.m-mark .mk-bar select { max-width: 22vw; }
+  .mk-browse { padding: 4px 8px; }
+  .mk-seg button { padding: 0 8px; font-size: 12.5px; }
+}

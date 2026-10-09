@@ -10,39 +10,30 @@
 //
 // `site` is always the website's record id in this app; the page itself is opened on the Duda
 // preview of that website's draft, so it shows what the team is working on, not just what is live.
-import { redis, P, allowedHost, savedEditorHost, unpackJSON, newId, now, globalLog, readBody } from './_lib.js';
-import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today } from './_tickets.js';
+import { redis, P, newId, now, globalLog, readBody } from './_lib.js';
+import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today, cleanPath, siteRec, previewUrl } from './_tickets.js';
 import { shoot, DEVICES } from './_shoot.js';
 
 const CLIENT_SHOTS_PER_DAY = 60;
 const MAX_UPLOAD = 3 * 1024 * 1024;   // a request body can be at most about 4.5 MB once encoded
 
-function cleanPath(p) {
-  let path = String(p || '/');
-  try { path = decodeURIComponent(path); } catch (e) { /* keep */ }
-  path = path.split('?')[0].split('#')[0];
-  if (!path.startsWith('/')) path = '/' + path;
-  if (path.includes('..') || !/^\/[\w\-/.%~]*$/.test(path)) return null;
-  return path.replace(/\/+$/, '') || '/';
-}
-async function siteRec(id) {
-  if (!/^[\w-]{1,64}$/.test(String(id || ''))) return null;
-  const [raw] = await redis(['GET', P + 'site:' + id]);
-  return unpackJSON(raw);
-}
-async function previewUrl(rec, path, device) {
-  const host = rec.host && allowedHost(rec.host) ? rec.host : await savedEditorHost();
-  if (!host && !process.env.CAPTURE_PREVIEW_ORIGIN) throw new Error('This website has no editor address on file yet.');
-  const origin = process.env.CAPTURE_PREVIEW_ORIGIN || 'https://' + host;
-  return { host, url: `${origin}/site/${rec.siteId || rec.id}${path === '/' ? '' : path}?showOriginal=true&preview=true&insitepreview=true&dm_device=${device}` };
-}
 const idxField = (device, path) => `${device}|${path}`;
 
-async function takePicture(rec, site, device, path, by, ttl) {
+/** A clean copy of what the live view says the client did: where they were and what they clicked. */
+function cleanReplay(r) {
+  if (!r || typeof r !== 'object') return null;
+  const sel = (v) => String(v || '').slice(0, 600);
+  const actions = (Array.isArray(r.actions) ? r.actions : []).slice(-20).map((a) => ({ s: sel(a && a.s) })).filter((a) => a.s);
+  const y = Math.max(0, Math.min(16000, Math.round(Number(r.y) || 0)));
+  const hover = sel(r.hover);
+  return actions.length || y || hover ? { actions, y, hover } : null;
+}
+
+async function takePicture(rec, site, device, path, by, ttl, replay) {
   const { host, url } = await previewUrl(rec, path, device);
-  const shot = await shoot(url, device);
+  const shot = await shoot(url, device, { replay });
   const meta = { id: newId(9), site, dudaSite: rec.siteId || site, host, path, device, kind: 'page', w: shot.w, h: shot.h, dsf: shot.dsf, cut: shot.cut,
-    title: shot.title, links: shot.links, at: now(), by, ms: shot.ms, hasMap: true, slices: shot.slices.map((s) => ({ y: s.y, h: s.h })) };
+    title: shot.title, links: shot.links, at: now(), by, ms: shot.ms, hasMap: true, scrollY: shot.scrollY || 0, replayed: !!replay, slices: shot.slices.map((s) => ({ y: s.y, h: s.h })) };
   await storeCap(meta, shot.slices.map((s) => s.data), shot.els);
   if (ttl) await redis(...[P + 'cap:' + meta.id, P + 'capmap:' + meta.id, ...meta.slices.map((_, i) => P + `capimg:${meta.id}:${i}`)].map((k) => ['EXPIRE', k, ttl]));
   return { meta, shot };
@@ -101,8 +92,10 @@ export default async function handler(req, res) {
       const r = ref ? JSON.parse(ref) : null;
       const prev = r ? await getCap(r.id) : null;
       const age = prev ? Date.now() - Date.parse(prev.at) : Infinity;
+      // A freeze from the live view repeats what the client did, so it is always a new picture.
       // "Refresh" still reuses a picture taken in the last two minutes: it cannot be any newer.
-      if (prev && (age < 120000 || (!b.fresh && age < cfg.freshHours * 3600000))) return res.status(200).json({ cap: capPublic(prev), reused: true });
+      const replay = cleanReplay(b.replay);
+      if (!replay && prev && (age < 120000 || (!b.fresh && age < cfg.freshHours * 3600000))) return res.status(200).json({ cap: capPublic(prev), reused: true });
       if (w.client && !w.preview) {
         const { day } = today();
         const [n] = await redis(['INCR', P + `capday:${w.me.email}:${day}`], ['EXPIRE', P + `capday:${w.me.email}:${day}`, 172800]);
@@ -110,10 +103,10 @@ export default async function handler(req, res) {
       }
       // One picture of a page at a time: a second visitor waits for the first rather than starting another.
       const lock = P + `caplock:${site}:${device}:${path}`;
-      const [got] = await redis(['SET', lock, '1', 'NX', 'EX', 110]);
+      const [got] = await redis(['SET', lock, w.me.email, 'NX', 'EX', 110]);
       if (!got) return res.status(200).json({ busy: true });
       try {
-        const { meta } = await takePicture(rec, site, device, path, w.me.email);
+        const { meta } = await takePicture(rec, site, device, path, w.me.email, 0, replay);
         await redis(['HSET', P + 'capidx:' + site, idxField(device, path), JSON.stringify({ id: meta.id, at: meta.at })]);
         return res.status(200).json({ cap: capPublic(meta) });
       } catch (e) {

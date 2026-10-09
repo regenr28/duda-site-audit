@@ -352,6 +352,9 @@ export function forgetUser(email) { for (const [k, v] of cache) if (v.user && v.
  * ones that do, and each of them re-checks which websites that person was actually granted.
  */
 export async function requireUser(req, res, { admin = false, client = false } = {}) {
+  // A page with no origin (a locked-down frame, such as the live view of a client's website) never
+  // gets to change anything here, whatever it sends.
+  if (req.method !== 'GET' && req.headers.origin === 'null') { res.status(403).json({ error: 'Bad origin' }); return null; }
   if (req.method !== 'GET' && req.headers.origin) {
     try { if (new URL(req.headers.origin).host !== (req.headers['x-forwarded-host'] || req.headers.host)) { res.status(403).json({ error: 'Bad origin' }); return null; } } catch (e) { /* ignore */ }
   }

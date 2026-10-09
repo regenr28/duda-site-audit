@@ -17,10 +17,24 @@
         {
           "key": "X-Robots-Tag",
           "value": "noindex, nofollow"
-        },
+        }
+      ]
+    },
+    {
+      "source": "/((?!api/live).*)",
+      "headers": [
         {
           "key": "X-Frame-Options",
           "value": "DENY"
+        }
+      ]
+    },
+    {
+      "source": "/api/live",
+      "headers": [
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
         }
       ]
     }

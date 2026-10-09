@@ -410,12 +410,13 @@ export const HELP_SECTIONS = [
 <h4>Marking a website change</h4>
 <ol>
 <li>They choose <b>Website change</b>.</li>
-<li>A picture of their page opens: <b>Desktop</b> by default, shown the way a 1920 × 1000 screen shows it. <b>Tablet</b> and <b>Phone</b> switch the view. They can pick another page, or tap <b>↻</b> for a fresh picture.</li>
-<li>They move around with a finger (or the mouse wheel), pinch or use <b>+ −</b> to zoom.</li>
-<li>They choose a tool: <b>Highlight</b> (tap a line of text or drag across it), <b>Tap item</b> (a picture, button or block), <b>Box</b>, <b>Circle</b> or <b>Arrow</b>. Drafts can be dragged and resized.</li>
-<li>They write what should change and press <b>Send</b>. The number glows blue while sending and turns green once it has arrived.</li>
+<li>Their website opens <b>live</b>: <b>Desktop</b> by default, the way a 1920 × 1000 screen shows it, scaled to fit. <b>Tablet</b> and <b>Phone</b> switch the view, and <b>+ −</b> zoom. They browse as usual: click through pages, open menus and pop-ups, tap slider arrows. Forms, and links to other websites, are switched off.</li>
+<li>When they see what should change, they pick a tool: <b>Highlight</b> (tap a line of text or drag across it), <b>Tap item</b> (a picture, button or block), <b>Box</b>, <b>Circle</b> or <b>Arrow</b>. That <b>freezes the view</b>: the page is pictured exactly as they had it, with the same page, scroll position, open menu or pop-up. It opens where they were looking and takes a few seconds.</li>
+<li>They mark it, move around with a finger (or the mouse wheel), and pinch or use <b>+ −</b> to zoom. Drafts can be dragged and resized.</li>
+<li>They write what should change and press <b>Send</b>. The number glows blue while sending and turns green once it has arrived. <b>← Browse</b> takes them back to the website exactly as they left it, to find the next thing.</li>
 </ol>
-<p>The page is a picture, so it cannot move or close while they draw. For something only visible while hovering, or on a slider, they can use <b>📷 My screenshot</b> and mark up a screenshot they took themselves.</p>
+<p>Freezing works by opening the same page on our server and repeating what they clicked. Nearly everything matches. A slider that moves on its own may show a different slide, and text typed into a form is not shown. For anything like that, <b>📷 My screenshot</b> lets them mark up a screenshot they took themselves. Unsent drafts stay with the page, and come back on the next freeze.</p>
+<p class="small muted">Nothing is installed in the website. The page passes through the app with a small helper added, so real visitors are never affected. It runs locked down inside the app, so it cannot see or act on the client's account.</p>
 <p><b>Layers</b> (pull the panel up) lists every mark with its number. Each one can be hidden or locked, so it does not get moved by accident. <b>Hide sent</b> clears the finished ones out of the way, and the marks fade while the page is being moved. If the connection drops, a request waits and sends itself when the connection is back. A retry never sends it twice.</p>
 <h4>The daily limit</h4>
 <p>Each client can send a set number of tickets a day (10 to start), questions and changes together. After that they can keep marking, and the drafts wait for the next day. Admins change the number, or set a different one for one client, under <b>Tickets → ⚙ Settings</b>.</p>

@@ -17,7 +17,7 @@
 // Pictures expire on their own (two weeks), and are kept for two months once a request points at
 // one, so the team can still see the whole page around a mark. The small cropped picture on each
 // request is kept for good.
-import { redis, P, hasRedis, currentUser, applyPreview, viewingAsClient, can, jparse, packJSON, unpackJSON, OWNER_EMAIL } from './_lib.js';
+import { redis, P, hasRedis, currentUser, applyPreview, viewingAsClient, can, jparse, packJSON, unpackJSON, OWNER_EMAIL, allowedHost, savedEditorHost } from './_lib.js';
 
 export const CAP_TTL = 14 * 86400;
 export const KEEP_TTL = 60 * 86400;
@@ -38,6 +38,9 @@ export const KINDS = ['highlight', 'element', 'rect', 'ellipse', 'arrow', 'pin']
  * as the team member they come from.
  */
 export async function who(req, res) {
+  // A page with no origin (a locked-down frame, such as the live view of a client's website) never
+  // gets to change anything here, whatever it sends.
+  if (req.method !== 'GET' && req.headers.origin === 'null') { res.status(403).json({ error: 'Bad origin' }); return null; }
   if (req.method !== 'GET' && req.headers.origin) {
     try { if (new URL(req.headers.origin).host !== (req.headers['x-forwarded-host'] || req.headers.host)) { res.status(403).json({ error: 'Bad origin' }); return null; } } catch (e) { /* ignore */ }
   }
@@ -107,7 +110,7 @@ export async function getCap(id) {
 }
 /** What the browser needs to draw a picture (never the element map, which is fetched separately). */
 export const capPublic = (c) => c && ({ id: c.id, site: c.site, path: c.path, device: c.device, kind: c.kind, w: c.w, h: c.h, dsf: c.dsf,
-  cut: !!c.cut, title: c.title || '', at: c.at, slices: (c.slices || []).map((s) => ({ y: s.y, h: s.h })), links: c.links || [], hasMap: !!c.hasMap });
+  cut: !!c.cut, title: c.title || '', at: c.at, scrollY: c.scrollY || 0, slices: (c.slices || []).map((s) => ({ y: s.y, h: s.h })), links: c.links || [], hasMap: !!c.hasMap });
 export async function storeCap(meta, slicesData, els) {
   // One slice per request keeps each one well under the database's request size limit.
   for (let i = 0; i < slicesData.length; i++) await redis(['SET', P + `capimg:${meta.id}:${i}`, slicesData[i], 'EX', CAP_TTL]);
@@ -149,4 +152,25 @@ export function clientTicket(t, me) {
 }
 export function teamTicket(t) {
   return Object.assign({}, t, { statusLabel: (STATUSES[t.status] || {}).label || t.status, img: t.img ? `/api/tickets?op=img&id=${encodeURIComponent(t.id)}` : '' });
+}
+
+// ---------- which page of which website ----------
+export function cleanPath(p) {
+  let path = String(p || '/');
+  try { path = decodeURIComponent(path); } catch (e) { /* keep */ }
+  path = path.split('?')[0].split('#')[0];
+  if (!path.startsWith('/')) path = '/' + path;
+  if (path.includes('..') || !/^\/[\w\-/.%~]*$/.test(path)) return null;
+  return path.replace(/\/+$/, '') || '/';
+}
+export async function siteRec(id) {
+  if (!/^[\w-]{1,64}$/.test(String(id || ''))) return null;
+  const [raw] = await redis(['GET', P + 'site:' + id]);
+  return unpackJSON(raw);
+}
+export async function previewUrl(rec, path, device) {
+  const host = rec.host && allowedHost(rec.host) ? rec.host : await savedEditorHost();
+  if (!host && !process.env.CAPTURE_PREVIEW_ORIGIN) throw new Error('This website has no editor address on file yet.');
+  const origin = process.env.CAPTURE_PREVIEW_ORIGIN || 'https://' + host;
+  return { host, url: `${origin}/site/${rec.siteId || rec.id}${path === '/' ? '' : path}?showOriginal=true&preview=true&insitepreview=true&dm_device=${device}` };
 }

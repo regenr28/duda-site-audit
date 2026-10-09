@@ -162,7 +162,27 @@ const MAP = `((MAX, SITE) => {
  * Photograph one page. Returns { w, h, dsf, full, slices: [{ y, h, data(base64 webp) }], els, links, title, ms }.
  * `url` is fetched exactly as given; callers decide which addresses are allowed.
  */
-export async function shoot(url, device = 'desktop', { timeout = 85000 } = {}) {
+/** Runs in the page: bring one element into view and say where its middle is on the screen. */
+const LOCATE = `((s, scroll) => {
+  let el = null; try { el = document.querySelector(s); } catch (e) { return null; }
+  if (!el) return null;
+  if (scroll) el.scrollIntoView({ block: 'center', inline: 'center' });
+  const r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return null;
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return null;
+  return { x, y };
+})`;
+
+/**
+ * Photograph one page. Returns { w, h, dsf, full, slices: [{ y, h, data(base64 webp) }], els, links, title, ms }.
+ * `url` is fetched exactly as given; callers decide which addresses are allowed.
+ *
+ * `replay` puts the page back the way a client had it while browsing: the clicks they made (a menu,
+ * a pop-up, a slider arrow) are made again as real mouse clicks, the page is scrolled to where they
+ * were, and the pointer is put back over what it was over — so the picture shows what they saw.
+ */
+export async function shoot(url, device = 'desktop', { timeout = 85000, replay = null } = {}) {
   const D = DEVICES[device];
   if (!D) throw new Error('Unknown device');
   const t0 = Date.now();
@@ -211,6 +231,26 @@ export async function shoot(url, device = 'desktop', { timeout = 85000 } = {}) {
     };
     const fullH = await within(ev(SETTLE, MAX_HEIGHT), 30000, 'The page took too long to finish drawing.');
     await quiet(6000, 0);
+    let scrollY = 0;
+    if (replay) {
+      const mouse = async (type, p) => call('Input.dispatchMouseEvent', Object.assign({ type, x: p.x, y: p.y }, type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }));
+      for (const a of (replay.actions || []).slice(-20)) {
+        const p = await ev(LOCATE, String(a.s || ''), true).catch(() => null);
+        if (!p) continue;
+        await sleep(150);
+        await mouse('mouseMoved', p); await mouse('mousePressed', p); await mouse('mouseReleased', p);
+        await sleep(650);
+      }
+      scrollY = Math.max(0, Math.min(MAX_HEIGHT, Math.round(Number(replay.y) || 0)));
+      await ev('((y) => { scrollTo(0, y); })', scrollY);
+      await sleep(450);
+      scrollY = await ev('(() => scrollY)');
+      if (replay.hover) {
+        const p = await ev(LOCATE, String(replay.hover), false).catch(() => null);
+        if (p) { await mouse('mouseMoved', p); await sleep(600); }
+      }
+      await quiet(3000, 0);
+    }
     const h = Math.max(D.h, Math.min(Math.ceil(fullH || D.h), MAX_HEIGHT));
     const map = await ev(MAP, h, '');
     const slices = [];
@@ -220,7 +260,7 @@ export async function shoot(url, device = 'desktop', { timeout = 85000 } = {}) {
         clip: { x: 0, y, width: D.w, height: sh, scale: 1 } }), 30000, 'Taking the picture took too long.');
       slices.push({ y, h: sh, data: r.data });
     }
-    return { w: D.w, h, dsf: D.dsf, full: Math.ceil(fullH || h), cut: (fullH || 0) > MAX_HEIGHT, slices, els: map.els || [], links: map.links || [], title: map.title || '', status, ms: Date.now() - t0 };
+    return { w: D.w, h, dsf: D.dsf, full: Math.ceil(fullH || h), cut: (fullH || 0) > MAX_HEIGHT, slices, els: map.els || [], links: map.links || [], title: map.title || '', status, scrollY, ms: Date.now() - t0 };
   } catch (e) {
     // When Chrome itself dies, what it printed on the way out is the only clue — keep the end of it.
     if (/browser (stopped|could not start|did not start)/.test(String(e.message)) && errText.trim()) {
