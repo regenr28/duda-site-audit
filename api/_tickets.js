@@ -174,3 +174,15 @@ export async function previewUrl(rec, path, device) {
   const origin = process.env.CAPTURE_PREVIEW_ORIGIN || 'https://' + host;
   return { host, url: `${origin}/site/${rec.siteId || rec.id}${path === '/' ? '' : path}?showOriginal=true&preview=true&insitepreview=true&dm_device=${device}` };
 }
+
+/** A clean copy of what the live view says the client did: where they were and what they clicked. */
+export function cleanReplay(r) {
+  if (!r || typeof r !== 'object') return null;
+  const sel = (v) => String(v || '').slice(0, 600);
+  const frac = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(1, Number(v))) : 0.5);
+  const actions = (Array.isArray(r.actions) ? r.actions : []).slice(-20).map((a) => ({ s: sel(a && a.s), fx: frac(a && a.fx), fy: frac(a && a.fy) })).filter((a) => a.s);
+  const y = Math.max(0, Math.min(16000, Math.round(Number(r.y) || 0)));
+  const hover = sel(r.hover);
+  return actions.length || y || hover ? { actions, y, hover } : null;
+}
+

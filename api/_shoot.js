@@ -15,14 +15,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const DEVICES = {
-  desktop: { w: 1920, h: 1000, dsf: 1, mobile: false, slice: 2000,
-    ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36' },
-  tablet: { w: 820, h: 1180, dsf: 1.5, mobile: true, slice: 1600,
-    ua: 'Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1' },
-  mobile: { w: 390, h: 844, dsf: 2, mobile: true, slice: 1400,
-    ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1' },
-};
+import { DEVICES } from './_devices.js';
+export { DEVICES };
 export const MAX_HEIGHT = 16000;   // CSS pixels; anything longer is cut, and the picture says so
 
 async function chromePath() {
@@ -98,78 +92,24 @@ const SETTLE = `(async (MAX) => {
   return H();
 })`;
 
-/**
- * Runs in the page: every piece of text, every picture, link and button, with where it sits.
- * The address of each (a CSS selector) is built from the nearest element with a unique id, which
- * Duda gives to every widget and keeps across edits, so the same element can be found again later.
- */
-const MAP = `((MAX, SITE) => {
-  const sx = scrollX, sy = scrollY, out = [];
-  const idOk = (e) => e.id && /^[A-Za-z0-9_-]+$/.test(e.id) && document.querySelectorAll('[id="' + e.id + '"]').length === 1;
-  const sel = (el) => {
-    const parts = []; let e = el;
-    while (e && e.nodeType === 1 && e !== document.documentElement) {
-      if (idOk(e)) { parts.unshift(/^\\d/.test(e.id) ? '[id="' + e.id + '"]' : '#' + e.id); break; }
-      let i = 1, s = e; while ((s = s.previousElementSibling)) if (s.tagName === e.tagName) i++;
-      parts.unshift(e.tagName.toLowerCase() + ':nth-of-type(' + i + ')'); e = e.parentElement;
-    }
-    return parts.join(' > ');
-  };
-  const SKIP = /^(SCRIPT|STYLE|NOSCRIPT|HEAD|META|LINK|TEMPLATE|PATH|G|DEFS|USE|BR|HR|SOURCE|TRACK|OPTION)$/i;
-  for (const el of document.body.querySelectorAll('*')) {
-    if (out.length >= 3500) break;
-    if (SKIP.test(el.tagName)) continue;
-    const r = el.getBoundingClientRect();
-    if (r.width < 4 || r.height < 4 || r.top + sy > MAX || r.bottom + sy < 0) continue;
-    const tag = el.tagName;
-    let own = ''; for (const n of el.childNodes) if (n.nodeType === 3) own += n.nodeValue;
-    own = own.replace(/\\s+/g, ' ').trim();
-    let k = '';
-    if (tag === 'IMG' || tag === 'PICTURE' || tag === 'VIDEO' || tag === 'svg') k = 'img';
-    else if (tag === 'A' || tag === 'BUTTON') k = 'link';
-    else if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') k = 'field';
-    else if (own.length > 1) k = 'text';
-    else if (/^(H[1-6]|P|LI|UL|OL|SECTION|FORM|TABLE|IFRAME)$/.test(tag)) k = 'box';
-    else if (r.width > 80 && r.height > 50) { const bg = getComputedStyle(el).backgroundImage; if (bg && bg !== 'none' && /url\\(/.test(bg)) k = 'img'; else if (el.id && /^\\d+$/.test(el.id)) k = 'box'; }
-    if (!k) continue;
-    const cs = getComputedStyle(el);
-    if (cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) < 0.05) continue;
-    const t = k === 'img' ? (el.getAttribute('alt') || el.getAttribute('title') || '') : k === 'field' ? (el.getAttribute('placeholder') || el.name || '') : (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-    const o = { r: [Math.round(r.left + sx), Math.round(r.top + sy), Math.round(r.width), Math.round(r.height)], k, t: t.slice(0, 400), s: sel(el) };
-    if (tag === 'A' && el.getAttribute('href')) o.h = el.getAttribute('href').slice(0, 300);
-    out.push(o);
-  }
-  // Pages of the same website, for the page picker. The preview's own links look like
-  // /site/<id>/about?preview=true…; the published site's are plain /about.
-  const links = [], seen = new Set();
-  for (const a of document.querySelectorAll('a[href]')) {
-    let u; try { u = new URL(a.getAttribute('href'), location.href); } catch (e) { continue; }
-    if (!/^https?:$/.test(u.protocol)) continue;
-    let p = u.pathname;
-    const m = p.match(/^\\/site\\/[A-Za-z0-9_-]+(\\/.*)?$/);
-    if (m) p = m[1] || '/';
-    else if (u.host !== location.host) continue;
-    p = p.replace(/\\/+$/, '') || '/';
-    if (!/^\\/[\\w\\-/.%~]*$/.test(p) || p.includes('..') || /\\.(pdf|jpe?g|png|gif|webp|svg|zip|docx?|xlsx?)$/i.test(p) || seen.has(p)) continue;
-    seen.add(p);
-    links.push({ p, t: (a.innerText || a.getAttribute('title') || '').replace(/\\s+/g, ' ').trim().slice(0, 60) });
-    if (links.length >= 80) break;
-  }
-  return { els: out, links, title: document.title.slice(0, 200) };
-})`;
+import { MAP } from './_map.js';
 
 /**
  * Photograph one page. Returns { w, h, dsf, full, slices: [{ y, h, data(base64 webp) }], els, links, title, ms }.
  * `url` is fetched exactly as given; callers decide which addresses are allowed.
  */
 /** Runs in the page: bring one element into view and say where its middle is on the screen. */
-const LOCATE = `((s, scroll) => {
+const LOCATE = `((s, scroll, fx, fy) => {
   let el = null; try { el = document.querySelector(s); } catch (e) { return null; }
   if (!el) return null;
-  if (scroll) el.scrollIntoView({ block: 'center', inline: 'center' });
+  // Up and down only: centring sideways can scroll a page that hides its sideways scrollbar,
+  // which then gets pictured shifted half off the screen.
+  if (scroll) el.scrollIntoView({ block: 'center', inline: 'nearest' });
   const r = el.getBoundingClientRect();
   if (r.width < 1 || r.height < 1) return null;
-  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  // Click where they clicked on it (an overlay's middle can be covered by the panel it holds).
+  const ox = fx >= 0 && fx <= 1 ? fx : 0.5, oy = fy >= 0 && fy <= 1 ? fy : 0.5;
+  const x = r.left + r.width * ox, y = r.top + r.height * oy;
   if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return null;
   return { x, y };
 })`;
@@ -182,7 +122,35 @@ const LOCATE = `((s, scroll) => {
  * a pop-up, a slider arrow) are made again as real mouse clicks, the page is scrolled to where they
  * were, and the pointer is put back over what it was over — so the picture shows what they saw.
  */
-export async function shoot(url, device = 'desktop', { timeout = 85000, replay = null } = {}) {
+/** The part of the page to show around a mark, in page pixels. Same rule as the browser's own crop. */
+export function cropRegion(kind, geo, D, H) {
+  const b = kind === 'arrow' ? { x: Math.min(geo.x1, geo.x2), y: Math.min(geo.y1, geo.y2), w: Math.abs(geo.x2 - geo.x1), h: Math.abs(geo.y2 - geo.y1) } : geo;
+  const minW = Math.min(D.w, D.w >= 1200 ? 1100 : D.w), minH = Math.min(H, D.w >= 1200 ? 650 : 760);
+  const pad = Math.max(90, Math.max(b.w, b.h) * 0.35);
+  let rw = Math.min(D.w, Math.max(minW, b.w + pad * 2)), rh = Math.min(H, 4000, Math.max(minH, b.h + pad * 2));
+  let rx = Math.max(0, Math.min(D.w - rw, b.x + b.w / 2 - rw / 2)), ry = Math.max(0, Math.min(H - rh, b.y + b.h / 2 - rh / 2));
+  return { x: Math.round(rx), y: Math.round(ry), w: Math.round(rw), h: Math.round(rh) };
+}
+/** Runs in the page: draw one mark over it, at page position, the way the team sees it. */
+const DRAW_MARK = `((kind, g, W, H) => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const o = document.createElementNS(NS, 'svg');
+  o.id = '__dsa_mark'; o.setAttribute('width', W); o.setAttribute('height', H);
+  o.style.cssText = 'position:absolute;left:0;top:0;z-index:2147483647;pointer-events:none;overflow:visible';
+  const add = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); o.appendChild(e); return e; };
+  const red = '#e11d48';
+  if (kind === 'arrow') {
+    add('line', { x1: g.x1, y1: g.y1, x2: g.x2, y2: g.y2, stroke: red, 'stroke-width': 4, 'stroke-linecap': 'round' });
+    const a = Math.atan2(g.y2 - g.y1, g.x2 - g.x1), L = 20, Wd = 11, bx = g.x2 - L * Math.cos(a), by = g.y2 - L * Math.sin(a);
+    add('polygon', { points: [g.x2 + ',' + g.y2, (bx + Wd * Math.sin(a)) + ',' + (by - Wd * Math.cos(a)), (bx - Wd * Math.sin(a)) + ',' + (by + Wd * Math.cos(a))].join(' '), fill: red });
+  } else if (kind === 'ellipse') add('ellipse', { cx: g.x + g.w / 2, cy: g.y + g.h / 2, rx: Math.max(1, g.w / 2), ry: Math.max(1, g.h / 2), fill: 'none', stroke: red, 'stroke-width': 4 });
+  else if (kind === 'highlight') add('rect', { x: g.x, y: g.y, width: g.w, height: g.h, fill: 'rgba(250,204,21,.35)', stroke: '#d97706', 'stroke-width': 3 });
+  else add('rect', { x: g.x, y: g.y, width: g.w, height: g.h, fill: 'none', stroke: red, 'stroke-width': 4, 'stroke-dasharray': kind === 'element' ? '10 6' : '' });
+  document.documentElement.appendChild(o);
+  return true;
+})`;
+
+export async function shoot(url, device = 'desktop', { timeout = 85000, replay = null, mark = null } = {}) {
   const D = DEVICES[device];
   if (!D) throw new Error('Unknown device');
   const t0 = Date.now();
@@ -235,24 +203,36 @@ export async function shoot(url, device = 'desktop', { timeout = 85000, replay =
     if (replay) {
       const mouse = async (type, p) => call('Input.dispatchMouseEvent', Object.assign({ type, x: p.x, y: p.y }, type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }));
       for (const a of (replay.actions || []).slice(-20)) {
-        const p = await ev(LOCATE, String(a.s || ''), true).catch(() => null);
+        const p = await ev(LOCATE, String(a.s || ''), true, a.fx, a.fy).catch(() => null);
         if (!p) continue;
         await sleep(150);
         await mouse('mouseMoved', p); await mouse('mousePressed', p); await mouse('mouseReleased', p);
         await sleep(650);
       }
       scrollY = Math.max(0, Math.min(MAX_HEIGHT, Math.round(Number(replay.y) || 0)));
-      await ev('((y) => { scrollTo(0, y); })', scrollY);
+      await ev(`((y) => { for (const e of [document.scrollingElement, document.documentElement, document.body]) if (e) e.scrollLeft = 0; scrollTo(0, y); })`, scrollY);
       await sleep(450);
       scrollY = await ev('(() => scrollY)');
       if (replay.hover) {
-        const p = await ev(LOCATE, String(replay.hover), false).catch(() => null);
+        const p = await ev(LOCATE, String(replay.hover), false, 0.5, 0.5).catch(() => null);
         if (p) { await mouse('mouseMoved', p); await sleep(600); }
       }
       await quiet(3000, 0);
     }
     const h = Math.max(D.h, Math.min(Math.ceil(fullH || D.h), MAX_HEIGHT));
     const map = await ev(MAP, h, '');
+    // The picture for a request: the page around the mark, with the mark drawn on by Chrome itself.
+    let crop = null;
+    if (mark && mark.geo) {
+      const R = cropRegion(mark.kind, mark.geo, D, h);
+      await ev(DRAW_MARK, mark.kind, mark.geo, D.w, h);
+      await sleep(120);
+      const k = Math.min(1, 1200 / (R.w * D.dsf));
+      const r = await within(call('Page.captureScreenshot', { format: 'webp', quality: 80, captureBeyondViewport: true, fromSurface: true,
+        clip: { x: R.x, y: R.y, width: R.w, height: R.h, scale: k } }), 30000, 'Taking the picture took too long.');
+      crop = { type: 'image/webp', data: r.data };
+      await ev(`(() => { const o = document.getElementById('__dsa_mark'); if (o) o.remove(); })`);
+    }
     const slices = [];
     for (let y = 0; y < h; y += D.slice) {
       const sh = Math.min(D.slice, h - y);
@@ -260,7 +240,7 @@ export async function shoot(url, device = 'desktop', { timeout = 85000, replay =
         clip: { x: 0, y, width: D.w, height: sh, scale: 1 } }), 30000, 'Taking the picture took too long.');
       slices.push({ y, h: sh, data: r.data });
     }
-    return { w: D.w, h, dsf: D.dsf, full: Math.ceil(fullH || h), cut: (fullH || 0) > MAX_HEIGHT, slices, els: map.els || [], links: map.links || [], title: map.title || '', status, scrollY, ms: Date.now() - t0 };
+    return { w: D.w, h, dsf: D.dsf, full: Math.ceil(fullH || h), cut: (fullH || 0) > MAX_HEIGHT, slices, els: map.els || [], links: map.links || [], title: map.title || '', status, scrollY, crop, ms: Date.now() - t0 };
   } catch (e) {
     // When Chrome itself dies, what it printed on the way out is the only clue — keep the end of it.
     if (/browser (stopped|could not start|did not start)/.test(String(e.message)) && errText.trim()) {

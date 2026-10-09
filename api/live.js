@@ -15,7 +15,8 @@
 // windows. Only scripts may run, which is what menus, sliders and pop-ups need.
 import { fetchWithTimeout } from './_lib.js';
 import { who, mayseeSite, cleanPath, siteRec, previewUrl } from './_tickets.js';
-import { DEVICES } from './_shoot.js';
+import { DEVICES } from './_devices.js';
+import { MAP } from './_map.js';
 
 /** Runs inside the client's page. PATH and PREFIX are filled in per page. */
 const HELPER = (path, prefix) => `(function () {
@@ -57,16 +58,30 @@ const HELPER = (path, prefix) => `(function () {
       else post({ t: 'blocked', why: 'external' });
       return;
     }
-    actions.push({ s: sel(ev.target) });
+    var r = ev.target.getBoundingClientRect ? ev.target.getBoundingClientRect() : null;
+    actions.push({ s: sel(ev.target), fx: r && r.width ? (ev.clientX - r.left) / r.width : 0.5, fy: r && r.height ? (ev.clientY - r.top) / r.height : 0.5 });
     if (actions.length > 20) actions.shift();
   }, true);
   document.addEventListener('submit', function (ev) { ev.preventDefault(); post({ t: 'blocked', why: 'form' }); }, true);
   document.addEventListener('mouseover', function (ev) { hover = sel(ev.target); }, true);
   window.open = function () { post({ t: 'blocked', why: 'external' }); return null; };
+  function docH() { return Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0); }
+  var MAPFN = ${MAP};
   addEventListener('message', function (ev) {
-    if (ev.source !== parent || !ev.data || ev.data.dsa !== 'state') return;
-    post({ t: 'state', path: PATH, y: Math.round(scrollY), actions: actions.slice(), hover: hover, id: ev.data.id });
+    var d = ev.data;
+    if (ev.source !== parent || !d) return;
+    if (d.dsa === 'state') post({ t: 'state', path: PATH, y: Math.round(scrollY), docH: docH(), actions: actions.slice(), hover: hover, id: d.id });
+    else if (d.dsa === 'map') { var m = { els: [] }; try { m = MAPFN(16000, ''); } catch (e) {} post({ t: 'map', id: d.id, els: m.els, docH: docH(), y: scrollY }); }
+    else if (d.dsa === 'scrollBy') scrollBy(Number(d.dx) || 0, Number(d.dy) || 0);
+    else if (d.dsa === 'scrollTo') scrollTo(0, Number(d.y) || 0);
   });
+  // Where the page is, every time it moves, so marks drawn over it move with it.
+  var pending = false;
+  function tell() { pending = false; post({ t: 'scroll', x: scrollX, y: scrollY, docH: docH(), vw: innerWidth, vh: innerHeight }); }
+  function soon() { if (!pending) { pending = true; requestAnimationFrame(tell); } }
+  addEventListener('scroll', soon, { passive: true }); addEventListener('resize', soon);
+  addEventListener('load', soon);
+  try { new ResizeObserver(soon).observe(document.documentElement); } catch (e) {}
   function links() {
     var out = [], seen = {};
     [].forEach.call(document.querySelectorAll('a[href]'), function (a) {
@@ -76,7 +91,7 @@ const HELPER = (path, prefix) => `(function () {
     });
     return out;
   }
-  function ready() { post({ t: 'ready', path: PATH, title: document.title.slice(0, 200), links: links() }); }
+  function ready() { post({ t: 'ready', path: PATH, title: document.title.slice(0, 200), links: links(), docH: docH(), y: scrollY }); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready); else ready();
 })();`;
 

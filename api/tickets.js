@@ -16,7 +16,8 @@
 import { redis, P, newId, now, unpackJSON, listUsers, listRoles, canWith, notifyUser, globalLog, sendEmail, emailEnabled, emailShell,
   esc, appUrl, readBody, normEmail } from './_lib.js';
 import { who, mayseeSite, settings, saveSettings, quota, today, getCap, keepCapCmds, getTickets, listIds, putTicketCmd, newSetCmd,
-  clientTicket, teamTicket, STATUSES, KINDS, TZ } from './_tickets.js';
+  clientTicket, teamTicket, STATUSES, KINDS, TZ, cleanPath, cleanReplay } from './_tickets.js';
+import { DEVICES } from './_devices.js';
 
 const MAX_CROP = 1.6 * 1024 * 1024;
 const num = (v) => Number.isFinite(Number(v)) ? Math.round(Number(v) * 10) / 10 : null;
@@ -116,8 +117,18 @@ export default async function handler(req, res) {
         // Two kinds of ticket: a general question (just words, maybe a photo), or a website change
         // marked on a picture of the page.
         const isQ = b.type === 'question';
-        let cap = null, kind = 'question', geo = null;
-        if (!isQ) {
+        // Marked on the live website: there is no picture yet — it is taken right after, without the client waiting.
+        const isLive = !isQ && !!b.live;
+        let cap = null, kind = 'question', geo = null, livePage = null;
+        if (isLive) {
+          const device = DEVICES[b.device] ? b.device : 'desktop';
+          const path = cleanPath(b.path);
+          if (!path) return fail(400, { error: 'That page address is not valid.' });
+          livePage = { path, device, w: DEVICES[device].w, h: Math.max(DEVICES[device].h, Math.min(16000, Math.round(Number(b.docH) || 0))) };
+          kind = KINDS.includes(b.kind) ? b.kind : null;
+          geo = kind && cleanGeo(kind, b.geo, livePage);
+          if (!geo) return fail(400, { error: 'That mark could not be read. Please draw it again.' });
+        } else if (!isQ) {
           cap = await getCap(b.cap);
           if (!cap || cap.site !== site) return fail(400, { error: 'This page picture has expired. Please open the page again and re-mark it.', expired: true });
           kind = KINDS.includes(b.kind) ? b.kind : null;
@@ -144,10 +155,12 @@ export default async function handler(req, res) {
         const rec = await siteRec(site);
         const [seq] = await redis(['INCR', P + 'tk:seq']);
         const t = {
-          id: newId(9), num: seq, site, type: isQ ? 'question' : 'change', dudaSite: cap ? cap.dudaSite : (rec && rec.siteId) || site, host: cap ? cap.host : (rec && rec.host) || '',
+          id: newId(9), num: seq, site, type: isQ ? 'question' : 'change', live: isLive, replay: isLive ? cleanReplay(b.replay) : null,
+          dudaSite: cap ? cap.dudaSite : (rec && rec.siteId) || site, host: cap ? cap.host : (rec && rec.host) || '',
           siteName: (rec && rec.businessName) || (rec && rec.siteId) || site,
           by: w.me.email, byName: w.me.name || w.me.email, at: now(), updatedAt: now(),
-          cap: cap ? cap.id : '', capKind: cap ? cap.kind : '', capW: cap ? cap.w : 0, capH: cap ? cap.h : 0, path: cap ? cap.path : '', device: cap ? cap.device : '', kind, geo, text, el: isQ ? null : el,
+          cap: cap ? cap.id : '', capKind: cap ? cap.kind : '', capW: cap ? cap.w : livePage ? livePage.w : 0, capH: cap ? cap.h : livePage ? livePage.h : 0,
+          path: cap ? cap.path : livePage ? livePage.path : '', device: cap ? cap.device : livePage ? livePage.device : '', kind, geo, text, el: isQ ? null : el,
           sel: String(b.sel || '').slice(0, 1000), status: 'open', replies: [], notes: [], history: [], assignee: '', img: !!crop, tu: true, cu: false,
           ua: String(req.headers['user-agent'] || '').slice(0, 160),
         };

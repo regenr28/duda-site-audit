@@ -1211,10 +1211,13 @@ html.mk-lock, html.mk-lock body { overflow: hidden; overscroll-behavior: none; }
 .mk-live-in { position: relative; margin: 0 auto; box-shadow: 0 2px 18px rgba(0,0,0,.25); background: #fff; }
 .mk-live iframe { position: absolute; left: 0; top: 0; border: 0; background: #fff; transform-origin: 0 0; display: block; }
 .mk.m-live .mk-stage { touch-action: auto; cursor: auto; }
-.mk.m-live .mk-world, .mk.m-live .mk-ov, .mk.m-live .mk-grip, .mk.m-live .mk-layers, .mk.m-live .mk-browse { display: none; }
+.mk.m-live .mk-world, .mk.m-live .mk-browse { display: none; }
+.mk-catch { position: absolute; inset: 0; display: none; touch-action: none; cursor: crosshair; }
+.mk.m-live.drawing .mk-catch { display: block; }
+.mk.m-live .lb-mark, .mk.m-mark .lb-live, .mk.ro .lb-live { display: none; }
+.mk.m-live.drawing .mk-tools button[data-tool="move"] { background: var(--panel-2); }
 .mk.m-mark .mk-live { visibility: hidden; pointer-events: none; }
-.mk.m-live .mk-tools button[data-tool="move"] { display: none; }
-.mk.m-live .mk-tools { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
 .mk.freezing .mk-live { filter: brightness(.8) blur(1px); pointer-events: none; }
 .mk-browse { flex: none; }
 @media (max-width: 520px) {

@@ -11,23 +11,13 @@
 // `site` is always the website's record id in this app; the page itself is opened on the Duda
 // preview of that website's draft, so it shows what the team is working on, not just what is live.
 import { redis, P, newId, now, globalLog, readBody } from './_lib.js';
-import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today, cleanPath, siteRec, previewUrl } from './_tickets.js';
+import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today, cleanPath, siteRec, previewUrl, getTickets, putTicketCmd, keepCapCmds, cleanReplay } from './_tickets.js';
 import { shoot, DEVICES } from './_shoot.js';
 
 const CLIENT_SHOTS_PER_DAY = 60;
 const MAX_UPLOAD = 3 * 1024 * 1024;   // a request body can be at most about 4.5 MB once encoded
 
 const idxField = (device, path) => `${device}|${path}`;
-
-/** A clean copy of what the live view says the client did: where they were and what they clicked. */
-function cleanReplay(r) {
-  if (!r || typeof r !== 'object') return null;
-  const sel = (v) => String(v || '').slice(0, 600);
-  const actions = (Array.isArray(r.actions) ? r.actions : []).slice(-20).map((a) => ({ s: sel(a && a.s) })).filter((a) => a.s);
-  const y = Math.max(0, Math.min(16000, Math.round(Number(r.y) || 0)));
-  const hover = sel(r.hover);
-  return actions.length || y || hover ? { actions, y, hover } : null;
-}
 
 async function takePicture(rec, site, device, path, by, ttl, replay) {
   const { host, url } = await previewUrl(rec, path, device);
@@ -115,6 +105,40 @@ export default async function handler(req, res) {
         const msg = String(e.message || e);
         console.error('capture failed', site, device, path, msg);
         return res.status(502).json({ error: /^The page (could not be opened|answered with an error|took too long)/.test(msg) ? msg : 'This page could not be opened right now. Please try again in a few minutes.' });
+      } finally { await redis(['DEL', lock]).catch(() => {}); }
+    }
+
+    // A request marked on the live website: take its pictures now. The client does not wait for this —
+    // the request was saved the moment they pressed Send; this adds the picture of the spot (with the
+    // mark drawn on) and the whole page around it, for the team.
+    if (op === 'attach') {
+      const [t] = await getTickets([String(b.id || '')]);
+      if (!t || !mayseeSite(w, t.site) || t.type === 'question') return res.status(404).json({ error: 'Not found' });
+      if (!w.client && !w.view) return res.status(403).json({ error: 'Not allowed' });
+      if (t.img && t.cap && !b.again) return res.status(200).json({ ok: true, already: true });
+      const lock = P + 'tkattach:' + t.id;
+      const [got] = await redis(['SET', lock, '1', 'NX', 'EX', 110]);
+      if (!got) return res.status(200).json({ busy: true });
+      try {
+        const rec = await siteRec(t.site);
+        if (!rec) return res.status(404).json({ error: 'Not found' });
+        const { host, url } = await previewUrl(rec, t.path || '/', t.device || 'desktop');
+        const shot = await shoot(url, t.device || 'desktop', { replay: t.replay || null, mark: { kind: t.kind, geo: t.geo } });
+        const meta = { id: newId(9), site: t.site, dudaSite: rec.siteId || t.site, host, path: t.path || '/', device: t.device || 'desktop', kind: 'page', w: shot.w, h: shot.h, dsf: shot.dsf, cut: shot.cut,
+          title: shot.title, links: shot.links, at: now(), by: t.by, ms: shot.ms, hasMap: true, scrollY: shot.scrollY || 0, replayed: true, slices: shot.slices.map((x) => ({ y: x.y, h: x.h })) };
+        await storeCap(meta, shot.slices.map((x) => x.data), shot.els);
+        const [fresh] = await getTickets([t.id]);
+        const nt = fresh || t;
+        Object.assign(nt, { cap: meta.id, capKind: 'page', capW: meta.w, capH: meta.h, host: nt.host || host });
+        const cmds = [...keepCapCmds(meta)];
+        if (shot.crop) { nt.img = true; cmds.push(['SET', P + 'tkimg:' + nt.id, JSON.stringify(shot.crop)]); }
+        cmds.push(putTicketCmd(nt));
+        await redis(...cmds);
+        return res.status(200).json({ ok: true, cap: capPublic(meta), img: !!shot.crop });
+      } catch (e) {
+        const msg = String(e.message || e);
+        console.error('attach failed', t.id, msg);
+        return res.status(502).json({ error: w.client ? 'The picture could not be taken right now.' : msg.slice(0, 300) });
       } finally { await redis(['DEL', lock]).catch(() => {}); }
     }
 
