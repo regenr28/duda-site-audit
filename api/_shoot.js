@@ -34,8 +34,12 @@ async function chromePath() {
   const c = mod.default || mod;
   try { if ('setGraphicsMode' in c) c.setGraphicsMode = false; } catch (e) { /* older versions */ }
   const exe = await c.executablePath();
-  const args = (c.args || []).filter((a) => !/^--(remote-debugging|user-data-dir|window-size)/.test(a));
+  // Not wanted for taking a picture of one of our own pages.
+  const args = (c.args || []).filter((a) => !/^--(remote-debugging|user-data-dir|window-size|disable-web-security|allow-running-insecure-content)/.test(a));
   if (!args.some((a) => a.startsWith('--headless'))) args.push('--headless');
+  // Vercel has no /dev/shm (shared memory), which Chrome uses by default and stops without; this
+  // makes it use the ordinary temp folder instead.
+  if (!args.includes('--disable-dev-shm-usage')) args.push('--disable-dev-shm-usage');
   return { exe, args };
 }
 
