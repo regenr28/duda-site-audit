@@ -9,6 +9,6 @@
     "build:console": "node -e \"const fs=require('fs');fs.writeFileSync('console-audit.js',fs.readFileSync('public/engine.js','utf8')+fs.readFileSync('src/console-runner.js','utf8'))\""
   },
   "dependencies": {
-    "@sparticuz/chromium": "^131.0.0"
+    "@sparticuz/chromium": "143.0.4"
   }
 }

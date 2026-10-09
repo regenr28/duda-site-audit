@@ -29,9 +29,6 @@ async function chromePath() {
   if (process.env.CAPTURE_CHROME_PATH) {
     return { exe: process.env.CAPTURE_CHROME_PATH, args: ['--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-zygote'] };
   }
-  // The package unpacks the system libraries Chrome needs only when it recognises the server; say
-  // which runtime this is in case the server does not announce itself.
-  if (process.env.VERCEL && !process.env.AWS_LAMBDA_JS_RUNTIME && !process.env.AWS_EXECUTION_ENV) process.env.AWS_LAMBDA_JS_RUNTIME = `nodejs${process.versions.node.split('.')[0]}.x`;
   let mod;
   try { mod = await import('@sparticuz/chromium'); } catch (e) { throw new Error('Page pictures are not set up on this server yet (the Chromium package is missing).'); }
   const c = mod.default || mod;
@@ -220,6 +217,12 @@ export async function shoot(url, device = 'desktop', { timeout = 85000 } = {}) {
       slices.push({ y, h: sh, data: r.data });
     }
     return { w: D.w, h, dsf: D.dsf, full: Math.ceil(fullH || h), cut: (fullH || 0) > MAX_HEIGHT, slices, els: map.els || [], links: map.links || [], title: map.title || '', status, ms: Date.now() - t0 };
+  } catch (e) {
+    // When Chrome itself dies, what it printed on the way out is the only clue — keep the end of it.
+    if (/browser (stopped|could not start|did not start)/.test(String(e.message)) && errText.trim()) {
+      e.message = `${e.message} (${errText.trim().split('\n').slice(-3).join(' | ').slice(0, 400)})`;
+    }
+    throw e;
   } finally {
     clearTimeout(deadline);
     try { await within(cdp.send('Browser.close'), 2000); } catch (e) { /* kill below */ }
