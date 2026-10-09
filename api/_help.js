@@ -400,6 +400,37 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'requests', group: 'Collaboration', title: 'Client tickets (questions and change requests)', audience: 'all',
+    html: `<p>Instead of texting or emailing, clients <b>send a ticket</b> from their own page, on a phone or a computer. Tickets arrive on <b>Tickets</b> in the top menu.</p>
+<p>The <b>✉️ Send a ticket</b> button is on their Dashboard and on <b>Tickets</b>. On a phone it also floats at the bottom of every screen. It asks which kind, and explains each one right under it:</p>
+<ul>
+<li><b>💬 General question</b>: anything not about the website's content or design, such as billing, the domain, email or their account. They type the question and can add a photo or screenshot.</li>
+<li><b>🖍 Website change</b>: a change request for the website. They mark it on a picture of the page, as below. Each mark becomes its own ticket, with a picture of exactly where.</li>
+</ul>
+<h4>Marking a website change</h4>
+<ol>
+<li>They choose <b>Website change</b>.</li>
+<li>A picture of their page opens: <b>Desktop</b> by default, shown the way a 1920 × 1000 screen shows it. <b>Tablet</b> and <b>Phone</b> switch the view. They can pick another page, or tap <b>↻</b> for a fresh picture.</li>
+<li>They move around with a finger (or the mouse wheel), pinch or use <b>+ −</b> to zoom.</li>
+<li>They choose a tool: <b>Highlight</b> (tap a line of text or drag across it), <b>Tap item</b> (a picture, button or block), <b>Box</b>, <b>Circle</b> or <b>Arrow</b>. Drafts can be dragged and resized.</li>
+<li>They write what should change and press <b>Send</b>. The number glows blue while sending and turns green once it has arrived.</li>
+</ol>
+<p>The page is a picture, so it cannot move or close while they draw. For something only visible while hovering, or on a slider, they can use <b>📷 My screenshot</b> and mark up a screenshot they took themselves.</p>
+<p><b>Layers</b> (pull the panel up) lists every mark with its number. Each one can be hidden or locked, so it does not get moved by accident. <b>Hide sent</b> clears the finished ones out of the way, and the marks fade while the page is being moved. If the connection drops, a request waits and sends itself when the connection is back. A retry never sends it twice.</p>
+<h4>The daily limit</h4>
+<p>Each client can send a set number of tickets a day (10 to start), questions and changes together. After that they can keep marking, and the drafts wait for the next day. Admins change the number, or set a different one for one client, under <b>Tickets → ⚙ Settings</b>.</p>
+<h4>On our side</h4>
+<ul>
+<li>Questions have no page tools or change check: answer them and set a status. Filter the list to <b>💬 General questions</b> or <b>🖍 Website changes</b>.</li>
+<li>Everyone whose role can <b>answer change requests</b> is told on the bell and in Slack, one request at a time. Admins can pick who is told in Settings instead. Turn your own off under your account → Notifications → <b>Client change requests</b>.</li>
+<li>Open a request to see the picture, what they marked, and the page and device. <b>See it on the whole page</b> shows every mark on that picture. <b>Open in editor</b> goes straight to that page.</li>
+<li><b>Has it changed?</b> Opening a request reads the current draft of that page and says whether the spot still says what the client marked. Use this to tell an old request from one already fixed.</li>
+<li>Set a status (Received, In progress, Waiting on client, On hold, Done, No change needed), assign it, and <b>write to the client</b>, who sees it on their Change requests page. <b>Team notes</b> are never shown to the client. Several requests can be ticked and updated together.</li>
+<li>When a client answers, the request comes back to <b>Received</b> and whoever it is assigned to is told.</li>
+</ul>
+<p class="small muted">Pictures of pages are kept for two weeks, or two months once a request points at one. The small picture on each request is kept for good.</p>`,
+  },
+  {
     id: 'comments-duda', group: 'Collaboration', title: 'Duda comments (from clients and the editor)', audience: 'all',
     html: `<p>Anyone who opens a website in the Duda editor — a teammate, or the client looking at their draft — can leave a comment pinned to the page. Those comments now appear here, on the <b>Duda comments</b> page in the top menu. They are separate from this app's own comments on an audit item.</p>
 <h4>What you get</h4>

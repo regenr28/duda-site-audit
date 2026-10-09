@@ -189,6 +189,18 @@ A Google account and an email/password account with the same email are treated a
 
 ---
 
+## Client tickets (questions and marked-up change requests)
+
+Clients press **Send a ticket** on their page and choose **General question** (text plus an optional photo) or **Website change** (mark a picture of their own website; each mark is one ticket). The team handles them on **Tickets**.
+
+- **Page pictures** are taken on the server by `api/capture.js` with a real headless Chrome (`api/_shoot.js` drives it directly; the only dependency is `@sparticuz/chromium`, listed in `package.json`, which Vercel installs on deploy). `vercel.json` gives that one function more memory and includes the Chromium files. The page is opened on the Duda **preview of the draft** (`https://<editor host>/site/<id>/<page>?preview=true…`) at 1920 × 1000 (desktop), 820 × 1180 (tablet) or 390 × 844 (phone), scrolled once so late images load, then photographed in slices. Where every text, image and button sits is saved with it, so a tap can be matched to an element.
+- A picture of a page is reused for 6 hours (adjustable in Settings). It expires after 14 days, or 60 days once a request points at it. Each request keeps its own small cropped picture for good.
+- **Daily limit**: 10 requests per client per day by default (admins: **Tickets → ⚙ Settings**), counted in `TICKET_TZ` (default `Asia/Manila`). Clients can also open about 60 page pictures a day.
+- **Is it checked?** Opening a request reads the current draft through `/api/fetch` and compares the marked element's text with what the client saw.
+- **Test page pictures** in Settings shows straight away whether Chrome runs on the server.
+- Local development: set `CAPTURE_CHROME_PATH` to any Chrome or Chromium binary.
+- Database cost: a new picture is a few commands (one per slice). A request is about 10, plus 2 per person told. Listing requests is 2 (LRANGE + MGET).
+
 ## 3. What it checks
 
 | Area | Checks |

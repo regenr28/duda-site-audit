@@ -432,6 +432,8 @@ export const NOTIFY_GROUPS = [
     lockNote: 'Always reaches your bell, so nothing addressed to you can go unseen.' },
   { key: 'assigned', label: 'Work assigned to you', kinds: ['assign', 'site-assign', 'site-unassign', 'site-reopen'], channels: ['bell', 'popup', 'slack'],
     desc: 'An audit item or a whole website is given to you, taken off you, or reopened.' },
+  { key: 'tickets', label: 'Client change requests', kinds: ['ticket-new', 'ticket-reply', 'ticket-assign'], channels: ['bell', 'popup', 'slack'],
+    desc: 'A client sends a change request from their website page, answers one, or a request is given to you.' },
   { key: 'comments', label: 'Duda comments waiting', kinds: ['comment-waiting'], channels: ['bell', 'popup', 'slack'],
     desc: 'Clients have left comments in Duda that nobody has answered yet.' },
   { key: 'scans', label: 'Scans finishing', kinds: ['scan-done', 'rescan-done'], channels: ['bell', 'popup', 'slack'],
@@ -503,6 +505,9 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   'domain-problem': 'has a domain problem',
   'domain-expiring': 'has a domain that needs renewing',
   'domain-ok': 'is working again',
+  'ticket-new': 'sent a ticket',
+  'ticket-reply': 'replied on a change request',
+  'ticket-assign': 'gave you a client change request',
   access: 'changed what you can do',
   test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
@@ -588,6 +593,7 @@ function notifLink(n) {
   if (/^fa-/.test(n.kind)) return n.siteId && n.findingNum ? `${base}/#/site/${encodeURIComponent(n.siteId)}/item/${n.findingNum}` : base + '/#/suggestions/false-alarms';
   if (/^suggestion/.test(n.kind || '')) return base + '/#/suggestions';
   if (n.kind === 'comment-waiting' && n.dudaSite) return `${base}/#/comments/${encodeURIComponent(n.dudaSite)}`;
+  if (/^ticket-/.test(n.kind || '')) return `${base}/#/requests${n.ticketId ? '/' + encodeURIComponent(n.ticketId) : ''}`;
   if (/^domain-/.test(n.kind || '')) return n.dudaSite ? `${base}/#/live/site/${encodeURIComponent(n.dudaSite)}` : `${base}/#/live/problems`;
   if (n.siteId) return `${base}/#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   return base;
@@ -701,6 +707,10 @@ export const PERMISSIONS = [
     { key: 'client.manage', label: 'Give clients access to a website', desc: 'Create a client sign-in and choose which websites it can see.' },
     { key: 'client.viewas', label: 'Use View as client', desc: 'Check what a client sees on a website.' },
   ] },
+  { group: 'Client change requests', items: [
+    { key: 'ticket.view', label: 'See client change requests', desc: 'The requests clients send by marking up their own website. Without this the Requests page is not in the top bar at all.' },
+    { key: 'ticket.manage', label: 'Answer and update change requests', desc: 'Change a request\u2019s status, write back to the client, leave team notes, assign it. People with this are told when a new request arrives.' },
+  ] },
   { group: 'Comments', items: [
     { key: 'comment.delete', label: 'Delete anybody’s comment', desc: 'Everyone can always delete their own.' },
     { key: 'duda.setup', label: 'Set up the Duda connection', desc: 'Connect, disconnect and check what is arriving.' },
@@ -731,7 +741,7 @@ export const BUILTIN_ROLES = [
     desc: 'Everything. At least one account must always have this.' },
   { id: 'member', name: 'Member', builtin: true,
     desc: 'The everyday role: audit websites, talk about them, report a false alarm.',
-    perms: ['site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'client.viewas'] },
+    perms: ['site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'client.viewas', 'ticket.view', 'ticket.manage'] },
 ];
 /** The client role is not a team role and never appears on the Roles screen. */
 export const isTeamRole = (id) => id !== 'client';

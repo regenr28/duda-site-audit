@@ -121,7 +121,7 @@
   let modalOpts = null;
   function modal(html, opts = {}) {
     modalOpts = opts;
-    $('#modalRoot').innerHTML = `<div class="modal-back"><div class="modal ${opts.wide ? 'wide' : ''} ${opts.full ? 'full' : ''}" role="dialog" aria-modal="true">${html}</div></div>`;
+    $('#modalRoot').innerHTML = `<div class="modal-back${opts.sheet ? ' sheet' : ''}"><div class="modal ${opts.wide ? 'wide' : ''} ${opts.full ? 'full' : ''} ${opts.sheet ? 'sheet' : ''}" role="dialog" aria-modal="true">${html}</div></div>`;
     const back = $('.modal-back');
     back.addEventListener('mousedown', (e) => { if (e.target === back) closeModal(); });
     $$('[data-close]', back).forEach((b) => (b.onclick = closeModal));
@@ -386,6 +386,7 @@
       ${can('live.view') ? '<a href="#/live" data-nav="live">Live DR Sites</a>' : ''}
       ${can('leads.view') ? '<a href="#/analysis" data-nav="analysis">Lead analysis</a>' : ''}
       ${can('activity.view') ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
+      ${can('ticket.view') ? `<a href="#/requests" data-nav="requests">${tkNavLabel()}</a>` : ''}
       <a href="#/comments" data-nav="comments">Duda comments${cmtWaiting() ? ` <span class="nav-dot bad" title="A client is waiting for an answer"></span>` : cmtUnread() ? ' <span class="nav-dot"></span>' : ''}</a>
       <a href="#/suggestions" data-nav="suggestions">${isOwner || can('fa.manage') ? 'Suggestions' : 'My suggestions'}</a>`;
     // Light-bulb menu (left of the logo): About, AI Status, Help, Suggest a feature, AI credits
@@ -414,6 +415,7 @@
     $('#btnAi').onclick = () => { location.hash = '#/ai'; }; renderAiChip();
     $('#presence').onclick = togglePresence;
     renderBell(); renderPresence(); markNav();
+    tkCount();
   }
   const ICONS = {
     bulb: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>',
@@ -491,8 +493,10 @@
   function renderBell() {
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
+    // A new client request also changes the count beside "Client requests".
+    if (state.notifs.items.some((n) => /^ticket-/.test(n.kind) && Date.parse(n.at) > tkCountAt)) tkCount(true);
   }
-  const NOTIF_TEXT = { 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
+  const NOTIF_TEXT = { 'ticket-new': 'sent a ticket', 'ticket-reply': 'replied on a change request', 'ticket-assign': 'gave you a change request', 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
@@ -505,6 +509,7 @@
     // Opens that website's conversations, the same place the Slack message links to. Only the
     // many-websites roll-up has no single website, so it opens the list.
     // A domain alert opens Live DR Sites on that one website (or on every domain problem, for a round-up).
+    if (/^ticket-/.test(n.kind)) return '#/requests' + (n.ticketId ? '/' + encodeURIComponent(n.ticketId) : '');
     if (/^domain-/.test(n.kind)) return n.dudaSite ? '#/live/site/' + encodeURIComponent(n.dudaSite) : '#/live/problems';
     if (n.kind === 'comment-waiting') return n.dudaSite ? '#/comments/' + encodeURIComponent(n.dudaSite) : '#/comments';
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
@@ -515,6 +520,7 @@
   // "did someone tag me?", "did my scan finish?".
   const NOTIF_TABS = [
     { key: 'all', label: 'All', has: () => true },
+    { key: 'requests', label: 'Client tickets', has: (n) => /^ticket-/.test(n.kind) },
     { key: 'duda', label: 'Duda comments', has: (n) => n.kind === 'comment-waiting' },
     { key: 'talk', label: 'Mentions & replies', has: (n) => ['mention', 'reply', 'assign'].includes(n.kind) },
     { key: 'scans', label: 'Scans', has: (n) => ['scan-done', 'rescan-done'].includes(n.kind) },
@@ -529,7 +535,7 @@
     const body = $('.np-body', p);
     body.innerHTML = items.length ? items.map((n) => `
       <a class="np-item" href="${esc(notifLink(n))}">${avatar(n.by, 26)}
-        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.count ? ` <span class="badge ${n.oldestHours >= 48 ? 'sev-critical' : 'sev-warning'}">${n.count} waiting · longest ${n.oldestHours}h</span>` : ''}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : ''}</div>
+        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.count ? ` <span class="badge ${n.oldestHours >= 48 ? 'sev-critical' : 'sev-warning'}">${n.count} waiting · longest ${n.oldestHours}h</span>` : ''}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : n.ticketNum ? ' · ticket #' + n.ticketNum : ''}</div>
         ${Array.isArray(n.lines) && n.lines.length
           ? `<ul class="np-lines">${n.lines.map((l) => `<li>${esc(String(l).replace(/^\d+\.\s*/, '').replace(/\*/g, ''))}</li>`).join('')}</ul>`
           : `<div class="small muted np-text">${esc(n.text || '')}</div>`}
@@ -1786,6 +1792,1128 @@
   }
 
   // =====================================================================
+  // CHANGE REQUESTS — a client marks up a picture of their own page
+  //
+  // The page is photographed on the server (desktop is 1920 × 1000, like a real screen), so it
+  // cannot move, slide or close a menu while somebody is drawing on it. The picture is laid out as
+  // slices in a "world" that is moved and zoomed with a CSS transform; the marks are drawn on a
+  // separate layer in screen coordinates, so lines and numbers stay the same size at any zoom.
+  // Every mark keeps its own position in page pixels and the address of the element under it, so
+  // a later picture of the page can put it back in the right place or say the element changed.
+  // =====================================================================
+  const TK_ST = { open: 'Received', progress: 'In progress', clarify: 'Needs your reply', hold: 'On hold', done: 'Done', closed: 'Closed' };
+  const TK_TEAM_ST = { open: 'Received', progress: 'In progress', clarify: 'Waiting on client', hold: 'On hold', done: 'Done', closed: 'No change needed' };
+  const MK_TOOLS = [
+    { k: 'move', icon: '✋', label: 'Move', hint: 'Drag to move around · pinch or use + − to zoom' },
+    { k: 'highlight', icon: '🖍', label: 'Highlight', hint: 'Tap a line of text, or drag across what should change' },
+    { k: 'element', icon: '👆', label: 'Tap item', hint: 'Tap any picture, button or block' },
+    { k: 'rect', icon: '▭', label: 'Box', hint: 'Drag to draw a box (or tap for a ready-made one)' },
+    { k: 'ellipse', icon: '◯', label: 'Circle', hint: 'Drag to draw a circle (or tap for a ready-made one)' },
+    { k: 'arrow', icon: '➚', label: 'Arrow', hint: 'Drag from where the arrow starts to what it points at' },
+  ];
+  const MK_KIND = { highlight: 'Highlight', element: 'Item', rect: 'Box', ellipse: 'Circle', arrow: 'Arrow', pin: 'Pin' };
+  const MK_DEV = { desktop: 'Desktop', tablet: 'Tablet', mobile: 'Phone' };
+  const mk = { on: false, warm: {} };
+  const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+  const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } };
+  const mkUid = () => 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+  const pageName = (p) => (!p || p === '/' ? 'Home page' : p);
+  const tkPill = (status, team) => `<span class="tk-pill tk-${esc(status)}">${esc((team ? TK_TEAM_ST : TK_ST)[status] || status)}</span>`;
+
+  /** Start photographing the home page as soon as the client arrives, so it is ready when they tap. */
+  function tkPrewarm(site) {
+    if (mk.warm[site.id]) return mk.warm[site.id];
+    mk.warm[site.id] = (async () => {
+      const r = await capi(`/api/capture?op=latest&site=${encodeURIComponent(site.id)}&device=desktop&path=/`);
+      if (r.cap) return r.cap;
+      const s = await cpost('/api/capture', { op: 'shoot', site: site.id, device: 'desktop', path: '/' });
+      return s.cap || null;
+    })().catch(() => null);
+    return mk.warm[site.id];
+  }
+
+  // ---------------------------------------------------------------- opening and loading
+  function openMarker(site, opts = {}) {
+    closeMarker(true);
+    mk.route = location.hash;
+    const prefs = lsGet('dsa-mk-prefs', {}) || {};
+    Object.assign(mk, {
+      on: true, site, readonly: !!opts.readonly, team: !!opts.team, focus: opts.focus || '', fixedCap: opts.capId || '',
+      device: opts.device || (prefs.device in MK_DEV ? prefs.device : 'desktop'), path: opts.path || '/',
+      cap: null, els: [], marks: [], orphans: [], tickets: opts.tickets || null, quota: null, preview: false,
+      s: 1, tx: 0, ty: 0, tool: opts.readonly ? 'move' : 'move', sel: '', hideSent: false, hideAll: false,
+      sheetOpen: false, compose: '', chain: Promise.resolve(), loading: true, msg: 'Preparing your page…', onClose: opts.onClose || null,
+    });
+    document.documentElement.classList.add('mk-lock');
+    const root = document.createElement('div');
+    root.id = 'mkRoot';
+    root.innerHTML = `<div class="mk${mk.readonly ? ' ro' : ''}" id="mk" role="dialog" aria-label="Mark what to change">
+      <div class="mk-top">
+        <button class="mk-ib" id="mkClose" aria-label="Close" title="Close">✕</button>
+        <div class="mk-title"><b>${mk.readonly ? 'Where the client marked it' : 'Mark what to change'}</b><span class="mk-sub" id="mkSub">${esc(site.name || '')}</span></div>
+        <span class="mk-sp"></span><span class="mk-quota" id="mkQuota"></span>
+      </div>
+      ${mk.readonly ? '' : `<div class="mk-bar">
+        <select id="mkPage" aria-label="Page"></select>
+        <div class="mk-seg" id="mkDev" role="group" aria-label="Screen">${Object.entries(MK_DEV).map(([k, v]) => `<button data-dev="${k}" class="${mk.device === k ? 'on' : ''}">${v}</button>`).join('')}</div>
+        <button class="mk-ib" id="mkRefresh" title="Take a new picture of this page" aria-label="Take a new picture">↻</button>
+        <label class="mk-upl" title="Mark up a screenshot you took yourself — for a menu, a slider or anything that only shows when you tap">📷<span> My screenshot</span><input type="file" id="mkFile" accept="image/*" hidden></label>
+      </div>`}
+      <div class="mk-stage" id="mkStage">
+        <div class="mk-world" id="mkWorld"></div>
+        <svg class="mk-ov" id="mkOv" aria-hidden="true"></svg>
+        <div class="mk-msg" id="mkMsg"></div>
+        <div class="mk-zoom"><button data-z="-" aria-label="Zoom out">−</button><button data-z="fit" id="mkZl" title="Fit to screen">Fit</button><button data-z="+" aria-label="Zoom in">+</button></div>
+        <div class="mk-hint" id="mkHint"></div>
+      </div>
+      <div class="mk-sheet" id="mkSheet">
+        <button class="mk-grip" id="mkGrip" aria-expanded="false"><span class="mk-grip-bar"></span><span id="mkGripT">Layers</span></button>
+        ${mk.readonly ? '' : `<div class="mk-tools" id="mkTools">${MK_TOOLS.map((t) => `<button data-tool="${t.k}" class="${mk.tool === t.k ? 'on' : ''}"><span class="mk-ti">${t.icon}</span><span>${t.label}</span></button>`).join('')}</div>`}
+        <div class="mk-layers" id="mkLayers"></div>
+      </div>
+      <div class="mk-compose" id="mkCompose" hidden></div>
+    </div>`;
+    document.body.appendChild(root);
+    $('#mkClose').onclick = () => closeMarker();
+    mkBindStage();
+    mkBindSheet();
+    if (!mk.readonly) {
+      $('#mkDev').onclick = (e) => { const b = e.target.closest('[data-dev]'); if (!b || b.dataset.dev === mk.device) return; mk.device = b.dataset.dev; mk.fixedCap = ''; lsSet('dsa-mk-prefs', { device: mk.device }); $$('#mkDev [data-dev]').forEach((x) => x.classList.toggle('on', x === b)); mkLoad(false); };
+      $('#mkPage').onchange = (e) => { if (!e.target.value) return; mk.path = e.target.value; mk.fixedCap = ''; mkLoad(false); };
+      $('#mkRefresh').onclick = () => { mk.fixedCap = ''; mkLoad(true); };
+      $('#mkFile').onchange = (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) mkUpload(f); };
+      // On a finger lifting as well as on click: a phone can swallow the click of a tap that comes
+      // straight after moving the page, and a tool button that sometimes does nothing feels broken.
+      const pickTool = (e) => { const b = e.target.closest('[data-tool]'); if (b) mkTool(b.dataset.tool); };
+      $('#mkTools').onclick = pickTool; $('#mkTools').addEventListener('pointerup', pickTool);
+    }
+    window.addEventListener('resize', mkResize);
+    window.addEventListener('online', mkRetryAll);
+    document.addEventListener('keydown', mkKey, true);
+    mk.timer = setInterval(mkRetryAll, 20000);
+    mkTool(mk.tool);
+    mkLoad(false);
+  }
+  function closeMarker(silent) {
+    if (!mk.on) return;
+    mk.on = false;
+    clearInterval(mk.timer);
+    window.removeEventListener('resize', mkResize);
+    window.removeEventListener('online', mkRetryAll);
+    document.removeEventListener('keydown', mkKey, true);
+    document.documentElement.classList.remove('mk-lock');
+    const r = $('#mkRoot'); if (r) r.remove();
+    if (silent) return;
+    const cb = mk.onClose; mk.onClose = null;
+    if (cb) cb();
+  }
+
+  function mkMsg(text, busy) {
+    const m = $('#mkMsg'); if (!m) return;
+    m.innerHTML = text ? `<div class="mk-msg-in">${busy ? '<span class="spin"></span>' : ''}<div>${text}</div></div>` : '';
+    m.hidden = !text;
+  }
+  /** Get the picture (reusing a fresh one), its element map, and what was already sent. */
+  async function mkLoad(fresh) {
+    const site = mk.site; const token = (mk.loadToken = (mk.loadToken || 0) + 1);
+    mk.loading = true; mk.cap = null; mk.marks = []; mk.orphans = []; mk.sel = ''; mkCloseCompose();
+    $('#mkWorld').innerHTML = ''; mkReq(); mkLayers();
+    mkMsg(fresh ? 'Taking a new picture of this page…' : 'Preparing your page…<div class="small">The first time takes a few seconds.</div>', true);
+    try {
+      let cap = null;
+      if (mk.fixedCap) {
+        try { cap = (await api(`/api/capture?op=meta&cap=${encodeURIComponent(mk.fixedCap)}`)).cap; }
+        catch (e) { if (mk.readonly) throw new Error('The picture this was marked on has expired (pictures are kept for two months).'); mk.fixedCap = ''; }
+      }
+      if (!cap && !mk.readonly) {
+        if (!fresh && mk.device === 'desktop' && mk.path === '/' && mk.warm[site.id]) { cap = await mk.warm[site.id]; mk.warm[site.id] = null; }
+        if (!cap && !fresh) cap = (await capi(`/api/capture?op=latest&site=${encodeURIComponent(site.id)}&device=${mk.device}&path=${encodeURIComponent(mk.path)}`)).cap;
+        for (let i = 0; !cap && i < 40; i++) {
+          if (token !== mk.loadToken || !mk.on) return;
+          const r = await cpost('/api/capture', { op: 'shoot', site: site.id, device: mk.device, path: mk.path, fresh: !!fresh && i === 0 });
+          if (r.cap) cap = r.cap;
+          else if (r.busy) { mkMsg('Someone else is opening this page right now — one moment…', true); await new Promise((ok) => setTimeout(ok, 3000)); }
+          else break;
+        }
+      }
+      if (token !== mk.loadToken || !mk.on) return;
+      if (!cap) throw new Error('This page could not be opened. Please try again in a minute.');
+      const [mapR, mine] = await Promise.all([
+        cap.hasMap ? api(`/api/capture?op=map&cap=${encodeURIComponent(cap.id)}`).catch(() => ({ els: [] })) : Promise.resolve({ els: [] }),
+        mk.readonly ? Promise.resolve(null) : capi(`/api/tickets?op=mine&site=${encodeURIComponent(site.id)}`).catch(() => null),
+      ]);
+      if (token !== mk.loadToken || !mk.on) return;
+      mk.cap = cap; mk.els = mapR.els || [];
+      if (mine) { mk.tickets = mine.tickets || []; mk.quota = mine.quota; mk.preview = !!mine.preview; }
+      if (!mk.readonly && cap.kind !== 'upload') mk.path = cap.path;
+      mkBuildWorld();
+      mkMarksFromTickets();
+      mkLoadDrafts();
+      mk.loading = false;
+      mkMsg('');
+      mkPages(); mkQuota(); mkFit(); mkLayers();
+      if (mk.focus) { const f = mk.marks.find((m) => m.ticket && m.ticket.id === mk.focus); if (f) { mkSelect(f.lid); mkCenter(f); mkOpenCompose(f); } }
+      mkHint();
+      if (mk.marks.some((m) => m.status === 'failed' && m.retry)) mkRetryAll();
+    } catch (e) {
+      if (token !== mk.loadToken) return;
+      mk.loading = false;
+      mkMsg(`${esc(e.message || 'This page could not be opened.')}<div class="mk-msg-a"><button class="btn sm primary" id="mkAgain">Try again</button></div>`);
+      const a = $('#mkAgain'); if (a) a.onclick = () => mkLoad(!!fresh);
+    }
+  }
+  function mkPages() {
+    if (!mk.cap) return;
+    $('#mkSub').textContent = `${mk.site.name || ''} · ${mk.cap.kind === 'upload' ? 'their own screenshot' : pageName(mk.cap.path) + ' · ' + MK_DEV[mk.cap.device]}${mk.cap.at ? ' · pictured ' + ago(mk.cap.at) : ''}`;
+    const sel = $('#mkPage'); if (!sel) return;
+    const seen = new Set(); const opts = [];
+    const add = (p, t) => { if (seen.has(p)) return; seen.add(p); opts.push({ p, t }); };
+    add('/', 'Home page');
+    if (mk.cap.kind !== 'upload') add(mk.cap.path, '');
+    (mk.cap.links || []).forEach((l) => add(l.p, l.t));
+    (lsGet('dsa-mk-pages:' + mk.site.id, []) || []).forEach((l) => add(l.p, l.t));
+    if (mk.cap.links && mk.cap.links.length) lsSet('dsa-mk-pages:' + mk.site.id, opts.slice(0, 80));
+    sel.innerHTML = (mk.cap.kind === 'upload' ? '<option value="" selected>📷 Your screenshot</option>' : '')
+      + opts.map((o) => `<option value="${esc(o.p)}"${mk.cap.kind !== 'upload' && o.p === mk.path ? ' selected' : ''}>${esc(o.p === '/' ? 'Home page' : (o.t ? o.t + ' — ' : '') + o.p)}</option>`).join('');
+    if (mk.cap.kind === 'upload') $('#mkSub').textContent = `${mk.site.name || ''} · your screenshot`;
+  }
+  function mkQuota() {
+    const q = mk.quota; const el = $('#mkQuota'); if (!el) return;
+    if (mk.readonly || !q) { el.textContent = ''; return; }
+    const reset = new Date(q.resetAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    el.className = 'mk-quota' + (q.left ? '' : ' out');
+    el.textContent = mk.preview ? 'Preview — nothing is sent' : q.left ? `${q.left} of ${q.limit} left today` : `Daily limit reached · resets ${reset}`;
+    el.title = q.left ? `You can send ${q.limit} requests a day. The count starts again at ${reset}.` : `You have used today's ${q.limit} requests. You can keep marking — your drafts wait here and can be sent after ${reset}.`;
+  }
+
+  // ---------------------------------------------------------------- the picture
+  function mkBuildWorld() {
+    const c = mk.cap; const w = $('#mkWorld');
+    w.style.width = c.w + 'px'; w.style.height = c.h + 'px';
+    w.innerHTML = c.slices.map((s, i) => `<img alt="" draggable="false" data-i="${i}" style="top:${s.y}px;height:${s.h}px;width:${c.w}px">`).join('')
+      + (c.cut ? `<div class="mk-cut" style="top:${c.h - 34}px">The page continues below — it is too long to show in full.</div>` : '');
+    mk.imgs = $$('img', w);
+  }
+  const mkSliceUrl = (i) => `/api/capture?op=slice&cap=${encodeURIComponent(mk.cap.id)}&i=${i}`;
+  /** Only the slices on (or next to) the screen are fetched, so a long page on a phone stays light. */
+  function mkPaintSlices() {
+    if (!mk.cap || !mk.imgs) return;
+    const st = $('#mkStage'); const H = st.clientHeight;
+    const top = (-mk.ty) / mk.s, bottom = (H - mk.ty) / mk.s;
+    mk.cap.slices.forEach((s, i) => {
+      const img = mk.imgs[i]; if (!img || img.src) return;
+      if (s.y + s.h >= top - 1500 && s.y <= bottom + 1500) img.src = mkSliceUrl(i);
+    });
+  }
+  function mkApply() {
+    const w = $('#mkWorld'); if (!w) return;
+    w.style.transform = `translate(${mk.tx}px, ${mk.ty}px) scale(${mk.s})`;
+    const zl = $('#mkZl'); if (zl && mk.cap) zl.textContent = Math.abs(mk.s - mkFitScale()) < 0.005 ? 'Fit' : Math.round(mk.s * 100) + '%';
+    mkPaintSlices(); mkReq();
+  }
+  const mkFitScale = () => { const st = $('#mkStage'); return mk.cap ? st.clientWidth / mk.cap.w : 1; };
+  function mkClamp() {
+    const st = $('#mkStage'); if (!st || !mk.cap) return;
+    const W = st.clientWidth, H = st.clientHeight, pw = mk.cap.w * mk.s, ph = mk.cap.h * mk.s, m = 60;
+    if (pw <= W) mk.tx = (W - pw) / 2; else mk.tx = Math.min(m, Math.max(W - pw - m, mk.tx));
+    if (ph <= H) mk.ty = Math.min(Math.max(mk.ty, 0), Math.max(0, H - ph)); else mk.ty = Math.min(m, Math.max(H - ph - m, mk.ty));
+  }
+  /** Desktop opens the way a real screen shows it: the top 1920 × 1000, fitted across. */
+  function mkFit() { if (!mk.cap) return; mk.s = mkFitScale(); mk.tx = 0; mk.ty = 0; mkClamp(); mkApply(); }
+  function mkZoomAt(f, x, y) {
+    if (!mk.cap) return;
+    const fit = mkFitScale(); const ns = Math.max(Math.min(fit, 0.5) * 0.6, Math.min(4, mk.s * f));
+    const px = (x - mk.tx) / mk.s, py = (y - mk.ty) / mk.s;
+    mk.s = ns; mk.tx = x - px * ns; mk.ty = y - py * ns; mkClamp(); mkApply();
+  }
+  function mkResize() { if (mk.cap) { mkClamp(); mkApply(); } }
+  function mkCenter(m) {
+    const st = $('#mkStage'); const b = mkBox(m);
+    const fit = mkFitScale();
+    if (mk.s < fit * 1.2 && mk.cap.w > st.clientWidth * 1.5) mk.s = Math.min(1, Math.max(fit, (st.clientWidth * 0.8) / Math.max(200, b.w + 120)));
+    mk.tx = st.clientWidth / 2 - (b.x + b.w / 2) * mk.s;
+    mk.ty = st.clientHeight * 0.4 - (b.y + b.h / 2) * mk.s;
+    mkClamp(); mkApply();
+  }
+
+  // ---------------------------------------------------------------- marks
+  const mkBox = (m) => (m.kind === 'arrow'
+    ? { x: Math.min(m.geo.x1, m.geo.x2), y: Math.min(m.geo.y1, m.geo.y2), w: Math.abs(m.geo.x2 - m.geo.x1), h: Math.abs(m.geo.y2 - m.geo.y1) }
+    : m.geo);
+  const mkDraftKey = () => `dsa-mk:${mk.site.id}:${mk.cap.id}`;
+  function mkSave() {
+    if (!mk.cap || mk.readonly) return;
+    const keep = mk.marks.filter((m) => m.status !== 'sent').map((m) => ({ lid: m.lid, cid: m.cid, kind: m.kind, geo: m.geo, el: m.el, sel: m.sel, text: m.text, locked: m.locked, hidden: m.hidden,
+      created: m.created, status: m.status === 'sending' ? 'failed' : m.status, retry: m.status === 'sending' ? true : m.retry, err: m.err || '' }));
+    lsSet(mkDraftKey(), keep.length ? keep : null);
+    const ui = {}; mk.marks.filter((m) => m.status === 'sent' && (m.locked || m.hidden)).forEach((m) => { ui[m.ticket.id] = { l: !!m.locked, h: !!m.hidden }; });
+    lsSet(`dsa-mk-ui:${mk.site.id}`, Object.keys(ui).length ? ui : null);
+  }
+  function mkLoadDrafts() {
+    if (mk.readonly) return;
+    (lsGet(mkDraftKey(), []) || []).forEach((d) => {
+      if (!d || !d.geo || mk.marks.some((m) => m.cid === d.cid)) return;
+      // A request whose send was interrupted may have arrived after all: it is then already in the list.
+      if (mk.tickets && d.status === 'failed' && mk.marks.some((m) => m.status === 'sent' && m.ticket.text === d.text && m.kind === d.kind)) return;
+      mk.marks.push(Object.assign({ status: 'draft' }, d));
+    });
+    mk.marks.sort((a, b) => a.created - b.created);
+  }
+  /** Requests already sent from this page come back as green marks — moved to their element if the page has changed. */
+  function mkMarksFromTickets() {
+    const c = mk.cap; const ui = lsGet(`dsa-mk-ui:${mk.site.id}`, {}) || {};
+    const byS = {}; mk.els.forEach((e) => { if (!byS[e.s]) byS[e.s] = e; });
+    (mk.tickets || []).slice().sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).forEach((t) => {
+      if (mk.readonly && mk.fixedCap && t.cap !== c.id) return;
+      const base = { lid: 't' + t.id, cid: '', kind: t.kind, geo: Object.assign({}, t.geo), el: t.el, sel: '', text: t.text, status: 'sent', ticket: t,
+        created: Date.parse(t.at), locked: !!(ui[t.id] && ui[t.id].l), hidden: !!(ui[t.id] && ui[t.id].h) };
+      if (t.cap === c.id) { mk.marks.push(base); return; }
+      if (c.kind === 'upload' || t.path !== c.path || t.device !== c.device) return;
+      const now = t.el && t.el.s ? byS[t.el.s] : null;
+      const then = t.el && t.el.r;
+      if (now && then && then.length === 4) {
+        const dx = now.r[0] - then[0], dy = now.r[1] - then[1];
+        if (base.kind === 'arrow') { base.geo.x1 += dx; base.geo.x2 += dx; base.geo.y1 += dy; base.geo.y2 += dy; } else { base.geo.x += dx; base.geo.y += dy; }
+        base.moved = true; base.changed = (now.t || '') !== (t.el.t || '');
+        mk.marks.push(base);
+      } else mk.orphans.push(t);
+    });
+  }
+  function mkNumbered() { return mk.marks.map((m, i) => Object.assign(m, { n: i + 1 })); }
+  const mkVisible = (m) => !(m.hidden || (mk.hideAll && m.lid !== mk.sel) || (mk.hideSent && m.status === 'sent' && m.lid !== mk.sel));
+  const toS = (x, y) => [x * mk.s + mk.tx, y * mk.s + mk.ty];
+
+  let mkRaf = 0;
+  function mkReq() { if (!mkRaf) mkRaf = requestAnimationFrame(() => { mkRaf = 0; mkDraw(); }); }
+  function mkDraw() {
+    const ov = $('#mkOv'); if (!ov) return;
+    if (!mk.cap) { ov.innerHTML = ''; return; }
+    mkNumbered();
+    const list = mk.marks.filter(mkVisible);
+    if (mk.temp) list.push(mk.temp);
+    ov.innerHTML = list.map((m) => mkSvg(m)).join('');
+  }
+  function mkArrowHead(x1, y1, x2, y2, L, Wd) {
+    const a = Math.atan2(y2 - y1, x2 - x1);
+    const bx = x2 - L * Math.cos(a), by = y2 - L * Math.sin(a);
+    return [[x2, y2], [bx + Wd * Math.sin(a), by - Wd * Math.cos(a)], [bx - Wd * Math.sin(a), by + Wd * Math.cos(a)]];
+  }
+  function mkSvg(m) {
+    const on = m.lid === mk.sel;
+    const cls = `mk-m st-${m.status}${on ? ' on' : ''}${m.locked ? ' locked' : ''}${m === mk.temp ? ' temp' : ''} k-${m.kind}`;
+    let shape = '', bx, by;
+    if (m.kind === 'arrow') {
+      const [x1, y1] = toS(m.geo.x1, m.geo.y1), [x2, y2] = toS(m.geo.x2, m.geo.y2);
+      const head = mkArrowHead(x1, y1, x2, y2, 16, 9);
+      shape = `<line class="mk-line" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/><polygon class="mk-head" points="${head.map((p) => p.join(',')).join(' ')}"/>`;
+      bx = x1; by = y1;
+      if (on && !m.locked && m.status !== 'sent' && !mk.readonly) shape += `<circle class="mk-h" cx="${x1}" cy="${y1}" r="8"/><circle class="mk-h" cx="${x2}" cy="${y2}" r="8"/>`;
+    } else {
+      const [x, y] = toS(m.geo.x, m.geo.y); const w = Math.max(2, m.geo.w * mk.s), h = Math.max(2, m.geo.h * mk.s);
+      shape = m.kind === 'ellipse' ? `<ellipse class="mk-shape" cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}"/>`
+        : `<rect class="mk-shape" x="${x}" y="${y}" width="${w}" height="${h}" rx="${m.kind === 'highlight' ? 3 : 2}"/>`;
+      bx = x; by = y;
+      if (on && !m.locked && m.status !== 'sent' && !mk.readonly) shape += [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].map(([hx, hy]) => `<rect class="mk-h" x="${hx - 7}" y="${hy - 7}" width="14" height="14" rx="3"/>`).join('');
+    }
+    if (m === mk.temp) return `<g class="${cls}">${shape}</g>`;
+    const badge = `<g class="mk-badge" transform="translate(${bx},${by})"><circle r="12"/><text y="4.5" text-anchor="middle">${m.status === 'sent' && !mk.readonly ? '✓' : m.n}</text>${m.locked ? '<text class="mk-lk" x="15" y="-6">🔒</text>' : ''}</g>`;
+    return `<g class="${cls}" data-lid="${esc(m.lid)}">${shape}${badge}</g>`;
+  }
+
+  // ---------------------------------------------------------------- picking what is under a finger
+  function mkElsAt(px, py) {
+    return mk.els.filter((e) => px >= e.r[0] && px <= e.r[0] + e.r[2] && py >= e.r[1] && py <= e.r[1] + e.r[3]);
+  }
+  function mkPick(px, py, kinds) {
+    let list = mkElsAt(px, py);
+    if (kinds) { const pref = list.filter((e) => kinds.includes(e.k)); if (pref.length) list = pref; }
+    list = list.filter((e) => e.r[2] * e.r[3] < mk.cap.w * mk.cap.h * 0.6);
+    list.sort((a, b) => a.r[2] * a.r[3] - b.r[2] * b.r[3]);
+    return list[0] || null;
+  }
+  function mkTextsIn(g) {
+    const hits = mk.els.filter((e) => (e.k === 'text' || e.k === 'link') && e.t).map((e) => {
+      const ix = Math.max(0, Math.min(g.x + g.w, e.r[0] + e.r[2]) - Math.max(g.x, e.r[0]));
+      const iy = Math.max(0, Math.min(g.y + g.h, e.r[1] + e.r[3]) - Math.max(g.y, e.r[1]));
+      return { e, part: (ix * iy) / Math.max(1, e.r[2] * e.r[3]), area: ix * iy };
+    }).filter((x) => x.part >= 0.4);
+    // Drop containers when an element inside them was caught too: their text would be counted twice.
+    const inside = (a, b) => b[0] >= a[0] && b[1] >= a[1] && b[0] + b[2] <= a[0] + a[2] && b[1] + b[3] <= a[1] + a[3] && a[2] * a[3] > b[2] * b[3];
+    const out = hits.filter((h) => !hits.some((o) => o !== h && inside(h.e.r, o.e.r)));
+    out.sort((a, b) => a.e.r[1] - b.e.r[1] || a.e.r[0] - b.e.r[0]);
+    return out;
+  }
+  const mkElInfo = (e) => (e ? { s: e.s, t: e.t, k: e.k, r: e.r } : null);
+
+  function mkScreenHit(x, y) {
+    const list = mkNumbered().filter(mkVisible);
+    const sel = list.find((m) => m.lid === mk.sel);
+    if (sel && !sel.locked && sel.status !== 'sent' && !mk.readonly) {
+      if (sel.kind === 'arrow') {
+        const [x1, y1] = toS(sel.geo.x1, sel.geo.y1), [x2, y2] = toS(sel.geo.x2, sel.geo.y2);
+        if (Math.hypot(x - x1, y - y1) < 18) return { m: sel, h: 'a' };
+        if (Math.hypot(x - x2, y - y2) < 18) return { m: sel, h: 'b' };
+      } else {
+        const [gx, gy] = toS(sel.geo.x, sel.geo.y); const w = sel.geo.w * mk.s, h = sel.geo.h * mk.s;
+        const corners = { nw: [gx, gy], ne: [gx + w, gy], sw: [gx, gy + h], se: [gx + w, gy + h] };
+        for (const [k, [cx, cy]] of Object.entries(corners)) if (Math.abs(x - cx) < 16 && Math.abs(y - cy) < 16) return { m: sel, h: k };
+      }
+    }
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i];
+      if (m.locked && m.lid !== mk.sel) continue;
+      let bx, by;
+      if (m.kind === 'arrow') {
+        const [x1, y1] = toS(m.geo.x1, m.geo.y1), [x2, y2] = toS(m.geo.x2, m.geo.y2);
+        const L2 = (x2 - x1) ** 2 + (y2 - y1) ** 2; const t = L2 ? Math.max(0, Math.min(1, ((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / L2)) : 0;
+        if (Math.hypot(x - (x1 + t * (x2 - x1)), y - (y1 + t * (y2 - y1))) < 14) return { m };
+        bx = x1; by = y1;
+      } else {
+        const [gx, gy] = toS(m.geo.x, m.geo.y); const w = m.geo.w * mk.s, h = m.geo.h * mk.s;
+        const pad = 6;
+        if (m.kind === 'rect' || m.kind === 'ellipse') {
+          // An outline only "owns" its edge, so somebody can still draw inside a big box.
+          const inO = x > gx - pad && x < gx + w + pad && y > gy - pad && y < gy + h + pad;
+          const inI = x > gx + 14 && x < gx + w - 14 && y > gy + 14 && y < gy + h - 14;
+          if (inO && !inI) return { m };
+        } else if (x > gx - pad && x < gx + w + pad && y > gy - pad && y < gy + h + pad) return { m };
+        bx = gx; by = gy;
+      }
+      if (Math.hypot(x - bx, y - by) < 16) return { m };
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- gestures
+  function mkBindStage() {
+    const st = $('#mkStage');
+    const pts = new Map();
+    let g = null, fadeT = 0;
+    const local = (e) => { const r = st.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    const moving = () => { st.classList.add('moving'); clearTimeout(fadeT); fadeT = setTimeout(() => st.classList.remove('moving'), 380); };
+    const toP = (p) => ({ x: (p.x - mk.tx) / mk.s, y: (p.y - mk.ty) / mk.s });
+    const startPinch = () => {
+      const [a, b] = [...pts.values()];
+      g = { mode: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: mk.s, mx0: (a.x + b.x) / 2, my0: (a.y + b.y) / 2, tx0: mk.tx, ty0: mk.ty };
+    };
+    st.addEventListener('pointerdown', (e) => {
+      if (!mk.cap || e.target.closest('.mk-zoom') || e.target.closest('.mk-msg-in')) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      e.preventDefault();
+      try { st.setPointerCapture(e.pointerId); } catch (x) { /* fine */ }
+      const p = local(e); pts.set(e.pointerId, p);
+      if (pts.size === 2) { if (g && g.mode === 'draw') { mk.temp = null; mkReq(); } if (g && g.mode === 'drag' && g.m) g.m.geo = g.geo0; startPinch(); return; }
+      if (pts.size > 2) return;
+      const hit = mkScreenHit(p.x, p.y);
+      const t0 = Date.now();
+      if (hit && hit.h) { g = { mode: 'resize', m: hit.m, h: hit.h, p0: p, geo0: Object.assign({}, hit.m.geo), t0 }; return; }
+      if (hit && hit.m) {
+        const m = hit.m;
+        if (m.status !== 'sent' && m.status !== 'sending' && !m.locked && !mk.readonly) { g = { mode: 'drag', m, p0: p, geo0: Object.assign({}, m.geo), t0 }; mkSelect(m.lid); return; }
+        // With a drawing tool in hand, a sent mark never gets in the way of drawing a new one over it.
+        if (mk.readonly || mk.tool === 'move') { g = { mode: 'pan', p0: p, last: p, t0, tapMark: m }; return; }
+      }
+      if (!mk.readonly && mk.tool !== 'move') { g = { mode: 'draw', p0: p, a: toP(p), t0 }; return; }
+      g = { mode: 'pan', p0: p, last: p, t0 };
+    });
+    st.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId) || !g) return;
+      const p = local(e); pts.set(e.pointerId, p);
+      if (g.mode === 'pinch' && pts.size >= 2) {
+        const [a, b] = [...pts.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y); const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const fit = mkFitScale();
+        const ns = Math.max(Math.min(fit, 0.5) * 0.6, Math.min(4, g.s0 * d / g.d0));
+        const px = (g.mx0 - g.tx0) / g.s0, py = (g.my0 - g.ty0) / g.s0;
+        mk.s = ns; mk.tx = mx - px * ns; mk.ty = my - py * ns; mkClamp(); mkApply(); moving(); return;
+      }
+      if (g.mode === 'pan') {
+        if (Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > 4) g.moved = true;
+        mk.tx += p.x - g.last.x; mk.ty += p.y - g.last.y; g.last = p; mkClamp(); mkApply(); if (g.moved) moving(); return;
+      }
+      const dx = (p.x - g.p0.x) / mk.s, dy = (p.y - g.p0.y) / mk.s;
+      if (Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > 5) g.moved = true;
+      if (g.mode === 'drag') {
+        if (!g.moved) return;
+        const o = g.geo0;
+        g.m.geo = g.m.kind === 'arrow' ? { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy } : Object.assign({}, o, { x: o.x + dx, y: o.y + dy });
+        mkReq(); return;
+      }
+      if (g.mode === 'resize') {
+        const o = g.geo0; const m = g.m;
+        if (m.kind === 'arrow') m.geo = g.h === 'a' ? Object.assign({}, o, { x1: o.x1 + dx, y1: o.y1 + dy }) : Object.assign({}, o, { x2: o.x2 + dx, y2: o.y2 + dy });
+        else {
+          let { x, y, w, h } = o;
+          if (g.h.includes('w')) { x += dx; w -= dx; } if (g.h.includes('e')) w += dx;
+          if (g.h.includes('n')) { y += dy; h -= dy; } if (g.h.includes('s')) h += dy;
+          m.geo = { x, y, w, h };
+        }
+        mkReq(); return;
+      }
+      if (g.mode === 'draw' && g.moved) {
+        const b = toP(p); const a = g.a; const k = mk.tool;
+        mk.temp = { lid: '_t', kind: k === 'element' ? 'rect' : k, status: 'draft', n: '', geo: k === 'arrow' ? { x1: a.x, y1: a.y, x2: b.x, y2: b.y }
+          : { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) } };
+        mkReq();
+      }
+    });
+    const end = (e) => {
+      if (!pts.has(e.pointerId)) return;
+      const p = pts.get(e.pointerId); pts.delete(e.pointerId);
+      if (!g) return;
+      if (g.mode === 'pinch') { if (pts.size === 1) { const q = [...pts.values()][0]; g = { mode: 'pan', p0: q, last: q, moved: true, t0: 0 }; } else if (!pts.size) g = null; return; }
+      if (pts.size) return;
+      const tap = !g.moved;
+      if (g.mode === 'pan' && tap) {
+        if (g.tapMark) { mkSelect(g.tapMark.lid); mkOpenCompose(g.tapMark); }
+        else { mkSelect(''); mkCloseCompose(); }
+      } else if (g.mode === 'drag') {
+        const m = g.m;
+        if (tap) mkOpenCompose(m);
+        else { mkReanchor(m); mkSave(); mkLayers(); }
+      } else if (g.mode === 'resize') {
+        const m = g.m;
+        if (m.kind !== 'arrow') { const q = m.geo; if (q.w < 0) { q.x += q.w; q.w = -q.w; } if (q.h < 0) { q.y += q.h; q.h = -q.h; } q.w = Math.max(8, q.w); q.h = Math.max(8, q.h); }
+        mkReanchor(m); mkSave(); mkReq();
+      } else if (g.mode === 'draw') {
+        mkFinishDraw(g, tap ? g.a : toP(p), tap);
+      }
+      g = null; mk.temp = null; mkReq();
+    };
+    st.addEventListener('pointerup', end);
+    st.addEventListener('pointercancel', end);
+    st.addEventListener('wheel', (e) => {
+      if (!mk.cap) return;
+      e.preventDefault();
+      const p = local(e);
+      if (e.ctrlKey || e.metaKey) mkZoomAt(Math.exp(-e.deltaY * 0.01), p.x, p.y);
+      else { mk.tx -= e.shiftKey ? e.deltaY : e.deltaX; mk.ty -= e.shiftKey ? 0 : e.deltaY; mkClamp(); mkApply(); }
+      moving();
+    }, { passive: false });
+    $$('.mk-zoom [data-z]', st).forEach((b) => (b.onclick = (e) => {
+      e.stopPropagation();
+      const W = st.clientWidth / 2, H = st.clientHeight / 2;
+      if (b.dataset.z === 'fit') mkFit(); else mkZoomAt(b.dataset.z === '+' ? 1.4 : 1 / 1.4, W, H);
+    }));
+  }
+  /** After a mark is moved, remember the element now under it. */
+  function mkReanchor(m) {
+    if (!mk.els.length) return;
+    if (m.kind === 'arrow') m.el = mkElInfo(mkPick(m.geo.x2, m.geo.y2)) || m.el;
+    else if (m.kind === 'highlight') { const t = mkTextsIn(m.geo); if (t.length) { m.sel = t.map((x) => x.e.t).join('\n').slice(0, 1000); m.el = mkElInfo(t.slice().sort((a, b) => b.area - a.area)[0].e); } }
+    else m.el = mkElInfo(mkPick(m.geo.x + m.geo.w / 2, m.geo.y + m.geo.h / 2)) || m.el;
+  }
+  function mkFinishDraw(g, b, tap) {
+    const a = g.a, k = mk.tool, S = mk.s, c = mk.cap;
+    const clampX = (v) => Math.max(0, Math.min(c.w, v)), clampY = (v) => Math.max(0, Math.min(c.h, v));
+    let m = { lid: mkUid(), cid: mkUid(), kind: k, status: 'draft', text: '', created: Date.now(), el: null, sel: '' };
+    if (k === 'highlight' || k === 'element') {
+      if (tap || k === 'element') {
+        const e = mkPick(a.x, a.y, k === 'highlight' ? ['text', 'link'] : null);
+        if (e) { m.geo = { x: e.r[0] - 3, y: e.r[1] - 3, w: e.r[2] + 6, h: e.r[3] + 6 }; m.el = mkElInfo(e); m.sel = e.k === 'img' ? (e.t ? 'Picture: ' + e.t : 'A picture') : e.t; }
+        else { const w = 220 / S, h = 44 / S; m.geo = { x: clampX(a.x - w / 2), y: clampY(a.y - h / 2), w, h }; }
+        if (k === 'element' && !tap) { m.kind = 'rect'; m.geo = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) }; mkReanchor(m); }
+      } else {
+        m.geo = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
+        mkReanchor(m);
+      }
+    } else if (k === 'arrow') {
+      if (tap) { const L = 110 / S; m.geo = { x1: clampX(a.x - L), y1: clampY(a.y - L), x2: a.x, y2: a.y }; }
+      else m.geo = { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+      mkReanchor(m);
+    } else {
+      const small = tap || Math.abs(b.x - a.x) * S < 12 || Math.abs(b.y - a.y) * S < 12;
+      m.geo = small ? { x: a.x - 80 / S, y: a.y - 50 / S, w: 160 / S, h: 100 / S } : { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
+      mkReanchor(m);
+    }
+    if (m.el && m.el.k === 'img' && !m.sel) m.sel = m.el.t ? 'Picture: ' + m.el.t : 'A picture';
+    mk.marks.push(m);
+    mkSelect(m.lid); mkSave(); mkLayers(); mkOpenCompose(m, true);
+  }
+  function mkTool(k) {
+    mk.tool = k;
+    $$('#mkTools [data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === k));
+    const st = $('#mkStage'); if (st) st.dataset.mode = k;
+    mkHint();
+  }
+  function mkHint() {
+    const h = $('#mkHint'); if (!h) return;
+    if (mk.readonly || !mk.cap) { h.hidden = true; return; }
+    const t = MK_TOOLS.find((x) => x.k === mk.tool);
+    h.hidden = false; h.textContent = (mk.marks.length ? '' : 'Pick a tool, then mark the page. ') + (t ? t.hint : '');
+    // Out of the way after a few seconds; it comes back whenever another tool is picked.
+    clearTimeout(mkHint.t); mkHint.t = setTimeout(() => { const x = $('#mkHint'); if (x) x.hidden = true; }, 5000);
+  }
+  function mkSelect(lid) { mk.sel = lid; mkReq(); $$('#mkLayers [data-row]').forEach((r) => r.classList.toggle('on', r.dataset.row === lid)); }
+  function mkKey(e) {
+    if (!mk.on) return;
+    const typing = /^(TEXTAREA|INPUT|SELECT)$/.test((e.target && e.target.tagName) || '');
+    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); if (!$('#mkCompose').hidden) mkCloseCompose(); else if (mk.sel) mkSelect(''); else closeMarker(); return; }
+    if (typing) return;
+    const m = mk.marks.find((x) => x.lid === mk.sel);
+    if ((e.key === 'Delete' || e.key === 'Backspace') && m && m.status !== 'sent' && m.status !== 'sending' && !mk.readonly) { e.preventDefault(); mkDelete(m); }
+  }
+  function mkDelete(m) {
+    mk.marks = mk.marks.filter((x) => x !== m);
+    if (mk.sel === m.lid) mk.sel = '';
+    mkCloseCompose(); mkSave(); mkReq(); mkLayers(); mkHint();
+  }
+
+  // ---------------------------------------------------------------- the comment box
+  function mkCloseCompose() { const c = $('#mkCompose'); if (c) { c.hidden = true; c.innerHTML = ''; } mk.compose = ''; }
+  function mkOpenCompose(m, fresh) {
+    const c = $('#mkCompose'); if (!c) return;
+    mk.compose = m.lid; mkSelect(m.lid);
+    const t = m.ticket;
+    const quoted = m.sel || (m.el && m.el.t) || '';
+    const q = quoted ? `<div class="mk-c-q">${m.kind === 'highlight' || (m.el && m.el.k !== 'img') ? '“' + esc(quoted.slice(0, 220)) + (quoted.length > 220 ? '…' : '') + '”' : esc(quoted.slice(0, 160))}</div>` : '';
+    if (m.status === 'sent' || m.status === 'sending') {
+      c.innerHTML = `<div class="mk-c-h"><span class="mk-dot st-${m.status}">${m.n}</span><b>${t ? 'Request #' + t.num : 'Sending…'}</b>${t ? tkPill(t.status, mk.team) : ''}<span class="mk-sp"></span><button class="mk-ib" data-c="x" aria-label="Close">✕</button></div>
+        ${m.changed ? '<div class="mk-c-note">This part of the page looks different now — the team may already have changed it.</div>' : m.moved ? '<div class="mk-c-note faint">Sent from an earlier picture of this page.</div>' : ''}
+        ${q}<div class="mk-c-text">${esc(m.text)}</div>
+        ${t && (t.replies || []).length ? `<div class="mk-c-thread">${t.replies.map((r) => `<div class="mk-c-r${r.team ? ' team' : ''}"><b>${esc(r.byName || r.by || (r.team ? 'Team' : 'Client'))}</b> <span class="faint small">${esc(ago(r.at))}</span><div>${esc(r.text)}</div></div>`).join('')}</div>` : ''}
+        ${!mk.readonly && t ? `<div class="mk-c-a"><span class="faint small">Sent ${esc(ago(t.at))}</span><span class="mk-sp"></span><a class="btn sm" href="#/my/${encodeURIComponent(mk.site.id)}/requests" data-c="list">See all requests</a></div>` : ''}`;
+      c.hidden = false;
+      $$('[data-c]', c).forEach((b) => (b.onclick = () => { if (b.dataset.c === 'x') mkCloseCompose(); if (b.dataset.c === 'list') closeMarker(); }));
+      return;
+    }
+    const limit = mk.quota && !mk.quota.left;
+    c.innerHTML = `<div class="mk-c-h"><span class="mk-dot st-${m.status}">${m.n}</span><b>${esc(MK_KIND[m.kind] || 'Mark')}</b><span class="faint small">${m.status === 'failed' ? '· not sent yet' : '· draft'}</span><span class="mk-sp"></span><button class="mk-ib" data-c="x" aria-label="Close">✕</button></div>
+      ${m.err ? `<div class="mk-c-note bad">${esc(m.err)}</div>` : ''}
+      ${q}
+      <textarea id="mkText" rows="3" maxlength="2000" placeholder="What would you like changed here?">${esc(m.text || '')}</textarea>
+      ${limit ? `<div class="mk-c-note">You have used today's ${mk.quota.limit} requests. This stays here as a draft — send it after ${esc(new Date(mk.quota.resetAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}.</div>` : ''}
+      ${mk.preview ? '<div class="mk-c-note">Previewing as the client: sending is switched off.</div>' : ''}
+      <div class="mk-c-a"><button class="btn sm danger" data-c="del">Delete</button><span class="mk-sp"></span><button class="btn sm" data-c="keep">Keep for later</button>
+        <button class="btn sm primary" data-c="send"${limit || mk.preview ? ' disabled' : ''}>Send ➤</button></div>`;
+    c.hidden = false;
+    const ta = $('#mkText');
+    ta.oninput = () => { m.text = ta.value; mkSave(); const s = $('[data-c="send"]', c); if (s) s.disabled = !ta.value.trim() || limit || mk.preview; mkLayersSoon(); };
+    $('[data-c="send"]', c).disabled = !String(m.text || '').trim() || limit || mk.preview;
+    $$('[data-c]', c).forEach((b) => (b.onclick = () => {
+      const k = b.dataset.c;
+      if (k === 'x' || k === 'keep') { mkCloseCompose(); mkLayers(); }
+      if (k === 'del') mkDelete(m);
+      if (k === 'send') { m.text = ta.value.trim(); if (!m.text) return; mkCloseCompose(); mkQueue(m); }
+    }));
+    if (fresh || window.matchMedia('(pointer:fine)').matches) setTimeout(() => ta.focus(), 30);
+  }
+
+  // ---------------------------------------------------------------- sending, one at a time
+  function mkQueue(m) {
+    m.status = 'sending'; m.err = ''; mkReq(); mkLayers();
+    mk.chain = mk.chain.then(() => mkSend(m)).catch(() => {});
+  }
+  async function mkSend(m) {
+    if (!mk.on || !mk.cap) return;
+    let crop = null;
+    try { crop = await mkCrop(m); } catch (e) { crop = null; }
+    try {
+      const r = await cpost('/api/tickets', { op: 'create', site: mk.site.id, cid: m.cid, cap: mk.cap.id, kind: m.kind, geo: m.geo, text: m.text, el: m.el, sel: m.sel, crop });
+      m.status = 'sent'; m.ticket = r.ticket; m.retry = false; m.err = '';
+      if (r.quota) mk.quota = r.quota;
+      if (mk.tickets && !mk.tickets.some((t) => t.id === r.ticket.id)) mk.tickets.unshift(r.ticket);
+      toast(`Sent — request #${r.ticket.num}`);
+    } catch (e) {
+      const d = e.data || {};
+      if (e.status === 429) { m.status = 'draft'; if (d.quota) mk.quota = d.quota; m.err = d.error || e.message; }
+      else if (e.status === 403 && d.preview) { m.status = 'draft'; m.err = e.message; }
+      else if (!e.status || e.status >= 500 || e.status === 409) { m.status = 'failed'; m.retry = true; m.err = 'Not sent yet — the connection dropped. It will try again by itself.'; }
+      else { m.status = 'failed'; m.retry = !!d.retry; m.err = e.message; }
+    }
+    if (!mk.on) return;
+    mkSave(); mkReq(); mkLayers(); mkQuota();
+  }
+  function mkRetryAll() {
+    if (!mk.on || !mk.cap || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+    mk.marks.filter((m) => m.status === 'failed' && m.retry && m.text).forEach((m) => mkQueue(m));
+  }
+  function mkSendAll() {
+    const ready = mk.marks.filter((m) => (m.status === 'draft' || m.status === 'failed') && String(m.text || '').trim());
+    const left = mk.quota ? mk.quota.left : ready.length;
+    ready.slice(0, left).forEach((m) => mkQueue(m));
+    if (ready.length > left) toast(`Only ${left} more can be sent today — the rest stay as drafts.`);
+  }
+
+  /** The picture of one mark: the page around it, with the mark drawn on, at most 1200 pixels wide. */
+  async function mkCrop(m) {
+    const c = mk.cap; const b = mkBox(m);
+    const minW = Math.min(c.w, c.device === 'desktop' && c.kind !== 'upload' ? 1100 : c.w), minH = Math.min(c.h, c.kind === 'upload' ? c.h : c.device === 'desktop' ? 650 : 760);
+    const pad = Math.max(90, Math.max(b.w, b.h) * 0.35);
+    let rw = Math.max(minW, b.w + pad * 2), rh = Math.max(minH, b.h + pad * 2);
+    rw = Math.min(rw, c.w); rh = Math.min(rh, c.h, 4000);
+    let rx = b.x + b.w / 2 - rw / 2, ry = b.y + b.h / 2 - rh / 2;
+    rx = Math.max(0, Math.min(c.w - rw, rx)); ry = Math.max(0, Math.min(c.h - rh, ry));
+    let k = Math.min((c.dsf || 1), 1200 / rw); if (rh * k > 2400) k = 2400 / rh;
+    const cv = document.createElement('canvas'); cv.width = Math.round(rw * k); cv.height = Math.round(rh * k);
+    const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    for (let i = 0; i < c.slices.length; i++) {
+      const s = c.slices[i];
+      if (s.y + s.h <= ry || s.y >= ry + rh) continue;
+      const img = new Image(); img.src = mkSliceUrl(i);
+      try { await img.decode(); } catch (e) { continue; }
+      const sx = img.naturalWidth / c.w; // picture pixels per page pixel
+      const y0 = Math.max(ry, s.y), y1 = Math.min(ry + rh, s.y + s.h);
+      ctx.drawImage(img, rx * sx, (y0 - s.y) * sx, rw * sx, (y1 - y0) * sx, 0, (y0 - ry) * k, rw * k, (y1 - y0) * k);
+    }
+    const X = (v) => (v - rx) * k, Y = (v) => (v - ry) * k;
+    ctx.lineWidth = Math.max(3, 3 * k); ctx.strokeStyle = '#e11d48'; ctx.fillStyle = 'rgba(250,204,21,.35)';
+    if (m.kind === 'arrow') {
+      const [x1, y1, x2, y2] = [X(m.geo.x1), Y(m.geo.y1), X(m.geo.x2), Y(m.geo.y2)];
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      const h = mkArrowHead(x1, y1, x2, y2, 20, 11); ctx.fillStyle = '#e11d48'; ctx.beginPath(); ctx.moveTo(...h[0]); ctx.lineTo(...h[1]); ctx.lineTo(...h[2]); ctx.closePath(); ctx.fill();
+    } else {
+      const [x, y, w, h] = [X(m.geo.x), Y(m.geo.y), m.geo.w * k, m.geo.h * k];
+      if (m.kind === 'ellipse') { ctx.beginPath(); ctx.ellipse(x + w / 2, y + h / 2, Math.max(1, w / 2), Math.max(1, h / 2), 0, 0, Math.PI * 2); ctx.stroke(); }
+      else if (m.kind === 'highlight') { ctx.fillRect(x, y, w, h); ctx.strokeStyle = '#d97706'; ctx.strokeRect(x, y, w, h); }
+      else { if (m.kind === 'element') ctx.setLineDash([10, 6]); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]); }
+    }
+    let data = cv.toDataURL('image/webp', 0.82); let type = 'image/webp';
+    if (!/^data:image\/webp/.test(data)) { data = cv.toDataURL('image/jpeg', 0.85); type = 'image/jpeg'; }
+    return { type, data: data.split(',')[1] };
+  }
+
+  /** Their own screenshot — for a menu that opens, a slider, anything a still picture of the page cannot show. */
+  async function mkUpload(file) {
+    if (!/^image\//.test(file.type)) { toast('Please choose a picture.'); return; }
+    mkMsg('Getting your screenshot ready…', true);
+    try {
+      const url = URL.createObjectURL(file);
+      const img = new Image(); img.src = url; await img.decode();
+      let w = img.naturalWidth, h = img.naturalHeight;
+      const k = Math.min(1, 2000 / w, 12000 / h); w = Math.round(w * k); h = Math.round(h * k);
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url);
+      let q = 0.85, data, type = 'image/webp';
+      for (let i = 0; i < 4; i++) {
+        data = cv.toDataURL('image/webp', q);
+        if (!/^data:image\/webp/.test(data)) { type = 'image/jpeg'; data = cv.toDataURL('image/jpeg', q); }
+        if (data.length * 0.75 < 2.8 * 1024 * 1024) break; q -= 0.15;
+      }
+      const r = await cpost('/api/capture', { op: 'upload', site: mk.site.id, data: data.split(',')[1], type, w, h, path: mk.path, device: w < 900 ? 'mobile' : 'desktop' });
+      mk.fixedCap = r.cap.id; mk.uploaded = true;
+      await mkLoad(false);
+      mk.fixedCap = '';
+      toast('Your screenshot is ready — mark it up the same way.');
+    } catch (e) { mkMsg(''); toast(e.message || 'That picture could not be used.'); if (!mk.cap) mkLoad(false); }
+  }
+
+  // ---------------------------------------------------------------- the slide-up sheet: tools + layers
+  function mkBindSheet() {
+    const grip = $('#mkGrip'); const sh = $('#mkSheet');
+    let y0 = null, moved = false;
+    const set = (open) => { mk.sheetOpen = open; sh.classList.toggle('open', open); grip.setAttribute('aria-expanded', String(open)); };
+    grip.addEventListener('pointerdown', (e) => { y0 = e.clientY; moved = false; try { grip.setPointerCapture(e.pointerId); } catch (x) { /* fine */ } });
+    grip.addEventListener('pointermove', (e) => { if (y0 === null) return; const d = e.clientY - y0; if (Math.abs(d) > 24) { moved = true; set(d < 0); y0 = null; } });
+    grip.addEventListener('pointerup', () => { if (y0 !== null && !moved) set(!mk.sheetOpen); y0 = null; });
+    if (mk.readonly) set(true);
+  }
+  let layersT = 0;
+  function mkLayersSoon() { clearTimeout(layersT); layersT = setTimeout(mkLayers, 250); }
+  function mkLayers() {
+    const box = $('#mkLayers'); if (!box) return;
+    mkNumbered();
+    const ms = mk.marks;
+    const drafts = ms.filter((m) => m.status !== 'sent');
+    const ready = drafts.filter((m) => (m.status === 'draft' || m.status === 'failed') && String(m.text || '').trim()).length;
+    const sent = ms.filter((m) => m.status === 'sent').length;
+    const gt = $('#mkGripT'); if (gt) gt.textContent = ms.length ? `Layers · ${ms.length} mark${ms.length === 1 ? '' : 's'}${drafts.length && !mk.readonly ? ` · ${drafts.length} not sent` : ''}` : 'Layers';
+    const icon = { highlight: '🖍', element: '👆', rect: '▭', ellipse: '◯', arrow: '➚', pin: '📍' };
+    const stLabel = (m) => m.status === 'sent' ? (m.ticket ? `#${m.ticket.num} · ${(mk.team ? TK_TEAM_ST : TK_ST)[m.ticket.status] || 'Sent'}` : 'Sent') : m.status === 'sending' ? 'Sending…' : m.status === 'failed' ? 'Not sent — tap to retry' : String(m.text || '').trim() ? 'Draft · ready to send' : 'Draft · needs a comment';
+    box.innerHTML = `<div class="mk-l-top">
+        ${mk.readonly ? '' : `<label><input type="checkbox" id="mkHideSent"${mk.hideSent ? ' checked' : ''}> Hide sent${sent ? ` (${sent})` : ''}</label>`}
+        <label><input type="checkbox" id="mkHideAll"${mk.hideAll ? ' checked' : ''}> Hide all marks</label>
+        <span class="mk-sp"></span>
+        ${!mk.readonly && ready ? `<button class="btn sm primary" id="mkSendAll"${(mk.quota && !mk.quota.left) || mk.preview ? ' disabled' : ''}>Send ${ready} ready</button>` : ''}
+      </div>
+      ${ms.length ? ms.map((m) => `<div class="mk-row${m.lid === mk.sel ? ' on' : ''}${m.hidden ? ' off' : ''}" data-row="${esc(m.lid)}">
+          <span class="mk-dot st-${m.status}">${m.n}</span><span class="mk-ic">${icon[m.kind] || '•'}</span>
+          <div class="mk-row-t"><div class="mk-row-x">${esc(String(m.text || '').trim() || (m.sel ? '“' + m.sel.slice(0, 60) + '”' : 'No comment yet'))}</div>
+            <div class="mk-row-s st-${m.status}">${esc(stLabel(m))}${m.changed ? ' · looks changed' : ''}</div></div>
+          <button class="mk-ib sm" data-act="hide" title="${m.hidden ? 'Show' : 'Hide'}" aria-label="${m.hidden ? 'Show' : 'Hide'}">${m.hidden ? '🙈' : '👁'}</button>
+          ${mk.readonly ? '' : `<button class="mk-ib sm" data-act="lock" title="${m.locked ? 'Unlock' : 'Lock so it cannot be moved'}" aria-label="${m.locked ? 'Unlock' : 'Lock'}">${m.locked ? '🔒' : '🔓'}</button>`}
+          ${!mk.readonly && m.status !== 'sent' && m.status !== 'sending' ? '<button class="mk-ib sm" data-act="del" title="Delete" aria-label="Delete">🗑</button>' : ''}
+        </div>`).join('') : `<div class="mk-empty">${mk.readonly ? 'Nothing marked on this picture.' : 'No marks yet. Choose <b>Highlight</b>, <b>Tap item</b>, <b>Box</b>, <b>Circle</b> or <b>Arrow</b>, then mark the page.'}</div>`}
+      ${mk.orphans.length ? `<div class="mk-l-k">Sent from an earlier picture of this page</div>${mk.orphans.map((t) => `<div class="mk-row orphan"><span class="mk-dot st-sent">✓</span><div class="mk-row-t"><div class="mk-row-x">${esc(t.text)}</div><div class="mk-row-s">#${t.num} · ${esc(TK_ST[t.status] || t.status)} · ${esc(ago(t.at))}</div></div></div>`).join('')}` : ''}`;
+    const hs = $('#mkHideSent'); if (hs) hs.onchange = () => { mk.hideSent = hs.checked; const m = mk.marks.find((x) => x.lid === mk.sel); if (hs.checked && m && m.status === 'sent') { mk.sel = ''; mkCloseCompose(); } mkReq(); };
+    const ha = $('#mkHideAll'); if (ha) ha.onchange = () => { mk.hideAll = ha.checked; if (ha.checked) { mk.sel = ''; mkCloseCompose(); } mkReq(); };
+    const sa = $('#mkSendAll'); if (sa) sa.onclick = mkSendAll;
+    $$('[data-row]', box).forEach((row) => (row.onclick = (e) => {
+      const m = mk.marks.find((x) => x.lid === row.dataset.row); if (!m) return;
+      const act = e.target.closest('[data-act]');
+      if (act) {
+        e.stopPropagation();
+        if (act.dataset.act === 'hide') m.hidden = !m.hidden;
+        if (act.dataset.act === 'lock') m.locked = !m.locked;
+        if (act.dataset.act === 'del') return mkDelete(m);
+        mkSave(); mkReq(); mkLayers(); return;
+      }
+      if (m.status === 'failed' && m.text) { mkQueue(m); return; }
+      m.hidden = false; mkSelect(m.lid); mkCenter(m); mkOpenCompose(m);
+    }));
+  }
+
+  // ---------------------------------------------------------------- the client's list of requests
+  const tkCta = () => `<div class="cl-cta"><div><b>Need a change, or have a question?</b>
+      <div class="small muted">Send it here instead of texting or emailing — from your phone or computer — and it comes straight to our team.</div></div>
+      <button class="btn primary" data-sendticket>✉️ Send a ticket</button></div>`;
+  /** Wire every "Send a ticket" button on the page (the card, and the floating one on phones). */
+  function tkBindSend(site) { $$('[data-sendticket]').forEach((b) => (b.onclick = () => tkChooser(site))); }
+  const TK_TYPES = [
+    { k: 'change', icon: '🖍', title: 'Website change', tip: 'If you have a change request for your website — wording, pictures, layout or design. You will point to it right on the page.' },
+    { k: 'question', icon: '💬', title: 'General question', tip: 'If you have a question that does not relate to your website’s content or design — for example billing, your domain, email or your account.' },
+  ];
+  /** The first step: which kind of ticket. Each choice says what it is for right under it — a phone has no hover for a tooltip. */
+  function tkChooser(site) {
+    const q = (state.cl.tkq || {})[site.id];
+    const quota = q && q.quota;
+    modal(`<header><h2>Send a ticket</h2><button class="btn ghost" data-close aria-label="Close">✕</button></header>
+      <div class="body tk-choose">
+        ${TK_TYPES.map((t) => `<button class="tk-opt" data-tkt="${t.k}"><span class="tk-opt-i">${t.icon}</span><span class="tk-opt-t"><b>${esc(t.title)}</b><span>${esc(t.tip)}</span></span><span class="tk-opt-go">›</span></button>`).join('')}
+        ${quota ? `<div class="small muted tk-choose-q">${quota.left ? `${quota.left} of ${quota.limit} tickets left today` : `Today's ${quota.limit} tickets are used — you can still prepare a website change; it waits until tomorrow.`}</div>` : ''}
+      </div>`, { sheet: true });
+    $$('[data-tkt]').forEach((b) => (b.onclick = () => {
+      closeModal();
+      if (b.dataset.tkt === 'change') location.hash = `#/my/${encodeURIComponent(site.id)}/mark`;
+      else tkQuestion(site);
+    }));
+  }
+  /** A general question: a few words, and a photo if it helps. */
+  function tkQuestion(site) {
+    const key = 'dsa-tkq-draft:' + site.id;
+    const draft = lsGet(key, null) || { text: '', cid: mkUid() };
+    let photo = null;
+    modal(`<header><h2>💬 General question</h2><button class="btn ghost" data-close aria-label="Close">✕</button></header>
+      <div class="body tk-qform">
+        <div class="small muted">Questions that are not about your website’s content or design — billing, your domain, email, your account. For a change on the website, use <button class="linkbtn" id="tqSwitch">Website change</button> instead.</div>
+        <textarea id="tqText" rows="6" maxlength="2000" placeholder="Type your question…">${esc(draft.text)}</textarea>
+        <div class="tk-qphoto"><label class="btn sm">📎 Add a photo or screenshot<input type="file" id="tqFile" accept="image/*" hidden></label><span id="tqPrev"></span></div>
+        <div class="small" id="tqNote"></div>
+      </div>
+      <footer><span class="spacer"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="tqSend">Send</button></footer>`, { sheet: true });
+    const ta = $('#tqText');
+    ta.oninput = () => { draft.text = ta.value; lsSet(key, draft); };
+    setTimeout(() => ta.focus(), 50);
+    $('#tqSwitch').onclick = () => { closeModal(); location.hash = `#/my/${encodeURIComponent(site.id)}/mark`; };
+    $('#tqFile').onchange = async (e) => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      try { photo = await tkShrink(f, 1600, 1.3); $('#tqPrev').innerHTML = `<img src="data:${photo.type};base64,${photo.data}" alt="Your photo"> <button class="linkbtn" id="tqRm">Remove</button>`; $('#tqRm').onclick = () => { photo = null; $('#tqPrev').innerHTML = ''; }; }
+      catch (x) { toast('That picture could not be used.'); }
+    };
+    $('#tqSend').onclick = async () => {
+      const text = ta.value.trim(); if (!text) { ta.focus(); return; }
+      const btn = $('#tqSend'); btn.disabled = true; btn.textContent = 'Sending…'; $('#tqNote').textContent = '';
+      try {
+        const r = await cpost('/api/tickets', { op: 'create', type: 'question', site: site.id, cid: draft.cid, text, crop: photo });
+        lsSet(key, null); closeModal(); toast(`Sent — ticket #${r.ticket.num}`);
+        clTkQuota(site, true);
+        if (clRoute().section === 'requests') { const el = $('#clMain'); if (el) clRequests(el, site); } else clGo(site.id, 'requests');
+      } catch (x) {
+        btn.disabled = false; btn.textContent = 'Send';
+        $('#tqNote').innerHTML = `<span class="tk-bad">${esc(!x.status ? 'Not sent — no connection. Your question is kept here; try again in a moment.' : x.message)}</span>`;
+      }
+    };
+  }
+  /** Shrink a photo to at most `max` pixels across and about `mb` megabytes. */
+  async function tkShrink(file, max, mb) {
+    const url = URL.createObjectURL(file); const img = new Image(); img.src = url; await img.decode();
+    const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const cv = document.createElement('canvas'); cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+    let q = 0.85, data = '', type = 'image/webp';
+    for (let i = 0; i < 4; i++) {
+      data = cv.toDataURL('image/webp', q); type = 'image/webp';
+      if (!/^data:image\/webp/.test(data)) { data = cv.toDataURL('image/jpeg', q); type = 'image/jpeg'; }
+      if (data.length * 0.75 < mb * 1024 * 1024) break; q -= 0.15;
+    }
+    return { type, data: data.split(',')[1] };
+  }
+  async function clTkQuota(site, force) {
+    state.cl.tkq = state.cl.tkq || {};
+    if (state.cl.tkq[site.id] && !force) return state.cl.tkq[site.id];
+    try { state.cl.tkq[site.id] = await capi(`/api/tickets?op=quota&site=${encodeURIComponent(site.id)}`); } catch (e) { state.cl.tkq[site.id] = null; }
+    const a = $(`.cl-nav a[href$="/requests"]`);
+    const u = (state.cl.tkq[site.id] || {}).unread || 0;
+    if (a) a.innerHTML = `<span class="cl-ic">🎫</span>Tickets${u ? ` <span class="cl-dot" title="${u} with news for you">${u}</span>` : ''}`;
+    return state.cl.tkq[site.id];
+  }
+  async function clRequests(el, site) {
+    tkPrewarm(site);
+    el.innerHTML = clHead(site, 'Tickets', 'Your questions and change requests for this website.') + tkCta(site) + '<div class="empty">Loading…</div>';
+    tkBindSend(site);
+    let d; try { d = await capi(`/api/tickets?op=mine&site=${encodeURIComponent(site.id)}`); } catch (e) { el.innerHTML = clHead(site, 'Tickets', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
+    const list = d.tickets || []; const q = d.quota || {};
+    const f = state.cl.tkFilter || 'open';
+    const isOpen = (t) => !['done', 'closed'].includes(t.status);
+    // Anything with news for them is shown whatever the filter — a reply on a finished one included.
+    const shown = list.filter((t) => t.unread || (f === 'all' ? true : f === 'done' ? !isOpen(t) : isOpen(t)));
+    const reset = q.resetAt ? new Date(q.resetAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    el.innerHTML = clHead(site, 'Tickets', 'Your questions and change requests for this website.') + tkCta(site)
+      + `<div class="cl-tk-bar"><span class="chips">${[['open', 'Open', list.filter(isOpen).length], ['done', 'Finished', list.filter((t) => !isOpen(t)).length], ['all', 'All', list.length]].map(([k, l, n]) =>
+          `<button class="chipbtn ${f === k ? 'active' : ''}" data-tkf="${k}">${l} <span class="tcount">${n}</span></button>`).join('')}</span>
+        <span class="small muted">${d.preview ? 'Preview — nothing is sent from here.' : q.limit ? (q.left ? `${q.left} of ${q.limit} tickets left today` : `Today's ${q.limit} tickets are used · more after ${esc(reset)}`) : ''}</span></div>
+      ${shown.length ? shown.map((t) => `<div class="cl-card tk-card${t.unread ? ' news' : ''}" data-tk="${esc(t.id)}">
+          ${t.img ? `<button class="tk-thumb${t.type === 'question' ? ' q' : ''}" data-img="${esc(t.img)}" aria-label="Open the picture"><img src="${esc(t.img)}" alt="" loading="lazy"></button>` : `<div class="tk-thumb none">${t.type === 'question' ? '💬' : 'No picture'}</div>`}
+          <div class="tk-body">
+            <div class="tk-h"><b>#${t.num}</b> ${tkPill(t.status)}${t.unread ? '<span class="tk-new">New update</span>' : ''}<span class="faint small">${t.type === 'question' ? 'General question' : esc(pageName(t.path)) + ' · ' + esc(MK_DEV[t.device] || '')} · ${esc(isoLabel(t.at))}${t.mine ? '' : ' · from ' + esc(t.byName || '')}</span></div>
+            <div class="tk-text">${esc(t.text)}</div>
+            ${(t.replies || []).length ? `<div class="tk-thread">${t.replies.map((r) => `<div class="tk-r${r.team ? ' team' : ''}"><b>${esc(r.by || (r.team ? 'Team' : 'You'))}</b> <span class="faint small">${esc(ago(r.at))}</span><div>${esc(r.text).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>` : ''}
+            <div class="tk-acts">${t.type === 'question' ? '' : '<button class="btn sm" data-see>See it on the page</button>'}${d.preview ? '' : '<button class="btn sm ghost" data-rep>Reply</button>'}</div>
+            <div class="tk-rep" hidden><textarea rows="2" maxlength="2000" placeholder="${t.status === 'clarify' ? 'Answer the team’s question…' : 'Add something for the team…'}"></textarea><button class="btn sm primary" data-send>Send</button></div>
+          </div></div>`).join('')
+        : `<div class="cl-card"><div class="empty">${list.length ? 'Nothing here.' : 'No tickets yet. Tap <b>Send a ticket</b> to ask a question or point out something to change.'}</div></div>`}`;
+    tkBindSend(site);
+    $$('[data-tkf]', el).forEach((b) => (b.onclick = () => { state.cl.tkFilter = b.dataset.tkf; clRequests(el, site); }));
+    $$('[data-img]', el).forEach((b) => (b.onclick = () => lightbox(b.dataset.img)));
+    $$('[data-tk]', el).forEach((card) => {
+      const t = list.find((x) => x.id === card.dataset.tk);
+      if ($('[data-see]', card)) $('[data-see]', card).onclick = () => openMarker(site, { capId: t.cap, path: t.path, device: t.device, focus: t.id, onClose: () => clRequests(el, site) });
+      const rb = $('[data-rep]', card); const box = $('.tk-rep', card);
+      if (rb) rb.onclick = () => { box.hidden = !box.hidden; if (!box.hidden) $('textarea', box).focus(); };
+      $('[data-send]', card).onclick = async (e) => {
+        const ta = $('textarea', box); const text = ta.value.trim(); if (!text) return;
+        e.target.disabled = true;
+        try { await cpost('/api/tickets', { op: 'creply', id: t.id, text }); toast('Sent to the team'); clRequests(el, site); }
+        catch (x) { toast(x.message); e.target.disabled = false; }
+      };
+    });
+    if (list.some((t) => t.unread) && !d.preview) { cpost('/api/tickets', { op: 'seen', site: site.id }).then(() => clTkQuota(site, true)).catch(() => {}); }
+  }
+
+  // =====================================================================
+  // CLIENT REQUESTS — the team's inbox
+  // =====================================================================
+  const tk = { list: null, loading: false, f: 'active', site: '', type: '', q: '', pick: {}, at: 0 };
+  const TK_GROUPS = [
+    { k: 'active', label: 'Open', has: (t) => ['open', 'progress', 'clarify', 'hold'].includes(t.status) },
+    { k: 'open', label: 'Received', has: (t) => t.status === 'open' },
+    { k: 'progress', label: 'In progress', has: (t) => t.status === 'progress' },
+    { k: 'clarify', label: 'Waiting on client', has: (t) => t.status === 'clarify' },
+    { k: 'hold', label: 'On hold', has: (t) => t.status === 'hold' },
+    { k: 'done', label: 'Done', has: (t) => t.status === 'done' },
+    { k: 'closed', label: 'No change needed', has: (t) => t.status === 'closed' },
+    { k: 'all', label: 'All', has: () => true },
+  ];
+  let tkCountAt = 0;
+  async function tkCount(force) {
+    if (!can('ticket.view') || clientMode()) return;
+    if (!force && Date.now() - tkCountAt < 20000) return;
+    tkCountAt = Date.now();
+    try { const r = await api('/api/tickets?op=count'); state.tkNew = r.new || 0; } catch (e) { return; }
+    const a = $('[data-nav="requests"]'); if (a) a.innerHTML = tkNavLabel();
+  }
+  const tkNavLabel = () => `Tickets${state.tkNew ? ` <span class="nav-count" title="${state.tkNew} not picked up yet">${state.tkNew}</span>` : ''}`;
+  async function tkLoad() {
+    tk.loading = true;
+    try { const r = await api('/api/tickets?op=list'); tk.list = r.tickets || []; tk.at = Date.now(); }
+    catch (e) { tk.error = e.message; tk.list = tk.list || []; }
+    tk.loading = false;
+    state.tkNew = tk.list.filter((t) => t.status === 'open').length;
+    const a = $('[data-nav="requests"]'); if (a) a.innerHTML = tkNavLabel();
+  }
+  function tkMerge(list) { (list || []).forEach((t) => { const i = tk.list.findIndex((x) => x.id === t.id); if (i >= 0) tk.list[i] = t; else tk.list.unshift(t); }); state.tkNew = tk.list.filter((t) => t.status === 'open').length; const a = $('[data-nav="requests"]'); if (a) a.innerHTML = tkNavLabel(); }
+
+  async function renderRequests(r) {
+    const v = $('#view');
+    if (!tk.list || Date.now() - tk.at > 30000) { if (!tk.list) v.innerHTML = '<div class="empty">Loading…</div>'; await tkLoad(); }
+    if (route().name !== 'requests') return;
+    if (r.site) { tk.site = r.site; history.replaceState(null, '', '#/requests'); }
+    const all = tk.list;
+    const grp = TK_GROUPS.find((g) => g.k === tk.f) || TK_GROUPS[0];
+    const ql = tk.q.trim().toLowerCase();
+    const sites = [...new Map(all.map((t) => [t.site, t.siteName])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1])));
+    const rows = all.filter((t) => grp.has(t) && (!tk.site || t.site === tk.site) && (!tk.type || (t.type || 'change') === tk.type)
+      && (!ql || [t.text, t.siteName, t.byName, t.path, '#' + t.num, t.sel].join(' ').toLowerCase().includes(ql)));
+    const picked = Object.keys(tk.pick).filter((id) => tk.pick[id] && all.some((t) => t.id === id));
+    const team = activeUsers().filter((u) => u.role !== 'client');
+    const manage = can('ticket.manage');
+    v.innerHTML = `<div class="page-head"><div><h1>Client tickets</h1>
+        <div class="muted small">Sent by clients from their own page: website changes (each mark is one ticket, with a picture of exactly where) and general questions.</div></div>
+        <span class="spacer"></span>${(state.perms || []).includes('*') ? '<button class="btn" id="tkSet">⚙ Settings</button>' : ''}
+        <button class="btn ghost" id="tkReload" title="Load again">↻</button></div>
+      <div class="tk-filters"><span class="chips">${TK_GROUPS.map((g) => { const n = all.filter((t) => g.has(t) && (!tk.site || t.site === tk.site)).length;
+          return `<button class="chipbtn ${tk.f === g.k ? 'active' : ''}" data-tkg="${g.k}">${esc(g.label)} <span class="tcount">${n}</span></button>`; }).join('')}</span>
+        <select id="tkType"><option value="">All tickets</option><option value="change"${tk.type === 'change' ? ' selected' : ''}>🖍 Website changes</option><option value="question"${tk.type === 'question' ? ' selected' : ''}>💬 General questions</option></select>
+        <select id="tkSite"><option value="">All websites</option>${sites.map(([id, n]) => `<option value="${esc(id)}"${tk.site === id ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+        <input type="search" id="tkQ" placeholder="Search requests" value="${esc(tk.q)}"></div>
+      ${picked.length && manage ? `<div class="bulkbar"><b>${picked.length} selected</b>
+          <select id="tkBulkSt"><option value="">Set status…</option>${Object.entries(TK_TEAM_ST).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
+          <select id="tkBulkAs"><option value="">Assign to…</option><option value="-">Nobody</option>${team.map((u) => `<option value="${esc(u.email)}">${esc(u.name)}</option>`).join('')}</select>
+          <button class="btn sm ghost" id="tkBulkX">Clear</button></div>` : ''}
+      ${rows.length ? `<div class="tk-list">${manage ? `<label class="tk-all small"><input type="checkbox" id="tkAll"${rows.every((t) => tk.pick[t.id]) ? ' checked' : ''}> Select all ${rows.length}</label>` : ''}
+        ${rows.map((t) => `<div class="tk-row${t.tu ? ' news' : ''}${tk.pick[t.id] ? ' picked' : ''}" data-tid="${esc(t.id)}">
+          ${manage ? `<input type="checkbox" class="tk-pick" data-pick="${esc(t.id)}"${tk.pick[t.id] ? ' checked' : ''} aria-label="Select #${t.num}">` : '<span></span>'}
+          <div class="tk-thumb sm">${t.img ? `<img src="${esc(t.img)}" alt="" loading="lazy">` : `<span>${t.type === 'question' ? '💬' : '📷'}</span>`}</div>
+          <div class="tk-main"><div class="tk-h"><b>#${t.num}</b>${t.tu ? '<span class="tk-new" title="New, or the client wrote since anyone looked">New</span>' : ''}<span class="tk-site">${esc(t.siteName)}</span><span class="faint small">${t.type === 'question' ? '💬 General question' : esc(pageName(t.path)) + ' · ' + esc(MK_DEV[t.device] || '')}</span></div>
+            <div class="tk-text clamp">${esc(t.text)}</div></div>
+          <div class="tk-who small"><div>${esc(t.byName || '')}</div><div class="faint">${esc(ago(t.at))}</div></div>
+          <div class="tk-st">${tkPill(t.status, true)}${t.assignee ? `<div class="small faint">${esc(nameOf(t.assignee))}</div>` : ''}${t.check ? `<div class="small tk-chk ${esc(t.check.result)}">${esc({ same: 'Not changed yet', changed: 'Changed since', gone: 'Spot moved or gone', unknown: 'Not checkable' }[t.check.result] || '')}</div>` : ''}</div>
+        </div>`).join('')}</div>`
+        : `<div class="empty">${all.length ? 'No requests match.' : 'No client requests yet. Clients send them from <b>Change requests</b> on their website page.'}</div>`}`;
+    $$('[data-tkg]').forEach((b) => (b.onclick = () => { tk.f = b.dataset.tkg; renderRequests({}); }));
+    $('#tkSite').onchange = (e) => { tk.site = e.target.value; renderRequests({}); };
+    $('#tkType').onchange = (e) => { tk.type = e.target.value; renderRequests({}); };
+    const qi = $('#tkQ'); qi.oninput = () => { tk.q = qi.value; const at = qi.selectionStart; renderRequests({}).then(() => { const n = $('#tkQ'); if (n) { n.focus(); n.setSelectionRange(at, at); } }); };
+    $('#tkReload').onclick = async () => { tk.at = 0; await renderRequests({}); };
+    if ($('#tkSet')) $('#tkSet').onclick = tkSettings;
+    const all2 = $('#tkAll'); if (all2) all2.onchange = () => { rows.forEach((t) => { tk.pick[t.id] = all2.checked; }); renderRequests({}); };
+    $$('[data-pick]').forEach((c) => (c.onclick = (e) => { e.stopPropagation(); tk.pick[c.dataset.pick] = c.checked; renderRequests({}); }));
+    $$('[data-tid]').forEach((row) => (row.onclick = (e) => { if (e.target.closest('[data-pick]')) return; tkOpen(row.dataset.tid); }));
+    if ($('#tkBulkX')) $('#tkBulkX').onclick = () => { tk.pick = {}; renderRequests({}); };
+    if ($('#tkBulkSt')) $('#tkBulkSt').onchange = async (e) => {
+      if (!e.target.value) return;
+      try { const x = await post('/api/tickets', { op: 'status', ids: picked, status: e.target.value }); tkMerge(x.tickets); tk.pick = {}; toast(`${picked.length} set to ${TK_TEAM_ST[e.target.value]}`); } catch (er) { toast(er.message); }
+      renderRequests({});
+    };
+    if ($('#tkBulkAs')) $('#tkBulkAs').onchange = async (e) => {
+      if (!e.target.value) return;
+      try { const x = await post('/api/tickets', { op: 'assign', ids: picked, email: e.target.value === '-' ? '' : e.target.value }); tkMerge(x.tickets); tk.pick = {}; toast('Assigned'); } catch (er) { toast(er.message); }
+      renderRequests({});
+    };
+    if (r.id) { history.replaceState(null, '', '#/requests'); if (r.page) tkSeePage(r.id); else tkOpen(r.id); }
+  }
+
+  /** Has the spot the client marked changed since? Read from the current draft of the page. */
+  async function tkCheck(t) {
+    if (!t.el || !t.el.s) return { result: 'unknown', now: '' };
+    const r = await api(`/api/fetch?host=${encodeURIComponent(t.host || '')}&site=${encodeURIComponent(t.dudaSite)}&path=${encodeURIComponent(t.path || '/')}&device=${encodeURIComponent(t.device || 'desktop')}`);
+    if (!r.html) return { result: 'unknown', now: '' };
+    const doc = new DOMParser().parseFromString(r.html, 'text/html');
+    let node = null; try { node = doc.querySelector(t.el.s); } catch (e) { node = null; }
+    if (!node) return { result: 'gone', now: '' };
+    const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    const nowText = t.el.k === 'img' ? norm(node.getAttribute('alt') || node.getAttribute('title') || '') : norm(node.textContent);
+    return { result: nowText === norm(t.el.t) ? 'same' : 'changed', now: nowText.slice(0, 400) };
+  }
+  function tkSeePage(id) {
+    const t = tk.list.find((x) => x.id === id); if (!t) return;
+    openMarker({ id: t.site, name: t.siteName }, { readonly: true, team: true, capId: t.cap, focus: t.id, tickets: tk.list.filter((x) => x.cap === t.cap) });
+  }
+  async function tkOpen(id) {
+    let t = tk.list.find((x) => x.id === id);
+    if (!t) { try { t = (await api('/api/tickets?op=get&id=' + encodeURIComponent(id))).ticket; tkMerge([t]); } catch (e) { toast(e.message); return; } }
+    const manage = can('ticket.manage');
+    const team = activeUsers().filter((u) => u.role !== 'client');
+    const thread = [].concat((t.replies || []).map((x) => Object.assign({ type: x.team ? 'team' : 'client' }, x)), (t.notes || []).map((x) => Object.assign({ type: 'note' }, x)),
+      (t.history || []).map((x) => Object.assign({ type: 'hist' }, x))).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+ const isQ = t.type === 'question';
+    const editor = !isQ && t.host && t.dudaSite ? `https://${t.host}/home/site/${t.dudaSite}/${!t.path || t.path === '/' ? 'home' : t.path.replace(/^\/+/, '')}` : '';
+ const prev = !isQ && t.host && t.dudaSite ? `https://${t.host}/site/${t.dudaSite}${t.path === '/' ? '' : t.path}?preview=true&insitepreview=true&dm_device=${t.device}` : '';
+    modal(`<header><h2>#${t.num} · ${esc(t.siteName)}</h2>${tkPill(t.status, true)}<span class="spacer"></span><button class="btn ghost" data-close aria-label="Close">✕</button></header>
+      <div class="body tk-detail">
+        <div class="tk-d-l">
+          ${t.img ? `<button class="tk-d-img" id="tkImg" title="Open full size"><img src="${esc(t.img)}" alt="${isQ ? 'Photo the client attached' : 'What the client marked'}"></button>` : `<div class="empty small">${isQ ? '💬 A general question — no photo attached.' : 'No picture with this one.'}</div>`}
+          <div class="tk-d-btns">${isQ ? '' : '<button class="btn sm primary" id="tkSee">🔍 See it on the whole page</button>'}
+            ${editor ? `<a class="btn sm" href="${esc(editor)}" target="_blank" rel="noopener">Open in editor ↗</a>` : ''}
+            ${prev ? `<a class="btn sm ghost" href="${esc(prev)}" target="_blank" rel="noopener">Preview ↗</a>` : ''}</div>
+          <div class="tk-d-check" id="tkChk"></div>
+        </div>
+        <div class="tk-d-r">
+          <div class="small muted">From <b>${esc(t.byName)}</b> · ${isQ ? '💬 General question' : esc(pageName(t.path)) + ' · ' + esc(MK_DEV[t.device] || t.device)}${t.capKind === 'upload' ? ' · on their own screenshot' : ''} · ${esc(fmtFull(t.at))}</div>
+          <div class="tk-d-text">${esc(t.text).replace(/\n/g, '<br>')}</div>
+          ${t.sel ? `<div class="tk-d-q"><span class="faint small">They marked</span><div>“${esc(t.sel.slice(0, 600))}”</div></div>` : ''}
+          ${t.el && t.el.s ? `<details class="small"><summary class="faint">Where on the page (for finding it in the editor)</summary><code class="tk-sel">${esc(t.el.s)}</code></details>` : ''}
+          <div class="tk-d-k">Status</div>
+          <div class="tk-d-sts">${Object.entries(TK_TEAM_ST).map(([k, l]) => `<button class="chipbtn ${t.status === k ? 'active' : ''}" data-st="${k}"${manage ? '' : ' disabled'}>${esc(l)}</button>`).join('')}</div>
+          <div class="tk-d-k">Assigned to</div>
+          <select id="tkAs"${manage ? '' : ' disabled'}><option value="">Nobody</option>${team.map((u) => `<option value="${esc(u.email)}"${t.assignee === u.email ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
+          <div class="tk-d-k">Conversation</div>
+          <div class="tk-thread big">${thread.length ? thread.map((x) => x.type === 'hist'
+            ? `<div class="tk-r hist small faint">${esc(x.byName || '')} ${x.assign !== undefined ? (x.assign ? 'assigned it to ' + esc(nameOf(x.assign)) : 'unassigned it') : `${x.why ? '(' + esc(x.why) + ') ' : ''}moved it to <b>${esc(TK_TEAM_ST[x.to] || x.to)}</b>`} · ${esc(ago(x.at))}</div>`
+            : `<div class="tk-r ${x.type}"><b>${esc(x.byName || '')}</b>${x.type === 'note' ? ' <span class="tk-note-tag">team only</span>' : x.type === 'client' ? ' <span class="faint small">client</span>' : ''} <span class="faint small">${esc(ago(x.at))}</span><div>${esc(x.text).replace(/\n/g, '<br>')}</div></div>`).join('') : '<div class="faint small">Nothing yet.</div>'}</div>
+          ${manage ? `<div class="tk-d-k">Write to the client</div>
+          <textarea id="tkReply" rows="3" placeholder="They see this on their Change requests page${state.config && state.config.emailEnabled ? ' and get an email' : ''}."></textarea>
+          <div class="row-gap"><select id="tkReplySt"><option value="">Keep the status</option><option value="clarify">…and ask them (Waiting on client)</option><option value="done">…and mark it Done</option><option value="progress">…and set In progress</option></select>
+            <button class="btn sm primary" id="tkReplyGo">Send to client</button></div>
+          <div class="tk-d-k">Team note <span class="faint small">— never shown to the client</span></div>
+          <textarea id="tkNote" rows="2" placeholder="Only the team sees this."></textarea>
+          <div class="row-gap"><button class="btn sm" id="tkNoteGo">Add note</button></div>` : ''}
+        </div>
+      </div>`, { wide: true });
+    if ($('#tkImg')) $('#tkImg').onclick = () => lightbox(t.img);
+    if ($('#tkSee')) $('#tkSee').onclick = () => { closeModal(); tkSeePage(t.id); };
+    const redraw = (nt) => { tkMerge([nt]); if (route().name === 'requests') renderRequests({}); tkOpen(nt.id); };
+    $$('[data-st]').forEach((b) => (b.onclick = async () => {
+      if (b.dataset.st === t.status) return;
+      try { const x = await post('/api/tickets', { op: 'status', ids: [t.id], status: b.dataset.st }); redraw(x.tickets[0]); } catch (e) { toast(e.message); }
+    }));
+    if ($('#tkAs')) $('#tkAs').onchange = async (e) => { try { const x = await post('/api/tickets', { op: 'assign', ids: [t.id], email: e.target.value }); redraw(x.tickets[0]); } catch (er) { toast(er.message); } };
+    if ($('#tkReplyGo')) $('#tkReplyGo').onclick = async () => {
+      const text = $('#tkReply').value.trim(); if (!text) return;
+      try { const x = await post('/api/tickets', { op: 'reply', id: t.id, text, status: $('#tkReplySt').value }); toast('Sent to the client'); redraw(x.ticket); } catch (e) { toast(e.message); }
+    };
+    if ($('#tkNoteGo')) $('#tkNoteGo').onclick = async () => {
+      const text = $('#tkNote').value.trim(); if (!text) return;
+      try { const x = await post('/api/tickets', { op: 'note', id: t.id, text }); redraw(x.ticket); } catch (e) { toast(e.message); }
+    };
+    if (t.tu) { post('/api/tickets', { op: 'opened', id: t.id }).then(() => { t.tu = false; if (route().name === 'requests') renderRequests({}); }).catch(() => {}); }
+    // Has it changed since? Checked again when the last answer is over an hour old.
+    const chk = $('#tkChk');
+    const show = (c) => {
+      if (!chk) return;
+      const words = { same: ['still', 'Not changed yet — the page still says what the client marked.'], changed: ['changed', 'Changed since the client marked it.'],
+        gone: ['gone', 'That exact spot is no longer on the page — it may have been changed or moved.'], unknown: ['unknown', t.capKind === 'upload' ? 'Marked on their own screenshot, so it cannot be checked automatically.' : 'This one cannot be checked automatically.'] }[c.result] || ['unknown', ''];
+      chk.innerHTML = `<div class="tk-chk ${words[0]}"><b>${esc(words[1])}</b>${c.result === 'changed' && c.now ? `<div class="small">Now: “${esc(c.now.slice(0, 240))}”</div>` : ''}
+        <div class="small faint">${c.at ? 'Checked ' + esc(ago(c.at)) : ''} <button class="linkbtn" id="tkReCheck">Check again</button></div></div>`;
+      $('#tkReCheck').onclick = run;
+    };
+    async function run() {
+      if (chk) chk.innerHTML = '<div class="small faint">Checking the page now…</div>';
+      try { const c = await tkCheck(t); const x = await post('/api/tickets', { op: 'checked', id: t.id, result: c.result, now: c.now }); tkMerge([x.ticket]); t.check = x.ticket.check; show(t.check); }
+      catch (e) { if (chk) chk.innerHTML = `<div class="small faint">Could not check the page: ${esc(e.message)}</div>`; }
+    }
+    if (isQ) { if (chk) chk.innerHTML = ''; }
+    else if (t.check && Date.now() - Date.parse(t.check.at) < 3600000) show(t.check); else if (t.el && t.el.s) run(); else show({ result: 'unknown' });
+  }
+
+  async function tkSettings() {
+    let d; try { d = await api('/api/tickets?op=settings'); } catch (e) { toast(e.message); return; }
+    const s = d.settings; const over = Object.assign({}, s.over || {});
+    const draw = () => {
+      modal(`<header><h2>Change request settings</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body tk-set">
+          <label class="tk-set-row"><span><b>Requests each client may send a day</b><div class="small muted">Counted from midnight (${esc(d.tz)}). Clients can keep marking after the limit — drafts wait until the next day.</div></span>
+            <input type="number" id="tsDaily" min="1" max="200" value="${s.daily}"></label>
+          <div class="tk-set-row col"><b>Different limit for some clients</b>
+            ${Object.keys(over).length ? Object.entries(over).map(([e, n]) => `<div class="row-gap"><span>${esc((d.clients.find((c) => c.email === e) || {}).name || e)} <span class="faint small">${esc(e)}</span></span><span class="spacer"></span>
+              <input type="number" min="0" max="200" value="${n}" data-ov="${esc(e)}" style="width:80px"><button class="btn sm ghost" data-ovx="${esc(e)}">Remove</button></div>`).join('') : '<div class="small faint">Everyone gets the number above.</div>'}
+            ${d.clients.length ? `<div class="row-gap"><select id="tsOvWho"><option value="">Add a client…</option>${d.clients.filter((c) => over[c.email] === undefined).map((c) => `<option value="${esc(c.email)}">${esc(c.name || c.email)}</option>`).join('')}</select>
+              <span class="small faint">0 pauses sending for that client.</span></div>` : ''}</div>
+          <div class="tk-set-row col"><b>Who is told when a request arrives</b><div class="small muted">Nobody ticked = everyone whose role can answer change requests.</div>
+            <div class="tk-set-team">${d.team.map((u) => `<label><input type="checkbox" data-nt="${esc(u.email)}"${(s.notify || []).includes(u.email.toLowerCase()) ? ' checked' : ''}> ${esc(u.name)}</label>`).join('')}</div></div>
+          <label class="tk-set-row"><span><b>Email clients when their request is answered</b><div class="small muted">${d.email ? 'When someone writes to them, or a request is done, closed or needs their answer.' : 'Email is not switched on for this app, so nothing is emailed yet.'}</div></span>
+            <input type="checkbox" id="tsEmail"${s.emailClients ? ' checked' : ''}></label>
+          <label class="tk-set-row"><span><b>Reuse a page picture for (hours)</b><div class="small muted">Opening a page again within this time uses the same picture, so it opens instantly. Clients can always tap ↻ for a new one.</div></span>
+            <input type="number" id="tsFresh" min="0" max="72" value="${s.freshHours}"></label>
+          <div class="tk-set-row col"><b>Check page pictures work</b><div class="small muted">Takes a picture of a website's home page now, the same way a client's would be taken.</div>
+            <div class="row-gap"><button class="btn sm" id="tsTest">Test page pictures</button><span class="small" id="tsTestOut"></span></div><div id="tsTestImg"></div></div>
+        </div>
+        <footer><span class="spacer"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="tsSave">Save</button></footer>`, { wide: true });
+      const grab = () => {
+        s.daily = Number($('#tsDaily').value) || s.daily; s.freshHours = Number($('#tsFresh').value); s.emailClients = $('#tsEmail').checked;
+        $$('[data-ov]').forEach((i) => { over[i.dataset.ov] = Number(i.value); });
+        s.notify = $$('[data-nt]').filter((c) => c.checked).map((c) => c.dataset.nt.toLowerCase());
+      };
+      $$('[data-ovx]').forEach((b) => (b.onclick = () => { grab(); delete over[b.dataset.ovx]; draw(); }));
+      const ow = $('#tsOvWho'); if (ow) ow.onchange = () => { if (!ow.value) return; grab(); over[ow.value] = s.daily; draw(); };
+      $('#tsSave').onclick = async () => {
+        grab();
+        try { await post('/api/tickets', { op: 'settings', settings: Object.assign({}, s, { over }) }); closeModal(); toast('Saved'); } catch (e) { toast(e.message); }
+      };
+      $('#tsTest').onclick = async () => {
+        const out = $('#tsTestOut'); out.textContent = 'Taking a picture… (up to a minute the first time)'; $('#tsTest').disabled = true;
+        try {
+          const x = await post('/api/capture', { op: 'test' });
+          out.innerHTML = x.ok ? `<span class="tk-ok">✓ Works</span> — ${esc(x.site)}: ${x.slices} slice${x.slices === 1 ? '' : 's'}, ${x.els} elements found, ${(x.ms / 1000).toFixed(1)} s` : `<span class="tk-bad">✗ ${esc(x.error)}</span>`;
+          if (x.ok && x.cap) $('#tsTestImg').innerHTML = `<img class="tk-test-img" src="/api/capture?op=slice&cap=${encodeURIComponent(x.cap.id)}&i=0" alt="Test picture">`;
+        } catch (e) { out.innerHTML = `<span class="tk-bad">✗ ${esc(e.message)}</span>`; }
+        $('#tsTest').disabled = false;
+      };
+    };
+    draw();
+  }
+
+  // =====================================================================
   // THE CLIENT VIEW
   //
   // A different app, not the team's with pieces hidden. It reads only /api/client, which assembles
@@ -1794,6 +2922,7 @@
   // =====================================================================
   const CL_SECTIONS = [
     { k: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { k: 'requests', label: 'Tickets', icon: '🎫' },
     { k: 'leads', label: 'Form Submissions', icon: '✉️' },
     { k: 'comments', label: 'Comments', icon: '💬' },
     { k: 'access', label: 'Access website', icon: '↗' },
@@ -1801,7 +2930,7 @@
   const clRoute = () => {
     const parts = location.hash.replace(/^#/, '').split('/').filter(Boolean);
     if (parts[0] !== 'my') return { site: '', section: 'dashboard' };
-    return { site: parts[1] ? decodeURIComponent(parts[1]) : '', section: CL_SECTIONS.some((s) => s.k === parts[2]) ? parts[2] : 'dashboard' };
+    return { site: parts[1] ? decodeURIComponent(parts[1]) : '', section: parts[2] === 'mark' || CL_SECTIONS.some((s) => s.k === parts[2]) ? parts[2] : 'dashboard' };
   };
   const clGo = (site, section) => { location.hash = `#/my/${encodeURIComponent(site)}/${section || 'dashboard'}`; };
 
@@ -1835,13 +2964,21 @@
           <div class="cl-side-k">Websites</div>
           ${sites.map((s) => `<div class="cl-site${s.id === current.id ? ' on' : ''}">
             <button class="cl-sitebtn" data-clsite="${esc(s.id)}">${esc(s.name)}<div class="cl-dom">${esc(s.domain || '')}</div></button>
-            ${s.id === current.id ? `<nav class="cl-nav">${CL_SECTIONS.map((x) => `<a href="#/my/${encodeURIComponent(s.id)}/${x.k}" class="${r.section === x.k ? 'on' : ''}"><span class="cl-ic">${x.icon}</span>${esc(x.label)}</a>`).join('')}</nav>` : ''}
+            ${s.id === current.id ? `<nav class="cl-nav">${CL_SECTIONS.map((x) => `<a href="#/my/${encodeURIComponent(s.id)}/${x.k}" class="${r.section === x.k || (r.section === 'mark' && x.k === 'requests') ? 'on' : ''}"><span class="cl-ic">${x.icon}</span>${esc(x.label)}${x.k === 'requests' && state.cl.tkq && state.cl.tkq[s.id] && state.cl.tkq[s.id].unread ? ` <span class="cl-dot">${state.cl.tkq[s.id].unread}</span>` : ''}</a>`).join('')}</nav>` : ''}
           </div>`).join('')}
         </aside>
         <main class="cl-main" id="clMain"><div class="empty">Loading…</div></main>
+        <button class="cl-fab" data-sendticket aria-label="Send a ticket">✉️ Send ticket</button>
       </div>`;
+    tkBindSend(current);
     $$('[data-clsite]').forEach((b) => (b.onclick = () => clGo(b.dataset.clsite, 'dashboard')));
-    if ($('#clExit')) $('#clExit').onclick = () => { state.viewAs = ''; state.cl = { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {} }; document.body.classList.remove('client-mode'); location.hash = '#/site/' + encodeURIComponent(current.id); };
+    if ($('#clExit')) $('#clExit').onclick = () => { closeMarker(true); state.viewAs = ''; state.cl = { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {} }; document.body.classList.remove('client-mode'); location.hash = '#/site/' + encodeURIComponent(current.id); };
+    if (!state.cl.tkq || !state.cl.tkq[current.id]) clTkQuota(current);
+    if (r.section === 'mark') {
+      clSection(current, 'requests');
+      if (!mk.on || mk.route !== location.hash) { openMarker(current, { onClose: () => clGo(current.id, 'requests') }); mk.route = location.hash; }
+      return;
+    }
     clSection(current, r.section);
   }
 
@@ -1849,6 +2986,7 @@
     const el = $('#clMain'); if (!el) return;
     if (section === 'access') return clAccess(el, site);
     if (section === 'comments') return clComments(el, site);
+    if (section === 'requests') return clRequests(el, site);
     if (section === 'leads' || section === 'dashboard') return clLeads(el, site, section);
   }
 
@@ -1907,13 +3045,15 @@
     </div>`;
 
     if (section === 'dashboard') {
-      el.innerHTML = clHead(site, 'Dashboard', `Where your enquiries come from, over the last ${state.cl.months} months.`) + tiles
+      tkPrewarm(site);
+      el.innerHTML = clHead(site, 'Dashboard', `Where your enquiries come from, over the last ${state.cl.months} months.`) + tkCta() + tiles
         + `<div class="cl-card"><div class="cl-card-h">Enquiries each month</div>${barChart(d.series || [])}</div>
            <div class="cl-two">
              <div class="cl-card"><div class="cl-card-h">By page</div>${pageBars((d.groups || {}).pages || [])}</div>
              <div class="cl-card"><div class="cl-card-h">By source</div>${hBars((d.groups || {}).sources || [])}</div>
            </div>
            <div class="cl-card"><div class="cl-card-h">When people get in touch</div>${dowChart((d.when || {}).dow || [])}</div>`;
+      tkBindSend(site);
       return;
     }
 
@@ -3782,6 +4922,7 @@
     if (parts[0] === 'removed') return { name: 'removed' };
     if (parts[0] === 'comments') return { name: 'comments', site: parts[1] ? decodeURIComponent(parts[1]) : '' };
     if (parts[0] === 'ai') return { name: 'ai' };
+    if (parts[0] === 'requests') return { name: 'requests', site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', id: parts[1] && parts[1] !== 'site' ? decodeURIComponent(parts[1]) : '', page: parts[2] === 'page' };
     if (parts[0] === 'projects') return { name: 'projects' };
     if (parts[0] === 'project' && parts[1]) return { name: 'project', id: decodeURIComponent(parts[1]) };
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : parts[1] === 'trends' ? 'trends' : 'published',
@@ -3796,6 +4937,7 @@
   let ffSite = null;      // the website the current audit-item filters belong to
   let lastView = '';
   async function render() {
+    if (mk.on && mk.route !== location.hash) closeMarker(true);
     if (!state.me) return renderAuth();
     renderTopPreview();
     // A client account, or one of us previewing one, gets a different app entirely.
@@ -3859,6 +5001,7 @@
     if (r.name === 'dr') { if (!can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; } return renderDrProfile(r.siteId); }
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
+    if (r.name === 'requests') return can('ticket.view') ? renderRequests(r) : ($('#view').innerHTML = '<div class="empty">Your role does not include client change requests.</div>');
     if (/members=1/.test(location.hash)) { history.replaceState(null, '', '#/'); setTimeout(openMembers, 50); }
     return renderSites();
   }
@@ -7109,6 +8252,7 @@
         <li class="panel"><h3>Report back</h3><p><b>📋 Summary</b> on any audit writes a short note for the group chat: what was checked, every critical fix in plain words and how it was verified, and what is left.</p></li>
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the top menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
+        <li class="panel"><h3>Take client tickets</h3><p>From their phone or computer, clients <b>Send a ticket</b>: a general question, or a website change marked right on a picture of their own page (highlight, tap, box, circle or arrow). Each one arrives on <b>Tickets</b>, and for changes the app says whether that spot has changed since.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
         <li class="panel"><h3>Details change — the audit keeps up</h3><p>Every scan records what Business Info said and what changed since last time. A website still showing an old phone number or email reads <b>"Still using the old …"</b> with the date it changed, at an <b>Outdated</b> severity of its own rather than looking like a detail nobody recognises. Approvals retire themselves once Duda catches up. The dates are under <b>Reference data → Business Info history</b>.</p></li>
         <li class="panel"><h3>Tell it when it's wrong</h3><p>Marking an item <b>False alarm</b> is a bug report against the check that raised it. Your reason lands on the item as a comment, you can follow the report under <b>My false alarms</b>, and you're told — with their note — when an admin decides. If they agree the check was wrong, every website scanned with the old version flags itself for a rescan.</p></li>

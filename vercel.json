@@ -3,6 +3,11 @@
   "functions": {
     "api/*.js": {
       "maxDuration": 120
+    },
+    "api/capture.js": {
+      "maxDuration": 120,
+      "memory": 1769,
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
     }
   },
   "headers": [

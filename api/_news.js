@@ -4,6 +4,23 @@
 
 export const NEWS = [
   {
+    id: '2026-10-09-requests', date: '2026-10-09', audience: 'all', tag: 'Clients',
+    title: 'Clients can send tickets: questions, or changes marked on their own website',
+    what: 'Instead of texting or emailing, a client taps <b>✉️ Send a ticket</b> on their page (it floats at the bottom on a phone) and picks <b>General question</b> or <b>Website change</b>. For a change, they mark a picture of their website (desktop, tablet or phone): highlight text, tap an element, or draw a box, circle or arrow. <b>Every ticket arrives separately on the new Tickets page</b>, and changes come with a picture of exactly where.<br><br>Open one to see whether that spot has <b>changed since</b>, write back to the client, set its status or assign it. Clients see the answer on their <b>Change requests</b> page.',
+    where: [
+      '<b>Walkthrough:</b> open a website\'s profile → <b>👁 View as client</b> → <b>Send a ticket</b> → <b>Website change</b>, and try the tools. Nothing is sent while previewing.',
+      'Client tickets are under <b>Tickets</b> in the top menu. The red number is how many nobody has picked up yet.',
+    ],
+    link: '#/requests', linkText: 'Open Tickets',
+  },
+  {
+    id: '2026-10-09-requests-admin', date: '2026-10-09', audience: 'admin', tag: 'Admin',
+    title: 'Set how many tickets a client can send each day',
+    what: 'Each client can send 10 tickets a day to start. Change the number for everyone or for one client, choose who on the team is told when one arrives, and decide whether clients are emailed when their request is answered.',
+    where: ['<b>Tickets → ⚙ Settings</b>. <b>Test page pictures</b> on the same screen checks that pictures of pages work.'],
+    link: '#/requests', linkText: 'Open Tickets',
+  },
+  {
     id: '2026-10-08-trends', date: '2026-10-08', audience: 'all', tag: 'Live DR Sites',
     title: 'Trends: launches, unpublished websites and comebacks over time, and a daily check of every domain',
     what: '<b>📈 Trends</b> is a new tab on Live DR Sites. See how many websites <b>launched</b>, were <b>unpublished</b>, <b>came back</b>, or were <b>re-published</b>, by week, month or year, over any date range. There is also how many websites are live over time, how long a website takes to launch, how many were audited before launch, and the health of every live domain. Click a period on a chart to see exactly which websites.<br><br><b>Domains are now checked every day</b>, and each check also reads the security certificate, the domain registration date and the speed. Expiring ones show a ⚠ on the list.',
