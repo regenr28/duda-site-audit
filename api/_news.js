@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-search', date: '2026-10-10', audience: 'all', tag: 'Everyone',
+    title: 'Search everything, and ask questions',
+    what: '<b>🔍 Search</b> at the top right (or press <b>/</b>) finds websites, people, pages, actions and filters as you type, and answers questions like <i>what is a false alarm?</i> or <i>what is the process after dev?</i> from Help.',
+    where: ['<b>Walkthrough:</b> press <b>/</b> and type <i>domains expiring</i>, then try <i>what is a false alarm?</i>'],
+    link: '#/help/search', linkText: 'How search works',
+  },
+  {
     id: '2026-10-10-settings', date: '2026-10-10', audience: 'all', tag: 'Team',
     title: 'The ⚙ gear: General settings, Team members and your security log',
     what: '<b>Members</b> at the top right is now a <b>⚙ gear</b> that opens <b>General settings</b>: Team members, Roles, your notifications, ticket settings, domain monitoring, integrations and the <b>🛡 Security log</b>. Your security log lists every sign-in and sign-out, wrong passwords and account changes, with the device. Only you (and the Super Admin) can see it. Everyone now uses their <b>real full name</b>.',

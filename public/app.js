@@ -412,6 +412,7 @@
     }
     $('#btnMenu').onclick = toggleMenu;
     $('#topRight').innerHTML = `
+      <button class="btn ghost sx-btn" id="btnSearch" type="button" title="Search (/ or Ctrl+K)" aria-label="Search"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sx-btn-t">Search</span><kbd>/</kbd></button>
       <div class="presence" id="presence" title="Who's online"></div>
       <button class="btn ghost ai-chip" id="btnAi" type="button" hidden></button>
       <button class="btn ghost bell" id="btnBell" title="Notifications" aria-label="Notifications">
@@ -424,6 +425,7 @@
     if ($('#btnAdd')) $('#btnAdd').onclick = openAdd;
     if ($('#btnProj')) $('#btnProj').onclick = openNewProject;
     $('#btnBell').onclick = toggleNotifs;
+    $('#btnSearch').onclick = () => openSearch();
     $('#btnMe').onclick = openMe;
     $('#btnAi').onclick = () => { location.hash = '#/ai'; }; renderAiChip();
     $('#presence').onclick = togglePresence;
@@ -3731,6 +3733,225 @@
       };
     }
   }
+
+  // =====================================================================
+  // 🔍 SEARCH (top bar, or press "/" or Ctrl/⌘+K): websites, people, pages, filters and answers.
+  //
+  // Answers come from the app's own Help pages and What's New notes, split into short passages, so
+  // anything added to Help is searchable the moment it is deployed: there is no second list to keep
+  // up to date. Pages and filters are SEARCH_ITEMS below; each names the Help page that explains it,
+  // and scripts/check-search.mjs fails when one points at a page that does not exist.
+  // Everything runs in the browser on words and synonyms; nothing is sent anywhere else.
+  // =====================================================================
+  const SEARCH_ITEMS = [
+    // pages
+    { route: 'sites', icon: '📋', label: 'Audits', words: 'audits websites list scan home', href: '#/', help: 'audits' },
+    { route: 'projects', icon: '🏗', label: 'Projects', words: 'projects build phases dev qa cleanup client handover', href: '#/projects', perm: 'project.view', help: 'projects' },
+    { route: 'live', icon: '🌐', label: 'Live DR Sites', words: 'live published websites duda list domains', href: '#/live', perm: 'live.view', help: 'live' },
+    { route: 'live', icon: '📈', label: 'Trends', words: 'trends launched unpublished came back republished days to launch growth chart', href: '#/live/trends', perm: 'live.view', help: 'live' },
+    { route: 'live', icon: '🌐', label: 'Domain monitoring', words: 'domain monitoring expiring expired redirected down unpublished certificate ssl', href: '#/live/trends', perm: 'live.view', help: 'live' },
+    { route: 'analysis', icon: '📊', label: 'Lead analysis', words: 'lead analysis enquiries forms quiet websites submissions', href: '#/analysis', perm: 'leads.view', help: 'analysis' },
+    { route: 'activity', icon: '🕑', label: 'Activity', words: 'activity log history who did what', href: '#/activity', perm: 'activity.view', help: 'admin-tools' },
+    { route: 'requests', icon: '🎫', label: 'Tickets', words: 'tickets client requests change requests questions', href: '#/requests', perm: 'ticket.view', help: 'requests' },
+    { route: 'comments', icon: '💬', label: 'Duda comments', words: 'duda comments client feedback editor', href: '#/comments', help: 'comments-duda' },
+    { route: 'suggestions', icon: '💡', label: 'Suggestions', words: 'suggestions ideas feature requests', href: '#/suggestions', help: 'suggest' },
+    { route: 'suggestions', icon: '🚩', label: 'False alarms', words: 'false alarm alarms reports wrong audit item', href: '#/suggestions/false-alarms', help: 'suggest' },
+    { route: 'removed', icon: '🗑', label: 'Removed audits', words: 'removed deleted audits restore', href: '#/removed', help: 'removed' },
+    { route: 'ai', icon: '🤖', label: 'AI checks', words: 'ai checks pending text', href: '#/ai', help: 'ai' },
+    { route: 'help', icon: '❓', label: 'Help', words: 'help guide how to manual', href: '#/help', help: 'start' },
+    { route: 'about', icon: 'ℹ️', label: 'About this app', words: 'about guide what this app does', href: '#/about', help: 'start' },
+    { route: 'settings', icon: '⚙', label: 'General settings', words: 'settings general gear preferences', href: '#/settings', help: 'team' },
+    { route: 'settings', icon: '👥', label: 'Team members', words: 'team members people staff users accounts online', href: '#/settings/team', help: 'team' },
+    { route: 'settings', icon: '🧩', label: 'Roles', words: 'roles permissions access what people can do', href: '#/settings/roles', perm: 'members.manage', help: 'roles' },
+    { route: 'settings', icon: '🎫', label: 'Ticket settings', words: 'ticket settings daily limit tickets per day client email', href: '#/settings/tickets', perm: 'ticket.manage', help: 'requests' },
+    { route: 'settings', icon: '🔌', label: 'Integrations', words: 'integrations slack email google connected', href: '#/settings/integrations', perm: 'members.manage', help: 'admin-members' },
+    { route: 'settings', icon: '🛡', label: 'My security log', words: 'security log sign in sign out login logout password history', href: '#/settings/security', help: 'account' },
+    { route: 'health', icon: '⚑', label: 'System health', words: 'system health storage allowance database', href: '#/health', owner: true, help: 'health' },
+    // actions
+    { icon: '＋', label: 'Add audit', words: 'add audit website scan new site', act: () => openAdd(), perm: 'site.add', help: 'add' },
+    { icon: '＋', label: 'Add project', words: 'add project new build', act: () => openNewProject(), perm: 'project.manage', help: 'projects' },
+    { icon: '＋', label: 'Add member', words: 'add member invite new person account user temporary password', act: () => { location.hash = '#/settings/team'; setTimeout(() => openAddMember(), 60); }, perm: 'members.manage', help: 'admin-members' },
+    { icon: '🔒', label: 'Change my password', words: 'change password reset my password', act: () => openChangePassword(), help: 'account' },
+    { icon: '🔔', label: 'My notifications', words: 'notifications bell slack pop up alerts settings', act: () => openMe(), help: 'notifications' },
+    { icon: '✨', label: "What's New", words: 'whats new updates changes news release', act: () => openNews(), help: 'whatsnew' },
+    { icon: '📊', label: 'Team stats', words: 'team stats statistics performance', act: () => openStats(), help: 'stats' },
+    // filters
+    { icon: '⏳', label: 'Domains expiring or expired', words: 'domains expiring expired renew renewal registration', filter: true, act: () => { trends.dm = 'exp'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
+    { icon: '⛔', label: 'Websites down', words: 'websites sites down not loading broken offline domain', filter: true, act: () => { trends.dm = 'down'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
+    { icon: '↪', label: 'Domains redirected or showing another site', words: 'redirected redirect another site not pointing hijacked dns', filter: true, act: () => { trends.dm = 'redir'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
+    { icon: '🚫', label: 'Custom-domain websites unpublished', words: 'unpublished switched off taken down', filter: true, act: () => { trends.dm = 'unp'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
+    { icon: 'ⓘ', label: 'Certificates ending (info only)', words: 'certificate ssl https ending expiring', filter: true, act: () => { trends.dm = 'cert'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
+    { icon: '🌐', label: 'Live websites not audited yet', words: 'not audited unaudited never audited', filter: true, act: () => { live.tab = 'published'; live.q = ''; live.dom = ''; live.audit = 'no'; live.page = 0; location.hash = '#/live'; }, perm: 'live.view', help: 'live' },
+    { icon: '⚠', label: 'Live websites with domain problems', words: 'domain problems broken domains', filter: true, act: () => { live.tab = 'published'; live.q = ''; live.dom = 'problem'; live.audit = ''; live.page = 0; location.hash = '#/live'; }, perm: 'live.view', help: 'live' },
+    { icon: '🟢', label: 'Who is online now', words: 'online now active who is working', filter: true, act: () => { memFilter.view = 'online'; location.hash = '#/settings/team'; }, help: 'team' },
+    { icon: '✏️', label: 'Members who need a full name', words: 'needs full name nickname one word name', filter: true, act: () => { memFilter.view = 'name'; location.hash = '#/settings/team'; }, perm: 'members.manage', help: 'admin-members' },
+  ];
+  const SX_STOP = new Set('a an the is are was were be been to of in on at for and or but with by from as it its this that these those what whats which who whom how why where when can could do does did i me my we our you your they them their there here should would will please tell explain mean means meaning about after before then than into out up down if so not no yes any some get got have has had someone somebody something thing things stuff way ways go going want need'.split(' '));
+  // Words people use → words the app uses. Both directions are not needed: the passage side is plain text.
+  const SX_SYN = {
+    process: ['phase', 'phases', 'steps', 'stage', 'stages', 'workflow', '→'], step: ['phase', 'stage'], steps: ['phase', 'phases', 'stage'],
+    dev: ['dev', 'design', 'developer', 'build'], development: ['dev', 'build'], qa: ['qa', 'check', 'approval'],
+    ticket: ['request', 'tickets'], tickets: ['requests', 'ticket'], request: ['ticket'], change: ['request', 'changes'],
+    fa: ['false', 'alarm'], falsealarm: ['false', 'alarm'], alarm: ['false', 'alarms'], wrong: ['false', 'alarm'],
+    ssl: ['certificate', 'certificates'], https: ['certificate'], cert: ['certificate'],
+    domain: ['domains', 'dns'], expire: ['expires', 'expiring', 'expired', 'renew', 'registration'], expiry: ['expires', 'registration', 'renew'], renew: ['renewal', 'registration', 'expires'],
+    down: ['down', 'loading', 'dns', 'error', 'working'], redirect: ['redirects', 'redirected', 'another'],
+    invite: ['add', 'member', 'temporary'], password: ['password', 'sign'], login: ['sign', 'signed', 'signin'], logout: ['sign', 'signout'], log: ['log', 'logged'],
+    member: ['members', 'team'], members: ['team', 'member'], people: ['team', 'members'], role: ['roles', 'permission', 'access'], permission: ['role', 'access'],
+    client: ['clients', 'customer'], customer: ['client'], form: ['forms', 'enquiries', 'submissions', 'leads'], lead: ['leads', 'enquiries', 'submissions'], leads: ['enquiries', 'submissions'],
+    analytics: ['visits', 'visitors', 'traffic', 'google'], traffic: ['visits', 'visitors', 'analytics'], visitors: ['visits', 'analytics'],
+    scan: ['scanning', 'rescan', 'audit'], audit: ['audits', 'scan'], publish: ['published', 'publish', 'live'], launch: ['launched', 'live', 'first'],
+    picture: ['thumbnail', 'screenshot', 'photo'], thumbnail: ['picture'], screenshot: ['picture', 'photo'],
+    notification: ['notifications', 'alert', 'bell'], alert: ['alerts', 'notified', 'told'], slack: ['slack'], delete: ['remove', 'removed'], remove: ['delete', 'removed'],
+  };
+  const sx = { help: null, news: null, chunks: null, loading: false, q: '', sel: 0, items: [] };
+  const sxNorm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
+  const sxWords = (s) => sxNorm(s).replace(/false[\s-]+alarm/g, 'falsealarm false alarm').split(/[^a-z0-9→]+/).filter(Boolean);
+  const stem = (w) => w.replace(/(ings?|ed|es|s)$/, '') || w;
+  function sxTerms(q) {
+    const raw = sxWords(q);
+    const core = raw.filter((w) => !SX_STOP.has(w) && (w.length > 1 || /\d/.test(w)));
+    return { raw, core: core.length ? core : raw.filter((w) => w.length > 2) };
+  }
+  const plain = (html) => String(html || '').replace(/<\/(p|li|h3|h4|tr|ol|ul|div)>/g, '\n').replace(/<\/(td|th)>/g, ' — ').replace(/<br\s*\/?>/g, '\n').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+  /** Help pages → short passages, each remembering its page and the heading above it. */
+  function sxBuild() {
+    const out = [];
+    (sx.help || []).forEach((s) => {
+      let heading = '';
+      String(s.html || '').split(/(?=<h[34][ >])|(?=<li[ >])|(?=<p[ >])|(?=<tr[ >])/).forEach((part) => {
+        const hm = part.match(/^<h[34][^>]*>([\s\S]*?)<\/h[34]>/); if (hm) heading = plain(hm[1]).trim();
+        const text = plain(part.replace(/^<h[34][^>]*>[\s\S]*?<\/h[34]>/, '')).replace(/\s+/g, ' ').trim().replace(/\s*—$/, '');
+        if (text.length < 12) return;
+        out.push({ id: s.id, title: s.title, group: s.group, heading, text: text.slice(0, 700), words: new Set(sxWords(s.title + ' ' + heading + ' ' + text).map(stem)), bodyWords: new Set(sxWords(text).map(stem)), titleWords: new Set(sxWords(s.title + ' ' + heading).map(stem)) });
+      });
+    });
+    (sx.news || []).forEach((n) => {
+      const text = plain(n.what).replace(/\s+/g, ' ').trim();
+      out.push({ id: '', news: n.id, link: n.link, title: "What's New · " + plain(n.title), group: 'What\'s New', heading: '', text: text.slice(0, 700), words: new Set(sxWords(n.title + ' ' + text).map(stem)), bodyWords: new Set(sxWords(text).map(stem)), titleWords: new Set(sxWords(n.title).map(stem)) });
+    });
+    sx.chunks = out;
+  }
+  async function sxLoad() {
+    if (sx.help || sx.loading) return;
+    sx.loading = true;
+    try { const r = await api('/api/ai?op=help'); sx.help = r.sections || []; } catch (e) { sx.help = []; }
+    sx.news = (news && news.items) || [];
+    sx.loading = false; sxBuild();
+    if ($('#sxInput')) sxRun();
+  }
+  function sxAnswers(q) {
+    const { core } = sxTerms(q);
+    if (!core.length || !sx.chunks) return [];
+    const scored = sx.chunks.map((c) => {
+      let s = 0, hit = 0;
+      core.forEach((w) => {
+        const ws = stem(w);
+        // A word in the passage itself counts more than one only in its page title.
+        const inBody = c.bodyWords.has(ws);
+        if (c.words.has(ws)) { hit++; s += inBody ? 3 : 1; }
+        else if ((SX_SYN[w] || SX_SYN[ws] || []).some((y) => c.words.has(stem(y)))) { hit += 0.6; s += 1.2; }
+        else if (w.length >= 4 && [...c.words].some((x) => x.startsWith(ws))) { hit += 0.5; s += 0.8; }
+      });
+      // The words as a phrase ("false alarm"), and best of all a passage that starts with it: that is
+      // where Help defines a term.
+      const phrase = sxNorm(q).replace(/[?!.,"“”]/g, ' ').replace(/^\s*(what|how|why|where|when|who)\s+(is|are|do|does|did|to|can|should)\s+(the\s+|a\s+|an\s+|i\s+|we\s+)?/, '').replace(/\s+/g, ' ').trim();
+      const low = sxNorm(c.text);
+      if (phrase.length > 3 && phrase.includes(' ') && low.includes(phrase)) s += 5;
+      if (phrase.length > 3 && low.startsWith(phrase)) s += 4;
+      if (phrase.length > 3 && (low.startsWith(phrase + ' —') || low.startsWith(phrase + ':') || new RegExp('^' + phrase.replace(/[^a-z0-9 ]/g, '') + ' (means|is|are) ').test(low))) s += 6;   // a definition
+      return { c, s: (s / Math.sqrt(1 + c.text.length / 800)) * (c.news ? 0.7 : 1), hit };
+    }).filter((x) => x.hit >= Math.max(1, core.length * 0.5)).sort((a, b) => b.s - a.s);
+    // One passage per Help page, best first.
+    const seen = new Set(); const out = [];
+    scored.forEach((x) => { const k = x.c.id || x.c.news; if (!seen.has(k) && out.length < 4) { seen.add(k); out.push(x.c); } });
+    return out;
+  }
+  function sxMark(text, q) {
+    const ws = sxTerms(q).core.flatMap((w) => [w, ...(SX_SYN[w] || [])]).filter((w) => w.length > 1 && w !== '→').map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    let t = esc(text);
+    if (ws.length) t = t.replace(new RegExp(`\\b(${ws.join('|')})\\w*`, 'gi'), '<mark>$&</mark>');
+    return t;
+  }
+  function sxSnippet(c, q) {
+    const ws = sxTerms(q).core; const low = sxNorm(c.text);
+    let i = -1; ws.some((w) => { i = low.indexOf(w); return i >= 0; });
+    const start = Math.max(0, i - 90); const t = c.text.slice(start, start + 260);
+    return (start > 0 ? '…' : '') + t + (start + 260 < c.text.length ? '…' : '');
+  }
+  function sxRun() {
+    const input = $('#sxInput'); if (!input) return;
+    const q = input.value.trim(); sx.q = q;
+    const groups = [];
+    const allowed = (it) => (!it.perm || can(it.perm)) && (!it.owner || state.superAdmin);
+    const terms = sxTerms(q).core;
+    const textScore = (txt) => { const t = sxNorm(txt); if (!terms.length) return 0; let s = 0, hit = 0; for (const w of terms) { const ww = w.replace(/[^a-z0-9]/g, ''); if (ww && new RegExp(`\\b${ww}`).test(t)) { s += 2; hit++; } else if (t.includes(w)) { s += 1; hit++; } else if ((SX_SYN[w] || []).some((y) => new RegExp(`\\b${y.replace(/[^a-z0-9]/g, '')}`).test(t))) { s += 0.7; hit++; } } return hit >= Math.ceil(terms.length / 2) ? s : 0; };
+    if (!q) {
+      groups.push(['Jump to', SEARCH_ITEMS.filter((it) => allowed(it) && !it.filter && it.route).slice(0, 8).map((it) => ({ icon: it.icon, label: it.label, go: it })) ]);
+      groups.push(['Try asking', ['What is a false alarm?', 'What is the process after dev?', 'Domains expiring', 'How do I add a member?'].map((t) => ({ icon: '💬', label: t, fill: t }))]);
+    } else {
+      const ql = sxNorm(q);
+      const question = /^(what|how|why|where|when|who|can|do|does|is|are)\b/.test(ql) || q.endsWith('?');
+      // websites: audits, then live websites not audited
+      const sites = [];
+      state.sites.forEach((s) => { const hay = `${s.businessName || ''} ${s.siteId || ''} ${(s.truth && s.truth.domain) || s.host || ''}`; const sc = sxNorm(hay).includes(ql) ? 10 : textScore(hay); if (sc) sites.push({ sc, icon: '🌐', label: s.businessName || s.siteId, sub: `${s.siteId}${s.truth && s.truth.domain ? ' · ' + s.truth.domain : ''} · audit`, href: `#/site/${encodeURIComponent(s.id)}/profile` }); });
+      if (can('live.view') && liveDR.data) {
+        const have = new Set(state.sites.map((s) => String(s.siteId || '').toLowerCase()));
+        liveDR.data.sites.forEach((x) => { if (have.has(String(x.id).toLowerCase())) return; const hay = `${x.name || ''} ${x.id} ${x.domain || ''} ${(x.labels || []).join(' ')}`; const sc = sxNorm(hay).includes(ql) ? 9 : textScore(hay); if (sc) sites.push({ sc, icon: '🌐', label: x.name || x.domain || x.id, sub: `${x.id}${x.domain ? ' · ' + x.domain : ''} · live, not audited`, href: `#/dr/${encodeURIComponent(x.id)}` }); });
+      }
+      sites.sort((a, b) => b.sc - a.sc);
+      const people = state.users.filter((u) => u.status !== 'pending').map((u) => ({ u, sc: sxNorm(u.name + ' ' + u.email).includes(ql) ? 10 : textScore(u.name + ' ' + u.email) })).filter((x) => x.sc).sort((a, b) => b.sc - a.sc)
+        .slice(0, 4).map(({ u }) => ({ icon: '👤', label: u.name, sub: u.email + (u.status === 'disabled' ? ' · switched off' : ''), who: u.email }));
+      const items = SEARCH_ITEMS.filter(allowed).map((it) => ({ it, sc: textScore(it.label + ' ' + it.words) + (sxNorm(it.label).startsWith(ql) ? 5 : 0) })).filter((x) => x.sc).sort((a, b) => b.sc - a.sc);
+      const pages = items.filter((x) => !x.it.filter).slice(0, 5).map(({ it }) => ({ icon: it.icon, label: it.label, sub: it.act ? 'Action' : 'Page', go: it }));
+      const filters = items.filter((x) => x.it.filter).slice(0, 4).map(({ it }) => ({ icon: it.icon, label: it.label, sub: 'Filter', go: it }));
+      const answers = sxAnswers(q).map((c) => ({ icon: c.news ? '✨' : '📖', label: c.heading ? `${c.title} › ${c.heading}` : c.title, snippet: sxMark(sxSnippet(c, q), q), href: c.news ? (c.link || '') : `#/help/${encodeURIComponent(c.id)}`, news: !!c.news }));
+      const g = [['Websites', sites.slice(0, 6)], ['People', people], ['Pages and actions', pages], ['Filters', filters], ['Answers from Help', answers]];
+      if (question) g.unshift(g.pop());
+      g.forEach((x) => { if (x[1].length) groups.push(x); });
+      if (!groups.length) groups.push(['No match', [{ icon: '❓', label: sx.chunks ? 'Nothing matched those words. Open Help to browse every topic' : 'Loading Help…', href: '#/help' }]]);
+    }
+    sx.items = groups.flatMap((g) => g[1]);
+    sx.sel = Math.min(sx.sel, Math.max(0, sx.items.length - 1));
+    let k = 0;
+    $('#sxList').innerHTML = groups.map(([title, rows]) => `<div class="sx-g"><div class="sx-gh">${esc(title)}</div>${rows.map((r) => { const i = k++; return `<button type="button" class="sx-row ${i === sx.sel ? 'on' : ''}" data-sx="${i}" role="option" aria-selected="${i === sx.sel}"><span class="sx-ic">${r.icon}</span><span class="sx-t"><span class="sx-l">${esc(r.label)}</span>${r.sub ? `<span class="sx-s">${esc(r.sub)}</span>` : ''}${r.snippet ? `<span class="sx-snip">${r.snippet}</span>` : ''}</span></button>`; }).join('')}</div>`).join('');
+    $$('[data-sx]', $('#sxList')).forEach((b) => { b.onclick = () => sxGo(Number(b.dataset.sx)); b.onmousemove = () => { if (sx.sel !== Number(b.dataset.sx)) { sx.sel = Number(b.dataset.sx); $$('.sx-row', $('#sxList')).forEach((x) => x.classList.toggle('on', Number(x.dataset.sx) === sx.sel)); } }; });
+  }
+  function sxGo(i) {
+    const r = sx.items[i]; if (!r) return;
+    if (r.fill) { $('#sxInput').value = r.fill; sx.sel = 0; sxRun(); return; }
+    closeSearch();
+    if (r.who) return openMemberActivity(r.who);
+    if (r.news && !r.href) return openNews();
+    if (r.go) { if (r.go.act) return r.go.act(); location.hash = r.go.href; return; }
+    if (r.href) location.hash = r.href;
+  }
+  function openSearch(prefill) {
+    if ($('#sx')) { $('#sxInput').focus(); return; }
+    const d = document.createElement('div'); d.id = 'sx'; d.className = 'sx-back';
+    d.innerHTML = `<div class="sx" role="dialog" aria-label="Search"><div class="sx-bar"><span aria-hidden="true">🔍</span><input id="sxInput" type="search" placeholder="Search websites, people, pages… or ask “what is a false alarm?”" autocomplete="off" aria-controls="sxList"><button type="button" class="btn ghost sm" id="sxClose" aria-label="Close search">Esc</button></div><div class="sx-list" id="sxList" role="listbox"></div>
+      <div class="sx-foot small faint">↑ ↓ to move · Enter to open · answers come from Help and What's New, so they stay up to date</div></div>`;
+    document.body.appendChild(d);
+    const input = $('#sxInput'); input.value = prefill || sx.q || '';
+    d.addEventListener('mousedown', (e) => { if (e.target === d) closeSearch(); });
+    $('#sxClose').onclick = closeSearch;
+    input.oninput = () => { sx.sel = 0; sxRun(); };
+    input.onkeydown = (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); sx.sel = Math.min(sx.items.length - 1, sx.sel + 1); sxRun(); const on = $('.sx-row.on'); if (on) on.scrollIntoView({ block: 'nearest' }); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); sx.sel = Math.max(0, sx.sel - 1); sxRun(); const on = $('.sx-row.on'); if (on) on.scrollIntoView({ block: 'nearest' }); }
+      else if (e.key === 'Enter') { e.preventDefault(); sxGo(sx.sel); }
+      else if (e.key === 'Escape') { e.preventDefault(); closeSearch(); }
+    };
+    sxRun(); input.focus(); input.select();
+    sxLoad();
+    if (can('live.view') && !liveDR.data && !liveDR.loading) loadLive(false).then(() => { if ($('#sxInput')) sxRun(); }).catch(() => {});
+  }
+  function closeSearch() { const d = $('#sx'); if (d) d.remove(); }
+  document.addEventListener('keydown', (e) => {
+    if (!state.me || document.body.classList.contains('auth-mode') || document.body.classList.contains('client-mode')) return;
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes((document.activeElement || {}).tagName) || (document.activeElement && document.activeElement.isContentEditable);
+    if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !typing && !$('.modal-back, .modal'))) { e.preventDefault(); openSearch(); }
+  });
 
   // =====================================================================
   // ⚙ GENERAL SETTINGS: everything that applies to the whole app, in one place
@@ -8906,6 +9127,8 @@
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the top menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
         <li class="panel"><h3>Take client tickets</h3><p>From their phone or computer, clients <b>Send a ticket</b>: a general question, or a website change marked right on a picture of their own page (highlight, tap, box, circle or arrow). Each one arrives on <b>Tickets</b>, and for changes the app says whether that spot has changed since.</p></li>
+        <li class="panel"><h3>Watch every live website</h3><p>Every website has one <b>Profile</b>: its picture, domain health, audit, form submissions, comments, tickets and <b>📊 Analytics</b> (visits, visitors and clicks from Duda, plus Google Analytics or Search Console when added). Every live domain is checked daily, and admins are alerted the moment one goes down, shows another site or expires.</p></li>
+        <li class="panel"><h3>Find anything</h3><p>Press <b>/</b> to search websites, people, pages and filters, or ask a question like <i>what is a false alarm?</i>. The <b>⚙ gear</b> holds the app's settings: the team, roles, notifications and your security log.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>
         <li class="panel"><h3>Details change — the audit keeps up</h3><p>Every scan records what Business Info said and what changed since last time. A website still showing an old phone number or email reads <b>"Still using the old …"</b> with the date it changed, at an <b>Outdated</b> severity of its own rather than looking like a detail nobody recognises. Approvals retire themselves once Duda catches up. The dates are under <b>Reference data → Business Info history</b>.</p></li>
         <li class="panel"><h3>Tell it when it's wrong</h3><p>Marking an item <b>False alarm</b> is a bug report against the check that raised it. Your reason lands on the item as a comment, you can follow the report under <b>My false alarms</b>, and you're told — with their note — when an admin decides. If they agree the check was wrong, every website scanned with the old version flags itself for a rescan.</p></li>

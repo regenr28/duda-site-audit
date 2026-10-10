@@ -54,6 +54,18 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'search', group: 'Getting started', title: 'Searching the app', audience: 'all',
+    html: `<p><b>🔍 Search</b> at the top right (or press <b>/</b>, or <b>Ctrl+K</b> / <b>⌘K</b>) finds anything as you type:</p>
+<ul>
+<li><b>Websites</b>: by business name, site ID, domain or label. Enter opens its profile. Websites on Live DR Sites that are not audited yet are found too.</li>
+<li><b>People</b>: by name or email; opens what they have been working on.</li>
+<li><b>Pages and actions</b>: "trends", "add member", "change my password", "ticket settings".</li>
+<li><b>Filters</b>: "domains expiring", "websites down", "not audited", "who is online".</li>
+<li><b>Answers</b>: ask a question such as <i>what is a false alarm?</i> or <i>what is the process after dev?</i> and the best passages from Help and What's New are shown, with the matching words highlighted. Pick one to open that Help page.</li>
+</ul>
+<p>Use ↑ ↓ and Enter, or click. You only see the pages and actions your role allows. Answers come straight from Help, so they stay up to date with every new feature. If nothing matches, open Help to browse every topic or ask the Help assistant.</p>`,
+  },
+  {
     id: 'admin-members', group: 'Getting started', title: 'Managing members (admins)', audience: 'admin',
     html: `<ul>
 <li><b>＋ Add member</b> (⚙ → Team members): enter their <b>real full name</b> (first and last; one-word names and nicknames are refused), their work email and their <b>role</b>, then press <b>Check if Slack available</b>, which says whether a Slack account uses that email, so Slack messages will reach them. Create stays off until you have checked. Tick <b>Adjust what they can do after creating</b> to set exceptions to the role straight away. You get a <b>temporary password</b> to send them privately (<b>Copy all</b> copies the address, email and password); they must choose their own the first time they sign in, and it expires after 7 days if unused. Their row shows <b>Temporary password</b> until they do.</li>
