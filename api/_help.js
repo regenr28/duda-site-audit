@@ -370,6 +370,36 @@ export const HELP_SECTIONS = [
 <p>It is worth a glance after any change that touches a website's page \u2014 it takes five seconds and it is the only way to be sure.</p>`,
   },
   {
+    id: 'analytics', group: 'Collaboration', title: 'Website analytics', audience: 'all',
+    html: `<p>Every website's <b>Profile</b> has an <b>📊 Analytics</b> section. Pick <b>30 days</b>, <b>90 days</b> or <b>12 months</b>.</p>
+<h3>Duda (always on)</h3>
+<ul>
+<li><b>Visits</b>, <b>Unique visitors</b> and <b>Page views</b>, each with the change against the period before (▲ / ▼).</li>
+<li>What visitors did: <b>Form submits</b>, <b>Click to call</b>, <b>Click to email</b>, <b>Click to map</b>. (The <b>Form submissions</b> card above counts the enquiries this app has stored; Duda's own count can differ slightly.)</li>
+<li><b>Daily visits</b> (weekly for 12 months), <b>Visits, last 12 months</b>, <b>Devices</b> and <b>Countries</b>. Hover a chart for the numbers.</li>
+<li>No setup: every website has it. Numbers are kept for 6 hours; <b>Refresh now</b> fetches them again.</li>
+</ul>
+<h3>Custom analytics (added per website)</h3>
+<p><b>＋ Add custom analytics</b> (needs <b>Connect custom analytics</b> in your role) adds more sources to one website. Each gets its own tab:</p>
+<ul>
+<li><b>Google Analytics 4</b>: sessions, users, page views, engagement rate, daily sessions, top pages, and where visitors came from. Enter the GA4 <b>property ID</b> (numbers only, from Admin → Property settings).</li>
+<li><b>Google Search Console</b>: search clicks, impressions, click rate, average position and the top search queries. Enter the property as Search Console shows it (<code>sc-domain:example.com</code> or the full https:// address). It runs about three days behind.</li>
+</ul>
+<p>Before connecting, give the Google account shown on that screen <b>Viewer</b> access in Google Analytics (Admin → Property access management) or Search Console (Settings → Users and permissions). The app tries it before saving, so a wrong ID or missing access is said straight away. More providers can be added to the same list later.</p>
+<p>Clients never see analytics. <b>See website analytics</b> and <b>Connect custom analytics</b> are separate switches on the Roles screen.</p>`,
+  },
+  {
+    // Owner only: the one-time Google connection.
+    id: 'analytics-setup', group: 'More', title: 'Connecting Google for analytics (one time)', audience: 'owner',
+    html: `<p>Google Analytics and Search Console are read with <b>one Google service account for the whole app</b>. Set it up once:</p>
+<ol>
+<li>In Google Cloud, create (or pick) a project, enable the <b>Google Analytics Data API</b> and the <b>Google Search Console API</b>.</li>
+<li>Create a <b>service account</b>, add a key (JSON) and download it.</li>
+<li>In Vercel → the project → Settings → Environment Variables, add <code>GOOGLE_SERVICE_ACCOUNT</code> with the whole JSON (or the JSON base64-encoded), then redeploy.</li>
+<li>Open any website's Profile → Analytics → <b>＋ Add custom analytics</b>: it now shows the service account's email. Give that email Viewer access in each GA4 property / Search Console site you connect.</li>
+</ol>`,
+  },
+  {
     id: 'notifications', group: 'Collaboration', title: 'Notifications and "someone is on this website"', audience: 'all',
     html: `<ul>
 <li>You are told when <b>your own</b> scan finishes too, so you can start one and go and do something else — except on a <b>Rescan all shown</b>, which would ring dozens of times.</li>

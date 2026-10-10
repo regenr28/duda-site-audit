@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-analytics', date: '2026-10-10', audience: 'all', tag: 'Websites',
+    title: 'Analytics on every website: Duda numbers built in, Google Analytics and Search Console when you add them',
+    what: 'Each website\'s <b>Profile</b> now has <b>📊 Analytics</b>: visits, unique visitors, page views, form submits and click-to-call / email / map from Duda, with the change against the period before, daily and 12-month charts, devices and countries. Admins can <b>＋ Add custom analytics</b> to one website: <b>Google Analytics 4</b> (sessions, top pages, where visitors came from) and <b>Search Console</b> (search clicks and top queries) each get their own tab.',
+    where: ['<b>Walkthrough:</b> open any website\'s <b>Profile</b> and scroll to <b>Analytics</b>. Try <b>12 months</b>.'],
+    link: '#/help/analytics', linkText: 'How analytics works',
+  },
+  {
     id: '2026-10-10-profile', date: '2026-10-10', audience: 'all', tag: 'Websites',
     title: 'One profile for every website, with its picture and domain health',
     what: '<b>Profile</b> on Live DR Sites and the <b>Profile</b> tab of an audit are now the same page. It shows a picture of the home page, the domain and site ID, launch and last publish dates, labels, client contact, and cards for <b>Domain health</b>, <b>Audit</b>, <b>Form submissions</b>, <b>Comments</b> and <b>Client tickets</b>. A website not audited yet gets the same layout, with an <b>Audit this website</b> button.',

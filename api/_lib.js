@@ -696,6 +696,10 @@ export const PERMISSIONS = [
     { key: 'live.domains', label: 'Check domains', desc: 'Open every live domain to see it still shows the right website.' },
     { key: 'live.audit', label: 'See the audit column and start audits from there', desc: 'The Audit column and the "Audit this website" button. Usually QA rather than everybody.' },
   ] },
+  { group: 'Website analytics', items: [
+    { key: 'analytics.view', label: 'See website analytics', desc: 'Visits, visitors, page views and actions on each website\'s profile, from Duda and any connected Google account.' },
+    { key: 'analytics.manage', label: 'Connect custom analytics', desc: 'Add or remove Google Analytics or Search Console on a website.' },
+  ] },
   { group: 'Audit items', items: [
     { key: 'item.status', label: 'Change audit item statuses', desc: 'Done, On hold, For clarification, False alarm.' },
     { key: 'item.assign', label: 'Assign audit items to people', desc: '' },
@@ -746,7 +750,7 @@ export const BUILTIN_ROLES = [
     desc: 'Everything. At least one account must always have this.' },
   { id: 'member', name: 'Member', builtin: true,
     desc: 'The everyday role: audit websites, talk about them, report a false alarm.',
-    perms: ['site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'client.viewas', 'ticket.view', 'ticket.manage'] },
+    perms: ['site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'client.viewas', 'ticket.view', 'ticket.manage', 'analytics.view'] },
 ];
 /** The client role is not a team role and never appears on the Roles screen. */
 export const isTeamRole = (id) => id !== 'client';

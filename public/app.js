@@ -1652,6 +1652,123 @@
    */
   function renderProfileTab(body, s, extra) { renderSiteProfile(body, { s, siteId: s.siteId, cnt: (extra || {}).cnt, generalComments: (extra || {}).generalComments }); }
   const prof = { tickets: {}, thumbs: {} };
+  // ---------- Website analytics (on every profile) ----------
+  prof.an = {}; prof.anDays = 30; prof.anTab = 'duda';
+  const anKey = (id) => id + ':' + prof.anDays;
+  function anDelta(cur, prev) {
+    if (prev === null || prev === undefined || !Number.isFinite(prev)) return '';
+    if (!prev) return cur ? '<span class="an-d up">new</span>' : '';
+    const p = Math.round(((cur - prev) / prev) * 100);
+    return `<span class="an-d ${p > 0 ? 'up' : p < 0 ? 'down' : ''}">${p > 0 ? '▲' : p < 0 ? '▼' : '='} ${Math.abs(p)}%</span>`;
+  }
+  const anTile = (label, v, prev, fmt) => `<div class="an-tile"><div class="an-l">${label}</div><div class="an-v">${fmt ? fmt(v) : fmtN(v)}</div><div class="an-s">${anDelta(v, prev)}${prev !== null && prev !== undefined ? ' <span class="faint">vs previous period</span>' : ''}</div></div>`;
+  const anBars = (rows, color, fmtV) => {
+    if (!rows || !rows.length) return '<div class="small faint">Nothing recorded for this range.</div>';
+    const mx = Math.max(1, ...rows.map((r) => r.v));
+    return `<div class="hbars">${rows.map((r) => `<div class="hbar an-hbar"><span class="hbar-l" title="${esc(r.k)}">${esc(r.k)}</span><span class="hbar-track"><span class="hbar-fill" style="width:${Math.max(r.v ? 2 : 0, (r.v / mx) * 100)}%;background:${color}"></span></span><b class="hbar-v">${fmtV ? fmtV(r.v) : fmtN(r.v)}</b></div>`).join('')}</div>`;
+  };
+  const anChart = (id, title, keys) => `<section class="an-card an-wide"><h3>${title}</h3><div class="viz-legend">${keys.map((k) => `<span><i class="viz-key-line" style="background:${TSERIES[k].color}"></i>${TSERIES[k].label}</span>`).join('')}</div><div class="viz-wrap" id="${id}"><div class="viz-plot"></div></div></section>`;
+
+  function analyticsSection(siteId) {
+    if (!can('analytics.view') && !can('analytics.manage')) return '';
+    const D = prof.an[anKey(siteId)];
+    const chips = [[30, '30 days'], [90, '90 days'], [365, '12 months']].map(([d, l]) => `<button class="chipbtn ${prof.anDays === d ? 'active' : ''}" data-andays="${d}">${l}</button>`).join('');
+    const head = (tabs) => `<div class="an-head"><h2>📊 Analytics</h2><span class="chips">${chips}</span></div>${tabs}`;
+    if (!D || D.loading) return `<section class="pf-an" id="pfAn">${head('')}<div class="empty">Loading analytics…</div></section>`;
+    if (D.failed) return `<section class="pf-an" id="pfAn">${head('')}<div class="note bad">${esc(D.failed)}</div></section>`;
+    const prov = D.providers || {};
+    const tabs = [['duda', 'Duda']].concat(prov.ga4 ? [['ga4', 'Google Analytics']] : []).concat(prov.gsc ? [['gsc', 'Search Console']] : []);
+    if (!tabs.some((t) => t[0] === prof.anTab) && prof.anTab !== 'add') prof.anTab = 'duda';
+    const tabHtml = `<div class="an-tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" class="${prof.anTab === k ? 'on' : ''}" data-antab="${k}">${l}</button>`).join('')}${D.manage ? `<button role="tab" class="an-add ${prof.anTab === 'add' ? 'on' : ''}" data-antab="add">＋ Add custom analytics</button>` : ''}</div>`;
+    let inner = '';
+    if (prof.anTab === 'add') {
+      inner = `<div class="an-addbox">
+        <p class="small muted">Duda analytics is always on. Connect more sources to this website; each is shown as its own tab. More providers can be added here later.</p>
+        ${!D.google.ready ? '<div class="note">Google is not connected to the app yet. The app owner sets this up once for the whole app (Help → Connecting Google for analytics); after that, each website only needs its own ID here.</div>' : `<div class="small muted" style="margin-bottom:8px">First give <b class="mono">${esc(D.google.email)}</b> <b>Viewer</b> access in Google (GA4: Admin → Property access management; Search Console: Settings → Users and permissions).</div>`}
+        ${Object.entries(D.catalog || {}).map(([k, c]) => `<div class="an-prov">
+          <div><b>${esc(c.label)}</b>${prov[k] ? ` <span class="badge scan-complete">Connected</span> <span class="small faint">${esc(prov[k][c.field])}${prov[k].byName ? ' · by ' + esc(prov[k].byName) : ''}</span>` : ''}<div class="small faint">${esc(c.hint)}</div></div>
+          ${prov[k] ? `<button class="btn sm ghost" data-andisc="${k}">Remove</button>` : `<form class="an-conn" data-anconn="${k}"><input name="v" placeholder="${k === 'ga4' ? '312345678' : 'sc-domain:example.com'}" ${D.google.ready ? '' : 'disabled'} aria-label="${esc(c.label)} ID"><button class="btn sm" ${D.google.ready ? '' : 'disabled'}>Connect</button></form>`}
+        </div>`).join('')}
+      </div>`;
+    } else if (prof.anTab === 'ga4') {
+      const g = D.ga4;
+      inner = !g ? '<div class="small faint">Not connected.</div>' : g.error ? `<div class="note bad">${g.error === 'no-access' ? `Google no longer lets the app read this property. ${D.manage && D.google.email ? `Give <b class="mono">${esc(D.google.email)}</b> Viewer access again.` : 'Ask an admin to check its access.'}` : 'Google Analytics could not be read right now.'}</div>`
+        : `<div class="an-tiles">${anTile('Sessions', g.totals.sessions, g.prev && g.prev.sessions)}${anTile('Users', g.totals.users, g.prev && g.prev.users)}${anTile('Page views', g.totals.views, g.prev && g.prev.views)}${anTile('Engagement rate', g.totals.engagement, g.prev && g.prev.engagement, (v) => Math.round(v * 100) + '%')}</div>
+          <div class="an-grid">${anChart('anGa', 'Daily sessions', ['gs', 'gu'])}
+            <section class="an-card"><h3>Top pages</h3>${anBars(g.pages, 'var(--viz-1)')}</section>
+            <section class="an-card"><h3>Where visitors came from</h3>${anBars(g.channels, 'var(--viz-3)')}</section></div>`;
+    } else if (prof.anTab === 'gsc') {
+      const s = D.gsc;
+      inner = !s ? '<div class="small faint">Not connected.</div>' : s.error ? `<div class="note bad">${s.error === 'no-access' ? 'Google no longer lets the app read this Search Console site.' : 'Search Console could not be read right now.'}</div>`
+        : `<div class="an-tiles">${anTile('Search clicks', s.totals.clicks)}${anTile('Impressions', s.totals.impressions)}${anTile('Click rate', s.totals.ctr, null, (v) => (v * 100).toFixed(1) + '%')}${anTile('Average position', s.totals.position, null, (v) => v ? v.toFixed(1) : '—')}</div>
+          <div class="an-grid">${anChart('anSc', 'Search clicks per day', ['sc'])}
+            <section class="an-card an-wide"><h3>Top search queries</h3>${s.queries.length ? `<table class="grid an-q"><thead><tr><th>Query</th><th>Clicks</th><th>Impressions</th><th>Position</th></tr></thead><tbody>${s.queries.map((q) => `<tr><td>${esc(q.k)}</td><td>${fmtN(q.clicks)}</td><td>${fmtN(q.impressions)}</td><td>${q.position.toFixed(1)}</td></tr>`).join('')}</tbody></table>` : '<div class="small faint">No searches recorded for this range.</div>'}</section></div>
+          <div class="small faint">Search Console runs about three days behind; figures are up to ${esc(s.to || '')}.</div>`;
+    } else {
+      const d = D.duda || {};
+      inner = d.error ? `<div class="note bad">${esc(d.error)}${D.manage && d.detail ? `<div class="small faint mono" style="margin-top:4px">${esc(d.detail)}</div>` : ''}</div>`
+        : `<div class="an-tiles">${anTile('Visits', d.totals.visits, d.prev && d.prev.visits)}${anTile('Unique visitors', d.totals.visitors, d.prev && d.prev.visitors)}${anTile('Page views', d.totals.views, d.prev && d.prev.views)}
+            ${d.acts ? `${anTile('Form submits', d.acts.forms)}${anTile('Click to call', d.acts.calls)}${anTile('Click to email', d.acts.emails)}${anTile('Click to map', d.acts.maps)}` : ''}</div>
+          <div class="an-grid">${anChart('anDaily', prof.anDays > 90 ? 'Visits per week' : 'Daily visits', ['av', 'au'])}
+            <section class="an-card an-wide"><h3>Visits, last 12 months</h3><div class="viz-wrap" id="anMonths"><div class="viz-plot"></div></div></section>
+            <section class="an-card"><h3>Devices</h3>${anBars(d.devices, 'var(--viz-1)')}</section>
+            <section class="an-card"><h3>Countries</h3>${anBars(d.countries, 'var(--viz-3)')}</section></div>`;
+    }
+    const when = D.at ? `<div class="small faint an-foot">Updated ${esc(ago(new Date(D.at).toISOString()))} · refreshed every 6 hours <button class="linkbtn small" id="anFresh">Refresh now</button></div>` : '';
+    return `<section class="pf-an" id="pfAn">${head(tabHtml)}${inner}${prof.anTab === 'add' ? '' : when}</section>`;
+  }
+  /** Day (or week) buckets over the range, with each series summed into them. */
+  function anSeries(range, rows, keys, g) {
+    const from = Date.parse(range.from + 'T00:00:00'), to = Date.parse(range.to + 'T00:00:00');
+    const B = makeBuckets(from, to, g);
+    const idx = (ms) => { for (let i = B.length - 1; i >= 0; i--) if (ms >= B[i].s) return i; return -1; };
+    const vals = {}; keys.forEach(([k]) => { vals[k] = B.map(() => 0); });
+    (rows || []).forEach((r) => { const i = idx(Date.parse(r.d + 'T00:00:00')); if (i >= 0) keys.forEach(([k, f]) => { vals[k][i] += r[f] || 0; }); });
+    return { B, series: keys.map(([k]) => ({ key: k, values: vals[k] })) };
+  }
+  function drawAnalytics(siteId) {
+    const D = prof.an[anKey(siteId)]; if (!D || D.loading || D.failed) return;
+    const g = prof.anDays > 90 ? 'week' : 'day';
+    if (prof.anTab === 'duda' && D.duda && !D.duda.error) {
+      if ($('#anDaily')) { const S = anSeries(D.range, D.duda.daily, [['av', 'visits'], ['au', 'visitors']], g); drawLines($('#anDaily'), { B: S.B, g, series: S.series }); }
+      if ($('#anMonths')) {
+        const from = Date.parse(D.range.yFrom + 'T00:00:00'); const B = makeBuckets(from, Date.parse(D.range.to + 'T00:00:00'), 'month');
+        const by = {}; (D.duda.months || []).forEach((r) => { by[r.d] = (by[r.d] || 0) + r.visits; });
+        drawColumns($('#anMonths'), { B, g: 'month', series: [{ key: 'mv', values: B.map((b) => { const d = new Date(b.s); return by[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`] || 0; }) }] });
+      }
+    }
+    if (prof.anTab === 'ga4' && D.ga4 && !D.ga4.error && $('#anGa')) { const S = anSeries(D.range, D.ga4.daily, [['gs', 'sessions'], ['gu', 'users']], g); drawLines($('#anGa'), { B: S.B, g, series: S.series }); }
+    if (prof.anTab === 'gsc' && D.gsc && !D.gsc.error && $('#anSc')) {
+      const end = D.gsc.to || D.range.to; const start = new Date(Date.parse(end + 'T00:00:00') - (prof.anDays - 1) * DAY_MS).toISOString().slice(0, 10);
+      const S = anSeries({ from: start, to: end }, D.gsc.daily, [['sc', 'clicks']], g); drawLines($('#anSc'), { B: S.B, g, series: S.series });
+    }
+  }
+  function loadAnalytics(siteId, fresh, again) {
+    const k = anKey(siteId);
+    prof.an[k] = Object.assign({}, prof.an[k] || {}, { loading: true });
+    api(`/api/analytics?site=${encodeURIComponent(siteId)}&days=${prof.anDays}${fresh ? '&fresh=1' : ''}`)
+      .then((r) => { prof.an[k] = r; again(); })
+      .catch((e) => { prof.an[k] = { failed: e.message }; again(); });
+  }
+  function bindAnalytics(body, siteId, again) {
+    if (!$('#pfAn', body)) return;
+    if (!prof.an[anKey(siteId)]) loadAnalytics(siteId, false, again);
+    $$('[data-andays]', body).forEach((b) => (b.onclick = () => { prof.anDays = Number(b.dataset.andays); if (!prof.an[anKey(siteId)]) loadAnalytics(siteId, false, again); again(); }));
+    $$('[data-antab]', body).forEach((b) => (b.onclick = () => { prof.anTab = b.dataset.antab; again(); }));
+    if ($('#anFresh', body)) $('#anFresh', body).onclick = () => { loadAnalytics(siteId, true, again); again(); };
+    $$('[data-anconn]', body).forEach((f) => (f.onsubmit = async (e) => {
+      e.preventDefault(); const btn = f.querySelector('button'); btn.disabled = true; btn.textContent = 'Checking…';
+      try {
+        await post('/api/analytics', { op: 'connect', site: siteId, provider: f.dataset.anconn, value: f.v.value });
+        toast('Connected'); [30, 90, 365].forEach((d) => delete prof.an[siteId + ':' + d]); prof.anTab = f.dataset.anconn; loadAnalytics(siteId, false, again);
+      } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = 'Connect'; }
+    }));
+    $$('[data-andisc]', body).forEach((b) => (b.onclick = async () => {
+      if (!confirm('Remove this analytics source from the website?')) return;
+      try { await post('/api/analytics', { op: 'disconnect', site: siteId, provider: b.dataset.andisc }); [30, 90, 365].forEach((d) => delete prof.an[siteId + ':' + d]); loadAnalytics(siteId, false, again); } catch (err) { toast(err.message); }
+    }));
+    requestAnimationFrame(() => drawAnalytics(siteId));
+  }
   function renderSiteProfile(body, ctx) {
     const s = ctx.s || null;
     const siteId = ctx.siteId;
@@ -1736,8 +1853,8 @@
             <div class="pf-big">${tk ? tk.open : '…'}</div>
             <div class="small faint">${tk ? `open · ${tk.total} in all${tk.last ? ` · latest ${esc(fmtWhen(Date.parse(tk.last)))}` : ''}` : 'loading'}</div>
           </div>` : ''}
-          <div id="pfMore" class="pf-more"></div>
         </div>
+        ${analyticsSection(siteId)}
       </div>`;
     // Answers can arrive after the page has been drawn again (the audit page redraws itself), so redraw
     // whichever profile is on screen now, not the one that asked.
@@ -1766,6 +1883,7 @@
       }
     };
     // ---- things fetched once, then the page redraws from what it holds ----
+    bindAnalytics(body, siteId, again);
     if (!liveDR.data && !liveDR.loading && !prof.liveAsked) { prof.liveAsked = true; loadLive(false).then(again).catch(() => {}); }
     if (s && can('client.manage') && state.clients === null) {
       state.clients = [];
@@ -4534,6 +4652,8 @@
     R: { label: 'Re-published', color: 'var(--viz-7)' },
     live: { label: 'Live websites', color: 'var(--viz-6)' },
     days: { label: 'Days to launch', color: 'var(--viz-ink)' },
+    av: { label: 'Visits', color: 'var(--viz-1)' }, au: { label: 'Unique visitors', color: 'var(--viz-3)' }, mv: { label: 'Visits', color: 'var(--viz-1)' },
+    gs: { label: 'Sessions', color: 'var(--viz-1)' }, gu: { label: 'Users', color: 'var(--viz-3)' }, sc: { label: 'Search clicks', color: 'var(--viz-7)' },
   };
   const TPRESETS = [['30d', 'Last 30 days', 'week'], ['90d', 'Last 90 days', 'week'], ['12m', 'Last 12 months', 'month'], ['ytd', 'This year', 'month'], ['all', 'All time', 'auto'], ['custom', 'Custom…', '']];
 
@@ -4549,6 +4669,7 @@
   // ---- periods ----
   function bucketStart(ms, g) {
     const d = new Date(ms); d.setHours(0, 0, 0, 0);
+    if (g === 'day') return d.getTime();
     if (g === 'week') d.setDate(d.getDate() - ((d.getDay() + 6) % 7));    // weeks start on Monday
     else if (g === 'month') d.setDate(1);
     else d.setMonth(0, 1);
@@ -4556,12 +4677,13 @@
   }
   function bucketNext(ms, g) {
     const d = new Date(ms);
-    if (g === 'week') d.setDate(d.getDate() + 7); else if (g === 'month') d.setMonth(d.getMonth() + 1); else d.setFullYear(d.getFullYear() + 1);
+    if (g === 'day') d.setDate(d.getDate() + 1); else if (g === 'week') d.setDate(d.getDate() + 7); else if (g === 'month') d.setMonth(d.getMonth() + 1); else d.setFullYear(d.getFullYear() + 1);
     return d.getTime();
   }
   function bucketLabel(ms, g, long) {
     const d = new Date(ms);
     if (g === 'year') return String(d.getFullYear());
+    if (g === 'day') return d.toLocaleDateString(undefined, long ? { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' } : { month: 'short', day: 'numeric' });
     if (g === 'month') return d.toLocaleDateString(undefined, long ? { month: 'long', year: 'numeric' } : { month: 'short', year: '2-digit' });
     const end = new Date(bucketNext(ms, g) - DAY_MS);
     return long ? `Week of ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} – ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`

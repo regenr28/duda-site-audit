@@ -1255,3 +1255,31 @@ html.mk-lock, html.mk-lock body { overflow: hidden; overscroll-behavior: none; }
 .pf-facts { list-style: none; padding: 0; margin: 8px 0 10px; display: grid; gap: 3px; }
 .pf-facts li.warn { color: var(--warn); } .pf-facts li.bad { color: var(--crit); font-weight: 600; }
 .pf-more:empty { display: none; }
+
+/* Website analytics (profile) */
+.pf-an { margin-top: 22px; }
+.an-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.an-head h2 { margin: 0; }
+.an-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 10px 0 14px; overflow-x: auto; }
+.an-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; font: inherit; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.an-tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.an-tabs .an-add { margin-left: auto; color: var(--accent); }
+.an-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.an-tile { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--card); }
+.an-l { font-size: 12px; color: var(--muted); }
+.an-v { font-size: 24px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.an-s { font-size: 12px; min-height: 1.3em; }
+.an-d.up { color: var(--status-good, #15803d); } .an-d.down { color: var(--crit); }
+.an-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.an-card { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--card); min-width: 0; }
+.an-card h3 { margin: 0 0 8px; font-size: 14px; }
+.an-wide { grid-column: 1 / -1; }
+.an-hbar { cursor: default; grid-template-columns: minmax(90px, 40%) 1fr 54px; }
+.an-hbar .hbar-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-q { width: 100%; }
+.an-foot { margin-top: 10px; }
+.an-addbox { max-width: 760px; }
+.an-prov { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; background: var(--card); flex-wrap: wrap; }
+.an-conn { display: flex; gap: 6px; }
+.an-conn input { width: 220px; max-width: 100%; }
+@media (max-width: 760px) { .an-grid { grid-template-columns: 1fr; } .an-conn { width: 100%; } .an-conn input { flex: 1; } }
