@@ -4,9 +4,16 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-home', date: '2026-10-10', audience: 'all', tag: 'Everyone',
+    title: 'A new Home, a grouped menu, phone-friendly navigation, dark mode and colours',
+    what: 'The top tabs are now a <b>menu on the left</b>, grouped by what you are doing: <b>Work</b>, <b>Websites</b> and <b>Insights</b>. A new <b>Home</b> page shows what needs you today and your own work, and only the parts your role allows. Two <b>+</b> buttons became one <b>+ New</b>. Each page has a short note on what it is for (including how <b>Audits</b> and <b>Projects</b> differ). On a phone the menu is a bar along the bottom. You can also pick <b>Light</b>, <b>Dark</b> or <b>Auto</b> and one of seven <b>colours</b>, and choose which page the app opens on. All of it follows your account.',
+    where: ['<b>Home</b> is the first item in the menu.', 'The <b>☀️ / 🌙</b> button (top right) changes how the app looks; <b>Settings → Appearance &amp; start page</b> has the rest.', 'On a phone, use the bottom bar and <b>More</b>.'],
+    link: '#/help/home', linkText: 'How it works',
+  },
+  {
     id: '2026-10-10-menu', date: '2026-10-10', audience: 'all', tag: 'Everyone',
     title: 'Activity and Suggestions moved into the light-bulb menu',
-    what: 'The top menu now holds only the work itself. <b>Activity</b> and <b>Suggestions</b> (with false alarms) are in the <b>💡 light-bulb</b> menu at the top left, next to What\'s New, Help and Suggest a feature.',
+    what: 'The main menu holds only the work itself. <b>Activity</b> and <b>Suggestions</b> (with false alarms) are in the <b>💡 light-bulb</b> menu at the top left, next to What\'s New, Help and Suggest a feature.',
     where: ['Click the <b>💡 light bulb</b> next to the logo.'],
   },
   {

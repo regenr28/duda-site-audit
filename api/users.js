@@ -2,7 +2,7 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole, effectivePerms, hasCustomAccess, bumpAccess, jparse, realName, secLog, readSecLog, slackLookup } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole, effectivePerms, hasCustomAccess, bumpAccess, jparse, realName, secLog, readSecLog, slackLookup, LOOK_THEMES, START_PAGES } from './_lib.js';
 
 const TEMP_DAYS = 7;
 const tempPassword = () => crypto.randomBytes(8).toString('base64url');
@@ -45,6 +45,10 @@ export default async function handler(req, res) {
       if (Array.isArray(b.notifyOff)) me.notifyOff = [...new Set(b.notifyOff.map(String))].filter((k) => NOTIFY_KEYS.includes(k));
       // Which editor address this member opens: the white-label one or my.duda.co
       if (b.editorEnv !== undefined) me.editorEnv = b.editorEnv === 'duda' ? 'duda' : 'white';
+      // How the app looks for this person (light / dark / follow the device, colour theme) and where it opens.
+      if (b.lookMode !== undefined) me.lookMode = ['light', 'dark'].includes(b.lookMode) ? b.lookMode : 'auto';
+      if (b.lookTheme !== undefined && LOOK_THEMES.includes(b.lookTheme)) me.lookTheme = b.lookTheme;
+      if (b.startPage !== undefined && START_PAGES.includes(b.startPage)) me.startPage = b.startPage;
       // Which "What's New" note this person has seen (so the light bulb stops glowing)
       if (b.newsSeen !== undefined) me.newsSeen = String(b.newsSeen || '').slice(0, 60);
       await putUser(me);

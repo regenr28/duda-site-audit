@@ -247,7 +247,7 @@
   function mountGoogle(cb) {
     const go = () => {
       window.google.accounts.id.initialize({ client_id: state.config.googleClientId, callback: (r) => cb(r.credential), ux_mode: 'popup' });
-      window.google.accounts.id.renderButton($('#gbtn'), { theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'filled_black' : 'outline', size: 'large', text: state.auth.mode === 'signup' ? 'signup_with' : 'signin_with', width: 320 });
+      window.google.accounts.id.renderButton($('#gbtn'), { theme: document.documentElement.dataset.scheme === 'dark' ? 'filled_black' : 'outline', size: 'large', text: state.auth.mode === 'signup' ? 'signup_with' : 'signin_with', width: 320 });
     };
     if (window.google && window.google.accounts) return go();
     const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.onload = go; document.head.appendChild(s);
@@ -389,27 +389,224 @@
   function upsertSummary(sum) { if (!sum) return; const i = state.sites.findIndex((s) => s.id === sum.id); if (i >= 0) state.sites[i] = sum; else state.sites.push(sum); }
 
   // =====================================================================
+  // LOOK: light / dark / follow the device, plus a colour theme — kept per person
+  // =====================================================================
+  const THEMES = [['blue', 'Ocean', '#2563eb'], ['violet', 'Violet', '#7c3aed'], ['teal', 'Teal', '#0f766e'], ['green', 'Forest', '#15803d'], ['rose', 'Rose', '#e11d48'], ['amber', 'Amber', '#c2410c'], ['slate', 'Graphite', '#475569']];
+  const MODES = [['auto', 'Auto', '🖥'], ['light', 'Light', '☀️'], ['dark', 'Dark', '🌙']];
+  const START_PAGES = [['home', 'Home', () => true], ['audits', 'Audits', () => true], ['projects', 'Projects', () => can('project.view')], ['live', 'DR Websites', () => can('live.view')], ['tickets', 'Tickets', () => can('ticket.view')]];
+  const START_HREF = { home: '#/home', audits: '#/', projects: '#/projects', live: '#/live', tickets: '#/requests' };
+  function lookStored() { try { return JSON.parse(localStorage.getItem('dsa-look') || '{}') || {}; } catch (e) { return {}; } }
+  function applyLook(l) {
+    l = l || {};
+    const mode = l.mode === 'light' || l.mode === 'dark' ? l.mode : 'auto';
+    const theme = THEMES.some((t) => t[0] === l.theme) ? l.theme : 'blue';
+    const dark = mode === 'dark' || (mode === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+    const h = document.documentElement; h.dataset.appearance = mode; h.dataset.theme = theme; h.dataset.scheme = dark ? 'dark' : 'light';
+    try { localStorage.setItem('dsa-look', JSON.stringify({ mode, theme })); } catch (e) { /* private window: just not remembered here */ }
+    const m = document.querySelector('meta[name="theme-color"]'); if (m) m.content = dark ? '#171a20' : '#ffffff';
+    const lb = $('#btnLook'); if (lb) lb.innerHTML = lookIcon();
+  }
+  try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (document.documentElement.dataset.appearance === 'auto') applyLook(lookStored()); }); } catch (e) { /* older browser */ }
+  const currentLook = () => Object.assign({ mode: 'auto', theme: 'blue', start: 'home' }, lookStored(), (state.me && state.me.look) || {});
+  /** Applies at once (so it never feels slow), then saves it to the account so it follows the person. */
+  async function saveLook(patch) {
+    const next = Object.assign(currentLook(), patch);
+    applyLook(next);
+    if (state.me) state.me.look = next;
+    if (!state.me) return;
+    try { const r = await post('/api/users', { op: 'profile', name: state.me.name, lookMode: next.mode, lookTheme: next.theme, startPage: next.start }); if (r.user) state.me = r.user; }
+    catch (e) { toast('Changed on this device only: ' + e.message); }
+  }
+  function lookIcon() {
+    const dark = document.documentElement.dataset.scheme === 'dark';
+    return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${dark ? '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>' : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'}</svg>`;
+  }
+  function lookHtml(opts) {
+    const l = currentLook(); const lab = opts && opts.labels;
+    return `<div class="look-h">Mode</div><div class="look-modes">${MODES.map(([k, n, i]) => `<button type="button" data-look-mode="${k}" class="${l.mode === k ? 'on' : ''}" aria-pressed="${l.mode === k}"><span class="lm-i">${i}</span>${n}</button>`).join('')}</div>
+      <div class="look-h">Colour</div><div class="look-themes${lab ? ' labelled' : ''}">${THEMES.map(([k, n, c]) => `<button type="button" data-look-theme="${k}" class="${l.theme === k ? 'on' : ''}" ${lab ? '' : `style="background:${c}"`} title="${n}" aria-label="${n}" aria-pressed="${l.theme === k}">${lab ? `<span class="sw" style="background:${c}"></span>${n}` : ''}</button>`).join('')}</div>`;
+  }
+  function bindLook(root, redraw) {
+    $$('[data-look-mode]', root).forEach((b) => (b.onclick = () => { saveLook({ mode: b.dataset.lookMode }); redraw(); }));
+    $$('[data-look-theme]', root).forEach((b) => (b.onclick = () => { saveLook({ theme: b.dataset.lookTheme }); redraw(); }));
+  }
+  /** Puts a small panel next to a button, closing on a click elsewhere, Escape or a page change. */
+  function popPlace(el, anchor) {
+    const r = anchor.getBoundingClientRect(); const w = el.offsetWidth || 280;
+    el.style.top = (r.bottom + 8) + 'px'; el.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w)) + 'px';
+    setTimeout(() => {
+      const off = () => { el.remove(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); };
+      const away = (e) => { if (!el.contains(e.target) && !anchor.contains(e.target)) off(); };
+      const key = (e) => { if (e.key === 'Escape') off(); };
+      document.addEventListener('mousedown', away); document.addEventListener('keydown', key);
+      el._off = off;
+    }, 0);
+  }
+  const popClose = (sel) => { const ex = $(sel); if (!ex) return false; if (ex._off) ex._off(); else ex.remove(); return true; };
+  function toggleLookPop(anchor) {
+    if (popClose('#lookPop')) return;
+    const m = document.createElement('div'); m.id = 'lookPop'; m.className = 'look-pop panel';
+    const draw = () => { m.innerHTML = `${lookHtml()}${state.me && state.me.role !== 'client' ? '<div class="small" style="margin-top:12px"><a href="#/settings/appearance" data-lp-more>More: start page and tips →</a></div>' : ''}`; bindLook(m, draw); const a = $('[data-lp-more]', m); if (a) a.onclick = () => popClose('#lookPop'); };
+    draw(); document.body.appendChild(m); popPlace(m, anchor);
+  }
+  function drawAppearance(body) {
+    const draw = () => {
+      const l = currentLook();
+      body.innerHTML = `<h2>Appearance &amp; start page</h2><p class="muted">These choices are yours. They follow you to any device you sign in on.</p>
+        ${lookHtml({ labels: true })}
+        <div class="look-h">Open the app on</div>
+        <select id="lkStart">${START_PAGES.filter((x) => x[2]()).map(([k, n]) => `<option value="${k}" ${l.start === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        <div class="small muted" style="margin-top:6px">Home shows what needs you today. Pick Audits, Projects or another page to land straight there instead.</div>
+        <div class="look-h">Page tips</div>
+        <button class="btn sm" id="lkTips" type="button">Show the page tips again</button>`;
+      bindLook(body, draw);
+      $('#lkStart').onchange = (e) => { saveLook({ start: e.target.value }); toast('Saved'); };
+      $('#lkTips').onclick = () => { try { localStorage.removeItem('dsa-tips-off'); } catch (e) { /* ignore */ } paintIntro(); toast('Tips are back'); };
+    };
+    draw();
+  }
+
+  // =====================================================================
+  // THE MENU: grouped on the left (a drawer and a tab bar on phones), the same for everybody,
+  // showing only what each person's role allows
+  // =====================================================================
+  const NAV_IC = {
+    home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+    audits: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
+    projects: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v10"/>',
+    live: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>',
+    tickets: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    comments: '<path d="M4 4h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M20 9v8a2 2 0 0 1-2 2h-1"/>',
+    analysis: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
+    ranks: '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>',
+    trends: '<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+    help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+    more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  };
+  const navIcon = (k, s) => `<svg viewBox="0 0 24 24" width="${s || 20}" height="${s || 20}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_IC[k] || ''}</svg>`;
+  function navGroups() {
+    const g = [{ items: [{ key: 'home', href: '#/home', label: 'Home', ic: 'home' }] }];
+    g.push({ title: 'Work', items: [
+      { key: 'sites', href: '#/', label: 'Audits', ic: 'audits' },
+      can('project.view') && { key: 'projects', href: '#/projects', label: 'Projects', ic: 'projects', dot: projWaiting() },
+    ].filter(Boolean) });
+    g.push({ title: 'Websites', items: [
+      can('live.view') && { key: 'live', href: '#/live', label: 'DR Websites', ic: 'live' },
+      can('ticket.view') && { key: 'requests', href: '#/requests', label: 'Tickets', ic: 'tickets', count: state.tkNew || 0 },
+      { key: 'comments', href: '#/comments', label: 'Duda comments', ic: 'comments', dot: cmtWaiting() > 0, soft: !cmtWaiting() && cmtUnread() > 0 },
+    ].filter(Boolean) });
+    const ins = [
+      can('leads.view') && { key: 'analysis', href: '#/analysis', label: 'Lead analysis', ic: 'analysis' },
+      can('live.view') && { key: 'ranks', href: '#/live/ranks', label: 'Leaderboards', ic: 'ranks' },
+      can('live.view') && { key: 'trends', href: '#/live/trends', label: 'Trends', ic: 'trends' },
+    ].filter(Boolean);
+    if (ins.length) g.push({ title: 'Insights', items: ins });
+    return g;
+  }
+  function navKey(r) {
+    if (r.name === 'site') return 'sites';
+    if (r.name === 'project') return 'projects';
+    if (r.name === 'dr') return 'live';
+    if (r.name === 'live') return r.tab === 'ranks' ? 'ranks' : r.tab === 'trends' ? 'trends' : 'live';
+    return r.name;
+  }
+  const isNarrow = () => window.innerWidth < 900;
+  function navOpen(on) {
+    document.body.classList.toggle('nav-open', !!on);
+    const s = $('#navScrim'); if (s) s.hidden = !on;
+    const b = $('#btnNav'); if (b && isNarrow()) b.setAttribute('aria-expanded', String(!!on));
+  }
+  function navToggle() {
+    if (isNarrow()) return navOpen(!document.body.classList.contains('nav-open'));
+    const c = document.body.classList.toggle('nav-collapsed');
+    try { localStorage.setItem('dsa-nav-collapsed', c ? '1' : ''); } catch (e) { /* ignore */ }
+    const b = $('#btnNav'); if (b) b.setAttribute('aria-expanded', String(!c));
+  }
+  function paintNav() {
+    const sn = $('#sideNav'); if (!sn || !state.me || state.me.role === 'client') return;
+    const key = navKey(route());
+    const groups = navGroups();
+    const flag = (i) => `${i.count ? `<span class="nav-count" title="${i.count} not picked up yet">${i.count}</span>` : ''}${i.dot ? '<span class="nav-dot bad" title="Needs attention"></span>' : i.soft ? '<span class="nav-dot" title="New"></span>' : ''}`;
+    const link = (i) => `<a class="sn-link${i.key === key ? ' active' : ''}" href="${i.href}" data-nav="${i.key}"${i.key === key ? ' aria-current="page"' : ''}>${navIcon(i.ic)}<span class="sn-t">${i.label}</span>${flag(i)}</a>`;
+    const pending = can('members.approve') ? state.users.filter((u) => u.status === 'pending').length : 0;
+    const role = state.superAdmin ? 'Super Admin' : state.myRole ? state.myRole.name : 'Team member';
+    sn.innerHTML = groups.map((g) => `${g.title ? `<div class="sn-sec">${g.title}</div>` : ''}${g.items.map(link).join('')}`).join('')
+      + `<div class="sn-foot">
+        <a class="sn-link${key === 'settings' ? ' active' : ''}" href="#/settings" data-nav="settings">${navIcon('settings')}<span class="sn-t">Settings</span>${pending ? `<span class="badge fs-clarification">${pending}</span>` : ''}</a>
+        <a class="sn-link${key === 'help' ? ' active' : ''}" href="#/help" data-nav="help">${navIcon('help')}<span class="sn-t">Help</span></a>
+        <button class="sn-link" type="button" id="snMore" data-am-anchor>${navIcon('more')}<span class="sn-t">More</span>${newsUnread() ? '<span class="badge fs-clarification">New</span>' : ''}</button>
+        <button class="sn-me" type="button" id="snMe">${avatar(state.me.email, 30)}<div><b>${esc(state.me.name)}</b><span>${esc(role)}</span></div></button></div>`;
+    sn.onclick = (e) => {
+      if (e.target.closest('#snMore')) { const a = e.target.closest('#snMore'); if (isNarrow()) navOpen(false); toggleMenu(a); return; }
+      if (e.target.closest('#snMe')) { if (isNarrow()) navOpen(false); openMe(); return; }
+      if (e.target.closest('a.sn-link') && isNarrow()) navOpen(false);
+    };
+    // The bottom bar on a phone: the four places used most, and More for the rest.
+    const tb = $('#tabBar'); if (!tb) return;
+    const all = groups.flatMap((g) => g.items);
+    const order = ['home', 'sites', 'projects', 'requests', 'live'];
+    const picks = order.map((k) => all.find((i) => i.key === k)).filter(Boolean).slice(0, 4);
+    const hidden = all.filter((i) => !picks.includes(i));
+    const moreFlag = hidden.some((i) => i.count || i.dot);
+    tb.innerHTML = picks.map((i) => `<a href="${i.href}" data-tab="${i.key}" class="${i.key === key ? 'active' : ''}"${i.key === key ? ' aria-current="page"' : ''}>${navIcon(i.ic, 22)}<span class="tb-t">${i.label}</span>${i.count ? `<span class="tb-n">${i.count > 99 ? '99+' : i.count}</span>` : i.dot ? '<span class="tb-d"></span>' : ''}</a>`).join('')
+      + `<button type="button" id="tbMore" class="${picks.some((i) => i.key === key) ? '' : 'active'}">${navIcon('menu', 22)}<span class="tb-t">More</span>${moreFlag ? '<span class="tb-d"></span>' : ''}</button>`;
+    $('#tbMore').onclick = () => navOpen(true);
+  }
+  (function navInit() {
+    try { if (localStorage.getItem('dsa-nav-collapsed')) document.body.classList.add('nav-collapsed'); } catch (e) { /* ignore */ }
+    const b = $('#btnNav'); if (b) { b.onclick = navToggle; b.setAttribute('aria-expanded', String(isNarrow() ? false : !document.body.classList.contains('nav-collapsed'))); }
+    const s = $('#navScrim'); if (s) s.onclick = () => navOpen(false);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('nav-open')) navOpen(false); });
+    window.addEventListener('resize', () => { if (!isNarrow() && document.body.classList.contains('nav-open')) navOpen(false); });
+    window.addEventListener('hashchange', () => { navOpen(false); popClose('#newMenu'); popClose('#lookPop'); });
+    const sync = () => { const t = $('.topbar'); if (t && t.offsetHeight) document.documentElement.style.setProperty('--topbar-h', t.offsetHeight + 'px'); };
+    window.addEventListener('resize', sync); setTimeout(sync, 0); setTimeout(sync, 800);
+  })();
+
+  // ---------- a short "what is this page" line, until the person hides it ----------
+  const INTROS = {
+    sites: ['📋', '<b>Audits</b> check a website for mistakes and track who fixes what. A <a href="#/projects">project</a> is the build; an audit is the check, so you can audit any website, with or without a project.', 'audits'],
+    projects: ['🏗', '<b>Projects</b> follow a website being built, from the client\'s files to launch: who has it now and what is late. When it is built, open the project to start its audit; the two stay linked.', 'projects'],
+    live: ['🌐', '<b>DR Websites</b> is every website in your Duda account, published or not, audited or not. Click one to open its profile: domain health, analytics, forms, comments and tickets in one place.', 'live'],
+    requests: ['🎫', '<b>Tickets</b> are what clients send from their portal: questions, and changes marked right on a picture of their page.', 'requests'],
+    comments: ['💬', '<b>Duda comments</b> are notes left on a website inside the Duda editor, by clients or by the team. A red mark means a client is waiting for an answer.', 'comments-duda'],
+    analysis: ['📊', '<b>Lead analysis</b> shows which websites get form enquiries and which have gone quiet.', 'analysis'],
+    settings: ['⚙️', '<b>Settings</b> are for the whole app: team, roles, notifications and how it looks for you. Anything about one website is on that website\'s profile.', 'account'],
+  };
+  const tipsOff = () => { try { return JSON.parse(localStorage.getItem('dsa-tips-off') || '[]'); } catch (e) { return []; } };
+  function paintIntro() {
+    const el = $('#pageIntro'); if (!el) return;
+    const r = route(); const t = state.me && !clientMode() ? INTROS[r.name] : null;
+    if (!t || tipsOff().includes(r.name)) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="intro" role="note"><span class="i-ic" aria-hidden="true">${t[0]}</span><div class="i-t">${t[1]} <a href="#/help/${t[2]}">Learn more</a></div><button class="i-x" type="button" aria-label="Hide this tip" title="Hide this tip">✕</button></div>`;
+    $('.i-x', el).onclick = () => { try { localStorage.setItem('dsa-tips-off', JSON.stringify(tipsOff().concat(r.name))); } catch (e) { /* ignore */ } el.innerHTML = ''; };
+  }
+
+  // ---------- one "+ New" button instead of two ----------
+  const newChoices = () => [
+    can('site.add') && ['audit', '📋', 'New audit', 'Check a website for mistakes'],
+    can('project.manage') && ['project', '🏗', 'New project', 'Start following a website build'],
+  ].filter(Boolean);
+  function newDo(k) { if (k === 'audit') openAdd(); else openNewProject(); }
+  function openNewMenu(anchor) {
+    if (popClose('#newMenu')) return;
+    const opts = newChoices(); if (!opts.length) return;
+    if (opts.length === 1) return newDo(opts[0][0]);
+    const m = document.createElement('div'); m.id = 'newMenu'; m.className = 'new-menu panel'; m.setAttribute('role', 'menu');
+    m.innerHTML = opts.map(([k, ic, t, d]) => `<button type="button" role="menuitem" data-new="${k}"><span class="nm-ic">${ic}</span><div><b>${t}</b><span>${d}</span></div></button>`).join('');
+    document.body.appendChild(m); popPlace(m, anchor);
+    $$('[data-new]', m).forEach((b) => (b.onclick = () => { popClose('#newMenu'); newDo(b.dataset.new); }));
+  }
+
+  // =====================================================================
   // TOP BAR
   // =====================================================================
   function renderTop() {
     const pb = $('#previewBar');
     if (pb) { pb.innerHTML = previewBanner(); const x = $('#pvExit'); if (x) x.onclick = exitViewAs; }
-    const isOwner = !!state.superAdmin;
-    $('.topnav').innerHTML = `<a href="#/" data-nav="sites">Audits</a>
-      ${can('project.view') ? `<a href="#/projects" data-nav="projects">Projects${projWaiting() ? ' <span class="nav-dot bad" title="Something is past its date"></span>' : ''}</a>` : ''}
-      ${can('live.view') ? '<a href="#/live" data-nav="live">DR Websites</a>' : ''}
-      ${can('leads.view') ? '<a href="#/analysis" data-nav="analysis">Lead analysis</a>' : ''}
-      ${can('ticket.view') ? `<a href="#/requests" data-nav="requests">${tkNavLabel()}</a>` : ''}
-      <a href="#/comments" data-nav="comments">Duda comments${cmtWaiting() ? ` <span class="nav-dot bad" title="A client is waiting for an answer"></span>` : cmtUnread() ? ' <span class="nav-dot"></span>' : ''}</a>
-`;
-    // Light-bulb menu (left of the logo): About, AI Status, Help, Suggest a feature, AI credits
-    if (!$('#btnMenu')) {
-      const mb = document.createElement('button');
-      mb.id = 'btnMenu'; mb.type = 'button'; mb.className = 'btn ghost menu-btn'; mb.title = 'Menu'; mb.setAttribute('aria-label', 'Menu'); mb.setAttribute('aria-haspopup', 'menu');
-      mb.innerHTML = ICONS.bulb;
-      $('.topbar').prepend(mb);
-    }
-    $('#btnMenu').onclick = toggleMenu;
+    const nc = newChoices();
     $('#topRight').innerHTML = `
       <button class="btn ghost sx-btn" id="btnSearch" type="button" title="Search (/ or Ctrl+K)" aria-label="Search"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sx-btn-t">Search</span><kbd>/</kbd></button>
       <div class="presence" id="presence" title="Who's online"></div>
@@ -417,19 +614,22 @@
       <button class="btn ghost bell" id="btnBell" title="Notifications" aria-label="Notifications">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
         <span class="bell-count" id="bellCount" hidden></span></button>
-      <a class="btn ghost gear" id="btnGear" href="#/settings" title="General settings" aria-label="General settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>${can('members.approve') && state.users.some((u) => u.status === 'pending') ? ` <span class="badge fs-clarification">${state.users.filter((u) => u.status === 'pending').length}</span>` : ''}</a>
-      ${can('project.manage') ? '<button class="btn primary" id="btnProj" type="button">+ Add project</button>' : ''}
-      ${can('site.add') ? `<button class="btn ${can('project.manage') ? '' : 'primary'}" id="btnAdd" type="button">+ Add audit</button>` : ''}
+      <button class="btn ghost" id="btnLook" type="button" title="Light, dark and colour" aria-label="Appearance">${lookIcon()}</button>
+      <button class="btn ghost menu-btn" id="btnMenu" type="button" title="Help &amp; more" aria-label="Help and more" aria-haspopup="menu">${ICONS.bulb}</button>
+      <a class="btn ghost gear" id="btnGear" href="#/settings" title="Settings" aria-label="Settings">${navIcon('settings', 18)}${can('members.approve') && state.users.some((u) => u.status === 'pending') ? ` <span class="badge fs-clarification">${state.users.filter((u) => u.status === 'pending').length}</span>` : ''}</a>
+      ${nc.length ? `<button class="btn primary" id="btnNew" type="button"${nc.length > 1 ? ' aria-haspopup="menu"' : ''}>+ ${nc.length === 1 ? nc[0][2] : 'New'}</button>` : ''}
       <button class="btn ghost me-btn" id="btnMe" title="${esc(state.me.email)}">${avatar(state.me.email, 26)}</button>`;
-    if ($('#btnAdd')) $('#btnAdd').onclick = openAdd;
-    if ($('#btnProj')) $('#btnProj').onclick = openNewProject;
+    if ($('#btnNew')) $('#btnNew').onclick = (e) => openNewMenu(e.currentTarget);
+    $('#btnMenu').onclick = (e) => toggleMenu(e.currentTarget);
+    $('#btnLook').onclick = (e) => toggleLookPop(e.currentTarget);
     $('#btnBell').onclick = toggleNotifs;
     $('#btnSearch').onclick = () => openSearch();
     $('#btnMe').onclick = openMe;
     $('#btnAi').onclick = () => { location.hash = '#/ai'; }; renderAiChip();
     $('#presence').onclick = togglePresence;
-    renderBell(); renderPresence(); markNav();
+    renderBell(); renderPresence(); markNav(); markBulb();
     tkCount();
+    const tbEl = $('.topbar'); if (tbEl && tbEl.offsetHeight) document.documentElement.style.setProperty('--topbar-h', tbEl.offsetHeight + 'px');
   }
   const ICONS = {
     bulb: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>',
@@ -472,8 +672,8 @@
     $$('[data-news-go]', $('.modal')).forEach((a) => (a.onclick = () => closeModal()));
     markNewsSeen();
   }
-  function closeMenu() { const m = $('#appMenu'); if (m) m.remove(); const b = $('#btnMenu'); if (b) { b.classList.remove('on'); b.setAttribute('aria-expanded', 'false'); } }
-  function toggleMenu() {
+  function closeMenu() { const m = $('#appMenu'); if (m) m.remove(); $$('#btnMenu, [data-am-anchor]').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-expanded', 'false'); }); }
+  function toggleMenu(anchor) {
     if ($('#appMenu')) return closeMenu();
     const r = route().name;
     const item = (href, icon, label, nav) => `<a class="am-item ${r === nav ? 'on' : ''}" href="${href}" role="menuitem">${icon}<span>${label}</span></a>`;
@@ -492,13 +692,13 @@
       <button class="am-item" type="button" data-am-suggest role="menuitem">${ICONS.idea}<span>Suggest a feature</span></button>
       ${credits ? `<div class="am-sep"></div>${credits}` : ''}`;
     document.body.appendChild(m);
-    const b = $('#btnMenu'); b.classList.add('on'); b.setAttribute('aria-expanded', 'true');
-    const rect = b.getBoundingClientRect(); m.style.top = (rect.bottom + 8) + 'px'; m.style.left = Math.max(8, rect.left) + 'px';
+    const b = anchor && anchor.nodeType ? anchor : $('#btnMenu'); b.classList.add('on'); b.setAttribute('aria-expanded', 'true');
+    const rect = b.getBoundingClientRect(); m.style.top = (rect.bottom + 8) + 'px'; m.style.left = Math.max(8, Math.min(innerWidth - 280, rect.right - 270)) + 'px';
     $$('a', m).forEach((a) => a.addEventListener('click', closeMenu));
     $('[data-am-suggest]', m).onclick = () => { closeMenu(); openSuggest(); };
     $('[data-am-news]', m).onclick = () => { closeMenu(); openNews(); };
     setTimeout(() => {
-      const away = (e) => { if (!m.contains(e.target) && !e.target.closest('#btnMenu')) { closeMenu(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc1); } };
+      const away = (e) => { if (!m.contains(e.target) && !e.target.closest('#btnMenu, [data-am-anchor]')) { closeMenu(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc1); } };
       const esc1 = (e) => { if (e.key === 'Escape') { closeMenu(); document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc1); } };
       document.addEventListener('mousedown', away); document.addEventListener('keydown', esc1);
     }, 0);
@@ -508,7 +708,7 @@
     const r = route();
     if ($('#btnGear')) $('#btnGear').classList.toggle('active', r.name === 'settings');
     if ($('#btnMenu')) $('#btnMenu').classList.toggle('here', ['activity', 'suggestions', 'about', 'help', 'ai'].includes(r.name));
-    $$('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (r.name === 'site' ? 'sites' : r.name)));
+    paintNav();
   }
   function renderBell() {
     const c = $('#bellCount'); if (!c) return;
@@ -3257,7 +3457,7 @@
     if (!force && Date.now() - tkCountAt < 20000) return;
     tkCountAt = Date.now();
     try { const r = await api('/api/tickets?op=count'); state.tkNew = r.new || 0; } catch (e) { return; }
-    const a = $('[data-nav="requests"]'); if (a) a.innerHTML = tkNavLabel();
+    paintNav();
   }
   const tkNavLabel = () => `Tickets${state.tkNew ? ` <span class="nav-count" title="${state.tkNew} not picked up yet">${state.tkNew}</span>` : ''}`;
   async function tkLoad() {
@@ -3266,9 +3466,9 @@
     catch (e) { tk.error = e.message; tk.list = tk.list || []; }
     tk.loading = false;
     state.tkNew = tk.list.filter((t) => t.status === 'open').length;
-    const a = $('[data-nav="requests"]'); if (a) a.innerHTML = tkNavLabel();
+    paintNav();
   }
-  function tkMerge(list) { (list || []).forEach((t) => { const i = tk.list.findIndex((x) => x.id === t.id); if (i >= 0) tk.list[i] = t; else tk.list.unshift(t); }); state.tkNew = tk.list.filter((t) => t.status === 'open').length; const a = $('[data-nav="requests"]'); if (a) a.innerHTML = tkNavLabel(); }
+  function tkMerge(list) { (list || []).forEach((t) => { const i = tk.list.findIndex((x) => x.id === t.id); if (i >= 0) tk.list[i] = t; else tk.list.unshift(t); }); state.tkNew = tk.list.filter((t) => t.status === 'open').length; paintNav(); }
 
   async function renderRequests(r) {
     const v = $('#view');
@@ -3483,12 +3683,12 @@
   // or another company's website can reach this screen, even if a template here were wrong.
   // =====================================================================
   const CL_SECTIONS = [
-    { k: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { k: 'dashboard', label: 'Dashboard', short: 'Home', icon: '📊' },
     { k: 'requests', label: 'Tickets', icon: '🎫' },
-    { k: 'leads', label: 'Form Submissions', icon: '✉️' },
+    { k: 'leads', label: 'Form Submissions', short: 'Forms', icon: '✉️' },
     { k: 'contacts', label: 'Contacts', icon: '👥' },
     { k: 'comments', label: 'Comments', icon: '💬' },
-    { k: 'access', label: 'Access website', icon: '↗' },
+    { k: 'access', label: 'Access website', short: 'Website', icon: '↗' },
   ];
   const clRoute = () => {
     const parts = location.hash.replace(/^#/, '').split('/').filter(Boolean);
@@ -3523,17 +3723,18 @@
         <button class="btn sm" id="clExit">Back to the team view</button></div>` : ''}
       <div class="cl-shell">
         <aside class="cl-side">
-          <div class="cl-brand">${esc((state.cl.who && state.cl.who.company) || (state.cl.who && state.cl.who.name) || 'Your websites')}</div>
+          <div class="cl-brand">${esc((state.cl.who && state.cl.who.company) || (state.cl.who && state.cl.who.name) || 'Your websites')}<button class="btn ghost sm" id="clLook" type="button" title="Light, dark and colour" aria-label="Appearance" style="float:right">🎨</button></div>
           <div class="cl-side-k">Websites</div>
           ${sites.map((s) => `<div class="cl-site${s.id === current.id ? ' on' : ''}">
             <button class="cl-sitebtn" data-clsite="${esc(s.id)}">${esc(s.name)}<div class="cl-dom">${esc(s.domain || '')}</div></button>
-            ${s.id === current.id ? `<nav class="cl-nav">${CL_SECTIONS.map((x) => `<a href="#/my/${encodeURIComponent(s.id)}/${x.k}" class="${r.section === x.k || (r.section === 'mark' && x.k === 'requests') ? 'on' : ''}"><span class="cl-ic">${x.icon}</span>${esc(x.label)}${x.k === 'requests' && state.cl.tkq && state.cl.tkq[s.id] && state.cl.tkq[s.id].unread ? ` <span class="cl-dot">${state.cl.tkq[s.id].unread}</span>` : ''}</a>`).join('')}</nav>` : ''}
+            ${s.id === current.id ? `<nav class="cl-nav">${CL_SECTIONS.map((x) => `<a href="#/my/${encodeURIComponent(s.id)}/${x.k}" class="${r.section === x.k || (r.section === 'mark' && x.k === 'requests') ? 'on' : ''}"><span class="cl-ic">${x.icon}</span><span class="cl-lb-f">${esc(x.label)}</span><span class="cl-lb-s">${esc(x.short || x.label)}</span>${x.k === 'requests' && state.cl.tkq && state.cl.tkq[s.id] && state.cl.tkq[s.id].unread ? ` <span class="cl-dot">${state.cl.tkq[s.id].unread}</span>` : ''}</a>`).join('')}</nav>` : ''}
           </div>`).join('')}
         </aside>
         <main class="cl-main" id="clMain"><div class="empty">Loading…</div></main>
         <button class="cl-fab" data-sendticket aria-label="Send a ticket">✉️ Send ticket</button>
       </div>`;
     tkBindSend(current);
+    if ($('#clLook')) $('#clLook').onclick = (e) => toggleLookPop(e.currentTarget);
     $$('[data-clsite]').forEach((b) => (b.onclick = () => clGo(b.dataset.clsite, 'dashboard')));
     if ($('#clExit')) $('#clExit').onclick = () => { closeMarker(true); state.viewAs = ''; state.cl = { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {} }; document.body.classList.remove('client-mode'); location.hash = '#/site/' + encodeURIComponent(current.id); };
     if (!state.cl.tkq || !state.cl.tkq[current.id]) clTkQuota(current);
@@ -3888,6 +4089,8 @@
   // =====================================================================
   const SEARCH_ITEMS = [
     // pages
+    { route: 'home', icon: '🏠', label: 'Home', words: 'home dashboard overview start today needs attention my work what to do first', href: '#/home', help: 'home' },
+    { route: 'settings', icon: '🎨', label: 'Appearance: dark mode, light mode and colours', words: 'appearance dark mode light mode theme colour color night start page tips look', href: '#/settings/appearance', help: 'home' },
     { route: 'sites', icon: '📋', label: 'Audits', words: 'audits websites list scan home', href: '#/', help: 'audits' },
     { route: 'projects', icon: '🏗', label: 'Projects', words: 'projects build phases dev qa cleanup client handover', href: '#/projects', perm: 'project.view', help: 'projects' },
     { route: 'live', icon: '🌐', label: 'DR Websites', words: 'dr websites live dr sites published websites duda list domains', href: '#/live', perm: 'live.view', help: 'live' },
@@ -4105,6 +4308,7 @@
     ['team', '👥 Team members', () => true],
     ['roles', '🧩 Roles', () => can('members.manage')],
     ['notifications', '🔔 Your notifications', () => true],
+    ['appearance', '🎨 Appearance & start page', () => true],
     ['tickets', '🎫 Ticket settings', () => can('ticket.manage')],
     ['domains', '🌐 Domain monitoring', () => can('members.manage')],
     ['integrations', '🔌 Integrations', () => can('members.manage')],
@@ -4120,6 +4324,7 @@
     const body = $('#setBody');
     if (cur === 'team') return drawTeamPage(body);
     if (cur === 'security') return drawSecurity(body);
+    if (cur === 'appearance') return drawAppearance(body);
     if (cur === 'roles') { body.innerHTML = `<h2>Roles</h2><p class="muted">A role is a set of things people may do. Change a role and everyone on it changes; give one person an exception with <b>Access</b> on the Team page.</p><button class="btn primary" id="setRoles">Open roles</button>`; $('#setRoles').onclick = () => openRoles(); return; }
     if (cur === 'notifications') { body.innerHTML = `<h2>Your notifications</h2><p class="muted">What reaches your bell, pop-ups and Slack is set per person, in your account.</p><button class="btn primary" id="setNotif">Open your notification settings</button>`; $('#setNotif').onclick = () => openMe(); return; }
     if (cur === 'tickets') { body.innerHTML = `<h2>Ticket settings</h2><p class="muted">How many tickets a client can send each day, who on the team is told, and whether clients are emailed.</p><button class="btn primary" id="setTk">Open ticket settings</button>`; $('#setTk').onclick = () => tkSettings(); return; }
@@ -6009,6 +6214,7 @@
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
     if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
+    if (parts[0] === 'home') return { name: 'home' };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'health') return { name: 'health' };
@@ -6029,18 +6235,20 @@
     if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas', key: parts[1] === 'false-alarms' && parts[2] ? decodeURIComponent(parts.slice(2).join('/')) : '' };
     return { name: 'sites' };
   }
+  let lookFor = '';
   let lastSiteId = null;
   let ffSite = null;      // the website the current audit-item filters belong to
   let lastView = '';
   async function render() {
     if (mk.on && mk.route !== location.hash) closeMarker(true);
     if (!state.me) return renderAuth();
+    if (lookFor !== state.me.email && state.me.look) { lookFor = state.me.email; applyLook(state.me.look); }
     renderTopPreview();
     // A client account, or one of us previewing one, gets a different app entirely.
     if (clientMode()) return renderClient();
     document.body.classList.remove('client-mode');
     const r = route();
-    markNav();
+    markNav(); paintIntro();
     if (r.name === 'site') {
       // A filter set on one website shouldn't hide another's items. Tracked separately from
       // lastSiteId, which is cleared by every trip back to the list.
@@ -6063,6 +6271,7 @@
       loadSites(true).then((ch) => { if (ch && route().name === r.name) render(); }).catch(() => {});
     }
     if (r.name === 'live' && !can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; }
+    if (r.name === 'home') return renderHome();
     if (r.name === 'about') return renderAbout();
     if (r.name === 'help') return renderHelp(r.section);
     if (r.name === 'settings') return renderSettings(r.section);
@@ -6101,6 +6310,98 @@
     if (r.name === 'requests') return can('ticket.view') ? renderRequests(r) : ($('#view').innerHTML = '<div class="empty">Your role does not include client change requests.</div>');
     if (/members=1/.test(location.hash)) { history.replaceState(null, '', '#/settings/team'); setTimeout(render, 0); }
     return renderSites();
+  }
+
+  // =====================================================================
+  // HOME — the first screen for everybody. Every part shows only what that person may use, so a
+  // boss, an auditor, a developer, a project manager and an admin each see their own page.
+  // =====================================================================
+  function renderHome() {
+    const need = [];
+    if (can('project.view') && !proj.list) need.push(loadProjects());
+    if (can('live.view') && !live.data && !live.loading && !live.error) need.push(loadLive(false));
+    if (can('ticket.view')) tkCount();
+    if (need.length) Promise.allSettled(need).then(() => { paintNav(); if (route().name === 'home') drawHome(); });
+    drawHome();
+  }
+  function drawHome() {
+    const v = $('#view'); if (!v || route().name !== 'home' || !state.me) return;
+    const me = state.me.email; const hr = new Date().getHours();
+    const first = String(state.me.name || '').trim().split(/\s+/)[0] || 'there';
+    const hello = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+    const sites = state.sites || [];
+    const L = live.data && live.data.sites;
+    const late = (proj.list || []).filter((p) => p.due && p.due < today() && p.phase !== 'done');
+    const card = (href, n, k, d, tone) => `<a class="hm-card ${tone || ''}" href="${href}"><div class="hc-n">${n}</div><div class="hc-k">${k}</div><div class="hc-d">${d}</div></a>`;
+
+    // ---- what needs attention (only what this person can open) ----
+    const cards = [];
+    if (can('live.view')) {
+      if (L) {
+        const bad = L.filter((x) => x.dom && domProblem(x.dom)).length;
+        const exp = L.filter((x) => x.dom && domExpiring(x.dom)).length;
+        cards.push(card('#/live/problems', bad, 'Domain problems', bad ? 'Down, redirected or showing another site' : 'Every live domain is fine', bad ? 'bad' : 'good'));
+        cards.push(card('#/live/trends', exp, 'Domains to renew', exp ? 'Expiring within 60 days' : 'Nothing to renew soon', exp ? 'warn' : 'good'));
+      } else cards.push(card('#/live', '…', 'Domain health', live.error ? 'Could not load your websites' : 'Loading your websites', ''));
+    }
+    if (cmt.sites) { const w = cmtWaiting(); cards.push(card('#/comments', w, 'Clients waiting', w ? 'Comments with no reply yet' : 'Every client has been answered', w ? 'bad' : 'good')); }
+    if (can('ticket.view')) { const n = state.tkNew || 0; cards.push(card('#/requests', n, 'New tickets', n ? 'Not picked up yet' : 'Nothing waiting', n ? 'warn' : 'good')); }
+    if (can('project.view') && proj.list) cards.push(card('#/projects', late.length, 'Projects past date', late.length ? 'Behind schedule' : 'Everything is on time', late.length ? 'warn' : 'good'));
+    const crit = sites.reduce((a, s) => a + ((s.counts || {}).critical || 0), 0);
+    cards.push(card('#/', crit, 'Critical audit items', crit ? 'Still open across your audits' : 'None open', crit ? 'bad' : 'good'));
+
+    // ---- my work ----
+    const mineA = sites.filter((s) => s.assignee === me && s.status !== 'Complete');
+    const mineP = (proj.list || []).filter((p) => p.assignee === me && p.phase !== 'done');
+    const mineT = (tk.list || []).filter((t) => t.assignee === me && !['done', 'closed'].includes(t.status));
+    const aRow = (s) => { const c = s.counts || {}; const open = (c.critical || 0) + (c.warning || 0);
+      return `<li><a href="#/site/${esc(s.id)}">${esc(s.businessName || s.host || s.siteId)}<span class="hl-s">${esc(s.status || 'Not started')}${(s.scan || {}).state === 'complete' ? '' : ' · not scanned yet'}</span></a>${c.critical ? `<span class="badge sev-critical">${c.critical} critical</span>` : open ? `<span class="badge sev-warning">${open} open</span>` : (s.scan || {}).state === 'complete' ? '<span class="badge scan-complete">✓ Clean</span>' : ''}</li>`; };
+    const pRow = (p) => `<li><a href="#/project/${esc(p.id)}">${esc(p.name)}<span class="hl-s">${esc(PHASE_OF(p.phase).label)}</span></a>${p.due ? `<span class="badge ${dueClass(p)}">${esc(dueWord(p))}</span>` : ''}</li>`;
+    const tRow = (t) => `<li><a href="#/requests/${esc(t.id)}">${esc(t.title || t.summary || 'Ticket')}<span class="hl-s">${esc(t.siteName || '')}</span></a></li>`;
+    const mine = `<div class="hm-two">
+      <div class="hm-box"><h3>My audits <span class="faint small">${mineA.length || ''}</span></h3>${mineA.length ? `<ul class="hm-list">${mineA.slice(0, 6).map(aRow).join('')}</ul>${mineA.length > 6 ? '<div class="small" style="margin-top:6px"><a href="#/">See all in Audits →</a></div>' : ''}` : '<div class="hm-empty">No audits waiting on you. 🎉</div>'}</div>
+      ${can('project.view') ? `<div class="hm-box"><h3>My projects <span class="faint small">${mineP.length || ''}</span></h3>${!proj.list ? '<div class="hm-empty">Loading…</div>' : mineP.length ? `<ul class="hm-list">${mineP.slice(0, 6).map(pRow).join('')}</ul>` : '<div class="hm-empty">No project is with you right now.</div>'}</div>` : ''}
+      ${can('ticket.view') && tk.list ? `<div class="hm-box"><h3>My tickets <span class="faint small">${mineT.length || ''}</span></h3>${mineT.length ? `<ul class="hm-list">${mineT.slice(0, 6).map(tRow).join('')}</ul>` : '<div class="hm-empty">No tickets assigned to you.</div>'}</div>` : ''}
+    </div>`;
+
+    // ---- the team at a glance ----
+    const total = sites.length; const done = sites.filter((s) => s.status === 'Complete').length;
+    const glance = (can('live.view') || can('project.view')) ? `<div class="hm-sec"><h2>The team at a glance</h2></div><div class="hm-two">
+      <div class="hm-box"><h3>Audits</h3><div><b>${done}</b> of <b>${total}</b> complete</div><div class="progress" style="margin:8px 0 4px"><i style="width:${total ? Math.round((done / total) * 100) : 0}%;background:var(--ok)"></i></div><div class="small muted">${sites.filter((s) => s.status === 'In progress').length} in progress · ${sites.filter((s) => s.status === 'Not started').length} not started</div><div class="small" style="margin-top:8px"><a href="#/">Open Audits →</a></div></div>
+      ${can('live.view') ? `<div class="hm-box"><h3>Websites</h3><div>${L ? `<b>${L.length}</b> live in Duda` : live.error ? 'Could not load the Duda list' : '<b>…</b> loading'}</div><div class="small muted" style="margin-top:4px">Who gets the most enquiries, comments and tickets is on the Leaderboards.</div><div class="small" style="margin-top:8px"><a href="#/live/ranks">Open Leaderboards →</a> · <a href="#/live/trends">Trends →</a></div></div>` : ''}
+      ${can('project.view') && proj.list ? `<div class="hm-box"><h3>Projects</h3><div><b>${proj.list.filter((p) => p.phase !== 'done').length}</b> in progress · <b>${proj.list.filter((p) => p.phase === 'done').length}</b> finished</div><div class="small muted" style="margin-top:4px">${late.length ? `${late.length} past their date.` : 'Nothing is late.'}</div><div class="small" style="margin-top:8px"><a href="#/projects">Open Projects →</a></div></div>` : ''}
+    </div>` : '';
+
+    // ---- admin setup list ----
+    let setup = '';
+    if (can('members.manage') || can('members.approve')) {
+      const c = state.config || {};
+      const pend = state.users.filter((u) => u.status === 'pending').length;
+      const nn = state.users.filter((u) => u.needsName && u.status !== 'disabled').length;
+      const items = [
+        can('members.approve') && [!pend, pend ? `${pend} sign-up${pend === 1 ? '' : 's'} waiting for your approval` : 'No sign-ups waiting', '#/settings/team'],
+        can('members.approve') && [!nn, nn ? `${nn} member${nn === 1 ? ' needs' : 's need'} a real full name` : 'Everyone has a full name', '#/settings/team'],
+        can('members.manage') && [!!c.slackDM, c.slackDM ? 'Slack messages are connected' : 'Connect Slack so people are messaged', '#/settings/integrations'],
+        can('members.manage') && [!!c.analyticsGoogle, c.analyticsGoogle ? 'Google Analytics is connected' : 'Connect Google for analytics (optional)', '#/settings/integrations'],
+      ].filter(Boolean);
+      const open = items.filter((i) => !i[0]);
+      setup = `<div class="hm-sec"><h2>Setup</h2><span class="small">${open.length ? `${open.length} to do` : 'All done ✓'}</span></div><div class="hm-box"><ul class="hm-list hm-todo">${items.map(([ok, t, href]) => `<li class="${ok ? '' : 'open'}"><span class="hl-ck">${ok ? '✓' : '!'}</span><a href="${href}">${esc(t)}</a></li>`).join('')}</ul></div>`;
+    }
+
+    // ---- ways to start ----
+    const starts = [
+      can('site.add') && `<button type="button" data-home="audit"><span class="hs-i">📋</span><div><b>New audit</b><span>Check a website for mistakes</span></div></button>`,
+      can('project.manage') && `<button type="button" data-home="project"><span class="hs-i">🏗</span><div><b>New project</b><span>Start following a website build</span></div></button>`,
+      `<button type="button" data-home="search"><span class="hs-i">🔎</span><div><b>Find anything</b><span>A website, a person, or ask "what is a false alarm?"</span></div></button>`,
+      `<a href="#/help"><span class="hs-i">📘</span><div><b>How it works</b><span>Short guides for every page</span></div></a>`,
+    ].filter(Boolean).join('');
+
+    v.innerHTML = `<div class="hm-hello"><h1>${hello}, ${esc(first)}</h1><div class="muted">Here is what needs you today.</div></div>
+      <div class="hm-sec" style="margin-top:0"><h2>Needs attention</h2></div><div class="hm-cards">${cards.join('')}</div>
+      <div class="hm-sec"><h2>My work</h2></div>${mine}
+      ${glance}${setup}
+      <div class="hm-sec"><h2>Start something</h2></div><div class="hm-start">${starts}</div>`;
+    $$('[data-home]', v).forEach((b) => (b.onclick = () => { const k = b.dataset.home; if (k === 'search') openSearch(); else newDo(k); }));
   }
 
   // =====================================================================
@@ -9348,7 +9649,7 @@
         <li class="panel"><h3>Backed up first</h3><p>Before an audit\u2019s first scan, the website is backed up in Duda (e.g. <span class="mono">R8RR_b4_audit_20261007_0930</span>), so a fix that goes wrong can be undone from <b>Site History</b> in the editor.</p></li>
         <li class="panel"><h3>Report back</h3><p><b>📋 Summary</b> on any audit writes a short note for the group chat: what was checked, every critical fix in plain words and how it was verified, and what is left.</p></li>
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
-        <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the top menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
+        <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
         <li class="panel"><h3>Take client tickets</h3><p>From their phone or computer, clients <b>Send a ticket</b>: a general question, or a website change marked right on a picture of their own page (highlight, tap, box, circle or arrow). Each one arrives on <b>Tickets</b>, and for changes the app says whether that spot has changed since.</p></li>
         <li class="panel"><h3>Watch every live website</h3><p>Every website has one <b>Profile</b>: its picture, domain health, audit, form submissions, comments, tickets and <b>📊 Analytics</b> (visits, visitors and clicks from Duda, plus Google Analytics or Search Console when added). Every live domain is checked daily, and admins are alerted the moment one goes down, shows another site or expires.</p></li>
         <li class="panel"><h3>Find anything</h3><p>Press <b>/</b> to search websites, people, pages and filters, or ask a question like <i>what is a false alarm?</i>. The <b>⚙ gear</b> holds the app's settings: the team, roles, notifications and your security log.</p></li>
@@ -9369,7 +9670,7 @@
         <p class="small muted" style="margin:8px 0 0">Rule of thumb: someone <i>inside</i> the team can answer → For clarification. Waiting on someone <i>outside</i> → On hold. Only Done and False alarm count as cleared.</p></div>
       <p class="small faint" style="margin-top:14px">Still review by hand: business hours, prices, service areas, form recipients, and text inside images.</p>
       <p style="margin-top:10px"><a class="btn" href="#/help">📘 Open the full Help guide</a> <button class="btn" id="abNews" type="button">✨ What's New</button></p>
-      <p class="small faint">The light bulb (top left) glows when there's an update you haven't read: it opens About, AI Status, Help, What's New and today's AI credits.</p></div>`;
+      <p class="small faint">The light bulb (top right) glows when there's an update you haven't read: it opens What's New, About, AI Status, Help, Activity, Suggestions and today's AI credits.</p></div>`;
     $('#abSuggest').onclick = openSuggest;
     $('#abNews').onclick = () => openNews();
   }
@@ -9385,6 +9686,10 @@
     if (state.me.role === 'client') { if (!location.hash.startsWith('#/my/')) location.hash = '#/my/'; return render(); }
     await Promise.all([loadUsers(), loadSites(), loadRoles(), api('/api/ai').then((r) => { state.ai = r; if (r.now) state.aiSkew = r.now - Date.now(); }).catch(() => { state.ai = { enabled: false }; })]);
     if (!state.rtChannel) { try { const m = await api('/api/auth?op=me'); state.rtChannel = m.rtChannel || ''; state.superAdmin = !!m.superAdmin; state.perms = m.perms || []; state.myRole = m.role || null; state.previewOf = m.preview || null; state.accessVer = m.accessVer || ''; } catch (e) { /* ignore */ } }
+    if (location.hash === '' || location.hash === '#') {
+      const st = currentLook().start; const ok = START_PAGES.find((x) => x[0] === st && x[2]());
+      history.replaceState(null, '', ok ? START_HREF[st] : '#/home');
+    }
     renderTop();
     loadNews();
     loadCommentSites(true).catch(() => {});

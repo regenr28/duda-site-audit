@@ -19,7 +19,8 @@ export const HELP_SECTIONS = [
 <li>Set the website's status to <b>Complete</b>.</li>
 </ol>
 <h4>Finding your way</h4>
-<p>The top menu has the work itself: <b>Audits</b>, <b>Projects</b>, <b>DR Websites</b>, <b>Lead analysis</b>, <b>Tickets</b> and <b>Duda comments</b> (each only if your role includes it). The <b>light-bulb</b> button (top left, next to the logo) opens <b>What's New</b>, <b>About</b>, <b>AI Status</b>, <b>Help</b>, <b>Activity</b>, <b>Suggestions</b> (your own, or the full queue with false alarms for admins), <b>Suggest a feature</b> and today's <b>AI credits</b>. The <b>⚙ gear</b> (top right) holds General settings.</p>`,
+<p>The <b>menu on the left</b> is grouped by what you are doing: <b>Home</b>; <b>Work</b> (Audits, Projects); <b>Websites</b> (DR Websites, Tickets, Duda comments); <b>Insights</b> (Lead analysis, Leaderboards, Trends). Settings, Help and your account are at the bottom. You only see what your role includes. On a phone the same menu is a bar along the bottom (Home, Audits and your most-used pages) with <b>More</b> for the rest.</p>
+<p><b>+ New</b> (top right) starts an audit or a project. <b>🔍 Search</b> finds anything. The <b>💡 light bulb</b> holds What's New, About, AI Status, Activity, Suggestions and Suggest a feature. The <b>☀️ / 🌙</b> button changes how the app looks. See <b>Home, the menu and how the app looks</b> for all of it.</p>`,
   },
   {
     id: 'account', group: 'Getting started', title: 'Your account', audience: 'all',
@@ -64,6 +65,31 @@ export const HELP_SECTIONS = [
 <li><b>Answers</b>: ask a question such as <i>what is a false alarm?</i> or <i>what is the process after dev?</i> and the best passages from Help and What's New are shown, with the matching words highlighted. Pick one to open that Help page.</li>
 </ul>
 <p>Use ↑ ↓ and Enter, or click. You only see the pages and actions your role allows. Answers come straight from Help, so they stay up to date with every new feature. If nothing matches, open Help to browse every topic or ask the Help assistant.</p>`,
+  },
+  {
+    id: 'home', group: 'Getting started', title: 'Home, the menu and how the app looks', audience: 'all',
+    html: `<h4>Home</h4>
+<p><b>Home</b> is the first page. It shows what needs you today: domain problems, domains to renew, clients waiting for an answer, new tickets, projects past their date and critical audit items. Each number opens the page that deals with it. Under it, <b>My work</b> lists the audits, projects and tickets that are with you. Admins also see a short <b>Setup</b> list (people waiting for approval, names to fix, connections). You only see the parts your role includes.</p>
+<h4>Audits, Projects: what is the difference?</h4>
+<ul>
+<li>An <b>audit</b> is a check of one website: every problem found, who is fixing it and its status. You can audit any website, with or without a project.</li>
+<li>A <b>project</b> follows a website being <i>built</i>, from the client's files to launch, with who has it now and what is late. Open a project to start its audit when it is ready; the two stay linked.</li>
+</ul>
+<h4>The menu</h4>
+<ul>
+<li><b>Home</b>; <b>Work</b>: Audits, Projects; <b>Websites</b>: DR Websites (every website in Duda), Tickets (from clients), Duda comments; <b>Insights</b>: Lead analysis, Leaderboards, Trends.</li>
+<li>Click the <b>☰</b> button (top left) to fold the menu away for more room, and again to bring it back.</li>
+<li>Each page has a short note on what it is for. Click <b>✕</b> to hide it; <b>Settings → Appearance &amp; start page → Show the page tips again</b> brings them back.</li>
+<li><b>+ New</b> (top right) starts an audit or a project.</li>
+</ul>
+<h4>On a phone</h4>
+<p>A bar along the bottom has <b>Home</b>, <b>Audits</b> and the pages you use most. <b>More</b> (or the ☰ button) opens the full menu. A red mark on a tab means something there needs you.</p>
+<h4>How the app looks</h4>
+<ul>
+<li>The <b>☀️ / 🌙</b> button (top right) or <b>Settings → Appearance &amp; start page</b>: <b>Auto</b> follows your device, <b>Light</b> or <b>Dark</b>, and seven colours.</li>
+<li>These are saved to your account, so they follow you to any device. Clients can change theirs too, from the 🎨 button on their page.</li>
+<li>Under <b>Open the app on</b> you can choose Home, Audits, Projects, DR Websites or Tickets as the page you land on.</li>
+</ul>`,
   },
   {
     id: 'admin-members', group: 'Getting started', title: 'Managing members (admins)', audience: 'admin',
@@ -301,7 +327,7 @@ export const HELP_SECTIONS = [
 <h3>Live DR Sites</h3>
 <p>The whole page is a permission, and so is each thing on it, so a role can be given the list without the buttons:</p>
 <ul>
-<li><b>See Live DR Sites</b> \u2014 without it the page is not in the top bar and the address is refused.</li>
+<li><b>See Live DR Sites</b> \u2014 without it the page is not in the menu and the address is refused.</li>
 <li><b>Pull the list from Duda</b> and <b>Check domains</b> \u2014 the two buttons at the top right.</li>
 <li><b>See the audit column and start audits from there</b> \u2014 the Audit column and the "Audit this website" button. Usually QA rather than everybody.</li>
 </ul>
@@ -325,7 +351,7 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'analysis', group: 'Collaboration', title: 'Lead analysis', audience: 'all',
-    html: `<p><b>Lead analysis</b> in the top bar is what the enquiries across every website add up to. It needs the analysis database connected; until then the pages explain that and nothing is lost \u2014 enquiries keep arriving and <b>Bring enquiries in</b> copies across everything already held.</p>
+    html: `<p><b>Lead analysis</b> in the menu is what the enquiries across every website add up to. It needs the analysis database connected; until then the pages explain that and nothing is lost \u2014 enquiries keep arriving and <b>Bring enquiries in</b> copies across everything already held.</p>
 <h3>Junk and real enquiries</h3>
 <p>Every enquiry is sorted as it arrives, in three steps, and most never reach the third:</p>
 <ul>
@@ -465,7 +491,7 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'requests', group: 'Collaboration', title: 'Client tickets (questions and change requests)', audience: 'all',
-    html: `<p>Instead of texting or emailing, clients <b>send a ticket</b> from their own page, on a phone or a computer. Tickets arrive on <b>Tickets</b> in the top menu.</p>
+    html: `<p>Instead of texting or emailing, clients <b>send a ticket</b> from their own page, on a phone or a computer. Tickets arrive on <b>Tickets</b> in the menu.</p>
 <p>The <b>✉️ Send a ticket</b> button is on their Dashboard and on <b>Tickets</b>. On a phone it also floats at the bottom of every screen. It asks which kind, and explains each one right under it:</p>
 <ul>
 <li><b>💬 General question</b>: anything not about the website's content or design, such as billing, the domain, email or their account. They type the question and can add a photo or screenshot.</li>
@@ -790,7 +816,7 @@ export const HELP_SECTIONS = [
 </ul>
 <p>Security certificates are not alerted at all. Problems that were already there are not reported again. When more than three arrive at once they come as one message. Clicking an alert opens Live DR Sites on that website. Each admin can switch these off under their account → Notifications → <b>Domain problems on live websites</b>.</p>
 <h4>📈 Trends</h4>
-<p><b>DR Websites</b> in the top menu holds four tabs: <b>Live DR Sites</b> (the list), <b>Not published yet</b>, <b>📈 Trends</b> and <b>🏆 Leaderboards</b>.</p>
+<p><b>DR Websites</b> in the menu holds four tabs: <b>Live DR Sites</b> (the list), <b>Not published yet</b>, <b>📈 Trends</b> and <b>🏆 Leaderboards</b>.</p>
 <h4>🏆 Leaderboards</h4>
 <p>Which websites had the most, for <b>This week</b>, <b>This month</b>, <b>This year</b>, <b>Last 30 days</b> or your own dates, with 🥇🥈🥉 for the top three. Click a website to open its profile.</p>
 <ul>
@@ -877,7 +903,7 @@ export const HELP_SECTIONS = [
     id: 'projects', group: 'Collaboration', title: 'Projects — running a build', audience: 'all',
     html: `<p><b>Projects</b> is the build itself, from the client's files to the client's comments. An <b>audit</b> is one scan of one website; a <b>project</b> is the whole job, and it can exist before the website does.</p>
 <h3>Starting one</h3>
-<p><b>+ Add project</b> (admins and project managers) takes a name, the client, the <b>Dropbox folder link</b>, who it goes to first and when it is due. Everyone ticked as involved sees it in their list and hears anything written in its channel.</p>
+<p><b>+ New → New project</b> (admins and project managers) takes a name, the client, the <b>Dropbox folder link</b>, who it goes to first and when it is due. Everyone ticked as involved sees it in their list and hears anything written in its channel.</p>
 <h3>The client's brief becomes the reference</h3>
 <p>With Dropbox connected, <b>Read the folder</b> lists what is in it and picks out the PDFs most likely to be the brief. <b>Read it</b> pulls out the business name, phone, email, address, hours and website and shows them for checking — each marked <b>answered</b> (the document had a label for it) or <b>guessed</b> (matched out of the text). Nothing is saved until somebody presses <b>Use these details</b>.</p>
 <p>Once saved, <b>those details are what every audit of that website is checked against</b>, ahead of Duda's own Business Info — during a build Duda often still carries the template's values, while the brief is what the customer actually wrote. Duda's values stay acceptable, so nothing is flagged for using one of them. Correct anything by hand; <b>↺ Reset to the brief</b> puts back exactly what the document said.</p>

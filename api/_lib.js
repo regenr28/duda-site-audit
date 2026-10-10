@@ -266,7 +266,9 @@ export async function nameTaken(name, exceptEmail) {
 export const plainMentions = (text) => String(text == null ? '' : text)
   .replace(/@\[([^\]\n|]{1,60})(?:\|[^\]\n]{1,80})?\]/g, '@$1');
 
-export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white',
+export const LOOK_THEMES = ['blue', 'violet', 'teal', 'green', 'rose', 'amber', 'slate'];
+export const START_PAGES = ['home', 'audits', 'projects', 'live', 'tickets'];
+export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white', look: { mode: ['light','dark'].includes(u.lookMode) ? u.lookMode : 'auto', theme: LOOK_THEMES.includes(u.lookTheme) ? u.lookTheme : 'blue', start: START_PAGES.includes(u.startPage) ? u.startPage : 'home' },
   notifyOff: Array.isArray(u.notifyOff) ? u.notifyOff : [],
   // Client accounts: which websites they were granted, and the company they belong to.
   sites: u.role === 'client' ? (u.sites || []).map(String) : undefined, clientId: u.clientId || undefined, company: u.company || undefined,

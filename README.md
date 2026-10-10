@@ -14,6 +14,14 @@ Keep these three in step with the code, or the team won't know what changed:
 The light bulb glows for anyone whose latest seen note is older than the newest one.
 
 
+## Navigation, Home and appearance (update 112)
+- **Shell:** `public/index.html` has the top bar, a left menu (`#sideNav`), a phone tab bar (`#tabBar`) and a one-line page note (`#pageIntro`). The menu is drawn by `paintNav()` from `navGroups()` in `public/app.js`; every item is filtered by `can(...)`, so each role sees its own menu. Add a page = add it to `navGroups()`, `route()` and `SEARCH_ITEMS` (then `node scripts/check-search.mjs`).
+- **Home** (`#/home`, `renderHome()`): needs-attention cards, My work, team at a glance, admin Setup list and quick starts. Each part appears only if the person's permissions include it. It reads only what the app has already loaded, plus the project list and the Duda website list the first time it opens (both cached).
+- **Start page:** a bare address (no `#`) opens Home, or the page the person chose under Settings → Appearance. `#/` stays Audits, so a reload on Audits is not bounced to Home.
+- **Appearance:** `<html data-appearance data-theme data-scheme>` (not `data-mode`: the sign-in screen binds every `[data-mode]` element). `data-scheme` is the resolved `light`/`dark` that all CSS keys on (`:root[data-scheme="dark"]`); `data-theme` is one of blue, violet, teal, green, rose, amber, slate (accent only, `:root[data-theme=...]` near the end of `styles.css`). A small script in `index.html` applies the last choice from `localStorage` before paint so nothing flashes. The choice is saved on the account (`lookMode`, `lookTheme`, `startPage` through `POST /api/users {op:'profile'}`, returned as `user.look`) and follows the person to other devices.
+- **Phone (under 900px):** the menu becomes a drawer opened by the burger or **More**; the bottom bar shows Home, Audits and up to two more by role. Clients get their own bottom bar (under 640px). Modals open as bottom sheets.
+- **Tests:** `tests/tk/e2e_nav.py` (menu, Home, + New, themes, phone) and `tests/tk/sweep.py` (every page on a phone, light and dark, no sideways scroll).
+
 ## 1. Deploy to Vercel (about 15 minutes, no coding)
 
 ### Step 1: Put the files on GitHub
