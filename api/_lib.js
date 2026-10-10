@@ -447,8 +447,8 @@ export const NOTIFY_GROUPS = [
     desc: 'Somebody reports an audit item as a false alarm, or answers a report you made.' },
   { key: 'suggestions', label: 'Feature suggestions', kinds: ['suggestion', 'suggestion-status', 'suggestion-comment'], channels: ['bell', 'popup', 'slack', 'email'],
     desc: 'A suggestion is sent, answered, or commented on.' },
-  { key: 'domains', label: 'Domain problems on live websites', kinds: ['domain-problem', 'domain-expiring', 'domain-ok'], channels: ['bell', 'popup', 'slack'], admin: true,
-    desc: 'A live website\'s domain stops working, its security certificate or registration is about to run out, or it works again.' },
+  { key: 'domains', label: 'Domain problems on live websites', kinds: ['domain-problem', 'domain-expiring', 'domain-ok', 'domain-digest'], channels: ['bell', 'popup', 'slack'], admin: true,
+    desc: 'A live website\'s domain stops working, shows another site, or its registration is about to run out or has expired; it works again; plus one daily report of everything still open. (Security certificates are Duda\'s job and are not reported.)' },
   { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
     desc: 'Someone signs up and needs approving, or an audit is removed from the list.' },
   { key: 'projects', label: 'Projects you are on', kinds: ['project-assign', 'project-late', 'project-note'], channels: ['bell', 'popup', 'slack', 'email'],
@@ -508,6 +508,7 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   'domain-problem': 'has a domain problem',
   'domain-expiring': 'has a domain that needs renewing',
   'domain-ok': 'is working again',
+  'domain-digest': 'sent the daily domain report',
   'ticket-new': 'sent a ticket',
   'ticket-reply': 'replied on a change request',
   'ticket-assign': 'gave you a client change request',
@@ -597,6 +598,7 @@ function notifLink(n) {
   if (/^suggestion/.test(n.kind || '')) return base + '/#/suggestions';
   if (n.kind === 'comment-waiting' && n.dudaSite) return `${base}/#/comments/${encodeURIComponent(n.dudaSite)}`;
   if (/^ticket-/.test(n.kind || '')) return `${base}/#/requests${n.ticketId ? '/' + encodeURIComponent(n.ticketId) : ''}`;
+  if (n.kind === 'domain-digest') return `${base}/#/live/trends`;
   if (/^domain-/.test(n.kind || '')) return n.dudaSite ? `${base}/#/live/site/${encodeURIComponent(n.dudaSite)}` : `${base}/#/live/problems`;
   if (n.siteId) return `${base}/#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
   return base;

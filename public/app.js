@@ -496,7 +496,7 @@
     // A new client request also changes the count beside "Client requests".
     if (state.notifs.items.some((n) => /^ticket-/.test(n.kind) && Date.parse(n.at) > tkCountAt)) tkCount(true);
   }
-  const NOTIF_TEXT = { 'ticket-new': 'sent a ticket', 'ticket-reply': 'replied on a change request', 'ticket-assign': 'gave you a change request', 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
+  const NOTIF_TEXT = { 'ticket-new': 'sent a ticket', 'ticket-reply': 'replied on a change request', 'ticket-assign': 'gave you a change request', 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'domain-digest': 'sent the daily domain report', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
@@ -4083,7 +4083,8 @@
   const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'comments', leadJob: null, leadsLoaded: false, queued: {}, q2: null, draining: false };
   const liveDR = live; // alias: some views use a local variable called `live` for scan progress
   const DOM_OK = ['ok'];
-  const domProblem = (d) => d && !['ok', 'nodomain'].includes(d.status);
+  // The security certificate is Duda's job, so a stored 'ssl' result (from before) is not a problem.
+  const domProblem = (d) => d && !['ok', 'nodomain', 'ssl'].includes(d.status);
   const DOM_CLS = { ok: 'scan-complete', nodomain: '', redirect: 'sev-critical', hijacked: 'sev-critical', notduda: 'sev-critical', dns: 'sev-critical', http: 'sev-critical', down: 'sev-critical', ssl: 'sev-warning', timeout: 'sev-warning', error: 'sev-warning' };
   const DOM_ICON = { ok: '✓', redirect: '↪', hijacked: '⛔', notduda: '⚠', dns: '⛔', http: '⛔', down: '⛔', ssl: '🔓', timeout: '⏱', error: '⚠', nodomain: '–' };
   /** Days until a date (ms), counted from now. */
@@ -4095,23 +4096,24 @@
     if (!d) return [];
     const out = [];
     const sd = sslDays(d);
-    if (d.status === 'ok' && sd !== null && sd <= 14) out.push({ k: 'ssl', t: sd < 0 ? 'Certificate expired' : `Certificate: ${sd} day${sd === 1 ? '' : 's'} left`, tip: 'Duda renews certificates on its own about a month ahead. This close to the end, renewal is failing; usually the DNS no longer points at Duda.' });
-    if (d.reg && d.reg.expires) { const rd = daysTo(d.reg.expires); if (rd <= 30) out.push({ k: 'reg', t: rd < 0 ? 'Domain expired' : `Domain renews in ${rd} day${rd === 1 ? '' : 's'}`, tip: `The client renews ${d.reg.name || 'the domain'} with their registrar${d.reg.registrar ? ` (${d.reg.registrar})` : ''}. Expires ${fmtFull(new Date(d.reg.expires).toISOString())}.` }); }
+    if (sd !== null && sd <= 14) out.push({ k: 'ssl', fyi: 1, t: sd < 0 ? 'Certificate: renewing (Duda handles it)' : `Certificate: ${sd} day${sd === 1 ? '' : 's'} left`, tip: 'For your information only. Duda issues and renews security certificates by itself, so nothing needs doing and you are not alerted.' });
+    if (d.reg && d.reg.expires) { const rd = daysTo(d.reg.expires); if (rd <= 60) out.push({ k: 'reg', t: rd < 0 ? `Domain EXPIRED ${-rd} day${rd === -1 ? '' : 's'} ago` : rd === 0 ? 'Domain expires TODAY' : `Domain expires in ${rd} day${rd === 1 ? '' : 's'}`, urgent: rd <= 7, tip: `The client renews ${d.reg.name || 'the domain'} with their registrar${d.reg.registrar ? ` (${d.reg.registrar})` : ''}. Expires ${fmtFull(new Date(d.reg.expires).toISOString())}.` }); }
     if (d.status === 'ok' && d.ms > 6000) out.push({ k: 'slow', t: `Slow: ${(d.ms / 1000).toFixed(1)}s`, tip: 'The home page took more than 6 seconds to answer.' });
     return out;
   }
-  const domExpiring = (d) => domWarnings(d).some((w) => w.k === 'ssl' || w.k === 'reg');
+  const domExpiring = (d) => domWarnings(d).some((w) => w.k === 'reg');
+  const domCertFyi = (d) => domWarnings(d).some((w) => w.k === 'ssl');
   function domBadge(d) {
     if (!d) return '<span class="faint small">Not checked</span>';
     const sd = sslDays(d);
     const facts = [d.detail || '',
       d.ms ? `Answered in ${(d.ms / 1000).toFixed(1)}s` : '',
-      sd !== null ? `Security certificate: ${sd < 0 ? 'expired' : sd + ' days left'}${d.ssl.issuer ? ' (' + d.ssl.issuer + ')' : ''}` : '',
+      sd !== null ? `Security certificate: ${sd < 0 ? 'expired' : sd + ' days left'}${d.ssl.issuer ? ' (' + d.ssl.issuer + ')' : ''} · Duda renews it` : '',
       d.reg && d.reg.expires ? `Domain registration: renews by ${fmtFull(new Date(d.reg.expires).toISOString())}${d.reg.registrar ? ' · ' + d.reg.registrar : ''}` : '',
       d.downSince && domProblem(d) ? `Not working since ${fmtFull(new Date(d.downSince).toISOString())}` : '',
       d.checkedAt ? 'Checked ' + fmtFull(new Date(d.checkedAt).toISOString()) : ''].filter(Boolean).join('\n');
     return `<span class="badge ${DOM_CLS[d.status] || ''}" title="${esc(facts)}">${DOM_ICON[d.status] || ''} ${esc(d.label || d.status)}</span>${domProblem(d) ? `<div class="small faint dom-detail">${esc(d.detail || '')}</div>` : ''}`
-      + domWarnings(d).map((w) => `<div><span class="badge sev-warning dom-warn" title="${esc(w.tip)}">⚠ ${esc(w.t)}</span></div>`).join('');
+      + domWarnings(d).map((w) => `<div><span class="badge ${w.fyi ? 'dom-fyi' : w.urgent ? 'sev-critical' : 'sev-warning'} dom-warn" title="${esc(w.tip)}">${w.fyi ? 'ⓘ' : '⚠'} ${esc(w.t)}</span></div>`).join('');
   }
   let liveDraw = null;
   const liveRedraw = () => { if (liveDraw) return; liveDraw = setTimeout(() => { liveDraw = null; if (route().name === 'live' && document.activeElement !== $('#liveQ')) renderLive(); }, 600); };
@@ -4467,7 +4469,7 @@
   // =====================================================================
   // One request brings every website's dates and every recorded change; everything below is worked
   // out here, so switching between a week, a month, a year or any date range asks nothing of the server.
-  const trends = { data: null, loading: false, error: '', preset: '12m', gran: 'month', from: '', to: '', custom: true, table: false, focus: -1 };
+  const trends = { data: null, loading: false, error: '', preset: '12m', gran: 'month', from: '', to: '', custom: true, table: false, focus: -1, dm: '' };
   const DAY_MS = 86400000;
   // Each kind of change keeps one colour in every chart (blue is always "launched", and so on).
   const TSERIES = {
@@ -4518,7 +4520,7 @@
     const earliest = Math.min(...d.sites.map((x) => x.f).filter(Boolean), now);
     if (trends.preset === '30d') from = now - 29 * DAY_MS;
     else if (trends.preset === '90d') from = now - 89 * DAY_MS;
-    else if (trends.preset === '12m') { const x = new Date(); x.setMonth(x.getMonth() - 11, 1); from = x.getTime(); }
+    else if (trends.preset === '12m') { const x = new Date(); x.setMonth(x.getMonth() - 11, 1); x.setHours(0, 0, 0, 0); from = x.getTime(); }   // the 1st at midnight, not at this time of day
     else if (trends.preset === 'ytd') from = new Date(new Date().getFullYear(), 0, 1).getTime();
     else if (trends.preset === 'all') from = earliest;
     else {
@@ -4590,17 +4592,42 @@
     const launchDays = launched.filter((x) => x.c && x.f >= x.c).map((x) => (x.f - x.c) / DAY_MS);
     const withDom = all.filter((x) => x.live && x.dm);
     const health = {};
-    withDom.forEach((x) => { const k = !x.ds ? 'unchecked' : x.ds; health[k] = (health[k] || 0) + 1; });
-    const expiring = withDom.filter((x) => (x.sd !== undefined && x.sd <= 14 && x.ds === 'ok') || (x.re && x.re - now <= 30 * DAY_MS)).length;
+    withDom.forEach((x) => { const k = !x.ds ? 'unchecked' : x.ds === 'ssl' ? 'ok' : x.ds; health[k] = (health[k] || 0) + 1; });
+    const expiring = withDom.filter((x) => x.re && x.re - now <= 60 * DAY_MS).length;
+    // ---- Domain monitoring: every custom domain, whatever the "only custom domain" switch says ----
+    const dmLive = all.filter((x) => x.live && x.dm);
+    const leftD = (x) => Math.floor((x.re - now) / DAY_MS);
+    const mk = (x, extra) => Object.assign({ id: x.id, n: x.n || x.dm, dm: x.dm }, extra);
+    const expRows = dmLive.filter((x) => x.re && leftD(x) <= 60).sort((a, b) => a.re - b.re);
+    const incidents = (d.domev || []).filter((e) => e[0] === 'D').map((e) => ({ s: e[1], at: e[2], c: e[3] }));
+    dmLive.forEach((x) => { if (x.dc && x.dsn && !incidents.some((i) => i.s === x.id && Math.abs(i.at - x.dsn) < 2 * DAY_MS)) incidents.push({ s: x.id, at: x.dsn, c: x.dc }); });
+    const incOf = (c) => { const seen = new Map(); incidents.filter((i) => i.c === c && i.at >= from && i.at <= to && allById.get(i.s) && allById.get(i.s).dm).sort((a, b) => b.at - a.at).forEach((i) => { if (!seen.has(i.s)) seen.set(i.s, i); }); return [...seen.values()]; };
+    const stillBad = (id) => { const x = allById.get(id); return !!(x && x.live && x.dc); };
+    // A problem that is still happening is always listed, whatever the date range; the range only decides which finished ones appear.
+    const withOpen = (c, label) => { const rows = incOf(c).map((i) => { const x = allById.get(i.s); return mk(x, { at: i.at, open: stillBad(i.s), detail: x.dl || label }); }); const have = new Set(rows.map((r) => r.id));
+      dmLive.filter((x) => x.dc === c && !have.has(x.id)).forEach((x) => rows.push(mk(x, { at: x.dsn || 0, open: true, detail: x.dl || label }))); return rows.sort((a, b) => (b.open - a.open) || b.at - a.at); };
+    const redirRows = withOpen('redirect', 'Shows another website');
+    const downRows = withOpen('down', 'Not loading');
+    const unpRows = [...unpub].map((id) => allById.get(id)).filter((x) => x && x.dm).map((x) => mk(x, { at: lastOff[x.id] || x.l || 0, open: !x.live, detail: x.live ? 'Back online' : 'Still unpublished' }));
+    const certRows = dmLive.filter((x) => x.sd !== undefined && x.sd <= 14).sort((a, b) => a.sd - b.sd);
+    const unkRows = dmLive.filter((x) => x.ds && !x.re);
+    const dmCards = {
+      expired: { rows: expRows.filter((x) => leftD(x) < 0), at: 're' },
+      exp: { rows: expRows },
+      redir: { rows: redirRows }, down: { rows: downRows }, unp: { rows: unpRows },
+      cert: { rows: certRows }, unk: { rows: unkRows },
+    };
+    const dmN = { expired: dmCards.expired.rows.length, w7: expRows.filter((x) => leftD(x) >= 0 && leftD(x) <= 7).length, w30: expRows.filter((x) => leftD(x) > 7 && leftD(x) <= 30).length, w60: expRows.filter((x) => leftD(x) > 30).length };
     return {
+      dm: { cards: dmCards, n: dmN, total: dmLive.length, openRedir: redirRows.filter((r) => r.open).length, openDown: downRows.filter((r) => r.open).length },
       from, to, g, bumped, B, series, sets, sites, byId: allById, ev,
       tiles: {
         live: liveSites.length, liveNoDomain: all.filter((x) => x.live && !x.dm).length,
         launched: launched.length, launchedBefore, unpub: unpub.size, stillOff: stillOff.length, forGood: forGood.length,
         back: back.size, rep: rep.size, net: launched.length + back.size - unpub.size,
         medianDays: launchDays.length ? Math.round(median(launchDays)) : null,
-        audited: auditedFirst, stale: liveSites.filter((x) => x.l && x.l < now - 365 * DAY_MS).length,
-        problems: withDom.filter((x) => x.ds && !['ok', 'nodomain'].includes(x.ds)).length, expiring,
+        audited: auditedFirst, stale: liveSites.filter((x) => x.l && x.l < from).length,
+        problems: withDom.filter((x) => x.ds && !['ok', 'nodomain', 'ssl'].includes(x.ds)).length, expiring,
         trackedFromInRange: d.since > from,
       },
       health, withDom: withDom.length,
@@ -4738,6 +4765,34 @@
   }
 
   // ---- the page ----
+  /** The Domain monitoring cards (each opens the websites behind it) and the list under them. */
+  function domSection(T) {
+    const D = T.dm, n = D.n, c = D.cards;
+    const card = (key, icon, label, count, sub, cls, follows) => `<button class="dm-card ${cls || ''} ${trends.dm === key ? 'on' : ''}" data-dm="${key}" aria-pressed="${trends.dm === key}"><span class="dm-l">${icon} ${label}</span><span class="dm-v">${fmtN(count)}</span><span class="dm-s">${sub}</span><span class="dm-f">${follows ? 'Follows the date range · open problems always shown' : 'Right now'}</span></button>`;
+    const expSub = c.exp.rows.length ? [n.expired ? `${n.expired} expired` : '', n.w7 ? `${n.w7} in 7 days` : '', n.w30 ? `${n.w30} in 30 days` : '', n.w60 ? `${n.w60} in 60 days` : ''].filter(Boolean).join(' · ') : 'Nothing expiring in 60 days';
+    const open = trends.dm && c[trends.dm] ? trends.dm : '';
+    const TITLES = { expired: 'Domain expired', exp: 'Custom domain expiring or expired', redir: 'Custom domain showing another site', down: 'Custom domain down', unp: 'Custom domain unpublished', cert: 'Security certificate ending (information only)', unk: 'Domain expiry date not readable' };
+    let list = '';
+    if (open) {
+      const rows = c[open].rows;
+      const when = (x) => (open === 'exp' || open === 'expired' ? (x.re ? `${daysTo(x.re) < 0 ? 'Expired ' + fmtDate(new Date(x.re).toISOString()) : 'Expires ' + fmtDate(new Date(x.re).toISOString()) + ' · ' + daysTo(x.re) + ' days'}` : '—')
+        : open === 'cert' ? `${x.sd < 0 ? 'Renewing' : x.sd + ' days left'} · Duda renews it` : open === 'unk' ? (x.dl || '') : `${x.at ? fmtDate(new Date(x.at).toISOString()) : '—'}${x.open ? ' · still happening' : ' · resolved'} · ${esc(x.detail || '')}`);
+      list = `<div class="dm-list panel panel-pad"><div class="row-between"><h2>${esc(TITLES[open])} <span class="faint small">${rows.length} website${rows.length === 1 ? '' : 's'}</span></h2><button class="linkbtn" id="dmClose">Close</button></div>
+        ${open === 'cert' ? '<div class="small muted">For your information only: Duda issues and renews these on its own, so you are not alerted.</div>' : ''}
+        ${open === 'unk' ? '<div class="small muted">The registry did not publish an expiry date for these (some country domains never do), so they can\'t be watched for renewal.</div>' : ''}
+        ${rows.length ? `<table class="grid dm-table"><thead><tr><th>Website</th><th>Domain</th><th>${open === 'exp' || open === 'expired' ? 'Registration' : open === 'cert' ? 'Certificate' : open === 'unk' ? 'Status' : 'When'}</th><th></th></tr></thead><tbody>${rows.slice(0, 200).map((x) => `<tr><td><a href="#/dr/${esc(encodeURIComponent(x.id))}">${esc(x.n || x.dm)}</a></td><td>${esc(x.dm)}</td><td class="small">${open === 'exp' || open === 'expired' || open === 'cert' || open === 'unk' ? when(Object.assign({}, x, allRowFor(T, x.id))) : when(x)}</td><td><a href="#/live" data-tsite="${esc(x.id)}" class="small">Find in list</a></td></tr>`).join('')}</tbody></table>${rows.length > 200 ? `<div class="small muted">Showing the first 200 of ${rows.length}.</div>` : ''}` : '<div class="small muted">Nothing here for this range. 🎉</div>'}</div>`;
+    }
+    return `<section class="dm-sec"><div class="row-between"><h2>🌐 Domain monitoring <span class="faint small">checked every day · admins are alerted straight away</span></h2></div>
+      <div class="dm-cards">
+        ${card('exp', '⏳', 'Domain expiring', c.exp.rows.length, expSub, n.expired || n.w7 ? 'dm-bad' : c.exp.rows.length ? 'dm-warn' : '', false)}
+        ${card('redir', '↪', 'Redirected issue', c.redir.rows.length, `${D.openRedir} still happening`, D.openRedir ? 'dm-bad' : '', true)}
+        ${card('down', '⛔', 'Domain down', c.down.rows.length, `${D.openDown} still happening`, D.openDown ? 'dm-bad' : '', true)}
+        ${card('unp', '🚫', 'Domain unpublished', c.unp.rows.length, c.unp.rows.length ? `${c.unp.rows.filter((r) => r.open).length} still off` : 'Custom-domain sites switched off', '', true)}
+        ${card('unk', '❔', 'Expiry unknown', c.unk.rows.length, 'No renewal date on record', '', false)}
+        ${card('cert', 'ⓘ', 'Certificate ending', c.cert.rows.length, 'Info only · Duda renews it', 'dm-fyi', false)}
+      </div>${list}</section>`;
+  }
+  const allRowFor = (T, id) => { const x = T.byId.get(id); return x ? { re: x.re, sd: x.sd, dl: x.dl } : {}; };
   function renderTrends() {
     const d = trends.data;
     if (!d && !trends.loading && !trends.error) { loadTrends(false); }
@@ -4764,7 +4819,6 @@
       ['wrong', '⛔ Shows another website', 'var(--status-critical)', ['redirect', 'hijacked', 'notduda']],
       ['dns', '⛔ Domain not resolving (DNS)', 'var(--status-critical)', ['dns']],
       ['down', '⛔ Not loading or erroring', 'var(--status-critical)', ['http', 'down', 'error']],
-      ['ssl', '🔓 Security certificate problem', 'var(--status-serious)', ['ssl']],
       ['timeout', '⏱ Not responding in time', 'var(--status-warning)', ['timeout']],
       ['unchecked', '– Not checked yet', 'var(--viz-muted)', ['unchecked']],
     ].map(([k, label, color, keys]) => ({ k, label, color, n: (keys || [k]).reduce((a, s) => a + (T.health[s] || 0), 0) })).filter((r) => r.n || r.k === 'ok');
@@ -4781,17 +4835,17 @@
       ${T.bumped ? `<div class="small muted" style="margin:-4px 0 10px">Too many ${T.bumped}s to draw for this range, so it is shown by ${gLabel}.</div>` : ''}
       ${!d.hasFirst ? '<div class="note bad">Duda did not send launch dates with the website list, so launches can\'t be counted. Press Reload; if it stays like this, tell the app owner.</div>' : ''}
 
+      ${domSection(T)}
       <div class="tr-tiles">
         ${tile('Live now', fmtN(t.live), trends.custom && t.liveNoDomain ? `+ ${fmtN(t.liveNoDomain)} on a Duda address only` : '')}
-        ${tile('Launched', fmtN(t.launched), `${delta === 0 ? 'Same as' : `${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)} vs`} the period before`)}
+        ${tile('Launched', fmtN(t.launched), `${delta === 0 ? 'Same as' : `${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)} vs`} the period before · first time live in this range`)}
         ${tile('Unpublished', fmtN(t.unpub), t.unpub ? `${fmtN(t.stillOff)} still off · ${fmtN(t.forGood)} off 30+ days` : (t.trackedFromInRange ? `Recorded from ${sinceTxt}` : ''))}
         ${tile('Came back', fmtN(t.back), 'Live again after being unpublished')}
         ${tile('Net change', (t.net > 0 ? '+' : '') + fmtN(t.net), 'Launched + came back − unpublished')}
-        ${tile('Re-published', fmtN(t.rep), 'Live websites updated at least once', '')}
+        ${tile('Re-published', fmtN(t.rep), 'Live websites updated at least once in this range')}
+        ${tile('Not updated', fmtN(t.stale), `Live, not published since ${esc(new Date(T.from).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}`)}
         ${tile('Days to launch', t.medianDays === null ? '—' : fmtN(t.medianDays), 'Median, from created in Duda to live')}
         ${tile('Audited before launch', pct(t.audited, t.launched), t.launched ? `${fmtN(t.audited)} of ${fmtN(t.launched)} launched` : '')}
-        ${tile('Domain problems', `<a href="#/live/problems">${fmtN(t.problems)}</a>`, t.expiring ? `${fmtN(t.expiring)} certificate or domain expiring` : 'Right now', t.problems ? 'tr-bad' : '')}
-        ${tile('Not updated in a year', fmtN(t.stale), 'Live, last published 12+ months ago')}
       </div>
       ${t.trackedFromInRange ? `<div class="small muted tr-note">Launches come from Duda's own dates and go back to the start. Unpublishes, comebacks and re-publishes are recorded as they happen, from <b>${sinceTxt}</b>; earlier periods show as not recorded.</div>` : ''}
 
@@ -4826,7 +4880,7 @@
           <h2>Domain health right now <span class="faint small">${fmtN(T.withDom)} live custom domains</span></h2>
           <div class="hbars">${HEALTH.map((r) => `<button class="hbar" data-hk="${r.k}" title="Show these on the list">
             <span class="hbar-l">${esc(r.label)}</span><span class="hbar-track"><span class="hbar-fill" style="width:${Math.max(r.n ? 2 : 0, (r.n / hMax) * 100)}%;background:${r.color}"></span></span><b class="hbar-v">${fmtN(r.n)}</b></button>`).join('')}</div>
-          ${t.expiring ? `<button class="linkbtn" id="trExp" style="margin-top:8px">⚠ ${fmtN(t.expiring)} with a certificate or domain registration running out →</button>` : ''}
+          ${t.expiring ? `<button class="linkbtn" id="trExp" style="margin-top:8px">⚠ ${fmtN(t.expiring)} whose domain registration is running out →</button>` : ''}
           <div class="small faint" style="margin-top:8px">Checked once a day. Admins are told when a domain that worked stops working, comes back, or is about to expire.</div>
         </section>
         <section class="panel panel-pad tr-card" id="trRecent">${trendRecent(T)}</section>
@@ -4852,6 +4906,8 @@
       live.dom = b.dataset.hk === 'ok' ? 'ok' : b.dataset.hk === 'unchecked' ? 'none' : 'problem';
       location.hash = '#/live';
     }));
+    $$('[data-dm]').forEach((b) => (b.onclick = () => { trends.dm = trends.dm === b.dataset.dm ? '' : b.dataset.dm; renderTrends(); const l = $('.dm-list'); if (l) l.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }));
+    if ($('#dmClose')) $('#dmClose').onclick = () => { trends.dm = ''; renderTrends(); };
     if ($('#trExp')) $('#trExp').onclick = () => { live.tab = 'published'; live.q = ''; live.dom = 'expiring'; live.page = 0; location.hash = '#/live'; };
     $$('[data-tsite]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = 'published'; live.q = a.dataset.tsite; live.dom = ''; live.audit = ''; live.page = 0; location.hash = '#/live'; }));
     if ($('#trFocusClose')) $('#trFocusClose').onclick = () => { trends.focus = -1; renderTrends(); };
@@ -4918,6 +4974,7 @@
     if (live.dom === 'ok') list = list.filter((x) => x.dom && x.dom.status === 'ok');
     if (live.dom === 'none') list = list.filter((x) => !x.dom);
     if (live.dom === 'expiring') list = list.filter((x) => domExpiring(x.dom));
+    if (live.dom === 'cert') list = list.filter((x) => domCertFyi(x.dom));
     list = list.slice().sort((a, b) => live.sort === 'domain' ? (domProblem(b.dom) ? 1 : 0) - (domProblem(a.dom) ? 1 : 0) || String(b.published).localeCompare(String(a.published)) : live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
     const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
     const shown = list.slice(live.page * PER, live.page * PER + PER);
@@ -4940,7 +4997,7 @@
       <div class="panel"><div class="toolbar">
         <input type="search" id="liveQ" placeholder="Search by name, site ID, domain or label…" value="${esc(live.q)}" style="flex:1;min-width:220px">
         <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option><option value="leads" ${live.audit === 'leads' ? 'selected' : ''}>With enquiries (${all.filter((x) => (state.leadSums[String(x.id)] || {}).total).length})</option></select>
-        <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="expiring" ${live.dom === 'expiring' ? 'selected' : ''}>Certificate or domain expiring (${all.filter((x) => domExpiring(x.dom)).length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
+        <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="expiring" ${live.dom === 'expiring' ? 'selected' : ''}>Domain expiring or expired (${all.filter((x) => domExpiring(x.dom)).length})</option><option value="cert" ${live.dom === 'cert' ? 'selected' : ''}>Certificate ending (info only, ${all.filter((x) => domCertFyi(x.dom)).length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
         <select id="liveSort"><option value="published">Recently published first</option><option value="domain" ${live.sort === 'domain' ? 'selected' : ''}>Domain problems first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
       </div>
       ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}

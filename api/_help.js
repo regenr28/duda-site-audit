@@ -694,37 +694,50 @@ export const HELP_SECTIONS = [
 <li><b>Redirects</b>: sends visitors to a different domain.</li>
 <li><b>Shows unrelated content</b>: loads a spam, gambling or parked page. Fix the domain before auditing (this needs the customer).</li>
 <li><b>Not pointing to this website</b>: the domain loads something else; its DNS may point to another host.</li>
-<li><b>404 Not found</b>, <b>Not responding</b>, <b>Connection refused</b>, <b>SSL certificate problem</b>, <b>Could not open</b>: the domain has a technical problem.</li>
+<li><b>404 Not found</b>, <b>Not responding</b>, <b>Connection refused</b>, <b>Could not open</b>: the domain has a technical problem.</li>
 <li><b>No custom domain</b>: the site only has its Duda address.</li>
 </ul>
-<p>Each check also reads three things that still work today but need somebody before they stop working. Hover the badge to see them:</p>
+<p>Each check also reads things that still work today but need somebody before they stop working. Hover the badge to see them:</p>
 <ul>
-<li><b>Security certificate</b>: days left. Duda renews certificates on its own about a month ahead, so <b>⚠ Certificate: 9 days left</b> means renewal is failing, usually because the domain's DNS no longer points at Duda.</li>
-<li><b>Domain registration</b>: when the client must renew the domain with their registrar (and which registrar). Shown as <b>⚠ Domain renews in N days</b> from 30 days out. Some country domains don't publish a date; those show nothing.</li>
+<li><b>Domain registration</b>: when the client must renew the domain with their registrar (and which registrar). Shown as <b>⚠ Domain expires in N days</b> from 60 days out, and in red <b>Domain EXPIRED</b> once it has lapsed. Some country domains don't publish a date; those are counted as <b>Expiry unknown</b>.</li>
 <li><b>Speed</b>: <b>⚠ Slow</b> when the home page takes more than 6 seconds to answer.</li>
+<li><b>Security certificate</b>: shown as <b>ⓘ Certificate: N days left</b> for information only. Duda issues and renews certificates by itself, so a certificate is <b>never a problem</b>, never counted in Domain problems and never alerted.</li>
 </ul>
-<p>The <b>Certificate or domain expiring</b> filter lists them. Every live domain is checked <b>once a day automatically</b>, whether or not anyone has the app open, and again whenever Duda reports the website's domain changed.</p>
-<h4>Domain alerts (admins)</h4>
-<p>Admins are told, on the bell, as a pop-up and on Slack:</p>
+<p>The <b>Domain expiring or expired</b> filter lists the registrations running out. Every live domain is checked <b>once a day automatically</b>, whether or not anyone has the app open, and again whenever Duda reports the website's domain changed.</p>
+<h4>🌐 Domain monitoring (on Trends)</h4>
+<p>A row of cards at the top of <b>Trends</b>. Click a card to list the websites behind it; click it again to close the list.</p>
 <ul>
-<li>A domain that <b>worked</b> on its last check <b>stops working</b>. It is checked a second time a few seconds later first, so a one-off blip is never reported.</li>
-<li>A website <b>launched in the last two weeks</b> whose domain doesn't work.</li>
-<li>A domain that was reported broken <b>works again</b>.</li>
-<li>A <b>security certificate</b> with 14 days or less left, or one Duda <b>could not issue</b> at all.</li>
-<li>A <b>domain registration</b> running out within 30 days (repeated every 2 weeks, every 3 days in the last week).</li>
+<li><b>Domain expiring</b>: registrations ending within 60 days, with how many are already expired, within 7, 30 and 60 days. <b>Always the current picture</b>; the date range does not change it.</li>
+<li><b>Redirected issue</b>: the domain no longer shows this website (it sends visitors elsewhere, or loads something else). <b>Follows the date range</b>: it counts problems that started in the range, plus any still happening now.</li>
+<li><b>Domain down</b>: the site doesn't load (DNS, errors, no answer). Follows the date range the same way.</li>
+<li><b>Domain unpublished</b>: websites with a custom domain that were switched off in the range, and how many are still off.</li>
+<li><b>Expiry unknown</b>: domains whose registry publishes no renewal date, so they can't be watched for renewal.</li>
+<li><b>Certificate ending</b>: information only, since Duda renews it.</li>
 </ul>
-<p>Problems that were already there are not reported again. When more than three arrive at once they come as one message. Clicking an alert opens Live DR Sites on that website. Each admin can switch these off under their account → Notifications → <b>Domain problems on live websites</b>.</p>
+<p>Domain history is recorded from the day this started, with problems already open counted from when they were first seen.</p>
+<h4>Domain alerts (admins)</h4>
+<p>Admins are told, on the bell, as a pop-up and on Slack. Urgent ones start with 🚨.</p>
+<ul>
+<li>🚨 A domain that <b>worked</b> on its last check <b>goes down</b> or <b>stops showing the website</b>. It is checked a second time a few seconds later first, so a one-off blip is never reported.</li>
+<li>🚨 A website <b>launched in the last two weeks</b> whose domain doesn't work.</li>
+<li>✅ A domain that was reported broken <b>works again</b>.</li>
+<li>⚠️ A <b>domain registration</b> running out: told at 60, 30, 14, 7, 3 and 1 days, in red from 7 days. 🚨 The moment it <b>expires</b>, then a reminder every 3 days until it is renewed.</li>
+<li>📋 One <b>Daily domain report</b> each morning listing everything still open (expired, expiring, down, showing another site). Nothing open means no report.</li>
+</ul>
+<p>Security certificates are not alerted at all. Problems that were already there are not reported again. When more than three arrive at once they come as one message. Clicking an alert opens Live DR Sites on that website. Each admin can switch these off under their account → Notifications → <b>Domain problems on live websites</b>.</p>
 <h4>📈 Trends</h4>
 <p>The <b>Trends</b> tab shows how the account is growing.</p>
 <ul>
 <li><b>Range</b>: last 30 or 90 days, last 12 months, this year, all time, or your own dates. <b>Weekly / Monthly / Yearly</b> sets one point per week, month or year.</li>
 <li><b>Only websites with a custom domain</b> (on by default) leaves out websites that only have a Duda address, such as tests and demos.</li>
 <li><b>Launched</b>: first published, from Duda's own dates, so it goes back to the very first website.</li>
+<li><b>Re-published</b> counts live websites updated at least once in the range; <b>Not updated</b> counts live websites with <b>no</b> publish since the start of the range (so it follows the range you pick). They are two sides of the same question.</li>
 <li><b>Unpublished</b>, <b>Came back</b> (published again after being unpublished) and <b>Re-published</b> (a live website updated): recorded as they happen, from the day the Duda connection was made. Earlier periods show as not recorded rather than as zero. A website deleted outright is still noticed, by comparing each pull of the list with the last one.</li>
 <li><b>Live websites over time</b> is an estimate: a website that left before records began counts as live until its last publish.</li>
 <li><b>Days to launch</b>: the median days from a website being created in Duda to going live. <b>Audited before launch</b>: of the websites launched in the range, how many were added to Audits before they went live.</li>
 <li>Hover a chart for the numbers; click a period to list the websites behind it. <b>Show as table</b> gives every number.</li>
 <li><b>Domain health right now</b>: click a bar to open those websites on the list.</li>
+<li><b>Domain monitoring</b> cards sit above the numbers; see <b>Domain monitoring (on Trends)</b> above.</li>
 </ul>
 <h4>Published, not yet, or gone</h4>
 <p>Duda keeps two lists — the websites that are <b>published</b> and the ones still <b>drafts</b> — and the Audits page reads both, because most audits happen <b>before</b> a website launches.</p>

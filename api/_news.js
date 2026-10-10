@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-domain-monitoring', date: '2026-10-10', audience: 'all', tag: 'Live DR Sites',
+    title: 'Domain monitoring: expiring, redirected, down and unpublished, one click from Trends',
+    what: 'A new <b>🌐 Domain monitoring</b> row at the top of <b>Trends</b> counts <b>Domain expiring</b>, <b>Redirected issue</b>, <b>Domain down</b> and <b>Domain unpublished</b>. Click any card to list those websites. Expiring is always the current picture; the others follow your date range (a problem still happening is always shown). Security certificates are now information only, because Duda renews them by itself, so they no longer count as domain problems. <b>Not updated</b> now follows your date range too.',
+    where: ['<b>Walkthrough:</b> open <b>Live DR Sites → 📈 Trends</b> and click <b>Domain expiring</b>.'],
+    link: '#/live/trends', linkText: 'Open Trends',
+  },
+  {
+    id: '2026-10-10-domain-alerts', date: '2026-10-10', audience: 'admin', tag: 'Admin',
+    title: 'Urgent domain alerts and a daily domain report',
+    what: 'You are now told straight away, with 🚨, when a live domain goes down, stops showing the website, or <b>expires</b>. Registrations running out are announced at 60, 30, 14, 7, 3 and 1 days, and an expired one is repeated every 3 days until renewed. Every morning one <b>Daily domain report</b> lists everything still open. Security certificates are no longer alerted.',
+    where: ['Switch these on or off under your account → Notifications → <b>Domain problems on live websites</b>.'],
+    link: '#/help/live', linkText: 'How domain alerts work',
+  },
+  {
     id: '2026-10-09-requests', date: '2026-10-09', audience: 'all', tag: 'Clients',
     title: 'Clients can send tickets: questions, or changes marked on their own website',
     what: 'Instead of texting or emailing, a client taps <b>✉️ Send a ticket</b> on their page (it floats at the bottom on a phone) and picks <b>General question</b> or <b>Website change</b>. For a change, they <b>browse their website live</b> (desktop, tablet or phone), open menus and pop-ups as usual, and mark it right there: highlight text, tap an element, or draw a box, circle or arrow. There is no waiting. The picture for the team is taken in the background. <b>Every ticket arrives separately on the new Tickets page</b>, and changes come with a picture of exactly where.<br><br>Open one to see whether that spot has <b>changed since</b>, write back to the client, set its status or assign it. Clients see the answer on their <b>Change requests</b> page.',

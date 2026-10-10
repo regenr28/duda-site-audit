@@ -7,7 +7,7 @@
 import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, learnEditorHost } from './_lib.js';
 import { enqueue } from './_queue.js';
 import { markRun, lastRuns } from './leadq.js';
-import { checkDomain, checkAndStore, DOMS } from './_domains.js';
+import { checkDomain, checkAndStore, sendDigest, problemClass, isProblem, DOMS, DOMEV } from './_domains.js';
 import { evCmds, diffEvents, seedFromFeeds, readEvents, settleEvents } from './_pubhist.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
@@ -128,7 +128,8 @@ async function sweep(req, res) {
     .sort((a, b) => (last[a.id] || 0) - (last[b.id] || 0));
   const out = await checkAndStore(due, { budgetMs: 95000, concurrency: 12 });
   await markRun('domains', bot, false, { count: Object.keys(out).length });
-  return res.status(200).json({ checked: Object.keys(out).length, due: due.length });
+  const open = await sendDigest().catch(() => 0);
+  return res.status(200).json({ checked: Object.keys(out).length, due: due.length, open });
 }
 
 /**
@@ -138,7 +139,7 @@ async function sweep(req, res) {
 async function stats(me) {
   const [pub, un] = await Promise.all([loadList('published', me, false), loadList('unpublished', me, false).catch(() => null)]);
   await seedFromFeeds().catch(() => {});
-  const [{ since, events }, [names, doms]] = await Promise.all([readEvents(), redis(['HGETALL', NAMES], ['HGETALL', DOMS])]);
+  const [{ since, events }, [names, doms, domev]] = await Promise.all([readEvents(), redis(['HGETALL', NAMES], ['HGETALL', DOMS], ['LRANGE', DOMEV, 0, 3999])]);
   const nm = {}; for (let i = 0; names && i < names.length; i += 2) { const v = String(names[i + 1] || ''); const j = v.startsWith('{') ? jparse(v) : null; nm[names[i]] = (j ? j.n : v) || ''; }
   const dm = {}; for (let i = 0; doms && i < doms.length; i += 2) dm[doms[i]] = jparse(doms[i + 1]);
   const ms = (v) => Date.parse(v) || 0;
@@ -147,6 +148,7 @@ async function stats(me) {
     const r = { id: x.id, n: x.name || (nm[x.id] && nm[x.id] !== '-' ? nm[x.id] : ''), dm: x.domain || '', c: ms(x.created), f: ms(x.first), l: ms(x.published), live: live ? 1 : 0 };
     if (d && (!x.domain || d.domain === x.domain || d.status === 'nodomain')) {
       r.ds = d.status; r.dl = d.label;
+      if (isProblem(d)) { r.dc = problemClass(d.status); if (d.downSince) r.dsn = d.downSince; }
       if (d.ssl) r.sd = d.ssl.days - Math.floor((Date.now() - (d.checkedAt || Date.now())) / 86400000);
       if (d.reg && d.reg.expires) r.re = d.reg.expires;
       if (d.ms) r.ms = d.ms;
@@ -160,6 +162,8 @@ async function stats(me) {
   const settled = settleEvents(events, firstPub).map((e) => [e.t, e.s, e.at, e.src === 's' ? 1 : 0]);
   return {
     at: Date.now(), listAt: pub.at, since, sites, events: settled,
+    // Domain problems as they started and ended (from the daily check): ["D"|"U", site, at, class]
+    domev: (domev || []).map((x) => jparse(x)).filter(Boolean),
     drafts: un ? Math.max(0, (un.count || 0) - unRows.length) : null,
     hasFirst: (pub.sites || []).some((x) => x.first),
   };

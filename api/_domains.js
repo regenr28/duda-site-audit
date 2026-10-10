@@ -54,7 +54,7 @@ async function basicCheck(domain) {
   const text = textOf(body);
   if (BAD_CONTENT.test(title + ' ' + text) && !DUDA_MARK.test(body)) return Object.assign(out, { status: 'hijacked', label: 'Shows unrelated content', detail: `The domain loads a page that isn't this website${title ? ` ("${title}")` : ''} and looks like spam, gambling or a parked domain.` });
   if (!DUDA_MARK.test(body)) return Object.assign(out, { status: 'notduda', label: 'Not pointing to this website', detail: `The domain loads, but not the Duda website${title ? ` ("${title}")` : ''}. Its DNS may point to another host.` });
-  if (out.sslError) return Object.assign(out, { status: 'ssl', label: 'SSL certificate problem', detail: 'The site only works over http://, the security certificate is missing or invalid.' });
+  // The security certificate is Duda's job (it issues and renews it by itself), so it is never reported as a problem here.
   return Object.assign(out, { status: 'ok', label: 'Working', detail: hops.length ? `Loads after ${hops.length} redirect(s) on the same domain.` : 'Loads normally.' });
 }
 
@@ -111,7 +111,12 @@ async function rdapInfo(domain) {
 
 const WEEK = 7 * 86400000;
 const DAY = 86400000;
-export const isProblem = (d) => !!d && !['ok', 'nodomain'].includes(d.status);
+// 'ssl' only exists in results stored before certificates stopped counting as problems.
+export const isProblem = (d) => !!d && !['ok', 'nodomain', 'ssl'].includes(d.status);
+/** The kind of problem, for counting: the domain shows another site, or the site does not load at all. */
+export const problemClass = (st) => (['redirect', 'hijacked', 'notduda'].includes(st) ? 'redirect' : ['dns', 'http', 'down', 'timeout', 'error'].includes(st) ? 'down' : '');
+export const DOMEV = P + 'domev';       // list: domain incidents, newest first  ["D"|"U", site, at, class]
+const MILESTONES = [60, 30, 14, 7, 3, 1];
 
 /** Everything about one domain, in one go. `prev` is the last result, so the weekly parts are reused. */
 export async function checkDomain(domain, prev) {
@@ -127,7 +132,7 @@ export async function checkDomain(domain, prev) {
   // Things that still work today but need somebody before they stop working.
   const warn = [];
   if (ssl && out.status === 'ok' && ssl.days <= 14) warn.push(ssl.days < 0 ? 'ssl-expired' : 'ssl-soon');
-  if (reg && reg.expires) { const left = Math.floor((reg.expires - Date.now()) / DAY); if (left <= 30) warn.push(left < 0 ? 'reg-expired' : 'reg-soon'); }
+  if (reg && reg.expires) { const left = Math.floor((reg.expires - Date.now()) / DAY); if (left <= 60) warn.push(left < 0 ? 'reg-expired' : 'reg-soon'); }
   if (out.status === 'ok' && out.ms > 6000) warn.push('slow');
   if (warn.length) out.warn = warn;
   return out;
@@ -168,7 +173,7 @@ export async function checkAndStore(sites, { budgetMs = 0, concurrency = 10 } = 
     out[x.id] = r;
   });
   const now = Date.now();
-  const alerts = [];
+  const alerts = []; const events = [];
   sites.forEach((x) => {
     const n = out[x.id]; if (!n || n.status === 'nodomain') return;
     const p = prev[x.id] && prev[x.id].domain === n.domain ? prev[x.id] : null;
@@ -177,36 +182,49 @@ export async function checkAndStore(sites, { budgetMs = 0, concurrency = 10 } = 
     const isNew = !p && x.first && now - x.first < 14 * DAY;
     if (isProblem(n)) {
       n.downSince = (p && isProblem(p) && p.downSince) || now;
-      if ((p && p.status === 'ok') || (isNew && !n.al.down)) { alerts.push(Object.assign({ kind: 'down', label: n.label, detail: n.detail }, who)); n.al.down = now; }
-    } else if (n.status === 'ok' && n.al.down) {
+      if ((p && !isProblem(p)) || (isNew && !n.al.down)) {
+        alerts.push(Object.assign({ kind: 'down', cls: problemClass(n.status), label: n.label, detail: n.detail }, who)); n.al.down = now;
+        events.push(['D', x.id, now, problemClass(n.status)]);
+      }
+    } else if (n.al.down) {
       alerts.push(Object.assign({ kind: 'up', since: p && p.downSince }, who)); delete n.al.down;
+      events.push(['U', x.id, now, '']);
     }
-    if (n.ssl && n.status === 'ok' && n.ssl.days <= 14 && (!n.al.ssl || now - n.al.ssl > WEEK)) {
-      alerts.push(Object.assign({ kind: 'ssl', days: n.ssl.days, until: n.ssl.until }, who)); n.al.ssl = now;
-    }
+    // The domain name's own registration: the one date that ends the website if nobody acts.
+    // Told at 60, 30, 14, 7, 3 and 1 days, then every three days while it stays expired.
     if (n.reg && n.reg.expires) {
       const left = daysLeft(n.reg.expires);
-      const gap = left <= 7 ? 3 * DAY : 14 * DAY;
-      if (left <= 30 && (!n.al.reg || now - n.al.reg > gap)) { alerts.push(Object.assign({ kind: 'reg', days: left, until: n.reg.expires, registrar: n.reg.registrar, regName: n.reg.name }, who)); n.al.reg = now; }
+      const send = (extra) => { alerts.push(Object.assign({ kind: 'reg', days: left, until: n.reg.expires, registrar: n.reg.registrar, regName: n.reg.name }, extra, who)); n.al.reg = now; };
+      if (left < 0) { if (n.al.regm !== 0 || !n.al.reg || now - n.al.reg > 3 * DAY) send({}); n.al.regm = 0; }   // the moment it expires, then every 3 days
+      else {
+        const hit = MILESTONES.filter((m) => left <= m).pop();            // the closest milestone passed
+        if (hit !== undefined && (n.al.regm === undefined || hit < n.al.regm)) { send({}); n.al.regm = hit; }
+        else if (left > 60) delete n.al.regm;                              // renewed: start over for next year
+      }
     }
     if (!Object.keys(n.al).length) delete n.al;
   });
   const flat = [].concat(...Object.entries(out).map(([k, v]) => [k, JSON.stringify(v)]));
   if (flat.length) await redis(['HSET', DOMS, ...flat]);
+  if (events.length) await redis(...events.map((e) => ['LPUSH', DOMEV, JSON.stringify(e)]), ['LTRIM', DOMEV, 0, 3999]);
   if (alerts.length) await sendDomainAlerts(alerts).catch(() => {});
   return out;
 }
 
 /** The sentence an admin reads, for one alert. */
 function alertLine(a) {
-  if (a.kind === 'down') return `${a.domain} — ${a.label}`;
-  if (a.kind === 'up') return `${a.domain} — working again${a.since ? ` (was down since ${fmtDay(a.since)})` : ''}`;
-  if (a.kind === 'ssl') return `${a.domain} — security certificate ${a.days < 0 ? 'has expired' : `expires in ${a.days} day${a.days === 1 ? '' : 's'}`} (Duda normally renews it on its own; the DNS may no longer point at Duda)`;
-  if (a.kind === 'reg') return `${a.regName || a.domain} — domain registration ${a.days < 0 ? 'has expired' : `expires in ${a.days} day${a.days === 1 ? '' : 's'}`} (${fmtDay(a.until)}${a.registrar ? `, ${a.registrar}` : ''}). The client renews it with their registrar.`;
-  if (a.kind === 'cert') return `${a.domain} — Duda could not issue the security certificate. Visitors will see a "not secure" warning until it is fixed; check the domain's DNS records.`;
+  if (a.kind === 'down') return a.cls === 'redirect'
+    ? `🚨 ${a.domain} no longer shows this website — ${a.label}. Visitors are being sent somewhere else.`
+    : `🚨 ${a.domain} is DOWN — ${a.label}. Visitors cannot open the website.`;
+  if (a.kind === 'up') return `✅ ${a.domain} is working again${a.since ? ` (was down since ${fmtDay(a.since)})` : ''}`;
+  if (a.kind === 'reg') {
+    const when = a.days < 0 ? `EXPIRED ${-a.days} day${a.days === -1 ? '' : 's'} ago (${fmtDay(a.until)})` : a.days === 0 ? 'expires TODAY' : `expires in ${a.days} day${a.days === 1 ? '' : 's'} (${fmtDay(a.until)})`;
+    return `${a.days <= 7 ? '🚨' : '⚠️'} ${a.regName || a.domain} — domain registration ${when}${a.registrar ? `, ${a.registrar}` : ''}. If it lapses the website goes offline; the client renews it with their registrar.`;
+  }
   return a.domain;
 }
-const KIND_OF = { down: 'domain-problem', cert: 'domain-problem', ssl: 'domain-expiring', reg: 'domain-expiring', up: 'domain-ok' };
+// Everything that needs somebody is "problem" (loud); a renewal still some weeks off is "expiring".
+const KIND_OF = (a) => (a.kind === 'up' ? 'domain-ok' : a.kind === 'down' || (a.kind === 'reg' && a.days <= 7) ? 'domain-problem' : 'domain-expiring');
 
 /**
  * Every admin is told. More than three at once (the first daily check after a bad night, say) is one
@@ -220,19 +238,46 @@ export async function sendDomainAlerts(alerts) {
     const bad = alerts.filter((a) => a.kind !== 'up');
     const lines = alerts.slice(0, 12).map((a) => `${a.name} · ${alertLine(a)}`);
     if (alerts.length > 12) lines.push(`…and ${alerts.length - 12} more`);
-    msgs.push({ kind: bad.length ? 'domain-problem' : 'domain-ok', by: '', byName: `${alerts.length} websites`, siteName: '', dudaSite: '',
-      headline: `*Domain check* — ${bad.length} website${bad.length === 1 ? '' : 's'} need${bad.length === 1 ? 's' : ''} attention${bad.length < alerts.length ? `, ${alerts.length - bad.length} working again` : ''}`,
+    msgs.push({ kind: bad.length ? 'domain-problem' : 'domain-ok', urgent: !!bad.length, by: '', byName: `${alerts.length} websites`, siteName: '', dudaSite: '',
+      headline: `${bad.length ? '🚨 ' : ''}*Domain check* — ${bad.length} website${bad.length === 1 ? '' : 's'} need${bad.length === 1 ? 's' : ''} attention${bad.length < alerts.length ? `, ${alerts.length - bad.length} working again` : ''}`,
       count: bad.length || alerts.length, lines, text: lines.join('\n') });
   } else {
-    alerts.forEach((a) => msgs.push({ kind: KIND_OF[a.kind] || 'domain-problem', by: '', byName: a.name, siteName: a.name, dudaSite: a.id, domain: a.domain,
+    alerts.forEach((a) => msgs.push({ kind: KIND_OF(a), urgent: a.kind === 'down' || (a.kind === 'reg' && a.days <= 7), by: '', byName: a.name, siteName: a.name, dudaSite: a.id, domain: a.domain,
       headline: `*${a.name}* — ${alertLine(a)}`, text: alertLine(a) }));
   }
   for (const m of msgs) await Promise.all(admins.map((u) => notifyUser(u.email, m).catch(() => {})));
 }
 
-/** Duda's CERTIFICATE_CREATED webhook said FAILED. */
-export async function certificateFailed({ siteId, domains }) {
-  const [rawW] = await redis(['HGET', P + 'watch', siteId]);
-  const w = jparse(rawW) || {};
-  await sendDomainAlerts([{ kind: 'cert', id: siteId, name: w.name || (domains || [])[0] || siteId, domain: (domains || []).join(', ') || w.domain || siteId }]);
+/**
+ * One morning message with everything still open: expired, expiring soon, redirected, down. Nothing
+ * open means no message at all. The security certificate is not part of it (Duda handles that).
+ */
+export async function sendDigest() {
+  const [all] = await redis(['HGETALL', DOMS]);
+  const c = { expired: [], soon7: [], soon30: [], redirect: [], down: [] };
+  for (let i = 0; all && i < all.length; i += 2) {
+    const d = jparse(all[i + 1]); if (!d || d.status === 'nodomain') continue;
+    const name = d.domain || all[i];
+    if (isProblem(d)) c[problemClass(d.status) || 'down'].push(name);
+    if (d.reg && d.reg.expires) { const left = daysLeft(d.reg.expires); if (left < 0) c.expired.push(name); else if (left <= 7) c.soon7.push(name); else if (left <= 30) c.soon30.push(name); }
+  }
+  const total = Object.values(c).reduce((n, a) => n + a.length, 0);
+  if (!total) return 0;
+  const part = (k, label) => (c[k].length ? `${c[k].length} ${label}` : '');
+  const summary = [part('expired', 'expired'), part('soon7', 'expiring within 7 days'), part('soon30', 'expiring within 30 days'), part('redirect', 'showing another site'), part('down', 'down')].filter(Boolean).join(' · ');
+  const lines = [];
+  [['expired', 'Expired'], ['soon7', 'Expiring ≤ 7 days'], ['redirect', 'Showing another site'], ['down', 'Down'], ['soon30', 'Expiring ≤ 30 days']].forEach(([k, l]) => { if (c[k].length) lines.push(`${l}: ${c[k].slice(0, 6).join(', ')}${c[k].length > 6 ? ` …+${c[k].length - 6}` : ''}`); });
+  const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
+  const urgent = !!(c.expired.length || c.soon7.length || c.redirect.length || c.down.length);
+  const m = { kind: 'domain-digest', urgent, by: '', byName: 'Daily domain report', siteName: '', dudaSite: '', count: total, lines,
+    headline: `${urgent ? '🚨 ' : ''}*Daily domain report* — ${summary}`, text: lines.join('\n') };
+  await Promise.all(admins.map((u) => notifyUser(u.email, m).catch(() => {})));
+  return total;
 }
+
+/**
+ * Duda's CERTIFICATE_CREATED webhook said FAILED. Certificates are Duda's job, so this is no longer
+ * an alert on its own: a domain whose DNS is wrong is caught by the daily check as "not showing this
+ * website", which is the thing somebody can act on.
+ */
+export async function certificateFailed() { return; }
