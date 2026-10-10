@@ -1393,3 +1393,4 @@ html.mk-lock, html.mk-lock body { overflow: hidden; overscroll-behavior: none; }
 .cl-cmt-top { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .cl-cmt-top .badge { margin-left: auto; }
 .cl-cmts + .cl-cmts { margin-top: 10px; }
+.menu-btn.here { background: var(--panel-2); }

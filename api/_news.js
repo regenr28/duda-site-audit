@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-menu', date: '2026-10-10', audience: 'all', tag: 'Everyone',
+    title: 'Activity and Suggestions moved into the light-bulb menu',
+    what: 'The top menu now holds only the work itself. <b>Activity</b> and <b>Suggestions</b> (with false alarms) are in the <b>💡 light-bulb</b> menu at the top left, next to What\'s New, Help and Suggest a feature.',
+    where: ['Click the <b>💡 light bulb</b> next to the logo.'],
+  },
+  {
     id: '2026-10-10-contacts', date: '2026-10-10', audience: 'all', tag: 'Websites',
     title: 'Contacts made automatically from form submissions',
     what: 'Every website\'s <b>Profile</b> now lists <b>👥 Contacts</b>: one line per person who filled in a form, with their email, phone, how many times they enquired and their latest message, kept up to date with every new submission. Search it or <b>Export CSV</b>. Clients see the same list under <b>Contacts</b> on their page. Also fixed: the client page\'s <b>Comments</b> now shows their conversations from the editor (it showed an error before).',

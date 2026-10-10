@@ -399,10 +399,9 @@
       ${can('project.view') ? `<a href="#/projects" data-nav="projects">Projects${projWaiting() ? ' <span class="nav-dot bad" title="Something is past its date"></span>' : ''}</a>` : ''}
       ${can('live.view') ? '<a href="#/live" data-nav="live">DR Websites</a>' : ''}
       ${can('leads.view') ? '<a href="#/analysis" data-nav="analysis">Lead analysis</a>' : ''}
-      ${can('activity.view') ? '<a href="#/activity" data-nav="activity">Activity</a>' : ''}
       ${can('ticket.view') ? `<a href="#/requests" data-nav="requests">${tkNavLabel()}</a>` : ''}
       <a href="#/comments" data-nav="comments">Duda comments${cmtWaiting() ? ` <span class="nav-dot bad" title="A client is waiting for an answer"></span>` : cmtUnread() ? ' <span class="nav-dot"></span>' : ''}</a>
-      <a href="#/suggestions" data-nav="suggestions">${isOwner || can('fa.manage') ? 'Suggestions' : 'My suggestions'}</a>`;
+`;
     // Light-bulb menu (left of the logo): About, AI Status, Help, Suggest a feature, AI credits
     if (!$('#btnMenu')) {
       const mb = document.createElement('button');
@@ -439,6 +438,8 @@
     help: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>',
     idea: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
     gift: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v9H4v-9"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>',
+    pulse: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>',
+    inbox: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>',
     chev: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
   };
   // ---------- "What's New" ----------
@@ -486,6 +487,8 @@
     m.innerHTML = `<button class="am-item" type="button" data-am-news role="menuitem">${ICONS.gift}<span>What's New</span>${newsUnread() ? '<span class="badge fs-clarification">New</span>' : ''}</button>
       ${item('#/about', ICONS.info, 'About', 'about')}${item('#/ai', ICONS.spark, 'AI Status', 'ai')}${item('#/help', ICONS.help, 'Help', 'help')}
       <div class="am-sep"></div>
+      ${can('activity.view') ? item('#/activity', ICONS.pulse, 'Activity', 'activity') : ''}
+      ${item('#/suggestions', ICONS.inbox, state.superAdmin || can('fa.manage') ? 'Suggestions & false alarms' : 'My suggestions', 'suggestions')}
       <button class="am-item" type="button" data-am-suggest role="menuitem">${ICONS.idea}<span>Suggest a feature</span></button>
       ${credits ? `<div class="am-sep"></div>${credits}` : ''}`;
     document.body.appendChild(m);
@@ -504,6 +507,7 @@
   function markNav() {
     const r = route();
     if ($('#btnGear')) $('#btnGear').classList.toggle('active', r.name === 'settings');
+    if ($('#btnMenu')) $('#btnMenu').classList.toggle('here', ['activity', 'suggestions', 'about', 'help', 'ai'].includes(r.name));
     $$('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (r.name === 'site' ? 'sites' : r.name)));
   }
   function renderBell() {

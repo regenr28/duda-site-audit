@@ -19,7 +19,7 @@ export const HELP_SECTIONS = [
 <li>Set the website's status to <b>Complete</b>.</li>
 </ol>
 <h4>Finding your way</h4>
-<p>The top menu has <b>Audits</b>, <b>Live DR Sites</b> and <b>Suggestions</b>. The <b>light-bulb</b> button (top left, next to the logo) opens <b>About</b>, <b>AI Status</b>, <b>Help</b>, <b>Suggest a feature</b> and today's <b>AI credits</b>.</p>`,
+<p>The top menu has the work itself: <b>Audits</b>, <b>Projects</b>, <b>DR Websites</b>, <b>Lead analysis</b>, <b>Tickets</b> and <b>Duda comments</b> (each only if your role includes it). The <b>light-bulb</b> button (top left, next to the logo) opens <b>What's New</b>, <b>About</b>, <b>AI Status</b>, <b>Help</b>, <b>Activity</b>, <b>Suggestions</b> (your own, or the full queue with false alarms for admins), <b>Suggest a feature</b> and today's <b>AI credits</b>. The <b>⚙ gear</b> (top right) holds General settings.</p>`,
   },
   {
     id: 'account', group: 'Getting started', title: 'Your account', audience: 'all',
@@ -868,7 +868,7 @@ export const HELP_SECTIONS = [
   {
     id: 'admin-tools', group: 'More', title: 'Admin tools', audience: 'admin',
     html: `<ul>
-<li><b>Activity</b> (top menu): everything that happened across the app, with filters.</li>
+<li><b>Activity</b> (light-bulb menu): everything that happened across the app, with filters.</li>
 <li><b>Suggestions → False alarms</b>: every item someone marked False alarm, with their reason. Set each to <b>New</b>, <b>Ongoing</b>, <b>Done</b> or <b>Skip</b>, add notes, and jump to the item.</li>
 <li><b>Suggestions → Feature suggestions</b>: ideas from the team.</li>
 </ul>`,
