@@ -27,12 +27,14 @@ export const HELP_SECTIONS = [
 <ul>
 <li>Create an account with your work email. You'll get a 6-digit code by email to confirm it.</li>
 <li>Accounts from the agency's email domain are ready right away. Other accounts wait for an admin to approve them (you'll get an email when approved).</li>
-<li>Forgot your password? Use <b>Forgot password</b> on the sign-in screen to get a reset code.</li>
+<li>An admin can also add you directly: you get your email and a <b>temporary password</b>. The first time you sign in with it you choose your own password before anything else; the temporary one stops working after 7 days if unused.</li>
+<li>Forgot your password? Use <b>Forgot password</b> on the sign-in screen to get a reset code. To change it while signed in: your avatar → <b>Change password</b>.</li>
 <li><b>Remember me</b> keeps you signed in for 30 days on that browser. Without it, you're signed out after 12 hours.</li>
 </ul>
 <h4>Your settings (click your avatar, top right)</h4>
 <ul>
-<li><b>Display name</b>: how teammates see you.</li>
+<li><b>Display name</b>: your <b>real full name</b> (first and last). Nicknames and usernames are refused, so everyone knows who did what, even years later.</li>
+<li><b>🛡 My security log</b>: every time you signed in or out, wrong passwords typed on your account, password changes and changes an admin made to your account, with the device and approximate network address, for the last 90 days. If you see something you didn't do, change your password and tell an admin. Nobody else on the team can see it except the Super Admin.</li>
 <li><b>Pop-up notifications stay on screen for</b>: 4 seconds up to "until I close them". <b>Show a test notification</b> previews it, and also sends a Slack test message when your Slack option is ticked.</li>
 <li><b>Open the Duda editor and previews on</b>: <b>White-label</b> (the agency's editor address) or <b>Duda</b> (my.duda.co). This only changes where your Editor and Preview links take you. The audit is the same for everyone.</li>
 <li><b>Also message me on Slack</b> (when Slack is connected): you get a Slack message from <b>Site Auditor</b> when someone mentions you, replies to you or assigns you an item. It uses the Slack account with the same email as here. <b>Send a test message</b> checks it works.</li>
@@ -42,22 +44,25 @@ export const HELP_SECTIONS = [
   {
     id: 'team', group: 'Getting started', title: 'Team members and who is online', audience: 'all',
     html: `<ul>
-<li>Click <b>Members</b> (top right) to see everyone on the team, how many websites each person is assigned, and whether they're online.</li>
+<li>Click the <b>⚙ gear</b> (top right) → <b>Team members</b> to see everyone on the team, how many websites each person is assigned, and whether they're online. The gear opens <b>General settings</b>: everything that applies to the whole app (team, roles, your notifications, ticket settings, domain monitoring, integrations, security log). Settings for one website are on that website's profile.</li>
 <li>The coloured dots at the top right show who's online: <b>green</b> = active now, <b>grey</b> = idle (no activity for a while), no dot = offline. Click them to see what each person is working on.</li>
 <li>Click a teammate's <b>name</b> anywhere (a comment, a mention, the member list) to see who they are: their email, whether they're online, any previous names, and what they've been working on.</li>
 <li><b>Display names are unique.</b> If someone tries to use a name that's taken, they're asked to add a surname or initial, so a mention always points to one person.</li>
 <li>Mentions remember the person, not the text: if they change their display name later, older mentions show the new name (hover to see the name used at the time).</li>
-<li>In <b>Members</b> you can search and filter by <b>Everyone</b>, <b>Online now</b>, <b>Offline</b> and <b>Switched off</b>.</li>
+<li>On <b>Team members</b> you can search and filter by <b>Everyone</b>, <b>Online now</b>, <b>Offline</b> and <b>Switched off</b>.</li>
 <li>When Slack is connected, click a teammate's <b>name</b> in a pop-up or in the "is also here" bar to open a Slack chat with them.</li>
 </ul>`,
   },
   {
     id: 'admin-members', group: 'Getting started', title: 'Managing members (admins)', audience: 'admin',
     html: `<ul>
-<li>New accounts from outside the agency's email domain show under <b>Admin for Approval</b> in <b>Members</b>. Click <b>Approve</b> or <b>Reject</b>. Admins also get a notification (bell, desktop and Slack if connected) when someone signs up.</li>
+<li><b>＋ Add member</b> (⚙ → Team members): enter their <b>real full name</b> (first and last; one-word names and nicknames are refused), their work email and their <b>role</b>, then press <b>Check if Slack available</b>, which says whether a Slack account uses that email, so Slack messages will reach them. Create stays off until you have checked. Tick <b>Adjust what they can do after creating</b> to set exceptions to the role straight away. You get a <b>temporary password</b> to send them privately (<b>Copy all</b> copies the address, email and password); they must choose their own the first time they sign in, and it expires after 7 days if unused. Their row shows <b>Temporary password</b> until they do.</li>
+<li><b>Needs full name</b> marks an account whose name is not a first and last name; <b>Fix name</b> corrects it (the old name stays in its history).</li>
+<li>New accounts from outside the agency's email domain show under <b>Admin for Approval</b> on <b>Team members</b>. Click <b>Approve</b> or <b>Reject</b>. Admins also get a notification (bell, desktop and Slack if connected) when someone signs up.</li>
 <li>Change someone's role with the <b>Member / Admin</b> menu. Admins can approve accounts, manage roles, reset passwords, see the app-wide <b>Activity</b> page and the <b>False alarms</b> list.</li>
 <li>When Slack is connected, each member shows <b>Slack ✓</b> or <b>No Slack match</b>. "No Slack match" means no Slack account uses that email, so Slack messages can't reach them: they should register here with the same email they use in Slack. Nobody needs to install anything in Slack.</li>
-<li><b>Reset password</b> creates a temporary password. Send it to the person privately; they can change it later with "Forgot password".</li>
+<li><b>Reset password</b> creates a new temporary password. Send it to the person privately; they must choose their own the next time they sign in.</li>
+<li><b>Security logs</b>: only the Super Admin sees other people's (<b>Security log</b> on their row, or ⚙ → Security log → <b>Everyone</b>, filterable by person and kind). Admins are told when an account gets five wrong passwords in 15 minutes.</li>
 <li><b>Switch off</b> an account when someone leaves. They can't sign in any more, but their name stays on every audit item, comment and scan they touched, so nothing loses its history. Switched-off people are hidden from the assignee lists (an item already assigned to them still shows their name), and you can <b>Switch back on</b> any time.</li>
 <li><b>Delete</b> (on a switched-off account) removes it for good: their name disappears from old items. Prefer <b>Switch off</b>.</li>
 <li>Name changes are recorded: the member's card lists previous names, and the app-wide <b>Activity</b> page shows who renamed themselves and when.</li>

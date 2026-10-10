@@ -1283,3 +1283,33 @@ html.mk-lock, html.mk-lock body { overflow: hidden; overscroll-behavior: none; }
 .an-conn { display: flex; gap: 6px; }
 .an-conn input { width: 220px; max-width: 100%; }
 @media (max-width: 760px) { .an-grid { grid-template-columns: 1fr; } .an-conn { width: 100%; } .an-conn input { flex: 1; } }
+
+/* General settings + Team page + security log */
+.gear.active { background: var(--panel-2); }
+.set-wrap { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; }
+.set-nav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 76px; }
+.set-nav a { padding: 8px 12px; border-radius: 8px; color: var(--text); text-decoration: none; }
+.set-nav a:hover { background: var(--panel-2); }
+.set-nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.set-body { min-width: 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+.set-body h2 { margin-top: 0; }
+.set-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.set-facts { padding-left: 18px; line-height: 1.6; }
+.set-int { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.mem-acts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+.tp-box { display: grid; gap: 10px; background: var(--panel-2); border-radius: 10px; padding: 14px; margin: 10px 0; }
+.tp-box .k { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.tp-pass { font-size: 20px; font-weight: 700; letter-spacing: .04em; user-select: all; }
+.am-slack { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: -2px 0 6px; }
+.me-sec { display: flex; gap: 8px; flex-wrap: wrap; }
+.sec-list li.sec-bad .grow { color: var(--crit); }
+@media (max-width: 800px) {
+  .set-wrap { grid-template-columns: 1fr; }
+  .set-nav { position: static; flex-direction: row; overflow-x: auto; gap: 4px; padding-bottom: 4px; }
+  .set-nav a { white-space: nowrap; }
+  .set-body { padding: 14px; }
+  .member-row { flex-wrap: wrap; }
+  .mem-acts { justify-content: flex-start; width: 100%; }
+}
+/* Phones: the top menu scrolls sideways instead of pushing the whole page wider than the screen. */
+@media (max-width: 700px) { .topnav { max-width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; } .topnav::-webkit-scrollbar { display: none; } .topnav a { white-space: nowrap; } }

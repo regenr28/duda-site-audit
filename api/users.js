@@ -2,7 +2,11 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole, effectivePerms, hasCustomAccess, bumpAccess, jparse } from './_lib.js';
+import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole, effectivePerms, hasCustomAccess, bumpAccess, jparse, realName, secLog, readSecLog, slackLookup } from './_lib.js';
+
+const TEMP_DAYS = 7;
+const tempPassword = () => crypto.randomBytes(8).toString('base64url');
+const isSuper = (me) => me.email === OWNER_EMAIL && !me.previewPerms;
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -14,13 +18,16 @@ export default async function handler(req, res) {
       const all = (await listUsers()).filter((u) => u.role !== 'client');
       const visible = me.role === 'admin' ? all : all.filter((u) => u.status === 'active' || u.status === 'disabled');
       // Members don't see who is an admin (avoids "why are they admin?" friction); admins see roles to manage them
-      const shape = (u) => { const x = publicUser(u); if (me.role !== 'admin' && u.email !== me.email) delete x.role; else if (u.email === OWNER_EMAIL) { if (me.email === OWNER_EMAIL) x.superAdmin = true; else x.locked = true; } return x; };
+      const shape = (u) => { const x = publicUser(u); if (me.role === 'admin') { if (!realName(u.name)) x.needsName = true; if (u.mustChange) { x.mustChange = true; x.tempExpires = u.tempExpires || ''; } } else delete x.mustChange; if (me.role !== 'admin' && u.email !== me.email) delete x.role; else if (u.email === OWNER_EMAIL) { if (me.email === OWNER_EMAIL) x.superAdmin = true; else x.locked = true; } return x; };
       return res.status(200).json({ me: publicUser(me), users: visible.map(shape).sort((a, b) => a.name.localeCompare(b.name)) });
     }
     const b = readBody(req);
     if (b.op === 'profile') {
       const name = String(b.name || '').trim().slice(0, 60);
       if (!name) return res.status(400).json({ error: 'Name required' });
+      // A new name must be a real full name; a name that is not changing is left alone, so somebody
+      // with an older one-word name can still save their other settings.
+      if (name !== me.name && me.role !== 'client' && !realName(name)) return res.status(400).json({ error: 'Use your real full name: first and last name, no nicknames.' });
       if (name.toLowerCase() !== String(me.name || '').toLowerCase() && await nameTaken(name, me.email)) {
         return res.status(409).json({ error: `Someone on the team already uses the name "${name}". Please add a surname or an initial so mentions point to the right person.` });
       }
@@ -43,6 +50,24 @@ export default async function handler(req, res) {
       await putUser(me);
       return res.status(200).json({ user: publicUser(me) });
     }
+    // ---------- security log ----------
+    // Your own, always. Anybody else's: the Super Admin only — not even other admins.
+    if (b.op === 'seclog') {
+      const email = normEmail(b.email || me.email);
+      if (email !== me.email && !isSuper(me)) return res.status(403).json({ error: 'You can only see your own security log.' });
+      const u = await getUser(email);
+      if (!u) return res.status(404).json({ error: 'User not found' });
+      return res.status(200).json({ email, name: u.name, entries: await readSecLog(email) });
+    }
+    if (b.op === 'seclogAll') {
+      if (!isSuper(me)) return res.status(403).json({ error: 'Only the Super Admin can see everyone\'s security log.' });
+      const people = (await listUsers()).filter((u) => u.role !== 'client');
+      const lists = people.length ? await redis(...people.map((u) => ['LRANGE', P + 'seclog:' + u.email, 0, 59])) : [];
+      const entries = [];
+      people.forEach((u, i) => (lists[i] || []).forEach((r) => { const e = jparse(r); if (e) entries.push(Object.assign(e, { email: u.email, name: u.name })); }));
+      entries.sort((a, c) => String(c.at).localeCompare(String(a.at)));
+      return res.status(200).json({ entries: entries.slice(0, 400) });
+    }
     if (b.op === 'slackWho') {
       if (await denyUnless(res, me, 'duda.team', 'Your role does not allow that.')) return;
       const all = await listUsers();
@@ -63,6 +88,55 @@ export default async function handler(req, res) {
     const fresh = me.role === 'admin' ? await getUser(me.email) : null;
     if (!fresh || fresh.role !== 'admin' || fresh.status !== 'active') return res.status(403).json({ error: 'Admins only' });
 
+    // ---------- adding a member with a temporary password ----------
+    if (b.op === 'slackCheck') {
+      if (await denyUnless(res, me, 'members.manage', 'Your role does not allow adding members.')) return;
+      const email = normEmail(b.email);
+      if (!isEmail(email)) return res.status(400).json({ error: 'Enter a valid email address first.' });
+      return res.status(200).json(await slackLookup(email));
+    }
+    if (b.op === 'create') {
+      if (await denyUnless(res, me, 'members.manage', 'Your role does not allow adding members.')) return;
+      const name = realName(b.name);
+      if (!name) return res.status(400).json({ error: 'Enter their real full name: first and last name, no nicknames or usernames.' });
+      const email = normEmail(b.email);
+      if (!isEmail(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+      if (await getUser(email)) return res.status(409).json({ error: 'There is already an account with this email.' });
+      if (await nameTaken(name)) return res.status(409).json({ error: `Someone on the team is already called "${name}". Add a middle initial so mentions point to the right person.` });
+      const roles = await listRoles();
+      const role = roles.find((r) => r.id === String(b.role || '') && isTeamRole(r.id)) || roles.find((r) => r.id === 'member');
+      if (role.id === 'admin' && !(await can(me, 'roles.manage')) && fresh.role !== 'admin') return res.status(403).json({ error: 'Only an admin can create another admin.' });
+      const temp = tempPassword();
+      const u = { email, name, role: role.id, status: 'active', ...hashPassword(temp), verified: true, mustChange: true,
+        tempExpires: new Date(Date.now() + TEMP_DAYS * 86400000).toISOString(), color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        createdAt: now(), createdBy: me.email, approvedBy: me.email, approvedAt: now(), slackChecked: b.slack === true ? 'found' : b.slack === false ? 'missing' : undefined };
+      if (role.id !== 'admin') {
+        const base = new Set(role.perms || []); const wanted = Array.isArray(b.perms) ? new Set(cleanPerms(b.perms)) : null;
+        if (wanted) { u.grant = [...wanted].filter((k) => !base.has(k)); u.revoke = [...base].filter((k) => k !== '*' && !wanted.has(k)); }
+      }
+      await putUser(u);
+      await bumpAccess();
+      await secLog(email, 'account-created', req, { by: me.email, byName: me.name, role: role.name });
+      await globalLog(me, 'member-add', `added ${name} (${email}) as ${/^[aeiou]/i.test(role.name) ? 'an' : 'a'} ${role.name}, with a temporary password`);
+      return res.status(200).json({ ok: true, tempPassword: temp, tempExpires: u.tempExpires, user: publicUser(u) });
+    }
+    if (b.op === 'rename') {
+      if (await denyUnless(res, me, 'members.manage', 'Your role does not allow changing members.')) return;
+      const t = await getUser(b.email);
+      if (!t || t.role === 'client') return res.status(404).json({ error: 'No such team member' });
+      if (normEmail(b.email) === OWNER_EMAIL && me.email !== OWNER_EMAIL) return res.status(403).json({ error: "You don't have permission to change this account." });
+      const name = realName(b.name);
+      if (!name) return res.status(400).json({ error: 'Enter their real full name: first and last name, no nicknames or usernames.' });
+      if (name.toLowerCase() !== String(t.name || '').toLowerCase() && await nameTaken(name, t.email)) return res.status(409).json({ error: `Someone on the team is already called "${name}".` });
+      if (name !== t.name) {
+        t.nameHistory = (t.nameHistory || []).concat([{ from: t.name, to: name, at: now(), by: me.email }]).slice(-20);
+        await globalLog(me, 'rename', `changed ${t.name}'s name to "${name}"`);
+        t.name = name; await putUser(t); await bumpAccess();
+        await secLog(t.email, 'renamed', req, { by: me.email, byName: me.name, to: name });
+      }
+      return res.status(200).json({ ok: true, user: publicUser(t) });
+    }
+
     // ---------- one person's own exceptions ----------
     // Stored as the difference from their role, never a copy of it: change the role and everyone on
     // it moves, with only the deliberate exceptions left behind.
@@ -80,6 +154,7 @@ export default async function handler(req, res) {
       u.revoke = [...base].filter((k) => k !== '*' && !wanted.has(k));
       await putUser(u);
       await bumpAccess();
+      await secLog(email, 'access-changed', req, { by: me.email, byName: me.name });
       await globalLog(me, 'access', (u.grant.length || u.revoke.length)
         ? `gave ${u.name} custom access (${u.grant.length} extra, ${u.revoke.length} removed)`
         : `put ${u.name} back on the plain ${role.name} role`);
@@ -211,6 +286,7 @@ export default async function handler(req, res) {
     switch (b.op) {
       case 'approve':
         target.status = 'active'; target.approvedBy = me.email; target.approvedAt = new Date().toISOString(); await putUser(target);
+        await secLog(email, 'approved', req, { by: me.email, byName: me.name });
         await globalLog(me, 'approve', `approved ${target.name} (${email})`);
         await sendEmail(email, 'Your Duda Site Auditor account is approved', emailShell('You\'re in!', `<p>${esc(me.name)} approved your account.</p><p><a href="${appUrl(req)}">Open Duda Site Auditor</a></p>`)).catch(() => {});
         break;
@@ -230,6 +306,7 @@ export default async function handler(req, res) {
           const roles = await listRoles();
           const picked = roles.find((r) => r.id === String(b.role || '')) || roles.find((r) => r.id === 'member');
           target.role = picked.id; await putUser(target); await bumpAccess();
+          await secLog(email, 'role-changed', req, { by: me.email, byName: me.name, role: picked.name });
           await globalLog(me, 'role', `made ${target.name} ${/^[aeiou]/i.test(picked.name) ? 'an' : 'a'} ${picked.name}`);
         }
         break;
@@ -240,14 +317,18 @@ export default async function handler(req, res) {
         target.status = b.op === 'disable' ? 'disabled' : 'active';
         if (b.op === 'disable') { target.disabledAt = now(); target.disabledBy = me.email; } else { delete target.disabledAt; delete target.disabledBy; }
         await putUser(target);
+        await secLog(email, b.op === 'disable' ? 'switched-off' : 'switched-on', req, { by: me.email, byName: me.name });
         await globalLog(me, b.op, `${b.op === 'disable' ? 'switched off' : 'switched on'} the account of ${target.name} (${email})`);
         break;
       }
       case 'resetPassword': {
-        const temp = crypto.randomBytes(6).toString('base64url');
-        Object.assign(target, hashPassword(temp)); await putUser(target);
+        const temp = tempPassword();
+        // A temporary password: they choose their own the first time they sign in with it.
+        Object.assign(target, hashPassword(temp), { mustChange: true, tempExpires: new Date(Date.now() + TEMP_DAYS * 86400000).toISOString() });
+        await putUser(target); await bumpAccess();
+        await secLog(email, 'password-reset-by-admin', req, { by: me.email, byName: me.name });
         await globalLog(me, 'reset', `reset the password for ${target.name}`);
-        return res.status(200).json({ ok: true, tempPassword: temp });
+        return res.status(200).json({ ok: true, tempPassword: temp, tempExpires: target.tempExpires });
       }
       default:
         return res.status(400).json({ error: 'Unknown op' });

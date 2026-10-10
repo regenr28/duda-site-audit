@@ -71,6 +71,7 @@
     if (r.status === 401 && !path.startsWith('/api/auth')) { state.me = null; renderAuth(); throw new Error('Please sign in'); }
     if (r.status === 403 && data && data.disabled) { state.auth.mode = 'disabled'; state.me = null; renderAuth(); throw new Error(data.error); }
     if (r.status === 403 && data && data.pending) { state.auth.mode = 'pending'; state.me = null; renderAuth(); throw new Error(data.error); }
+    if (r.status === 403 && data && data.mustChange) { state.auth.mode = 'mustchange'; renderAuth(); throw new Error(data.error); }
     if (!r.ok) throw Object.assign(new Error((data && data.error) || `HTTP ${r.status}`), { status: r.status, data });
     return data;
   }
@@ -186,6 +187,12 @@
         <label class="field">Email<input type="email" id="auEmail" autocomplete="email" required value="${esc(a.email)}" autofocus></label>
         <button class="btn primary block" type="submit">Send code</button>
       </form><p class="switch"><a href="#" data-mode="login">Back to sign in</a></p>`;
+    else if (a.mode === 'mustchange') body = `<h1>Choose your own password</h1><p class="muted">Welcome${state.me && state.me.name ? ', ' + esc(state.me.name.split(' ')[0]) : ''}! You signed in with a temporary password. Choose your own before you start; the temporary one stops working.</p>
+      <form id="auForm" class="auth-form">
+        <label class="field">New password <span class="small muted">at least 8 characters</span><input type="password" id="auPass" autocomplete="new-password" required minlength="8" autofocus></label>
+        <label class="field">New password again<input type="password" id="auPass2" autocomplete="new-password" required minlength="8"></label>
+        <button class="btn primary block" type="submit">Save and continue</button>
+      </form><p class="switch"><a href="#" id="auOut">Sign out</a></p>`;
     else if (a.mode === 'disabled') body = `<h1>Account switched off</h1><p class="muted">An admin has switched this account off, so it can't sign in. Everything you worked on is still there. Ask an admin to switch it back on.</p>
       <button class="btn block" data-mode="login">Back to sign in</button>`;
     else if (a.mode === 'pending') body = `<h1>Account created</h1><div><span class="badge fs-clarification" style="font-size:13px;padding:4px 12px">Status: Admin for Approval</span></div><p class="muted">The admins have been notified. You can sign in as soon as one of them approves your account.</p>
@@ -196,7 +203,9 @@
     $$('[data-mode]').forEach((l) => (l.onclick = (e) => { e.preventDefault(); a.email = ($('#auEmail') || {}).value || a.email; a.mode = l.dataset.mode; renderAuth(); }));
     const msg = (t, ok) => { const m = $('#auMsg'); m.textContent = t || ''; m.className = 'au-msg ' + (ok ? 'ok' : 'bad'); };
     const rem = () => ($('#auRemember') ? $('#auRemember').checked : a.remember);
+    if ($('#auOut')) $('#auOut').onclick = (e) => { e.preventDefault(); logout(); };
     const done = async (r) => {
+      if (r.user && r.user.mustChange) { state.me = r.user; a.mode = 'mustchange'; renderAuth(); return; }
       if (r.user) {
         state.me = r.user; document.body.classList.remove('auth-mode');
         // Signing in does not say what this role may do; ask before drawing anything.
@@ -219,6 +228,11 @@
         } else if (a.mode === 'verify') await done(await post('/api/auth', { op: 'verify', email: a.email, code: $('#auCode').value, remember: a.remember }));
         else if (a.mode === 'forgot') { a.email = $('#auEmail').value; const r = await post('/api/auth', { op: 'forgot', email: a.email }); a.mode = 'reset'; renderAuth(); msg(r.message, true); }
         else if (a.mode === 'reset') await done(await post('/api/auth', { op: 'reset', email: a.email, code: $('#auCode').value, password: $('#auPass').value, remember: true }));
+        else if (a.mode === 'mustchange') {
+          if ($('#auPass').value !== $('#auPass2').value) throw new Error('The two passwords are not the same.');
+          const r = await post('/api/auth', { op: 'changePassword', password: $('#auPass').value });
+          a.mode = 'login'; await done(r);
+        }
       } catch (err) { msg(err.message); if (err.data && err.data.pending) { a.mode = 'pending'; renderAuth(); } }
       if (document.body.contains(btn)) btn.disabled = false;
     };
@@ -403,13 +417,12 @@
       <button class="btn ghost bell" id="btnBell" title="Notifications" aria-label="Notifications">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
         <span class="bell-count" id="bellCount" hidden></span></button>
-      <button class="btn ghost" id="btnMembers" type="button">Members${can('members.approve') && state.users.some((u) => u.status === 'pending') ? ` <span class="badge fs-clarification">${state.users.filter((u) => u.status === 'pending').length} for approval</span>` : ''}</button>
+      <a class="btn ghost gear" id="btnGear" href="#/settings" title="General settings" aria-label="General settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>${can('members.approve') && state.users.some((u) => u.status === 'pending') ? ` <span class="badge fs-clarification">${state.users.filter((u) => u.status === 'pending').length}</span>` : ''}</a>
       ${can('project.manage') ? '<button class="btn primary" id="btnProj" type="button">+ Add project</button>' : ''}
       ${can('site.add') ? `<button class="btn ${can('project.manage') ? '' : 'primary'}" id="btnAdd" type="button">+ Add audit</button>` : ''}
       <button class="btn ghost me-btn" id="btnMe" title="${esc(state.me.email)}">${avatar(state.me.email, 26)}</button>`;
     if ($('#btnAdd')) $('#btnAdd').onclick = openAdd;
     if ($('#btnProj')) $('#btnProj').onclick = openNewProject;
-    $('#btnMembers').onclick = openMembers;
     $('#btnBell').onclick = toggleNotifs;
     $('#btnMe').onclick = openMe;
     $('#btnAi').onclick = () => { location.hash = '#/ai'; }; renderAiChip();
@@ -488,6 +501,7 @@
   window.addEventListener('hashchange', closeMenu);
   function markNav() {
     const r = route();
+    if ($('#btnGear')) $('#btnGear').classList.toggle('active', r.name === 'settings');
     $$('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (r.name === 'site' ? 'sites' : r.name)));
   }
   function renderBell() {
@@ -496,7 +510,7 @@
     // A new client request also changes the count beside "Client requests".
     if (state.notifs.items.some((n) => /^ticket-/.test(n.kind) && Date.parse(n.at) > tkCountAt)) tkCount(true);
   }
-  const NOTIF_TEXT = { 'ticket-new': 'sent a ticket', 'ticket-reply': 'replied on a change request', 'ticket-assign': 'gave you a change request', 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'domain-digest': 'sent the daily domain report', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
+  const NOTIF_TEXT = { 'ticket-new': 'sent a ticket', 'ticket-reply': 'replied on a change request', 'ticket-assign': 'gave you a change request', 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'domain-digest': 'sent the daily domain report', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', security: 'needs a look: repeated wrong passwords', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
@@ -895,11 +909,13 @@
       $('.modal').innerHTML = `<header><div style="display:flex;gap:12px;align-items:center"><span class="pav">${avatar(email, 36)}<span class="pdot ${pr.st}"></span></span><div><h2 style="margin:0">${esc(u.name)}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}</h2>
         <div class="small mono muted">${esc(u.email)}</div>
         <div class="small ${pr.st === 'active' ? 'pt-active' : 'muted'}">${esc(u.status === 'disabled' ? 'This account can no longer sign in. Its past work is kept.' : presenceText(pr))}${u.role && can('members.manage') ? ' · ' + esc(roleName(u.role)) : ''}</div>
-        ${(u.nameHistory || []).length ? `<div class="small faint">Previously: ${esc([...new Set(u.nameHistory.map((h) => h.from).filter(Boolean))].join(', '))}</div>` : ''}</div></div><button class="btn ghost" data-close>✕</button></header>
+        ${(u.nameHistory || []).length ? `<div class="small faint">Previously: ${esc([...new Set(u.nameHistory.map((h) => h.from).filter(Boolean))].join(', '))}</div>` : ''}
+        ${email === state.me.email || state.superAdmin ? `<button class="btn sm ghost" id="maSec" type="button" style="margin-top:6px">🛡 Security log</button>` : ''}</div></div><button class="btn ghost" data-close>✕</button></header>
         <div class="body ma-body">${body}</div>`;
       $$('[data-close]', $('.modal')).forEach((b) => (b.onclick = closeModal));
       $$('[data-close-nav]', $('.modal')).forEach((a) => a.addEventListener('click', () => closeModal()));
       $$('[data-maf]', $('.modal')).forEach((b) => (b.onclick = () => { filter = b.dataset.maf; draw(); }));
+      if ($('#maSec')) $('#maSec').onclick = () => { if (email === state.me.email) { closeModal(); location.hash = '#/settings/security'; } else openSecLog(email); };
     };
     modal('<div></div>', { wide: true }); draw();
     try { data = await api('/api/store?op=userActivity&email=' + encodeURIComponent(email)); } catch (e) { data = { items: [], recent: [], counts: { sites: 0, items: 0, comments: 0, scans: 0 } }; toast(e.message); }
@@ -969,7 +985,8 @@
       <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.myRole ? ' · ' + esc(state.myRole.name.toLowerCase()) : ''}</div></div></div>
       ${state.superAdmin ? `<button class="btn sm" id="meHealth" type="button" style="justify-self:start">⚑ System health</button>
         <div class="small muted" style="margin-top:-4px">Storage, allowances and whether everything is still arriving. Only you can open it.</div>` : ''}
-      <label class="field">Display name<input type="text" id="meName" value="${esc(state.me.name)}"></label>
+      <div class="me-sec"><button class="btn sm" id="mePw" type="button">Change password</button><button class="btn sm" id="meLog" type="button">🛡 My security log</button></div>
+      <label class="field">Display name <span class="small muted">your real full name</span><input type="text" id="meName" value="${esc(state.me.name)}"></label>
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <button class="btn sm" id="meTest" type="button" style="justify-self:start">Show a test notification</button>
@@ -983,6 +1000,8 @@
       ${notifyGrid()}</div>
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
+    $('#mePw').onclick = () => openChangePassword();
+    $('#meLog').onclick = () => { closeModal(); location.hash = '#/settings/security'; };
     if ($('#meHealth')) $('#meHealth').onclick = () => { closeModal(); location.hash = '#/health'; };
     // The test shows the pop-up and, when Slack messages are switched on here, also sends a Slack test message
     $('#meTest').onclick = () => {
@@ -3713,10 +3732,69 @@
     }
   }
 
+  // =====================================================================
+  // ⚙ GENERAL SETTINGS: everything that applies to the whole app, in one place
+  // (anything about one website stays on that website's profile)
+  // =====================================================================
+  const SET_SECTIONS = [
+    ['team', '👥 Team members', () => true],
+    ['roles', '🧩 Roles', () => can('members.manage')],
+    ['notifications', '🔔 Your notifications', () => true],
+    ['tickets', '🎫 Ticket settings', () => can('ticket.manage')],
+    ['domains', '🌐 Domain monitoring', () => can('members.manage')],
+    ['integrations', '🔌 Integrations', () => can('members.manage')],
+    ['security', '🛡 Security log', () => true],
+  ];
+  const secState = { all: false, data: null, who: '', type: '', loading: false };
+  function renderSettings(section) {
+    const list = SET_SECTIONS.filter((x) => x[2]());
+    const cur = list.find((x) => x[0] === section) ? section : 'team';
+    $('#view').innerHTML = `<div class="page-head"><div><h1>General settings</h1><div class="muted">Settings for the whole app. Anything about one website is on that website's profile.</div></div></div>
+      <div class="set-wrap"><nav class="set-nav" aria-label="Settings">${list.map(([k, l]) => `<a href="#/settings/${k}" class="${k === cur ? 'on' : ''}">${l}</a>`).join('')}</nav>
+      <div class="set-body" id="setBody"></div></div>`;
+    const body = $('#setBody');
+    if (cur === 'team') return drawTeamPage(body);
+    if (cur === 'security') return drawSecurity(body);
+    if (cur === 'roles') { body.innerHTML = `<h2>Roles</h2><p class="muted">A role is a set of things people may do. Change a role and everyone on it changes; give one person an exception with <b>Access</b> on the Team page.</p><button class="btn primary" id="setRoles">Open roles</button>`; $('#setRoles').onclick = () => openRoles(); return; }
+    if (cur === 'notifications') { body.innerHTML = `<h2>Your notifications</h2><p class="muted">What reaches your bell, pop-ups and Slack is set per person, in your account.</p><button class="btn primary" id="setNotif">Open your notification settings</button>`; $('#setNotif').onclick = () => openMe(); return; }
+    if (cur === 'tickets') { body.innerHTML = `<h2>Ticket settings</h2><p class="muted">How many tickets a client can send each day, who on the team is told, and whether clients are emailed.</p><button class="btn primary" id="setTk">Open ticket settings</button>`; $('#setTk').onclick = () => tkSettings(); return; }
+    if (cur === 'domains') {
+      body.innerHTML = `<h2>Domain monitoring</h2>
+        <ul class="set-facts"><li>Every live custom domain is checked <b>once a day</b>, whether or not anyone has the app open.</li>
+        <li>Admins are alerted straight away (🚨) when a domain goes down, stops showing the website, or expires; renewals at 60, 30, 14, 7, 3 and 1 days; one <b>Daily domain report</b> of everything still open.</li>
+        <li>Security certificates are Duda's job: shown for information only, never alerted.</li>
+        <li>Each admin turns these on or off in their own notifications (<b>Domain problems on live websites</b>).</li></ul>
+        <a class="btn" href="#/live/trends">Open Domain monitoring</a> <a class="btn ghost" href="#/help/live">How it works</a>`;
+      return;
+    }
+    if (cur === 'integrations') {
+      const c = state.config || {};
+      const row = (name, ok, okText, offText) => `<div class="set-int"><b>${name}</b><span class="badge ${ok ? 'scan-complete' : 'subtle'}">${ok ? '✓ ' + okText : offText}</span></div>`;
+      body.innerHTML = `<h2>Integrations</h2><p class="muted">What the app is connected to. ${state.superAdmin ? 'Connections are set up once by you, the app owner.' : 'Connections are set up by the app owner.'}</p>
+        ${row('Slack messages', !!c.slackDM, 'Connected', 'Not connected')}
+        ${row('Email (codes, client emails)', !!c.emailEnabled, 'Connected', 'Not connected')}
+        ${row('Google sign-in', !!c.googleClientId, 'Connected', 'Not connected')}
+        ${row('Google Analytics & Search Console', !!c.analyticsGoogle, 'Connected', 'Not connected')}
+        ${row('Live updates', !!c.realtime, 'Connected', 'Not connected')}
+        <p class="small muted" style="margin-top:12px">Google Analytics and Search Console are then added to each website from its profile (Analytics → Add custom analytics).</p>`;
+    }
+  }
+
+  // ---------- the Team page ----------
   const memFilter = { q: '', view: 'all' };
-  function openMembers() {
+  function openMembers() { location.hash = '#/settings/team'; }
+  function drawTeamPage(root) {
     const isAdmin = can('members.manage');
+    root.innerHTML = `<div class="row-between"><h2 style="margin:0">Team members</h2><div class="set-acts">
+        ${isAdmin ? '<button class="btn primary" id="memAdd" type="button">＋ Add member</button>' : ''}
+        <button class="btn" id="memStats" type="button">📊 Team stats</button>${isAdmin ? '<button class="btn" id="memRoles" type="button">🧩 Roles</button>' : ''}</div></div>
+      <p class="small muted">${isAdmin ? 'Add people with <b>＋ Add member</b>: they get a temporary password and choose their own the first time they sign in. Everyone uses their <b>real full name</b>. <b>Switch off</b> an account when someone leaves: they can\'t sign in, but their name stays on everything they did.' : 'Everyone on the team. Click a name to see what they have been working on.'}</p>
+      <div id="memList"></div>`;
+    $('#memStats').onclick = () => openStats();
+    if ($('#memRoles')) $('#memRoles').onclick = () => openRoles();
+    if ($('#memAdd')) $('#memAdd').onclick = () => openAddMember();
     const draw = () => {
+      if (!$('#memList')) return;
       const pending = state.users.filter((u) => u.status === 'pending');
       const all = state.users.filter((u) => u.status === 'active' || u.status === 'disabled');
       const q = memFilter.q.trim().toLowerCase();
@@ -3725,22 +3803,27 @@
         online: ['Online now', (u) => u.status === 'active' && presenceOf(u.email).st === 'active'],
         offline: ['Offline', (u) => u.status === 'active' && presenceOf(u.email).st === 'offline'],
         off: ['Switched off', (u) => u.status === 'disabled'],
+        ...(isAdmin ? { name: ['Needs full name', (u) => !!u.needsName] } : {}),
       };
-      const match = (u) => (!q || (u.name + ' ' + u.email).toLowerCase().includes(q)) && VIEWS[memFilter.view][1](u);
+      const match = (u) => (!q || (u.name + ' ' + u.email).toLowerCase().includes(q)) && VIEWS[memFilter.view] && VIEWS[memFilter.view][1](u);
       const list = all.filter(match).sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === 'disabled' ? 1 : -1));
       $('#memList').innerHTML = `
         <div class="toolbar" style="margin:8px 0 10px"><input type="search" id="memQ" placeholder="Search name or email…" value="${esc(memFilter.q)}" style="flex:1;min-width:180px">
-          <span class="chips">${Object.entries(VIEWS).filter(([k]) => k !== 'off' || isAdmin || all.some((u) => u.status === 'disabled')).map(([k, [label, fn]]) => `<button class="chipbtn ${memFilter.view === k ? 'active' : ''}" data-memv="${k}">${esc(label)} <span class="faint">${all.filter(fn).length}</span></button>`).join('')}</span></div>
+          <span class="chips">${Object.entries(VIEWS).filter(([k, [, fn]]) => (k !== 'off' || isAdmin || all.some((u) => u.status === 'disabled')) && (k !== 'name' || all.some(fn))).map(([k, [label, fn]]) => `<button class="chipbtn ${memFilter.view === k ? 'active' : ''}" data-memv="${k}">${esc(label)} <span class="faint">${all.filter(fn).length}</span></button>`).join('')}</span></div>
         ${isAdmin && pending.length ? `<h3>Admin for Approval (${pending.length})</h3>` + pending.map((u) => `
-          <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span><div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
+          <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span>${u.needsName ? ' <span class="badge sev-warning">Needs full name</span>' : ''}<div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
           <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : ''}
         ${list.length ? list.map((u) => `<div class="member-row ${u.status === 'disabled' ? 'off' : ''}"><span class="pav">${avatar(u.email, 30)}${u.status === 'disabled' ? '' : pdot(u.email)}</span>
           <div class="grow"><button type="button" class="whobtn" data-who="${esc(u.email)}"><b>${esc(u.name)}</b></button>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}${isAdmin && u.status !== 'disabled' ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : esc(roleName(u.role))}</span>${u.custom ? ' <span class="badge sev-info" title="This person has access that is not simply their role">Custom access</span>' : ''}` : ''}
-            <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(u.status === 'disabled' ? 'Can no longer sign in · past work kept' : presenceText(presenceOf(u.email)))}${isAdmin && slackWho && u.status !== 'disabled' ? (slackWho[u.email] ? ' · <span class="v-ok-t">Slack ✓</span>' : ' · <span class="v-still-t" title="No Slack account uses this email, so Slack messages can\'t reach them. They should register here with their Slack email.">No Slack match</span>') : ''}</div>
+            ${isAdmin && u.needsName ? ' <span class="badge sev-warning" title="Not a real full name. Everyone needs a first and last name so it is clear who did what.">Needs full name</span>' : ''}
+            ${isAdmin && u.mustChange ? ` <span class="badge fs-clarification" title="They have not chosen their own password yet">Temporary password${u.tempExpires ? ' · expires ' + esc(new Date(u.tempExpires).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) : ''}</span>` : ''}
+            <div class="small muted">${esc(u.email)} · ${state.sites.filter((s) => s.assignee === u.email).length} sites · ${esc(u.status === 'disabled' ? 'Can no longer sign in · past work kept' : presenceText(presenceOf(u.email)))}${isAdmin && slackWho && u.status !== 'disabled' ? (slackWho[u.email] ? ' · <span class="v-ok-t">Slack ✓</span>' : ' · <span class="v-still-t" title="No Slack account uses this email, so Slack messages can\'t reach them. They should use their Slack email here.">No Slack match</span>') : ''}</div>
             ${(u.nameHistory || []).length ? `<div class="small faint">Renamed ${u.nameHistory.length}× · was ${esc([...new Set(u.nameHistory.map((h) => h.from).filter(Boolean))].slice(-3).join(', '))}</div>` : ''}</div>
-          ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>${esc(roleName('admin'))}</option></select>` : isAdmin && u.status !== 'disabled' ? `<select data-role="${esc(u.email)}" class="sm-select">${(state.roles || []).map((r) => `<option value="${esc(r.id)}" ${u.role === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
-            <button class="btn sm ghost" data-access="${esc(u.email)}" title="What this person can do, on top of their role">Access</button>${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Create a temporary password">Reset password</button><button class="btn sm ghost" data-disable="${esc(u.email)}" title="Switch the account off: they can't sign in, but everything they did is kept">Switch off</button>` : ''}`
-            : isAdmin && u.status === 'disabled' ? `<button class="btn sm" data-enable="${esc(u.email)}">Switch back on</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Delete for good — their name disappears from old items">Delete</button>` : ''}</div>`).join('')
+          <div class="mem-acts">
+          ${state.superAdmin && u.email !== state.me.email ? `<button class="btn sm ghost" data-seclog="${esc(u.email)}" title="Sign-ins, sign-outs and account changes">Security log</button>` : ''}
+          ${isAdmin && u.superAdmin ? `<span class="small faint" title="Only you can change your own account">🔒 Protected</span>` : isAdmin && u.locked ? `<select class="sm-select" disabled><option>${esc(roleName('admin'))}</option></select>` : isAdmin && u.status !== 'disabled' ? `${u.needsName ? `<button class="btn sm" data-rename="${esc(u.email)}">Fix name</button>` : ''}<select data-role="${esc(u.email)}" class="sm-select" aria-label="Role">${(state.roles || []).map((r) => `<option value="${esc(r.id)}" ${u.role === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
+            <button class="btn sm ghost" data-access="${esc(u.email)}" title="What this person can do, on top of their role">Access</button>${u.email !== state.me.email ? `<button class="btn sm ghost" data-reset="${esc(u.email)}" title="Give them a new temporary password">Reset password</button><button class="btn sm ghost" data-disable="${esc(u.email)}" title="Switch the account off: they can't sign in, but everything they did is kept">Switch off</button>` : ''}`
+            : isAdmin && u.status === 'disabled' ? `<button class="btn sm" data-enable="${esc(u.email)}">Switch back on</button><button class="btn sm ghost danger" data-remove="${esc(u.email)}" title="Delete for good — their name disappears from old items">Delete</button>` : ''}</div></div>`).join('')
           : '<div class="empty small">Nobody matches.</div>'}`;
       const mq = $('#memQ'); mq.oninput = () => { memFilter.q = mq.value; const p = mq.selectionStart; draw(); const i2 = $('#memQ'); if (i2) { i2.focus(); i2.setSelectionRange(p, p); } };
       $$('[data-memv]', $('#memList')).forEach((b) => (b.onclick = () => { memFilter.view = b.dataset.memv; draw(); }));
@@ -3750,6 +3833,12 @@
       act('[data-disable]', async (b) => { if (!confirm('Switch this account off? They can no longer sign in, but everything they did stays on record and their name keeps showing.')) return; try { await post('/api/users', { op: 'disable', email: b.dataset.disable }); toast('Account switched off'); } catch (e) { toast(e.message); } await loadUsers(); draw(); });
       act('[data-enable]', async (b) => { try { await post('/api/users', { op: 'enable', email: b.dataset.enable }); toast('Account switched back on'); } catch (e) { toast(e.message); } await loadUsers(); draw(); });
       act('[data-access]', (b) => { const u = state.users.find((x) => x.email === b.dataset.access); if (u) openAccess(u); });
+      act('[data-seclog]', (b) => openSecLog(b.dataset.seclog));
+      act('[data-rename]', async (b) => {
+        const u = state.users.find((x) => x.email === b.dataset.rename) || {};
+        const name = prompt(`Real full name for ${u.email} (first and last name):`, u.name || ''); if (!name) return;
+        try { await post('/api/users', { op: 'rename', email: u.email, name }); toast('Name updated'); await loadUsers(); draw(); } catch (e) { toast(e.message); }
+      });
       act('[data-role]', async (b) => {
         try {
           const who = state.users.find((x) => x.email === b.dataset.role) || {};
@@ -3761,21 +3850,147 @@
         draw();
       });
       act('[data-reset]', async (b) => {
-        if (!confirm('Create a temporary password for this member? Their current password stops working.')) return;
-        const r = await post('/api/users', { op: 'resetPassword', email: b.dataset.reset });
-        prompt('Temporary password — send it to them privately. They can change it later with "Forgot password".', r.tempPassword);
+        const u = state.users.find((x) => x.email === b.dataset.reset) || {};
+        if (!confirm(`Give ${u.name || 'this member'} a new temporary password? Their current password stops working, and they choose a new one when they sign in.`)) return;
+        try { const r = await post('/api/users', { op: 'resetPassword', email: b.dataset.reset }); showTempPassword(u.name, u.email, r.tempPassword, r.tempExpires); await loadUsers(); draw(); } catch (e) { toast(e.message); }
       });
     };
-    modal(`<header><h2>Team members</h2><span class="spacer"></span><button class="btn sm" id="memStats" type="button">📊 Team stats</button>${can('members.manage') ? '<button class="btn sm" id="memRoles" type="button">🧩 Roles</button>' : ''}<button class="btn ghost" data-close>✕</button></header>
-      <div class="body"><p class="small muted" style="margin:0">${isAdmin ? 'Everyone who registers is listed here automatically. New accounts show as <b>Admin for Approval</b> until you approve them. <b>Switch off</b> an account when someone leaves: they can\'t sign in, but their name stays on everything they did.' : 'Everyone on the team. Click a name to see what they have been working on.'}</p><div id="memList"></div></div>
-      <footer><button class="btn" data-close>Done</button></footer>`);
+    state.drawTeam = draw;
     draw();
-    $('#memStats').onclick = () => openStats();
-    if ($('#memRoles')) $('#memRoles').onclick = () => openRoles();
     loadUsers().then(draw).catch(() => {});
     if (isAdmin && state.config && state.config.slackDM && !slackWho) {
-      post('/api/users', { op: 'slackWho' }).then((r) => { slackWho = r.who || {}; if ($('#memList')) draw(); }).catch(() => {});
+      post('/api/users', { op: 'slackWho' }).then((r) => { slackWho = r.who || {}; draw(); }).catch(() => {});
     }
+  }
+  function showTempPassword(name, email, temp, expires) {
+    modal(`<header><h2>Temporary password for ${esc(name || email)}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <p>Send these to <b>${esc(name || email)}</b> privately (not in a group chat). This is the only time the password is shown.</p>
+        <div class="tp-box"><div><span class="k">Sign in at</span><div class="mono">${esc(location.origin)}</div></div><div><span class="k">Email</span><div class="mono">${esc(email)}</div></div><div><span class="k">Temporary password</span><div class="mono tp-pass">${esc(temp)}</div></div></div>
+        <p class="small muted">The first time they sign in they must choose their own password. The temporary one stops working ${expires ? 'on ' + esc(fmtFull(expires)) : 'in 7 days'} if it is not used.</p>
+      </div>
+      <footer><button class="btn" id="tpCopy">Copy all</button><span class="spacer"></span><button class="btn primary" data-close>Done</button></footer>`);
+    $('#tpCopy').onclick = () => { const t = `Sign in at ${location.origin}\nEmail: ${email}\nTemporary password: ${temp}\nYou'll be asked to choose your own password the first time you sign in.`; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Copied'), () => prompt('Copy this:', t)); };
+  }
+  /** Add a member: real name, email, role and access, and a Slack check before the account exists. */
+  function openAddMember() {
+    const st = { slack: null, checkedEmail: '' };
+    modal(`<header><h2>Add member</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <label class="field">Full name <span class="small muted">first and last name, as on their ID: no nicknames or usernames</span><input id="amName" autocomplete="off" placeholder="e.g. Maria Santos"></label>
+        <div class="small" id="amNameMsg"></div>
+        <label class="field">Work email <span class="small muted">they sign in with this; use the one they use in Slack</span><input id="amEmail" type="email" autocomplete="off" placeholder="name@company.com"></label>
+        <div class="am-slack"><button class="btn" id="amSlack" type="button">Check if Slack available</button><span id="amSlackMsg" class="small"></span></div>
+        <label class="field">Role<select id="amRole">${(state.roles || []).filter((r) => r.id !== 'client').map((r) => `<option value="${esc(r.id)}" ${r.id === 'member' ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
+        <div class="small muted" id="amRoleDesc"></div>
+        <label class="check-row"><input type="checkbox" id="amAccess"> Adjust what they can do after creating (exceptions to the role)</label>
+      </div>
+      <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn primary" id="amGo" disabled title="Check Slack first">Create and get temporary password</button></footer>`);
+    const nameOk = (n) => { const p = n.trim().split(/\s+/); return p.length >= 2 && p.every((x) => /^[\p{L}][\p{L}'’.-]*$/u.test(x)) && p.filter((x) => x.replace(/[^\p{L}]/gu, '').length >= 2).length >= 2; };
+    const sync = () => {
+      const n = $('#amName').value; const e = $('#amEmail').value.trim().toLowerCase();
+      $('#amNameMsg').innerHTML = !n.trim() ? '' : nameOk(n) ? '<span class="v-ok-t">✓ Looks like a real full name</span>' : '<span class="v-still-t">Enter a first and last name, letters only.</span>';
+      if (st.checkedEmail !== e) { st.slack = null; $('#amSlackMsg').textContent = ''; }
+      const ready = nameOk(n) && /^\S+@\S+\.\S+$/.test(e) && st.slack !== null;
+      $('#amGo').disabled = !ready; $('#amGo').title = st.slack === null ? 'Check Slack first' : '';
+      const r = (state.roles || []).find((x) => x.id === $('#amRole').value); $('#amRoleDesc').textContent = r ? (r.desc || '') : '';
+      $('#amAccess').disabled = $('#amRole').value === 'admin'; if ($('#amRole').value === 'admin') $('#amAccess').checked = false;
+    };
+    ['#amName', '#amEmail'].forEach((s2) => $(s2).addEventListener('input', sync)); $('#amRole').onchange = sync; sync();
+    $('#amSlack').onclick = async () => {
+      const e = $('#amEmail').value.trim().toLowerCase(); const btn = $('#amSlack'); btn.disabled = true; btn.textContent = 'Checking…';
+      try {
+        const r = await post('/api/users', { op: 'slackCheck', email: e });
+        st.checkedEmail = e;
+        if (!r.configured) { st.slack = 'na'; $('#amSlackMsg').innerHTML = '<span class="muted">Slack is not connected to the app, so this can\'t be checked. You can still add them.</span>'; }
+        else if (r.found) { st.slack = true; $('#amSlackMsg').innerHTML = `<span class="v-ok-t">✓ In Slack as <b>${esc(r.name || e)}</b>${r.guest ? ' (a guest account)' : ''}. Slack messages will reach them.</span>`; }
+        else { st.slack = false; $('#amSlackMsg').innerHTML = `<span class="v-still-t">No Slack account uses ${esc(e)}. Slack messages won't reach them. Check the spelling, or use the email they use in Slack.</span>`; }
+      } catch (err) { $('#amSlackMsg').innerHTML = `<span class="v-still-t">${esc(err.message)}</span>`; }
+      btn.disabled = false; btn.textContent = 'Check again'; sync();
+    };
+    $('#amGo').onclick = async () => {
+      if (st.slack === false && !confirm('This email is not in Slack, so Slack messages won\'t reach them. Create the account anyway?')) return;
+      const btn = $('#amGo'); btn.disabled = true; btn.textContent = 'Creating…';
+      try {
+        const r = await post('/api/users', { op: 'create', name: $('#amName').value, email: $('#amEmail').value, role: $('#amRole').value, slack: st.slack === true ? true : st.slack === false ? false : undefined });
+        const wantAccess = $('#amAccess').checked;
+        await loadUsers(); if (state.drawTeam) state.drawTeam();
+        if (slackWho && st.slack !== 'na') slackWho[r.user.email] = st.slack === true;
+        showTempPassword(r.user.name, r.user.email, r.tempPassword, r.tempExpires);
+        if (wantAccess) { const add = document.createElement('button'); add.className = 'btn'; add.textContent = 'Set their access next'; add.onclick = () => { const u = state.users.find((x) => x.email === r.user.email); closeModal(); if (u) openAccess(u); }; $('.modal footer .spacer').before(add); }
+      } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = 'Create and get temporary password'; }
+    };
+  }
+
+  // ---------- security log ----------
+  const SEC_TYPES = {
+    signin: ['🔑', 'Signed in'], 'signin-failed': ['⚠️', 'Wrong password'], signout: ['🚪', 'Signed out'],
+    'password-changed': ['🔒', 'Password changed'], 'password-reset-by-admin': ['🔁', 'Password reset by an admin'],
+    'account-created': ['✨', 'Account created'], approved: ['✅', 'Account approved'], renamed: ['✏️', 'Name changed'],
+    'role-changed': ['🧩', 'Role changed'], 'access-changed': ['🧩', 'Access changed'], 'switched-off': ['⛔', 'Account switched off'], 'switched-on': ['🟢', 'Account switched back on'],
+  };
+  /** "Chrome on Mac" from the browser's own description of itself. */
+  function deviceOf(ua) {
+    ua = String(ua || ''); if (!ua) return '';
+    const b = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Chrome\//.test(ua) && !/Chromium/.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'a browser';
+    const o = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : '';
+    return o ? `${b} on ${o}` : b;
+  }
+  function secRows(entries, showWho) {
+    if (!entries || !entries.length) return '<div class="empty small">Nothing recorded yet. Entries start from this update and are kept for 90 days.</div>';
+    let lastDay = '';
+    return `<ul class="activity sec-list">${entries.map((e) => {
+      const [ic, label] = SEC_TYPES[e.type] || ['•', e.type];
+      const day = new Date(e.at).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+      const head = day !== lastDay ? `<li class="ma-day">${esc(day)}</li>` : ''; lastDay = day;
+      const extra = [e.how ? `with ${esc(e.how)}` : '', e.role ? `${e.type === 'account-created' ? 'as' : 'to'} ${esc(e.role)}` : '', e.to ? `to “${esc(e.to)}”` : '', e.why ? esc(e.why) : '', e.byName ? `by ${esc(e.byName)}` : '', e.first ? 'after a temporary password' : ''].filter(Boolean).join(' · ');
+      return `${head}<li class="${e.type === 'signin-failed' ? 'sec-bad' : ''}"><span class="a-ic">${ic}</span><div class="grow">${showWho ? `<b>${esc(e.name || e.email)}</b> · ` : ''}${esc(label)}${extra ? ` <span class="muted">${extra}</span>` : ''}<div class="small faint">${esc(deviceOf(e.ua))}${e.ip ? ` · ${esc(e.ip)}` : ''}</div></div><div class="a-time"><div>${esc(new Date(e.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</div><div class="faint">${esc(ago(e.at))}</div></div></li>`;
+    }).join('')}</ul>`;
+  }
+  async function openSecLog(email) {
+    modal(`<header><h2>Security log</h2><button class="btn ghost" data-close>✕</button></header><div class="body" id="slBody"><div class="empty">Loading…</div></div>`, { wide: true });
+    try {
+      const r = await post('/api/users', { op: 'seclog', email });
+      $('#slBody').innerHTML = `<p class="small muted" style="margin:0 0 8px"><b>${esc(r.name)}</b> · ${esc(r.email)} · sign-ins, sign-outs, wrong passwords and changes to the account, last 90 days.</p>${secRows(r.entries, false)}`;
+    } catch (e) { $('#slBody').innerHTML = `<div class="note bad">${esc(e.message)}</div>`; }
+  }
+  async function drawSecurity(root) {
+    const draw = () => {
+      const d = secState.data;
+      const types = d ? [...new Set(d.entries.map((e) => e.type))] : [];
+      const people = d && secState.all ? [...new Map(d.entries.map((e) => [e.email, e.name])).entries()] : [];
+      const rows = d ? d.entries.filter((e) => (!secState.who || e.email === secState.who) && (!secState.type || e.type === secState.type)) : [];
+      root.innerHTML = `<div class="row-between"><h2 style="margin:0">Security log</h2>
+        ${state.superAdmin ? `<span class="chips"><button class="chipbtn ${!secState.all ? 'active' : ''}" data-secall="0">Mine</button><button class="chipbtn ${secState.all ? 'active' : ''}" data-secall="1">Everyone</button></span>` : ''}</div>
+        <p class="small muted">${secState.all ? 'Every team member\'s sign-ins, sign-outs, wrong passwords and account changes. Only you, the Super Admin, can see this.' : 'Your own sign-ins, sign-outs, wrong passwords and account changes. If you see something you didn\'t do, change your password and tell an admin.'} Kept for 90 days. Signing out is recorded when you press Sign out; a session that simply runs out is not.</p>
+        ${d ? `<div class="toolbar" style="margin:8px 0">${secState.all ? `<select id="secWho"><option value="">Everyone</option>${people.map(([e, n]) => `<option value="${esc(e)}" ${secState.who === e ? 'selected' : ''}>${esc(n || e)}</option>`).join('')}</select>` : ''}
+          <select id="secType"><option value="">Every kind</option>${types.map((t) => `<option value="${esc(t)}" ${secState.type === t ? 'selected' : ''}>${esc((SEC_TYPES[t] || ['', t])[1])}</option>`).join('')}</select></div>` : ''}
+        ${!d ? '<div class="empty">Loading…</div>' : secRows(rows, secState.all)}
+        ${!secState.all ? '<button class="btn" id="secPw" style="margin-top:12px">Change my password</button>' : ''}`;
+      $$('[data-secall]', root).forEach((b) => (b.onclick = () => { secState.all = b.dataset.secall === '1'; secState.data = null; secState.who = ''; secState.type = ''; load(); }));
+      if ($('#secWho')) $('#secWho').onchange = (e) => { secState.who = e.target.value; draw(); };
+      if ($('#secType')) $('#secType').onchange = (e) => { secState.type = e.target.value; draw(); };
+      if ($('#secPw')) $('#secPw').onclick = () => openChangePassword();
+    };
+    const load = async () => {
+      draw();
+      try { secState.data = secState.all ? await post('/api/users', { op: 'seclogAll' }) : await post('/api/users', { op: 'seclog' }); }
+      catch (e) { secState.data = { entries: [] }; toast(e.message); }
+      if (route().name === 'settings') draw();
+    };
+    if (!state.superAdmin) secState.all = false;
+    secState.data = null; load();
+  }
+  function openChangePassword() {
+    modal(`<header><h2>Change your password</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body"><label class="field">Current password<input type="password" id="cpOld" autocomplete="current-password"></label>
+      <label class="field">New password <span class="small muted">at least 8 characters</span><input type="password" id="cpNew" autocomplete="new-password"></label>
+      <label class="field">New password again<input type="password" id="cpNew2" autocomplete="new-password"></label></div>
+      <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn primary" id="cpGo">Change password</button></footer>`);
+    $('#cpGo').onclick = async () => {
+      if ($('#cpNew').value !== $('#cpNew2').value) return toast('The two new passwords are not the same');
+      try { const r = await post('/api/auth', { op: 'changePassword', current: $('#cpOld').value, password: $('#cpNew').value }); state.me = Object.assign(state.me, r.user); closeModal(); toast('Password changed'); } catch (e) { toast(e.message); }
+    };
   }
 
   // =====================================================================
@@ -5353,6 +5568,7 @@
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'health') return { name: 'health' };
+    if (parts[0] === 'settings') return { name: 'settings', section: parts[1] || 'team' };
     if (parts[0] === 'analysis') return { name: 'analysis', tab: parts[1] || 'quiet' };
     if (parts[0] === 'activity') return { name: 'activity' };
     if (parts[0] === 'removed') return { name: 'removed' };
@@ -5405,6 +5621,7 @@
     if (r.name === 'live' && !can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; }
     if (r.name === 'about') return renderAbout();
     if (r.name === 'help') return renderHelp(r.section);
+    if (r.name === 'settings') return renderSettings(r.section);
     if (r.name === 'health') return state.superAdmin ? renderHealth() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
     if (r.name === 'analysis') return can('leads.view') ? renderAnalysis(r.tab) : ($('#view').innerHTML = '<div class="empty">Your role does not include form submissions.</div>');
     if (r.name === 'activity') return renderGlobalActivity();
@@ -5438,7 +5655,7 @@
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
     if (r.name === 'requests') return can('ticket.view') ? renderRequests(r) : ($('#view').innerHTML = '<div class="empty">Your role does not include client change requests.</div>');
-    if (/members=1/.test(location.hash)) { history.replaceState(null, '', '#/'); setTimeout(openMembers, 50); }
+    if (/members=1/.test(location.hash)) { history.replaceState(null, '', '#/settings/team'); setTimeout(render, 0); }
     return renderSites();
   }
 
@@ -8753,6 +8970,7 @@
     try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; state.perms = r.perms || []; state.myRole = r.role || null; state.previewOf = r.preview || null; state.accessVer = r.accessVer || ''; }
     catch (e) { $('#view').innerHTML = `<div class="empty">Could not start the app: ${esc(e.message)}</div>`; return; }
     if (!state.me) return renderAuth();
+    if (state.me.mustChange) { state.auth.mode = 'mustchange'; return renderAuth(); }
     if (state.me.status !== 'active') { state.auth.mode = state.me.status === 'disabled' ? 'disabled' : 'pending'; state.me = null; return renderAuth(); }
     await boot2();
     // Keep data fresh so teammates' changes show up

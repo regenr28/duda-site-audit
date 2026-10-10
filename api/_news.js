@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-settings', date: '2026-10-10', audience: 'all', tag: 'Team',
+    title: 'The ⚙ gear: General settings, Team members and your security log',
+    what: '<b>Members</b> at the top right is now a <b>⚙ gear</b> that opens <b>General settings</b>: Team members, Roles, your notifications, ticket settings, domain monitoring, integrations and the <b>🛡 Security log</b>. Your security log lists every sign-in and sign-out, wrong passwords and account changes, with the device. Only you (and the Super Admin) can see it. Everyone now uses their <b>real full name</b>.',
+    where: ['<b>Walkthrough:</b> click the <b>⚙ gear</b> → <b>Security log</b>. To change your password: your avatar → <b>Change password</b>.'],
+    link: '#/settings', linkText: 'Open General settings',
+  },
+  {
+    id: '2026-10-10-add-member', date: '2026-10-10', audience: 'admin', tag: 'Admin',
+    title: 'Add members yourself, with a temporary password',
+    what: '<b>⚙ → Team members → ＋ Add member</b>: real full name, email and role, then <b>Check if Slack available</b>, and you get a temporary password to send them. They choose their own the first time they sign in. <b>Reset password</b> works the same way now. One-word names are flagged <b>Needs full name</b> with a <b>Fix name</b> button. You are told when an account gets five wrong passwords in a row.',
+    where: ['<b>⚙ gear → Team members</b>.'],
+    link: '#/settings/team', linkText: 'Open Team members',
+  },
+  {
     id: '2026-10-10-analytics', date: '2026-10-10', audience: 'all', tag: 'Websites',
     title: 'Analytics on every website: Duda numbers built in, Google Analytics and Search Console when you add them',
     what: 'Each website\'s <b>Profile</b> now has <b>📊 Analytics</b>: visits, unique visitors, page views, form submits and click-to-call / email / map from Duda, with the change against the period before, daily and 12-month charts, devices and countries. Admins can <b>＋ Add custom analytics</b> to one website: <b>Google Analytics 4</b> (sessions, top pages, where visitors came from) and <b>Search Console</b> (search clicks and top queries) each get their own tab.',

@@ -2,6 +2,7 @@
 // GET  /api/auth?op=config | me
 // POST /api/auth { op: signup | verify | resend | login | google | logout | forgot | reset }
 import crypto from 'node:crypto';
+import { secLog, listUsers, notifyUser, bumpAccess } from './_lib.js';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
   initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, commentsChannel, OWNER_EMAIL , savedEditorHost, nameTaken, NOTIFY_GROUPS, getRole, effectivePerms, applyPreview, accessVersion } from './_lib.js';
@@ -36,8 +37,9 @@ async function checkCode(kind, email, code) {
   await redis(['DEL', key]);
   return null;
 }
-async function finishLogin(res, user, remember) {
+async function finishLogin(res, user, remember, req, how) {
   await createSession(res, user.email, !!remember);
+  if (req) await secLog(user.email, 'signin', req, { how: how || 'password', remember: !!remember });
   return res.status(200).json({ user: publicUser(user) });
 }
 
@@ -46,7 +48,7 @@ export default async function handler(req, res) {
   if (!hasRedis()) return res.status(500).json({ error: 'The database is not connected. Please contact the app owner.' });
   try {
     if (req.method === 'GET') {
-      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), slackDM: /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || ''), editorHost: await savedEditorHost(), cmtChannel: commentsChannel(), notifyGroups: NOTIFY_GROUPS });
+      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), analyticsGoogle: !!process.env.GOOGLE_SERVICE_ACCOUNT, realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), slackDM: /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || ''), editorHost: await savedEditorHost(), cmtChannel: commentsChannel(), notifyGroups: NOTIFY_GROUPS });
       const u = await currentUser(req);
       // The browser is told what this person may do, so it can leave out what they cannot reach.
       // It is only ever a convenience: every endpoint checks the same thing again for itself.
@@ -82,7 +84,7 @@ export default async function handler(req, res) {
           const user = await putUser({ email, name, salt, hash, color: COLORS[Math.floor(Math.random() * COLORS.length)], ...access, createdAt: now() });
           await announceSignup(user, req);
           if (user.status !== 'active') return res.status(200).json({ pending: true, message: 'Account created. Status: Admin for Approval. The admins have been notified.' });
-          return finishLogin(res, user, b.remember);
+          return finishLogin(res, user, b.remember, req, 'new account');
         }
         await redis(['SET', P + 'pending:' + email, JSON.stringify({ name, salt, hash }), 'EX', CODE_TTL]);
         await sendCode('verify', email, name);
@@ -111,17 +113,31 @@ export default async function handler(req, res) {
         await redis(['DEL', P + 'pending:' + email]);
         await announceSignup(user, req);
         if (user.status !== 'active') return res.status(200).json({ pending: true, message: 'Email verified. Status: Admin for Approval. The admins have been notified.' });
-        return finishLogin(res, user, b.remember);
+        return finishLogin(res, user, b.remember, req, 'new account');
       }
       case 'login': {
         if (await limited('login:' + email, 10, 900)) return res.status(429).json({ error: 'Too many attempts. Wait 15 minutes and try again.' });
         const user = await getUser(email);
         if (!user || !checkPassword(b.password, user.salt, user.hash)) {
+          if (user) {
+            await secLog(email, 'signin-failed', req);
+            // Five wrong passwords on one account inside 15 minutes: the admins are told, once.
+            const [n] = await redis(['INCR', P + 'rl:fail:' + email]);
+            if (n === 1) await redis(['EXPIRE', P + 'rl:fail:' + email, 900]);
+            if (n === 5) {
+              const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
+              await Promise.all(admins.map((a) => notifyUser(a.email, { kind: 'security', by: email, byName: user.name, text: `5 wrong passwords in a row on ${user.name}'s account (${email}) in the last 15 minutes. If that wasn't them, reset their password.` }).catch(() => {})));
+            }
+          }
           return res.status(401).json({ error: user && user.google && !user.hash ? 'This account uses Google sign-in. Click "Sign in with Google", or use "Forgot password" to set a password.' : 'Wrong email or password' });
         }
         if (user.status !== 'active') return res.status(403).json({ pending: true, error: 'Your account status is "Admin for Approval". You can sign in once an admin approves it.' });
-        await redis(['DEL', P + 'rl:login:' + email]);
-        return finishLogin(res, user, b.remember);
+        if (user.mustChange && user.tempExpires && Date.parse(user.tempExpires) < Date.now()) {
+          await secLog(email, 'signin-failed', req, { why: 'temporary password expired' });
+          return res.status(401).json({ error: 'This temporary password has expired. Ask an admin for a new one.' });
+        }
+        await redis(['DEL', P + 'rl:login:' + email], ['DEL', P + 'rl:fail:' + email]);
+        return finishLogin(res, user, b.remember, req, user.mustChange ? 'temporary password' : 'password');
       }
       case 'google': {
         const cid = process.env.GOOGLE_CLIENT_ID;
@@ -140,11 +156,30 @@ export default async function handler(req, res) {
           await announceSignup(user, req);
         } else if (!user.google) { user.google = true; await putUser(user); }
         if (user.status !== 'active') return res.status(403).json({ pending: true, error: 'Your account status is "Admin for Approval". You can sign in once an admin approves it.' });
-        return finishLogin(res, user, b.remember);
+        return finishLogin(res, user, b.remember, req, 'Google');
       }
-      case 'logout':
+      case 'logout': {
+        const who = await currentUser(req).catch(() => null);
         await destroySession(req, res);
+        if (who) await secLog(who.email, 'signout', req);
         return res.status(200).json({ ok: true });
+      }
+      case 'changePassword': {
+        // Choosing their own password: required straight after signing in with a temporary one, and
+        // available any time from Your account (then the current password is asked for).
+        const me = await currentUser(req);
+        if (!me) return res.status(401).json({ error: 'Please sign in' });
+        if (String(b.password || '').length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        const u = await getUser(me.email);
+        if (!u.mustChange && !checkPassword(b.current, u.salt, u.hash)) return res.status(400).json({ error: 'Your current password is not correct.' });
+        if (u.hash && checkPassword(b.password, u.salt, u.hash)) return res.status(400).json({ error: 'Choose a new password, not the one you have now.' });
+        const was = !!u.mustChange;
+        Object.assign(u, hashPassword(b.password)); delete u.mustChange; delete u.tempExpires; u.passwordChangedAt = now();
+        await putUser(u);
+        await bumpAccess();                    // every server forgets the old copy of this account now
+        await secLog(u.email, 'password-changed', req, { first: was || undefined });
+        return res.status(200).json({ user: publicUser(u) });
+      }
       case 'forgot': {
         if (!emailEnabled()) return res.status(400).json({ error: 'Email is not set up for this app. Ask an admin to reset your password from Members.' });
         if (await limited('forgot:' + email, 5, 3600)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
@@ -158,10 +193,11 @@ export default async function handler(req, res) {
         if (err) return res.status(400).json({ error: err });
         const user = await getUser(email);
         if (!user) return res.status(400).json({ error: 'Account not found' });
-        Object.assign(user, hashPassword(b.password), { verified: true });
+        Object.assign(user, hashPassword(b.password), { verified: true }); delete user.mustChange; delete user.tempExpires;
         await putUser(user);
+        await secLog(email, 'password-changed', req, { how: 'emailed code' });
         if (user.status !== 'active') return res.status(200).json({ pending: true, message: 'Password updated. Your account still needs admin approval.' });
-        return finishLogin(res, user, b.remember);
+        return finishLogin(res, user, b.remember, req, 'password');
       }
       default:
         return res.status(400).json({ error: 'Unknown op' });

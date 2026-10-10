@@ -270,7 +270,9 @@ export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.na
   notifyOff: Array.isArray(u.notifyOff) ? u.notifyOff : [],
   // Client accounts: which websites they were granted, and the company they belong to.
   sites: u.role === 'client' ? (u.sites || []).map(String) : undefined, clientId: u.clientId || undefined, company: u.company || undefined,
-  grant: (u.grant || []).length ? u.grant : undefined, revoke: (u.revoke || []).length ? u.revoke : undefined, custom: hasCustomAccess(u) || undefined });
+  grant: (u.grant || []).length ? u.grant : undefined, revoke: (u.revoke || []).length ? u.revoke : undefined, custom: hasCustomAccess(u) || undefined,
+  // Signed in with a temporary password an admin gave them: they must choose their own before anything else.
+  mustChange: u.mustChange ? true : undefined });
 export async function listUsers() {
   const [emails] = await redis(['SMEMBERS', P + 'users']);
   if (!emails || !emails.length) return [];
@@ -341,6 +343,47 @@ export async function currentUser(req) {
   return user ? Object.assign({}, user) : user;
 }
 /** Drop cached sessions for someone whose role or account just changed (this server instance). */
+// ---------- real names and the security log ----------
+/**
+ * A real full name: at least a first and a last name, letters only (accents, hyphens and apostrophes
+ * are fine). Nicknames and usernames are refused, so in a year everybody still knows who did what.
+ * Returns the tidied name, or null.
+ */
+export function realName(s) {
+  const n = String(s || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  const parts = n.split(' ');
+  if (parts.length < 2) return null;
+  if (!parts.every((p) => /^[\p{L}][\p{L}'’.-]*$/u.test(p))) return null;
+  if (parts.filter((p) => p.replace(/[^\p{L}]/gu, '').length >= 2).length < 2) return null;
+  return n;
+}
+const SEC_KEEP = 200, SEC_TTL = 90 * 86400;
+/**
+ * One line in a person's security log: signed in, signed out, a wrong password, a password change,
+ * an admin changing their account. Kept 90 days, the latest 200 per person.
+ */
+export async function secLog(email, type, req, extra = {}) {
+  if (!email) return;
+  const h = (req && req.headers) || {};
+  const e = { at: now(), type, ip: String(h['x-forwarded-for'] || h['x-real-ip'] || '').split(',')[0].trim().slice(0, 64), ua: String(h['user-agent'] || '').slice(0, 220), ...extra };
+  const k = P + 'seclog:' + normEmail(email);
+  try { await redis(['LPUSH', k, JSON.stringify(e)], ['LTRIM', k, 0, SEC_KEEP - 1], ['EXPIRE', k, SEC_TTL]); } catch (x) { /* never stop a sign-in over a log line */ }
+}
+export async function readSecLog(email, n = SEC_KEEP) {
+  const [rows] = await redis(['LRANGE', P + 'seclog:' + normEmail(email), 0, n - 1]);
+  return (rows || []).map((r) => jparse(r)).filter(Boolean);
+}
+/** Is this person in the Slack workspace? { configured, found, name } — asked fresh, for the Add member form. */
+export async function slackLookup(email) {
+  if (!slackBotEnabled()) return { configured: false, found: false };
+  const r = await fetchWithTimeout(`${process.env.SLACK_API_BASE || 'https://slack.com/api'}/users.lookupByEmail?email=${encodeURIComponent(email)}`, { headers: { Authorization: 'Bearer ' + process.env.SLACK_BOT_TOKEN } }, 6000)
+    .then((x) => x.json()).catch(() => ({ ok: false, error: 'unreachable' }));
+  if (r.ok && r.user && !r.user.deleted) {
+    await redis(['SET', P + 'slackid:' + normEmail(email), r.user.id, 'EX', 30 * 86400]).catch(() => {});
+    return { configured: true, found: true, name: String((r.user.profile && (r.user.profile.real_name || r.user.profile.display_name)) || r.user.real_name || r.user.name || '').slice(0, 80), guest: !!(r.user.is_restricted || r.user.is_ultra_restricted) };
+  }
+  return { configured: true, found: false, error: r.error === 'users_not_found' ? '' : (r.error || '') };
+}
 export function forgetUser(email) { for (const [k, v] of cache) if (v.user && v.user.email === email) cache.delete(k); }
 /** Require a signed-in, approved user. Sends 401/403 and returns null otherwise. */
 /**
@@ -365,6 +408,8 @@ export async function requireUser(req, res, { admin = false, client = false } = 
   if (u.status === 'disabled') { res.status(403).json({ error: 'This account has been switched off by an admin.', disabled: true }); return null; }
   if (u.status !== 'active') { res.status(403).json({ error: 'Your account is waiting for admin approval', pending: true }); return null; }
   if (u.role === 'client' && !client) { res.status(403).json({ error: 'Not available on this account' }); return null; }
+  // A temporary password opens one door only: the screen to choose their own (POST /api/auth changePassword).
+  if (u.mustChange) { res.status(403).json({ error: 'Please choose your own password first.', mustChange: true }); return null; }
   await applyPreview(req, u);
   // Every answer carries the access version, so an open browser notices a change on its next action
   // rather than waiting for the heartbeat. The heartbeat still covers somebody sitting idle.
@@ -449,8 +494,8 @@ export const NOTIFY_GROUPS = [
     desc: 'A suggestion is sent, answered, or commented on.' },
   { key: 'domains', label: 'Domain problems on live websites', kinds: ['domain-problem', 'domain-expiring', 'domain-ok', 'domain-digest'], channels: ['bell', 'popup', 'slack'], admin: true,
     desc: 'A live website\'s domain stops working, shows another site, or its registration is about to run out or has expired; it works again; plus one daily report of everything still open. (Security certificates are Duda\'s job and are not reported.)' },
-  { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
-    desc: 'Someone signs up and needs approving, or an audit is removed from the list.' },
+  { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed', 'security'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
+    desc: 'Someone signs up and needs approving, an audit is removed from the list, or an account gets repeated wrong passwords.' },
   { key: 'projects', label: 'Projects you are on', kinds: ['project-assign', 'project-late', 'project-note'], channels: ['bell', 'popup', 'slack', 'email'],
     desc: 'A project is handed to you, runs past its date, or somebody writes in its channel.' },
   // Only ever sent to the account that runs the app, and always to the bell: an allowance quietly
@@ -513,6 +558,7 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   'ticket-reply': 'replied on a change request',
   'ticket-assign': 'gave you a client change request',
   access: 'changed what you can do',
+  security: 'needs a look: repeated wrong passwords',
   test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
 async function slackApi(method, body) {
