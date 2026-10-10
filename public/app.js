@@ -1646,65 +1646,147 @@
   }
   function startQueue() { /* nothing to start: the heartbeat drives the catch-up now */ }
 
-  function renderProfileTab(body, s, { cnt, generalComments }) {
-    const sum = (state.leadSums && state.leadSums[s.siteId]) || {};
-    const t = s.truth || {};
-    const prevUrl = `https://${linkHost(s)}/site/${s.siteId}?preview=true&insitepreview=true&dm_device=desktop`;
-    const sc = s.scan || {};
+  /**
+   * A website's profile. ONE layout, whichever way you arrive: from an audit (its Profile tab) or
+   * from Live DR Sites (Profile), audited or not. `s` is the audit record when there is one.
+   */
+  function renderProfileTab(body, s, extra) { renderSiteProfile(body, { s, siteId: s.siteId, cnt: (extra || {}).cnt, generalComments: (extra || {}).generalComments }); }
+  const prof = { tickets: {}, thumbs: {} };
+  function renderSiteProfile(body, ctx) {
+    const s = ctx.s || null;
+    const siteId = ctx.siteId;
+    const cnt = ctx.cnt || {};
+    const x = ((liveDR.data && liveDR.data.sites) || []).find((y) => sameId(y.id, siteId))
+      || ((liveDR.un && liveDR.un.sites) || []).find((y) => sameId(y.id, siteId)) || null;
+    const d = x && x.dom;
+    const t = (s && s.truth) || {};
+    const sc = (s && s.scan) || {};
+    const sum = (state.leadSums && state.leadSums[siteId]) || {};
+    const name = (s && s.businessName) || (x && x.name) || siteId;
+    const dom = (x && x.domain) || t.domain || (s && s.host) || '';
+    const prevUrl = `https://${linkHost(s)}/site/${siteId}?preview=true&insitepreview=true&dm_device=desktop`;
+    const edUrl = s ? editorUrl(s, '/') : `https://${linkHost(null)}/home/site/${siteId}/home`;
+    const th = prof.thumbs[siteId];
+    const thumbSrc = th && th.at ? `/api/capture?op=thumb&site=${encodeURIComponent(siteId)}&v=${th.at}` : '';
     const sev = (k, label) => `<button class="pf-count ${k}" data-gofilter="${k}">${cnt[k] || 0}<span>${label}</span></button>`;
+    const tk = s ? prof.tickets[s.id] : null;
+    const sd = d ? sslDays(d) : null;
+    const rd = d && d.reg && d.reg.expires ? daysTo(d.reg.expires) : null;
     body.innerHTML = `
       <div class="pf">
         <div class="pf-top">
           <a class="pf-shot" href="${esc(prevUrl)}" target="_blank" rel="noopener" title="Open the desktop preview">
-            <iframe src="${esc(prevUrl)}" title="Preview of ${esc(s.businessName || s.siteId)}" loading="lazy" tabindex="-1"></iframe><span class="pf-shot-o">Open preview ↗</span></a>
+            ${thumbSrc ? `<img src="${esc(thumbSrc)}" alt="Picture of ${esc(name)}">` : `<span class="pf-shot-wait">${th && th.error ? 'No picture yet' : '<span class="spin-dot"></span> Taking a picture…'}</span>`}
+            <span class="pf-shot-o">Open preview ↗</span></a>
           <div class="pf-id">
-            <h2>${esc(s.businessName || s.siteId)}</h2>
+            <h2>${esc(name)}</h2>
             <div class="pf-meta">
-              ${t.domain || s.host ? `<a href="https://${esc(t.domain || s.host)}" target="_blank" rel="noopener">${esc(t.domain || s.host)} ↗</a>` : '<span class="faint">No domain yet</span>'}
-              ${(t.addresses || [])[0] && t.addresses[0].city ? ` · ${esc(t.addresses[0].city)}` : ''}
-              ${sc.at ? ` · last scan ${esc(fmtWhen(Date.parse(sc.at)))}` : ' · never scanned'}
+              ${dom ? `<a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a>` : '<span class="faint">No domain yet</span>'}
+              · <span class="mono">${esc(siteId)}</span> <button class="linkbtn small" id="pfCopy">Copy</button>
+              ${x && x.first ? ` · launched ${esc(fmtFull(x.first))}` : ''}${x && x.published ? ` · last published ${esc(fmtFull(x.published))}` : (x ? '' : ' · <span class="badge subtle">Not published yet</span>')}
             </div>
+            ${(x && (x.labels || []).length) ? `<div class="small faint" style="margin:-6px 0 10px">${x.labels.map(esc).join(' · ')}</div>` : ''}
             <div class="pf-owner">
               <label>Client contact</label>
-              <div class="pf-owner-row" id="pfOwner">${clientsFor(s.id).length
+              <div class="pf-owner-row" id="pfOwner">${s ? (clientsFor(s.id).length
                 ? clientsFor(s.id).map((c) => `<span class="pill">${esc(c.name)}<span class="faint small"> · ${esc(c.email)}</span></span>`).join('')
-                : '<span class="faint">Nobody yet</span>'}
-                ${can('client.manage') ? '<button class="linkbtn" id="pfClient">Manage client access</button>' : ''}</div>
+                : '<span class="faint">Nobody yet</span>') + (can('client.manage') ? '<button class="linkbtn" id="pfClient">Manage client access</button>' : '')
+                : '<span class="faint">Add this website to Audits to give a client access.</span>'}</div>
             </div>
             <div class="pf-acts">
-              ${can('client.viewas') ? '<button class="btn" id="pfView">👁 View as client</button>' : ''}
-              <a class="btn ghost" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
+              ${s && can('client.viewas') ? '<button class="btn" id="pfView">👁 View as client</button>' : ''}
+              ${!s && can('live.audit') ? '<button class="btn primary" id="pfAudit">Audit this website</button>' : ''}
+              <a class="btn ghost" href="${esc(edUrl)}" target="_blank" rel="noopener">Open editor ↗</a>
             </div>
           </div>
         </div>
 
         <div class="pf-cards">
           <div class="pf-card">
-            <div class="pf-card-h">Audit <a href="#/site/${esc(s.id)}">open ↗</a></div>
-            <div class="pf-counts">${sev('critical', 'critical')}${sev('outdated', 'outdated')}${sev('warning', 'warning')}${sev('info', 'info')}</div>
-            <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}</div>
+            <div class="pf-card-h">Domain health ${x ? `<a href="#/live" data-tsite="${esc(siteId)}">on the list ↗</a>` : ''}</div>
+            ${!x ? '<div class="small faint">Not published yet, so there is no live domain to check.</div>'
+              : !x.domain ? '<div class="small faint">Only on its Duda address (no custom domain).</div>'
+              : `<div>${d ? `<span class="badge ${DOM_CLS[d.status] || ''}">${DOM_ICON[d.status] || ''} ${esc(d.label || d.status)}</span>${domProblem(d) && d.detail ? `<div class="small faint dom-detail">${esc(d.detail)}</div>` : ''}` : '<span class="faint small">Not checked yet</span>'}</div>
+                <ul class="pf-facts small">
+                  ${rd !== null ? `<li class="${rd <= 7 ? 'bad' : rd <= 60 ? 'warn' : ''}">Domain registration: ${rd < 0 ? `<b>expired ${-rd} day${rd === -1 ? '' : 's'} ago</b>` : `renews by ${esc(fmtFull(new Date(d.reg.expires).toISOString()))} (${rd} days)`}${d.reg.registrar ? ` · ${esc(d.reg.registrar)}` : ''}</li>` : d ? '<li class="faint">Domain registration: no date published</li>' : ''}
+                  ${sd !== null ? `<li class="faint">Security certificate: ${sd < 0 ? 'renewing' : sd + ' days left'} · Duda renews it</li>` : ''}
+                  ${d && d.ms ? `<li class="faint">Answers in ${(d.ms / 1000).toFixed(1)}s</li>` : ''}
+                  ${d && d.checkedAt ? `<li class="faint">Checked ${esc(fmtFull(new Date(d.checkedAt).toISOString()))}</li>` : ''}
+                </ul>
+                ${can('live.domains') ? '<button class="btn sm" id="pfCheck">Check now</button>' : ''}`}
           </div>
           <div class="pf-card">
-            <div class="pf-card-h">Form submissions <a href="#/site/${esc(s.id)}/leads">open ↗</a></div>
+            <div class="pf-card-h">Audit ${s ? `<a href="#/site/${esc(s.id)}">open ↗</a>` : ''}</div>
+            ${s ? `<div class="pf-counts">${sev('critical', 'critical')}${sev('outdated', 'outdated')}${sev('warning', 'warning')}${sev('info', 'info')}</div>
+              <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}${sc.at ? ` · last scan ${esc(fmtWhen(Date.parse(sc.at)))}` : ' · never scanned'}</div>`
+              : `<div class="pf-big faint">—</div><div class="small faint">Not audited yet.</div>`}
+          </div>
+          <div class="pf-card">
+            <div class="pf-card-h">Form submissions <a href="${s ? `#/site/${esc(s.id)}/leads` : '#pfLeads'}" ${s ? '' : 'data-jump="pfLeads"'}>open ↗</a></div>
             <div class="pf-big">${sum.total || 0}</div>
             <div class="small faint">${sum.last ? `last one ${esc(fmtWhen(Date.parse(sum.last)))}` : 'none recorded yet'}</div>
           </div>
-          <div class="pf-card">
+          ${s ? `<div class="pf-card">
             <div class="pf-card-h">Comments <a href="#/site/${esc(s.id)}/comments">open ↗</a></div>
-            <div class="pf-big">${generalComments || 0}</div>
+            <div class="pf-big">${ctx.generalComments || 0}</div>
             <div class="small faint">on this website</div>
-          </div>
+          </div>` : ''}
+          ${s && can('ticket.view') ? `<div class="pf-card">
+            <div class="pf-card-h">Client tickets <a href="#/requests/site/${esc(encodeURIComponent(s.id))}">open ↗</a></div>
+            <div class="pf-big">${tk ? tk.open : '…'}</div>
+            <div class="small faint">${tk ? `open · ${tk.total} in all${tk.last ? ` · latest ${esc(fmtWhen(Date.parse(tk.last)))}` : ''}` : 'loading'}</div>
+          </div>` : ''}
+          <div id="pfMore" class="pf-more"></div>
         </div>
       </div>`;
+    // Answers can arrive after the page has been drawn again (the audit page redraws itself), so redraw
+    // whichever profile is on screen now, not the one that asked.
+    prof.last = { body, ctx };
+    const again = () => { const L = prof.last; if (L && document.body.contains(L.body)) renderSiteProfile(L.body, L.ctx); };
+    if ($('#pfCopy')) $('#pfCopy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(siteId); toast('Site ID copied'); };
     if ($('#pfView')) $('#pfView').onclick = () => { state.viewAs = s.id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(s.id)}/dashboard`; };
-    // Who can see this website is only known once; after that the panel redraws from what we hold.
-    if (can('client.manage') && state.clients === null) {
-      state.clients = [];
-      post('/api/users', { op: 'clients' }).then((r) => { state.clients = r.clients || []; if (route().tab === 'profile') renderProfileTab(body, s, { cnt, generalComments }); }).catch(() => {});
-    }
-    if (!state.leadSums[s.siteId]) loadLeadSums([s.siteId]).then(() => { if (route().tab === 'profile') renderProfileTab(body, s, { cnt, generalComments }); });
     if ($('#pfClient')) $('#pfClient').onclick = () => openClients(s);
     $$('[data-gofilter]', body).forEach((b) => (b.onclick = () => { state.ff.sev = b.dataset.gofilter; location.hash = '#/site/' + encodeURIComponent(s.id); }));
+    $$('[data-tsite]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = 'published'; live.q = a.dataset.tsite; live.dom = ''; live.audit = ''; live.page = 0; location.hash = '#/live'; }));
+    $$('[data-jump]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); const t2 = document.getElementById(a.dataset.jump); if (t2) t2.scrollIntoView({ behavior: 'smooth' }); }));
+    if ($('#pfCheck')) $('#pfCheck').onclick = async (e) => {
+      e.target.disabled = true; e.target.textContent = 'Checking…';
+      try { const r = await post('/api/dudasites', { op: 'domains', ids: [x.id] }); if (r.domains && r.domains[x.id]) x.dom = r.domains[x.id]; toast('Domain checked'); } catch (err) { toast(err.message); }
+      again();
+    };
+    if ($('#pfAudit')) $('#pfAudit').onclick = async (e) => {
+      const host = editorHostOr(); e.target.disabled = true; e.target.textContent = 'Adding…';
+      try {
+        const n = await store({ op: 'create', siteId, host, editorUrl: `https://${host}/home/site/${siteId}/home`, assignee: state.me.email });
+        upsertSummary(n); requestScan([n.id]); toast(`Submitted for audit. ${doneNote()}`);
+        location.hash = `#/site/${encodeURIComponent(n.id)}/profile`;
+      } catch (err) {
+        if (err.status === 409) { await loadSites(); const a = auditFor(siteId); if (a) location.hash = `#/site/${encodeURIComponent(a.id)}/profile`; }
+        else { toast(err.message); e.target.disabled = false; e.target.textContent = 'Audit this website'; }
+      }
+    };
+    // ---- things fetched once, then the page redraws from what it holds ----
+    if (!liveDR.data && !liveDR.loading && !prof.liveAsked) { prof.liveAsked = true; loadLive(false).then(again).catch(() => {}); }
+    if (s && can('client.manage') && state.clients === null) {
+      state.clients = [];
+      post('/api/users', { op: 'clients' }).then((r) => { state.clients = r.clients || []; again(); }).catch(() => {});
+    }
+    if (!state.leadSums[siteId] && !prof['ls' + siteId]) { prof['ls' + siteId] = 1; loadLeadSums([siteId]).then(again); }
+    if (s && can('ticket.view') && !tk && !prof['tk' + s.id]) {
+      prof['tk' + s.id] = 1;
+      api('/api/tickets?op=list&site=' + encodeURIComponent(s.id)).then((r) => {
+        const list = r.tickets || [];
+        prof.tickets[s.id] = { total: list.length, open: list.filter((k) => !['done', 'closed'].includes(k.status)).length, last: list[0] && list[0].at };
+        again();
+      }).catch(() => { prof.tickets[s.id] = { total: 0, open: 0 }; again(); });
+    }
+    if (!th) {
+      prof.thumbs[siteId] = { at: 0, asking: true };
+      // Show the one we have straight away, then ask for a fresh one only if it is out of date.
+      post('/api/capture', { op: 'thumb', site: siteId, pub: (x && x.published) || '' })
+        .then((r) => { prof.thumbs[siteId] = { at: r.at || 0, error: !r.at }; again(); })
+        .catch(() => { prof.thumbs[siteId] = { at: 0, error: true }; again(); });
+    }
   }
   const clientsFor = (siteId) => (state.clients || []).filter((c) => (c.sites || []).includes(siteId));
 
@@ -4409,38 +4491,11 @@
    */
   async function renderDrProfile(siteId) {
     const a = auditFor(siteId);
-    if (a) { location.hash = `#/site/${encodeURIComponent(a.id)}/leads`; return; }
+    if (a) { location.hash = `#/site/${encodeURIComponent(a.id)}/profile`; return; }
     if (!live.data) { $('#view').innerHTML = '<div class="empty">Loading…</div>'; await loadLive(false); }
-    const x = ((live.data && live.data.sites) || []).find((y) => y.id === siteId)
-      || ((live.draft && live.draft.sites) || []).find((y) => y.id === siteId) || null;
-    const dom = x && (x.domain || x.defaultDomain);
-    const host = editorHostOr();
-    $('#view').innerHTML = `<div class="page-head"><div>
-        <div class="small muted"><a href="#/live">← Live DR Sites</a></div>
-        <h1>${esc((x && x.name) || siteId)}</h1>
-        <div class="muted small">${dom ? `<a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a> · ` : ''}<span class="mono">${esc(siteId)}</span>
-          ${x && x.published ? ` · published ${esc(fmtFull(x.published))}` : ' · <span class="badge subtle">Not published yet</span>'}</div>
-        ${(x && (x.labels || []).length) ? `<div class="small faint" style="margin-top:3px">${x.labels.map(esc).join(' · ')}</div>` : ''}</div>
-      <div style="display:flex;gap:8px;align-items:flex-start">
-        ${can('live.audit') ? `<button class="btn primary" id="drAudit">Audit this website</button>` : ''}
-        ${host ? `<a class="btn ghost" href="https://${esc(linkHost(null))}/home/site/${esc(siteId)}/home" target="_blank" rel="noopener">Editor ↗</a>` : ''}</div></div>
-      <div class="note" style="margin-bottom:12px"><b>This website has not been audited.</b>
-        <div class="small" style="margin-top:3px">Its form submissions are collected and kept all the same — nothing here needs an audit first.
-        ${can('live.audit') ? 'Press <b>Audit this website</b> when it should be checked.' : ''}</div></div>
-      <div id="drBody"><div class="empty">Loading…</div></div>`;
-    if ($('#drAudit')) {
-      $('#drAudit').onclick = async () => {
-        $('#drAudit').disabled = true; $('#drAudit').textContent = 'Adding…';
-        try {
-          const sum = await store({ op: 'create', siteId, host, editorUrl: `https://${host}/home/site/${siteId}/home`, assignee: state.me.email });
-          upsertSummary(sum); requestScan([sum.id]); toast(`Submitted for audit. ${doneNote()}`);
-          location.hash = `#/site/${encodeURIComponent(sum.id)}`;
-        } catch (e) {
-          if (e.status === 409) { await loadSites(); goLeads(siteId); }
-          else { toast(e.message); $('#drAudit').disabled = false; $('#drAudit').textContent = 'Audit this website'; }
-        }
-      };
-    }
+    $('#view').innerHTML = `<div class="page-head"><div><div class="small muted"><a href="#/live">← Live DR Sites</a></div></div></div><div id="drProf"></div>
+      <h2 id="pfLeads" style="margin-top:22px">Form submissions</h2><div id="drBody"><div class="empty">Loading…</div></div>`;
+    renderSiteProfile($('#drProf'), { siteId });
     // The same enquiries view the audited websites get — it only ever needed a Duda site id.
     renderLeadsTab($('#drBody'), { siteId });
   }

@@ -7,6 +7,8 @@
 // POST /api/capture { op:'shoot', site, device, path, fresh }   → take a new picture (or reuse a fresh one)
 // POST /api/capture { op:'upload', site, data, type, w, h }     → the client's own screenshot, used as the page
 // POST /api/capture { op:'test', site? }                         → admins: check pictures work on this server
+// GET  /api/capture?op=thumb&site=<duda id>                      → the team: a website's small thumbnail (image)
+// POST /api/capture { op:'thumb', site:<duda id>, pub }          → the team: take it if missing, or older than its last publish / a week
 //
 // `site` is always the website's record id in this app; the page itself is opened on the Duda
 // preview of that website's draft, so it shows what the team is working on, not just what is live.
@@ -29,6 +31,44 @@ async function takePicture(rec, site, device, path, by, ttl, replay) {
   return { meta, shot };
 }
 
+// ---------- website thumbnails (the picture at the top of a profile) ----------
+// One small picture per website (480 px wide, about 15–30 KB), kept until the website is published
+// again or a week has passed. Taken only when somebody opens that profile, so websites nobody looks
+// at cost nothing.
+const THUMB_W = 480;
+const thumbKey = (id) => P + 'thumb:' + id;
+const okDudaId = (id) => /^[A-Za-z0-9_-]{4,64}$/.test(String(id || ''));
+async function thumbOp(req, res, w, b) {
+  if (!w.team) return res.status(404).json({ error: 'Not found' });
+  const site = String((req.method === 'GET' ? req.query.site : b.site) || '');
+  if (!okDudaId(site)) return res.status(400).json({ error: 'Unknown website' });
+  const [raw] = await redis(['GET', thumbKey(site)]);
+  const t = raw ? JSON.parse(raw) : null;
+  if (req.method === 'GET') {
+    if (!t || !t.data) return res.status(404).json({ error: 'No picture yet' });
+    const buf = Buffer.from(t.data, 'base64');
+    res.setHeader('Content-Type', 'image/webp');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    return res.status(200).end(buf);
+  }
+  const pub = Date.parse(b.pub || '') || 0;
+  const stale = !t || !t.data || (pub && pub > t.at) || Date.now() - t.at > 7 * 86400000;
+  if (!stale && !b.again) return res.status(200).json({ at: t.at, made: false });
+  const [lock] = await redis(['SET', P + 'thumblock:' + site, '1', 'NX', 'EX', 120]);
+  if (lock !== 'OK') return res.status(200).json({ at: t ? t.at : 0, made: false, busy: true });
+  try {
+    const rec = (await siteRec(site)) || { id: site, siteId: site };
+    const { url } = await previewUrl(Object.assign({}, rec, { siteId: rec.siteId || site }), '/', 'desktop');
+    const shot = await shoot(url, 'desktop', { thumb: THUMB_W, timeout: 45000 });
+    const at = Date.now();
+    await redis(['SET', thumbKey(site), JSON.stringify({ at, w: shot.w, h: shot.h, data: shot.thumb })], ['DEL', P + 'thumblock:' + site]);
+    return res.status(200).json({ at, made: true, kb: Math.round(shot.thumb.length * 0.75 / 1024) });
+  } catch (e) {
+    await redis(['DEL', P + 'thumblock:' + site]).catch(() => {});
+    return res.status(200).json({ at: t ? t.at : 0, made: false, error: 'The picture could not be taken right now.' });
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const w = await who(req, res);
@@ -36,6 +76,7 @@ export default async function handler(req, res) {
   const b = req.method === 'GET' ? {} : (readBody(req) || {});
   const op = String((req.method === 'GET' ? req.query.op : b.op) || '');
   try {
+    if (op === 'thumb') return await thumbOp(req, res, w, b);
     if (req.method === 'GET') {
       if (op === 'latest') {
         const site = String(req.query.site || '');

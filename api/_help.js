@@ -329,8 +329,14 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'profiles', group: 'Collaboration', title: 'Profiles, form submissions and client access', audience: 'all',
-    html: `<p>Every website in Audits has a <b>Profile</b> tab. It is the website as a whole rather than only its audit: a live preview, the domain, who outside the team can see it, and the three numbers that matter \u2014 open audit items, form submissions, comments \u2014 each one a link into the tab that explains it.</p>
-<p>Nothing was created to make this work. The Profile is the same website record the audit has always used, with more on it, so every website you have ever audited already has one.</p>
+    html: `<p>Every website has <b>one Profile</b>, and it looks the same whichever way you arrive: the <b>Profile</b> tab of an audit, or <b>Profile</b> on Live DR Sites (an audited website opens its audit's Profile tab; one not audited yet opens the same layout with its form submissions underneath).</p>
+<ul>
+<li><b>Picture</b>: a small picture of the website's home page, taken the first time somebody opens the profile, and again after the website is published or once a week. Click it to open the preview.</li>
+<li><b>Name, domain, site ID</b> (with <b>Copy</b>), launch date, last publish and labels; <b>Client contact</b>; <b>View as client</b>, <b>Audit this website</b> (when not audited yet) and <b>Open editor</b>.</li>
+<li><b>Domain health</b>: working or not, when the domain registration must be renewed (red within 7 days), the certificate as information only, speed, when it was last checked, and <b>Check now</b>.</li>
+<li><b>Audit</b>, <b>Form submissions</b>, <b>Comments</b> and <b>Client tickets</b>, each a link into the page that explains it.</li>
+</ul>
+<p>Nothing was created to make this work: an audited website's Profile is its audit record, and a website not audited yet is assembled from the Duda list, so every website already has one.</p>
 <h3>Form submissions</h3>
 <ul>
 <li>New submissions arrive on their own once Duda's connection is switched on \u2014 the same connection that brings client comments in.</li>

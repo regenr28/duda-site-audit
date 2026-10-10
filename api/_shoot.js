@@ -150,7 +150,7 @@ const DRAW_MARK = `((kind, g, W, H) => {
   return true;
 })`;
 
-export async function shoot(url, device = 'desktop', { timeout = 85000, replay = null, mark = null } = {}) {
+export async function shoot(url, device = 'desktop', { timeout = 85000, replay = null, mark = null, thumb = 0 } = {}) {
   const D = DEVICES[device];
   if (!D) throw new Error('Unknown device');
   const t0 = Date.now();
@@ -197,6 +197,12 @@ export async function shoot(url, device = 'desktop', { timeout = 85000, replay =
       if (r.exceptionDetails) throw new Error('The page could not be read: ' + ((r.exceptionDetails.exception || {}).description || r.exceptionDetails.text || '').slice(0, 160));
       return r.result.value;
     };
+    // A thumbnail: only the first screen, small. No need to scroll the whole page for it.
+    if (thumb) {
+      await ev(`(async () => { const p = [...document.images].filter((i) => !i.complete && i.getBoundingClientRect().top < innerHeight); await Promise.race([Promise.all(p.map((i) => new Promise((r) => { i.addEventListener('load', r, { once: true }); i.addEventListener('error', r, { once: true }); }))), new Promise((r) => setTimeout(r, 4000))]); try { await document.fonts.ready; } catch (e) {} await new Promise((r) => setTimeout(r, 1200)); })`).catch(() => {});
+      const r = await within(call('Page.captureScreenshot', { format: 'webp', quality: 70, fromSurface: true, clip: { x: 0, y: 0, width: D.w, height: D.h, scale: thumb / D.w } }), 20000, 'Taking the picture took too long.');
+      return { thumb: r.data, w: thumb, h: Math.round(D.h * thumb / D.w), status, ms: Date.now() - t0 };
+    }
     const fullH = await within(ev(SETTLE, MAX_HEIGHT), 30000, 'The page took too long to finish drawing.');
     await quiet(6000, 0);
     let scrollY = 0;

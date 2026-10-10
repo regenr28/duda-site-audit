@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-profile', date: '2026-10-10', audience: 'all', tag: 'Websites',
+    title: 'One profile for every website, with its picture and domain health',
+    what: '<b>Profile</b> on Live DR Sites and the <b>Profile</b> tab of an audit are now the same page. It shows a picture of the home page, the domain and site ID, launch and last publish dates, labels, client contact, and cards for <b>Domain health</b>, <b>Audit</b>, <b>Form submissions</b>, <b>Comments</b> and <b>Client tickets</b>. A website not audited yet gets the same layout, with an <b>Audit this website</b> button.',
+    where: ['<b>Walkthrough:</b> open <b>Live DR Sites</b> and click <b>Profile</b> on any row. The picture appears after a few seconds the first time.'],
+    link: '#/live', linkText: 'Open Live DR Sites',
+  },
+  {
     id: '2026-10-10-domain-monitoring', date: '2026-10-10', audience: 'all', tag: 'Live DR Sites',
     title: 'Domain monitoring: expiring, redirected, down and unpublished, one click from Trends',
     what: 'A new <b>🌐 Domain monitoring</b> row at the top of <b>Trends</b> counts <b>Domain expiring</b>, <b>Redirected issue</b>, <b>Domain down</b> and <b>Domain unpublished</b>. Click any card to list those websites. Expiring is always the current picture; the others follow your date range (a problem still happening is always shown). Security certificates are now information only, because Duda renews them by itself, so they no longer count as domain problems. <b>Not updated</b> now follows your date range too.',

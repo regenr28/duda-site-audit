@@ -695,7 +695,7 @@ span.pill { display: inline-block; padding: 5px 10px; border-radius: 999px; font
 
 /* ===================== Profile tab ===================== */
 .pf-top { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; margin-top: 14px; }
-.pf-shot { position: relative; display: block; width: 300px; height: 200px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); text-decoration: none; }
+.pf-shot { position: relative; display: block; width: 300px; aspect-ratio: 1920 / 1000; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); text-decoration: none; }
 .pf-shot iframe { width: 1200px; height: 800px; border: 0; transform: scale(.25); transform-origin: 0 0; pointer-events: none; }
 .pf-shot-o { position: absolute; inset: auto 0 0 0; padding: 6px 10px; font-size: 12px; background: rgba(0,0,0,.6); color: #fff; }
 .pf-id h2 { margin: 0 0 4px; }
@@ -1248,3 +1248,10 @@ html.mk-lock, html.mk-lock body { overflow: hidden; overscroll-behavior: none; }
 .dm-list { margin-top: 10px; }
 .dm-table { width: 100%; }
 .badge.dom-fyi { background: transparent; color: var(--muted); border: 1px dashed var(--border); }
+
+/* Website profile: thumbnail and domain facts */
+.pf-shot img { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
+.pf-shot-wait { display: flex; align-items: center; justify-content: center; gap: 6px; height: 100%; color: var(--muted); font-size: 13px; }
+.pf-facts { list-style: none; padding: 0; margin: 8px 0 10px; display: grid; gap: 3px; }
+.pf-facts li.warn { color: var(--warn); } .pf-facts li.bad { color: var(--crit); font-weight: 600; }
+.pf-more:empty { display: none; }
