@@ -425,3 +425,43 @@ export function whenSeries(leads) {
   leads.forEach((l) => { const d = new Date(l.at); if (!isNaN(d)) { dow[d.getUTCDay()]++; hour[d.getUTCHours()]++; } });
   return { dow, hour };
 }
+
+/**
+ * The people behind the submissions: one contact per person, made automatically from every enquiry.
+ *
+ * Nothing is stored for this. Contacts are worked out from the enquiries each time, so every new
+ * submission is in the list the moment it arrives, a corrected verdict moves with it, and there is
+ * no second copy of anyone's details to keep in step (or to forget to delete).
+ *
+ * The same person is recognised by email, else by phone (last 10 digits), else by name; a later
+ * enquiry that shares either an email or a phone with an earlier one joins that contact. Junk is
+ * left out.
+ */
+const MSG_KEY = /message|comment|note|details|question|how can|describe|tell us|project|request|inquiry|enquiry/i;
+export function contactsFrom(leads) {
+  const byEmail = new Map(), byPhone = new Map(), byName = new Map(), all = [];
+  const digits = (p) => String(p || '').replace(/\D/g, '').slice(-10);
+  const sorted = leads.filter((l) => l && l.verdict !== 'junk').slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  for (const l of sorted) {
+    const e = String(l.e || '').trim().toLowerCase(), ph = digits(l.p), nm = String(l.n || '').trim();
+    if (!e && ph.length < 7 && !nm) continue;
+    let c = (e && byEmail.get(e)) || (ph.length >= 7 && byPhone.get(ph)) || (!e && ph.length < 7 && nm && byName.get(nm.toLowerCase())) || null;
+    if (!c) { c = { name: '', emails: [], phones: [], first: l.at, last: l.at, count: 0, pages: {}, sources: {}, forms: {}, note: '', ids: [] }; all.push(c); }
+    // The name they give most often (the fullest one on a tie), not just the latest: "M. Santos" once
+    // does not replace "Maria Santos" twice.
+    if (nm) { c.names = c.names || {}; c.names[nm] = (c.names[nm] || 0) + 1; c.name = Object.entries(c.names).sort((x, y) => y[1] - x[1] || y[0].length - x[0].length)[0][0]; }
+    if (e && !c.emails.includes(e)) c.emails.push(e);
+    if (l.p && !c.phones.some((x) => digits(x) === ph)) c.phones.push(String(l.p).trim());
+    c.last = l.at; c.count++; c.ids.push(l.id);
+    if (l.pg) c.pages[l.pg] = (c.pages[l.pg] || 0) + 1;
+    if (l.src) c.sources[l.src] = (c.sources[l.src] || 0) + 1;
+    if (l.fm) c.forms[l.fm] = (c.forms[l.fm] || 0) + 1;
+    const f = l.f || {}; const k = Object.keys(f).find((x) => MSG_KEY.test(x) && String(f[x] || '').trim());
+    if (k) c.note = String(f[k]).slice(0, 300);
+    if (e) byEmail.set(e, c); if (ph.length >= 7) byPhone.set(ph, c); if (nm) byName.set(nm.toLowerCase(), c);
+  }
+  const top = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  return all.map((c) => ({ name: c.name, email: c.emails[0] || '', emails: c.emails, phone: c.phones[0] || '', phones: c.phones,
+    first: c.first, last: c.last, count: c.count, page: top(c.pages)[0] || '', source: top(c.sources)[0] || '', form: top(c.forms)[0] || '', note: c.note, ids: c.ids.slice(-20) }))
+    .sort((a, b) => String(b.last).localeCompare(String(a.last)));
+}

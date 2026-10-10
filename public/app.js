@@ -1674,8 +1674,9 @@
   function renderProfileTab(body, s, extra) {
     // The form submissions live on the profile now (they used to be their own tab), underneath it so
     // the profile can redraw itself without throwing away a list somebody is reading.
-    body.innerHTML = '<div id="pfMain"></div><h2 id="pfLeads" class="pf-leads-h">Form submissions</h2><div id="pfLeadsBody"><div class="empty">Loading…</div></div>';
+    body.innerHTML = '<div id="pfMain"></div>' + (can('leads.contacts') ? '<h2 id="pfContacts" class="pf-leads-h">👥 Contacts</h2><div id="pfContactsBody"></div>' : '') + '<h2 id="pfLeads" class="pf-leads-h">Form submissions</h2><div id="pfLeadsBody"><div class="empty">Loading…</div></div>';
     renderSiteProfile($('#pfMain'), { s, siteId: s.siteId, cnt: (extra || {}).cnt, generalComments: (extra || {}).generalComments });
+    if (can('leads.contacts')) renderContacts($('#pfContactsBody'), { url: 'team:' + s.siteId, name: s.businessName || s.siteId, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(s.siteId)) });
     renderLeadsTab($('#pfLeadsBody'), s);
     if ((extra || {}).toLeads) setTimeout(() => { const h = $('#pfLeads'); if (h) h.scrollIntoView({ block: 'start' }); }, 80);
   }
@@ -2028,6 +2029,47 @@
         .then((r) => { prof.thumbs[siteId] = { at: r.at || 0, error: !r.at }; again(); })
         .catch(() => { prof.thumbs[siteId] = { at: 0, error: true }; again(); });
     }
+  }
+  // ---------- Contacts: one per person, made automatically from the form submissions ----------
+  const ctState = {};
+  function ctCsv(name, list) {
+    const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const rows = [['Name', 'Email', 'Other emails', 'Phone', 'Other phones', 'Enquiries', 'First enquiry', 'Latest enquiry', 'Page', 'Source', 'Form', 'Latest message']]
+      .concat(list.map((c) => [c.name, c.email, c.emails.slice(1).join(' '), c.phone, c.phones.slice(1).join(' '), c.count, c.first, c.last, c.page, c.source, c.form, c.note]));
+    const blob = new Blob(['﻿' + rows.map((r) => r.map(q).join(',')).join('\r\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${String(name || 'website').replace(/[^\w-]+/g, '-')}-contacts.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  /** `opts.url` is where they come from (team or client endpoint); `opts.name` names the download. */
+  async function renderContacts(el, opts) {
+    if (!el) return;
+    const key = opts.url;
+    const st = ctState[key] = ctState[key] || { q: '', open: '', data: null };
+    const draw = () => {
+      if (!document.body.contains(el)) return;
+      const d = st.data;
+      if (!d) { el.innerHTML = '<div class="empty small">Loading…</div>'; return; }
+      if (d.error) { el.innerHTML = `<div class="small muted">${esc(d.error)}</div>`; return; }
+      const q = st.q.trim().toLowerCase();
+      const list = d.contacts.filter((c) => !q || [c.name, ...c.emails, ...c.phones, c.page, c.source, c.note].some((v) => String(v || '').toLowerCase().includes(q)));
+      const repeat = d.contacts.filter((c) => c.count > 1).length;
+      el.innerHTML = `<div class="ct-bar"><input type="search" class="ct-q" placeholder="Search name, email, phone…" value="${esc(st.q)}" aria-label="Search contacts">
+          <span class="small muted">${d.contacts.length} contact${d.contacts.length === 1 ? '' : 's'} from ${d.from} submission${d.from === 1 ? '' : 's'}${repeat ? ` · ${repeat} came back more than once` : ''}</span><span class="spacer"></span>
+          ${d.contacts.length ? '<button class="btn sm ct-csv" type="button">⬇ Export CSV</button>' : ''}</div>
+        ${!d.contacts.length ? '<div class="small muted">No contacts yet. Each new form submission adds its sender here automatically.</div>' : `
+        <div class="table-wrap"><table class="grid ct-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Enquiries</th><th>Latest</th><th>Came from</th></tr></thead><tbody>
+        ${list.slice(0, 300).map((c, i) => { const k = (c.email || c.phone || c.name) + i; return `<tr class="ct-row ${st.open === k ? 'open' : ''}" data-ct="${esc(k)}" tabindex="0">
+          <td><b>${esc(c.name || '—')}</b></td><td>${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>${c.emails.length > 1 ? ` <span class="faint small">+${c.emails.length - 1}</span>` : ''}` : '<span class="faint">—</span>'}</td>
+          <td>${c.phone ? `<a href="tel:${esc(c.phone.replace(/[^\d+]/g, ''))}">${esc(c.phone)}</a>` : '<span class="faint">—</span>'}</td>
+          <td>${c.count}${c.count > 1 ? ' <span class="badge sev-info">returning</span>' : ''}</td><td class="small">${esc(dayLabel(c.last))}</td><td class="small">${esc(c.source || c.page || c.form || '—')}</td></tr>
+          ${st.open === k ? `<tr class="ct-more"><td colspan="6"><div class="small"><b>First enquiry</b> ${esc(dayLabel(c.first))} · <b>Latest</b> ${esc(isoLabel(c.last))}${c.page ? ` · <b>Page</b> ${esc(c.page)}` : ''}${c.form ? ` · <b>Form</b> ${esc(c.form)}` : ''}${c.emails.length > 1 ? ` · <b>Other emails</b> ${esc(c.emails.slice(1).join(', '))}` : ''}${c.phones.length > 1 ? ` · <b>Other phones</b> ${esc(c.phones.slice(1).join(', '))}` : ''}</div>${c.note ? `<div class="ct-note">“${esc(c.note)}”</div>` : ''}</td></tr>` : ''}`; }).join('')}
+        </tbody></table></div>${list.length > 300 ? `<div class="small muted">Showing 300 of ${list.length}. Search to narrow it down, or export them all.</div>` : ''}`}`;
+      const qi = $('.ct-q', el); if (qi) qi.oninput = () => { st.q = qi.value; const p = qi.selectionStart; draw(); const n = $('.ct-q', el); if (n) { n.focus(); n.setSelectionRange(p, p); } };
+      $$('.ct-row', el).forEach((r) => { const go = () => { st.open = st.open === r.dataset.ct ? '' : r.dataset.ct; draw(); }; r.onclick = (e) => { if (!e.target.closest('a')) go(); }; r.onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
+      const cb = $('.ct-csv', el); if (cb) cb.onclick = () => ctCsv(opts.name, d.contacts);
+    };
+    draw();
+    try { st.data = await opts.load(); } catch (e) { st.data = { error: e.message }; }
+    draw();
   }
   const clientsFor = (siteId) => (state.clients || []).filter((c) => (c.sites || []).includes(siteId));
 
@@ -3450,6 +3492,7 @@
     { k: 'dashboard', label: 'Dashboard', icon: '📊' },
     { k: 'requests', label: 'Tickets', icon: '🎫' },
     { k: 'leads', label: 'Form Submissions', icon: '✉️' },
+    { k: 'contacts', label: 'Contacts', icon: '👥' },
     { k: 'comments', label: 'Comments', icon: '💬' },
     { k: 'access', label: 'Access website', icon: '↗' },
   ];
@@ -3512,13 +3555,17 @@
     const el = $('#clMain'); if (!el) return;
     if (section === 'access') return clAccess(el, site);
     if (section === 'comments') return clComments(el, site);
+    if (section === 'contacts') {
+      el.innerHTML = `${clHead(site, 'Contacts', 'Everyone who has filled in a form on your website, one line per person. Added automatically with every new submission.')}<div class="cl-card" id="clCt"></div>`;
+      return renderContacts($('#clCt'), { url: 'client:' + site.id, name: site.name, load: () => capi('/api/client?op=contacts&id=' + encodeURIComponent(site.id)) });
+    }
     if (section === 'requests') return clRequests(el, site);
     if (section === 'leads' || section === 'dashboard') return clLeads(el, site, section);
   }
 
   function clHead(site, title, sub) {
     return `<div class="cl-head"><div><h1>${esc(title)}</h1><div class="cl-sub">${esc(sub || '')}</div></div>
-      <a class="btn ghost" href="https://${esc(site.domain)}" target="_blank" rel="noopener">Open ${esc(site.domain || 'website')} ↗</a></div>`;
+      ${site.domain ? `<a class="btn ghost" href="https://${esc(site.domain)}" target="_blank" rel="noopener">Open ${esc(site.domain)} ↗</a>` : ''}</div>`;
   }
 
   async function clAccess(el, site) {
@@ -3534,14 +3581,14 @@
   }
 
   async function clComments(el, site) {
-    el.innerHTML = `${clHead(site, 'Comments', 'Messages between you and the team about this website.')}<div class="empty">Loading…</div>`;
+    el.innerHTML = `${clHead(site, 'Comments', 'Your comments on the website and the team\'s replies.')}<div class="empty">Loading…</div>`;
     let d; try { d = await capi('/api/client?op=comments&id=' + encodeURIComponent(site.id)); } catch (e) { el.innerHTML = clHead(site, 'Comments', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
-    const list = d.comments || [];
-    el.innerHTML = `${clHead(site, 'Comments', `${list.length} message${list.length === 1 ? '' : 's'} on this website.`)}
-      ${list.length ? `<div class="cl-card cl-cmts">${list.map((c) => `<div class="cl-cmt${c.mine ? ' mine' : ''}">
-        <div class="cl-cmt-h"><b>${esc(c.by)}</b><span class="faint small">${esc(isoLabel(c.at))}</span></div>
-        <div class="cl-cmt-b">${esc(c.text).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>`
-      : '<div class="cl-card"><div class="empty">No comments yet. Anything your team posts about this website will appear here.</div></div>'}`;
+    const list = d.threads || [];
+    const open = list.filter((t) => t.status === 'open').length;
+    el.innerHTML = `${clHead(site, 'Comments', list.length ? `${list.length} conversation${list.length === 1 ? '' : 's'} on your website${open ? `, ${open} still open` : ''}.` : '')}
+      ${list.length ? list.map((t) => `<div class="cl-card cl-cmts"><div class="cl-cmt-top"><b>${t.page ? esc(t.page) : 'Your website'}</b>${t.device ? ` <span class="faint small">· ${esc(t.device.toLowerCase())}</span>` : ''}<span class="badge ${t.status === 'open' ? 'fs-clarification' : 'scan-complete'}">${t.status === 'open' ? 'Open' : 'Resolved'}</span></div>
+        ${t.comments.map((c) => `<div class="cl-cmt${c.team ? '' : ' mine'}"><div class="cl-cmt-h"><b>${c.team ? 'Your team' : 'You'}</b><span class="faint small">${esc(isoLabel(c.at))}</span></div><div class="cl-cmt-b">${esc(c.text).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>`).join('')
+      : '<div class="cl-card"><div class="empty">No comments yet. Comments you leave on your website in the editor, and the team\'s replies, appear here.</div></div>'}`;
   }
 
   const isoLabel = (v) => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
@@ -5227,8 +5274,10 @@
     if (a) { location.hash = `#/site/${encodeURIComponent(a.id)}/profile`; return; }
     if (!live.data) { $('#view').innerHTML = '<div class="empty">Loading…</div>'; await loadLive(false); }
     $('#view').innerHTML = `<div class="page-head"><div><div class="small muted"><a href="#/live">← DR Websites</a></div></div></div><div id="drProf"></div>
+      ${can('leads.contacts') ? '<h2 id="pfContacts" class="pf-leads-h">👥 Contacts</h2><div id="pfContactsBody"></div>' : ''}
       <h2 id="pfLeads" style="margin-top:22px">Form submissions</h2><div id="drBody"><div class="empty">Loading…</div></div>`;
     renderSiteProfile($('#drProf'), { siteId });
+    if (can('leads.contacts')) renderContacts($('#pfContactsBody'), { url: 'team:' + siteId, name: siteId, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(siteId)) });
     // The same enquiries view the audited websites get — it only ever needed a Duda site id.
     renderLeadsTab($('#drBody'), { siteId });
   }

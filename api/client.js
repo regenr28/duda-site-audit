@@ -10,8 +10,9 @@
 // GET  /api/client?op=leads&id=            → their form submissions (+ groups and charts)
 // GET  /api/client?op=comments&id=         → the conversation on their website
 // POST /api/client { op:'access', id }     → a fresh Duda link, made at the moment of the click
-import { redis, P, requireUser, readBody, unpackJSON, jparse, fetchWithTimeout, clientSites, viewingAsClient, globalLog } from './_lib.js';
-import { readLeads, groupLeads, monthlySeries, whenSeries, getSummary, bumpSummary } from './_leads.js';
+import { redis, P, requireUser, readBody, unpackJSON, jparse, fetchWithTimeout, clientSites, viewingAsClient, globalLog, listUsers, slackRoster, unescapeHtml } from './_lib.js';
+import { sideTest, dudaTypes } from './comments.js';
+import { readLeads, groupLeads, monthlySeries, whenSeries, getSummary, bumpSummary, contactsFrom } from './_leads.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 
@@ -25,23 +26,54 @@ async function duda(path) {
 }
 
 /** One website, cut down to what belongs to the client. Nothing else from the record is read. */
-function clientSite(rec) {
+function clientSite(rec, live) {
   const t = rec.truth || {};
   return {
     id: rec.id,
     siteId: rec.siteId || rec.id,
     name: rec.businessName || rec.siteId || 'Your website',
-    domain: (rec.host || t.domain || '').replace(/^https?:\/\//, ''),
+    // The website's own address. (rec.host is the editor's address, which is ours, not theirs.)
+    domain: String(t.domain || (live && live[String(rec.siteId || '').toLowerCase()]) || '').replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
     phone: (t.phones || [])[0] || '',
     email: (t.emails || [])[0] || '',
     address: ((t.addresses || [])[0] || {}).city || '',
   };
 }
 
+/** Live addresses from the cached Duda list: site id → its domain (or Duda address). */
+async function liveDomains() {
+  const [raw] = await redis(['GET', P + 'dudasites']);
+  const list = unpackJSON(raw); const out = {};
+  ((list && list.sites) || []).forEach((x) => { const d = x.domain || x.defaultDomain; if (d) out[String(x.id).toLowerCase()] = d; });
+  return out;
+}
 async function sitesFor(ids) {
   if (!ids.length) return [];
   const raws = await redis(...ids.map((id) => ['GET', P + 'site:' + id]));
-  return raws.map((r) => unpackJSON(r)).filter(Boolean).map(clientSite);
+  const live = await liveDomains().catch(() => ({}));
+  return raws.map((r) => unpackJSON(r)).filter(Boolean).map((r) => clientSite(r, live));
+}
+/**
+ * The client's conversations with us: the comments left in the Duda editor on their website, which
+ * they take part in themselves. Never the team's own Comments tab (that is the team talking among
+ * itself), and never a thread only the team ever wrote in (a note the team left itself).
+ */
+async function readThreads(dudaSiteId, me) {
+  const [conv, over, pg] = await redis(['HGETALL', P + 'conv:' + dudaSiteId], ['HGETALL', P + 'cmtwho'], ['HGETALL', P + 'pages:' + dudaSiteId]);
+  const map = (arr) => { const o = {}; for (let i = 0; arr && i < arr.length; i += 2) o[arr[i]] = arr[i + 1]; return o; };
+  const threads = Object.values(map(conv)).map((v) => jparse(v)).filter(Boolean);
+  const pages = map(pg);
+  const authors = [...new Set(threads.flatMap((t) => (t.comments || []).map((c) => c.by)).filter(Boolean))];
+  const isClient = sideTest(await listUsers(), map(over), await slackRoster().catch(() => null), await dudaTypes(authors, 0));
+  return threads.map((t) => {
+    const live = (t.comments || []).filter((c) => !c.deleted && String(c.text || '').trim());
+    if (!live.length || live.every((c) => isClient(c.by) !== 'client')) return null;
+    return {
+      num: t.num || 0, status: t.status === 'resolved' ? 'resolved' : 'open', page: pages[t.page] || '', device: t.device || '',
+      lastAt: live[live.length - 1].at || t.last || t.at,
+      comments: live.map((c) => { const client = isClient(c.by) === 'client'; return { at: c.at, text: unescapeHtml(c.text).slice(0, 4000), team: !client, mine: !!(me && c.by && String(c.by).toLowerCase() === String(me.email || '').toLowerCase()) }; }),
+    };
+  }).filter(Boolean).sort((x, y) => String(y.lastAt).localeCompare(String(x.lastAt)));
 }
 
 export default async function handler(req, res) {
@@ -72,9 +104,8 @@ export default async function handler(req, res) {
 
       if (op === 'site') {
         const sum = await getSummary(rec.siteId || id);
-        const [cmtRaw] = await redis(['LRANGE', P + 'cmt:' + id, 0, 199]);
-        const open = (cmtRaw || []).map((x) => jparse(x)).filter((c) => c && !c.fromFalseAlarm).length;
-        return res.status(200).json({ site: clientSite(rec), leads: sum, comments: open });
+        const open = (await readThreads(rec.siteId || id, me).catch(() => [])).filter((t) => t.status === 'open').length;
+        return res.status(200).json({ site: clientSite(rec, await liveDomains().catch(() => ({}))), leads: sum, comments: open });
       }
 
       if (op === 'leads') {
@@ -92,13 +123,13 @@ export default async function handler(req, res) {
       }
 
       if (op === 'comments') {
-        // Only the conversation on their own website, and only what was said — never who on our
-        // side marked what, never an audit item, never a false alarm report.
-        const [rawC] = await redis(['LRANGE', P + 'cmt:' + id, 0, 199]);
-        const items = (rawC || []).map((x) => jparse(x)).filter(Boolean)
-          .filter((c) => !c.fromFalseAlarm && !c.internal && !c.target)
-          .map((c) => ({ id: c.id, at: c.at, by: c.byName || 'Your team', text: String(c.text || '').slice(0, 4000), mine: c.by === me.email }));
-        return res.status(200).json({ comments: items });
+        return res.status(200).json({ threads: await readThreads(rec.siteId || id, me) });
+      }
+      if (op === 'contacts') {
+        // Their own enquirers, made into contacts from the submissions: the client already sees each
+        // submission in full, so this shows them nothing new, only grouped by person.
+        const all = await readLeads(rec.siteId || id, 24);
+        return res.status(200).json({ contacts: contactsFrom(all), from: all.length });
       }
       return res.status(400).json({ error: 'Unknown operation' });
     }

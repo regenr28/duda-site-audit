@@ -102,7 +102,8 @@ const domainsOf = (v) => String(v || '').split(',').map((s) => s.trim().toLowerC
  * Anyone else is the client. An admin can correct any address, and the correction wins.
  */
 export function sideTest(users, overrides, roster, dudaType) {
-  const mine = new Set(users.map((u) => String(u.email || '').toLowerCase()));
+  // Accounts here are us — except client sign-ins, who are the very people this is looking for.
+  const mine = new Set(users.filter((u) => u.role !== 'client').map((u) => String(u.email || '').toLowerCase()));
   const doms = [...domainsOf(process.env.ALLOWED_EMAIL_DOMAINS), ...domainsOf(process.env.AGENCY_EMAIL_DOMAINS)];
   // Anyone in the Slack workspace is one of us, whatever address they comment from. Slack guests are
   // deliberately NOT team — a client invited into a shared channel is a member too.

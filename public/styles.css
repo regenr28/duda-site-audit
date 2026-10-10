@@ -1381,3 +1381,15 @@ html.mk-lock, html.mk-lock body { overflow: hidden; overscroll-behavior: none; }
 .rk-n { text-align: right; font-variant-numeric: tabular-nums; }
 .rk-u { grid-column: 2 / -1; font-size: 11px; color: var(--muted); margin-top: -4px; }
 @media (max-width: 500px) { .rk-grid { grid-template-columns: 1fr; } .rk-list li { grid-template-columns: 26px minmax(0, 1fr) 46px auto; } }
+
+/* Contacts (made from form submissions) */
+.ct-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.ct-q { min-width: 220px; flex: 0 1 320px; }
+.ct-table { width: 100%; }
+.ct-row { cursor: pointer; }
+.ct-row:hover, .ct-row.open { background: var(--panel-2); }
+.ct-more td { background: var(--panel-2); }
+.ct-note { margin-top: 6px; font-style: italic; color: var(--text); opacity: .85; }
+.cl-cmt-top { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.cl-cmt-top .badge { margin-left: auto; }
+.cl-cmts + .cl-cmts { margin-top: 10px; }

@@ -6,7 +6,7 @@
 // POST /api/leads { op: 'backfill', id, months }   (admins) → pull history from Duda
 // POST /api/leads { op: 'census' }                 (admins) → count submissions per site, store nothing
 import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
-import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, bumpSummary, afterImport } from './_leads.js';
+import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, bumpSummary, afterImport, contactsFrom } from './_leads.js';
 import { takeLock, unlock, enqueue } from './_queue.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
@@ -70,6 +70,12 @@ export default async function handler(req, res) {
       }
       const id = String(req.query.id || '');
       if (!id) return res.status(400).json({ error: 'Which website?' });
+      if (op === 'contacts') {
+        // Contacts are names, emails and phones, so they need the same permission as seeing them.
+        if (!(await can(me, 'leads.contacts'))) return res.status(403).json({ error: 'Your role does not include enquirers\' contact details.' });
+        const all = await readLeads(id, 24);
+        return res.status(200).json({ contacts: contactsFrom(all), from: all.length });
+      }
       const months = Math.min(Math.max(Number(req.query.months) || 12, 1), 24);
       let leads = await readLeads(id, months);
       const f = { page: req.query.page || '', form: req.query.form || '', source: req.query.source || '' };
