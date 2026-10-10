@@ -12,6 +12,8 @@
 // POST /api/client { op:'access', id }     → a fresh Duda link, made at the moment of the click
 import { redis, P, requireUser, readBody, unpackJSON, jparse, fetchWithTimeout, clientSites, viewingAsClient, globalLog, listUsers, slackRoster, unescapeHtml } from './_lib.js';
 import { sideTest, dudaTypes } from './comments.js';
+import { siteRec } from './_tickets.js';
+import { can } from './_lib.js';
 import { readLeads, groupLeads, monthlySeries, whenSeries, getSummary, bumpSummary, contactsFrom } from './_leads.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
@@ -49,9 +51,9 @@ async function liveDomains() {
 }
 async function sitesFor(ids) {
   if (!ids.length) return [];
-  const raws = await redis(...ids.map((id) => ['GET', P + 'site:' + id]));
+  const recs = await Promise.all(ids.map((id) => siteRec(id)));
   const live = await liveDomains().catch(() => ({}));
-  return raws.map((r) => unpackJSON(r)).filter(Boolean).map((r) => clientSite(r, live));
+  return recs.filter(Boolean).map((r) => clientSite(r, live));
 }
 /**
  * The client's conversations with us: the comments left in the Duda editor on their website, which
@@ -80,6 +82,8 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res, { client: true });
   if (!me) return;
+  // One of us looking at a client page needs "Profile: View as client" (admins always have it).
+  if (me.role !== 'client' && viewingAsClient(req) && !(await can(me, 'client.viewas'))) return res.status(403).json({ error: 'Your role does not include View as client.' });
   // Every request re-reads the grant. It is never taken from the page, a parameter or a session.
   const allowed = clientSites(me, req);
   const guard = (id) => allowed.includes(String(id));
@@ -98,8 +102,7 @@ export default async function handler(req, res) {
       }
       const id = String(req.query.id || '');
       if (!guard(id)) return res.status(404).json({ error: 'Not found' });
-      const [raw] = await redis(['GET', P + 'site:' + id]);
-      const rec = unpackJSON(raw);
+      const rec = await siteRec(id);
       if (!rec) return res.status(404).json({ error: 'Not found' });
 
       if (op === 'site') {
@@ -138,8 +141,7 @@ export default async function handler(req, res) {
     if (b.op === 'access') {
       const id = String(b.id || '');
       if (!guard(id)) return res.status(404).json({ error: 'Not found' });
-      const [raw] = await redis(['GET', P + 'site:' + id]);
-      const rec = unpackJSON(raw);
+      const rec = await siteRec(id);
       if (!rec) return res.status(404).json({ error: 'Not found' });
       const account = me.dudaAccount || me.email;
       // Duda's SSO token lasts two minutes, so this is made now, used now, and never stored.

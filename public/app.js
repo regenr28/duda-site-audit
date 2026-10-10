@@ -1972,19 +1972,9 @@
     prof.last = { body, ctx };
     const again = () => { const L = prof.last; if (L && document.body.contains(L.body)) renderSiteProfile(L.body, L.ctx); };
     if ($('#pfCopy')) $('#pfCopy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(siteId); toast('Site ID copied'); };
-    if ($('#pfView')) $('#pfView').onclick = async (e) => {
-      if (s) { state.viewAs = s.id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(s.id)}/dashboard`; return; }
-      // A client page belongs to a website on the Audits list, so one not on it is added first, without a scan.
-      if (!confirm('To see it as a client, this website is added to Audits first (no scan is started). Add it now?')) return;
-      const host = editorHostOr(); e.target.disabled = true;
-      try {
-        const n = await store({ op: 'create', siteId, host, editorUrl: `https://${host}/home/site/${siteId}/home`, assignee: state.me.email });
-        upsertSummary(n); state.viewAs = n.id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(n.id)}/dashboard`;
-      } catch (err) {
-        if (err.status === 409) { await loadSites(); const a = auditFor(siteId); if (a) { state.viewAs = a.id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(a.id)}/dashboard`; return; } }
-        toast(err.message); e.target.disabled = false;
-      }
-    };
+    // Any website's client page can be previewed, on Audits or not: one not on Audits is opened by its
+    // Duda site id and described from the Duda list.
+    if ($('#pfView')) $('#pfView').onclick = () => { const id = s ? s.id : siteId; state.viewAs = id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(id)}/dashboard`; };
     if ($('#pfClient')) $('#pfClient').onclick = () => openClients(s);
     $$('[data-gofilter]', body).forEach((b) => (b.onclick = () => { state.ff.sev = b.dataset.gofilter; location.hash = '#/site/' + encodeURIComponent(s.id); }));
     $$('[data-tsite]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = 'published'; live.q = a.dataset.tsite; live.dom = ''; live.audit = ''; live.page = 0; location.hash = '#/live'; }));

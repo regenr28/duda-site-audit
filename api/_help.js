@@ -355,7 +355,7 @@ export const HELP_SECTIONS = [
 <li><b>👥 Contacts</b>: everyone who filled in a form, one line per person, made automatically from every submission (the same person is recognised by email or phone, and junk is left out). Click a contact for their latest message; search; <b>Export CSV</b>. Needs <b>See enquirers' contact details</b>. Clients get the same list on their own page under <b>Contacts</b>.</li>
 <li><b>📊 Analytics</b> and <b>🩺 Site health</b> sections, then the website's <b>Form submissions</b> list (it used to be its own tab on the audit page; old links still land here).</li>
 <li>On the client page, <b>Comments</b> shows the client's own conversations in the Duda editor and the team's replies (signed "Your team"). The team's own Comments tab and notes the team left itself are never shown to clients.</li>
-<li><b>👁 View as client</b> (on every profile and on the audit page, for anyone whose role includes <b>Profile: View as client</b>; admins always have it) shows the website's client page exactly as the client sees it. A website not on Audits yet is added first, without a scan.</li>
+<li><b>👁 View as client</b> (on every profile and on the audit page, for anyone whose role includes <b>Profile: View as client</b>; admins always have it) shows the website's client page exactly as the client sees it, for any website, on Audits or not.</li>
 </ul>
 <h3>🩺 Site health</h3>
 <ul>

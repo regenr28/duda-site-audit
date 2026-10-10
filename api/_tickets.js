@@ -166,7 +166,18 @@ export function cleanPath(p) {
 export async function siteRec(id) {
   if (!/^[\w-]{1,64}$/.test(String(id || ''))) return null;
   const [raw] = await redis(['GET', P + 'site:' + id]);
-  return unpackJSON(raw);
+  return unpackJSON(raw) || liveRec(id);
+}
+/**
+ * A website that is not on Audits, described from the Duda list, so the team can open its client
+ * page (View as client) without adding it to Audits first. Its id is the Duda site id.
+ */
+export async function liveRec(id) {
+  const [pub, un] = await redis(['GET', P + 'dudasites'], ['GET', P + 'dudadrafts']);
+  const all = [].concat(((unpackJSON(pub) || {}).sites) || [], ((unpackJSON(un) || {}).sites) || []);
+  const x = all.find((s) => String(s.id).toLowerCase() === String(id).toLowerCase());
+  if (!x) return null;
+  return { id: x.id, siteId: x.id, businessName: x.name || '', host: '', truth: { domain: x.domain || '' }, live: true };
 }
 export async function previewUrl(rec, path, device) {
   const host = rec.host && allowedHost(rec.host) ? rec.host : await savedEditorHost();

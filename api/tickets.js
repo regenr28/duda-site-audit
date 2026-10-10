@@ -16,16 +16,14 @@
 import { redis, P, newId, now, unpackJSON, listUsers, listRoles, canWith, notifyUser, globalLog, sendEmail, emailEnabled, emailShell,
   esc, appUrl, readBody, normEmail } from './_lib.js';
 import { who, mayseeSite, settings, saveSettings, quota, today, getCap, keepCapCmds, getTickets, listIds, putTicketCmd, newSetCmd,
-  clientTicket, teamTicket, STATUSES, KINDS, TZ, cleanPath, cleanReplay } from './_tickets.js';
+  clientTicket, teamTicket, STATUSES, KINDS, TZ, cleanPath, cleanReplay, siteRec as tkSiteRec } from './_tickets.js';
 import { DEVICES } from './_devices.js';
 
 const MAX_CROP = 1.6 * 1024 * 1024;
 const num = (v) => Number.isFinite(Number(v)) ? Math.round(Number(v) * 10) / 10 : null;
 
-async function siteRec(id) {
-  const [raw] = await redis(['GET', P + 'site:' + id]);
-  return unpackJSON(raw);
-}
+// The website's record, or (for one not on Audits) what the Duda list says about it.
+const siteRec = (id) => tkSiteRec(id);
 /** Who on the team hears about a new request: the chosen list, or everyone who may answer them. */
 async function recipients(cfg) {
   const [users, roles] = await Promise.all([listUsers(), listRoles()]);
