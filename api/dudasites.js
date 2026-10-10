@@ -9,6 +9,10 @@ import { enqueue } from './_queue.js';
 import { markRun, lastRuns } from './leadq.js';
 import { checkDomain, checkAndStore, sendDigest, problemClass, isProblem, DOMS, DOMEV } from './_domains.js';
 import { evCmds, diffEvents, seedFromFeeds, readEvents, settleEvents } from './_pubhist.js';
+import { sqlReady, ensureSchema, rows as sqlRows } from './_sql.js';
+import { sideTest, dudaTypes, tailOf } from './comments.js';
+import { listUsers, slackRoster, can } from './_lib.js';
+import { getTickets, listIds } from './_tickets.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const KEY = P + 'dudasites';
@@ -169,6 +173,56 @@ async function stats(me) {
   };
 }
 
+/**
+ * Leaderboards (DR Websites → 🏆 Leaderboards): which websites had the most enquiries, client
+ * comments and client tickets between two days. The other boards (most updated, fastest launches,
+ * most domain problems) are worked out in the browser from the Trends data it already has.
+ * Kept 30 minutes per range, so flicking between ranges costs nothing after the first look.
+ */
+const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : '');
+async function ranks(me, from, to) {
+  const ck = P + `rank:${from}:${to}`;
+  const [hit] = await redis(['GET', ck]);
+  if (hit) return jparse(hit);
+  const fromMs = Date.parse(from + 'T00:00:00Z'), toMs = Date.parse(to + 'T23:59:59Z');
+  const out = { from, to, at: Date.now() };
+  // Enquiries: the real ones (junk set aside), from the one-row-per-website-per-day table.
+  if (!(await can(me, 'leads.view'))) out.enquiries = { error: 'Your role does not include form submissions.' };
+  else if (!sqlReady()) out.enquiries = { error: 'Needs the analysis database (the same one Lead analysis uses).' };
+  else {
+    try {
+      await ensureSchema();
+      out.enquiries = (await sqlRows('SELECT site, SUM(real) AS n FROM lead_days WHERE day >= ? AND day <= ? GROUP BY site HAVING n > 0 ORDER BY n DESC LIMIT 15', from, to)).map((r) => ({ id: r.site, n: Number(r.n) }));
+    } catch (e) { out.enquiries = { error: 'The enquiry numbers could not be read right now.' }; }
+  }
+  // Client comments in Duda: each conversation keeps its latest comments with who wrote them.
+  try {
+    const [idx, over] = await redis(['HGETALL', P + 'convidx'], ['HGETALL', P + 'cmtwho']);
+    const rowsC = []; for (let i = 0; idx && i < idx.length; i += 2) { const r = jparse(idx[i + 1]); if (r) rowsC.push(r); }
+    const ov = {}; for (let i = 0; over && i < over.length; i += 2) ov[over[i]] = over[i + 1];
+    const authors = [...new Set(rowsC.flatMap((r) => tailOf(r).map((t) => t.by)).filter(Boolean))];
+    const isClient = sideTest(await listUsers(), ov, await slackRoster().catch(() => null), await dudaTypes(authors, 0));
+    const m = new Map();
+    rowsC.forEach((r) => tailOf(r).forEach((t) => {
+      const ms = Date.parse(t.at); if (ms < fromMs || ms > toMs || isClient(t.by) !== 'client') return;
+      const c = m.get(r.s) || { id: r.s, n: 0, threads: new Set() }; c.n++; c.threads.add(r.n); m.set(r.s, c);
+    }));
+    out.comments = [...m.values()].map((c) => ({ id: c.id, n: c.n, threads: c.threads.size })).sort((a, b) => b.n - a.n).slice(0, 15);
+  } catch (e) { out.comments = { error: 'The comments could not be counted right now.' }; }
+  // Client tickets sent from the client page.
+  try {
+    const tks = await getTickets(await listIds('', 2000));
+    const recIds = [...new Set(tks.map((t) => t.site))];
+    const recs = recIds.length ? (await redis(['MGET', ...recIds.map((id) => P + 'site:' + id)]))[0] : [];
+    const duId = {}; recIds.forEach((id, i) => { const r = unpackJSON(recs && recs[i]); duId[id] = (r && r.siteId) || id; });
+    const m = new Map();
+    tks.forEach((t) => { const ms = Date.parse(t.at); if (ms < fromMs || ms > toMs) return; const id = duId[t.site]; const c = m.get(id) || { id, n: 0, open: 0 }; c.n++; if (!['done', 'closed'].includes(t.status)) c.open++; m.set(id, c); });
+    out.tickets = [...m.values()].sort((a, b) => b.n - a.n).slice(0, 15);
+  } catch (e) { out.tickets = { error: 'The tickets could not be counted right now.' }; }
+  await redis(['SET', ck, JSON.stringify(out), 'EX', 1800]);
+  return out;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method === 'GET' && req.query.op === 'sweep') {
@@ -212,6 +266,11 @@ export default async function handler(req, res) {
   }
   try {
     if (req.query.op === 'stats') return res.status(200).json(await stats(me));
+    if (req.query.op === 'rank') {
+      const from = day(req.query.from), to = day(req.query.to);
+      if (!from || !to || from > to) return res.status(400).json({ error: 'Pick a valid date range.' });
+      return res.status(200).json(await ranks(me, from, to));
+    }
     // Not-yet-published websites: the ones clients are commenting on before launch. Kept in its own
     // cache and only fetched when somebody asks, so it costs nothing on a normal day.
     const drafts = req.query.scope === 'unpublished';

@@ -760,7 +760,7 @@ export const PERMISSIONS = [
   ] },
   { group: 'Clients', items: [
     { key: 'client.manage', label: 'Give clients access to a website', desc: 'Create a client sign-in and choose which websites it can see.' },
-    { key: 'client.viewas', label: 'Use View as client', desc: 'Check what a client sees on a website.' },
+    { key: 'client.viewas', label: 'Profile: View as client', desc: 'The 👁 View as client button on a website\'s profile: see the website\'s client page exactly as the client does. Admins always have it.' },
   ] },
   { group: 'Client change requests', items: [
     { key: 'ticket.view', label: 'See client change requests', desc: 'The requests clients send by marking up their own website. Without this the Requests page is not in the top bar at all.' },
@@ -796,7 +796,7 @@ export const BUILTIN_ROLES = [
     desc: 'Everything. At least one account must always have this.' },
   { id: 'member', name: 'Member', builtin: true,
     desc: 'The everyday role: audit websites, talk about them, report a false alarm.',
-    perms: ['site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'client.viewas', 'ticket.view', 'ticket.manage', 'analytics.view'] },
+    perms: ['site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'ticket.view', 'ticket.manage', 'analytics.view'] },
 ];
 /** The client role is not a team role and never appears on the Roles screen. */
 export const isTeamRole = (id) => id !== 'client';

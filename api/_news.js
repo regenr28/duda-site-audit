@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-health', date: '2026-10-10', audience: 'all', tag: 'Websites',
+    title: 'Site health on every profile (Google Lighthouse), and form submissions moved there',
+    what: 'Each website\'s <b>Profile</b> now has <b>🩺 Site health</b>: Performance, Accessibility, Best practices and SEO scores on mobile and desktop, page-speed numbers, what to fix first and which checks failed. It checks itself weekly when the profile is opened, or press <b>Check now</b>. The audit page\'s <b>Form submissions</b> tab is gone: the list is on the Profile now. <b>👁 View as client</b> is on every profile and on the audit page.',
+    where: ['<b>Walkthrough:</b> open a live website\'s <b>Profile</b> and scroll to <b>Site health</b>.'],
+    link: '#/help/profiles', linkText: 'How profiles work',
+  },
+  {
+    id: '2026-10-10-leaderboards', date: '2026-10-10', audience: 'all', tag: 'DR Websites',
+    title: 'DR Websites and Leaderboards: who had the most enquiries, comments and tickets',
+    what: '<b>Live DR Sites</b> in the top menu is now <b>DR Websites</b> (the list is its first tab). A new <b>🏆 Leaderboards</b> tab ranks websites by most enquiries, client comments, client tickets, updates, fastest launches and domain problems, for this week, month, year or any dates.',
+    where: ['<b>Walkthrough:</b> <b>DR Websites → 🏆 Leaderboards</b>, then pick <b>This month</b>.'],
+    link: '#/live/ranks', linkText: 'Open Leaderboards',
+  },
+  {
     id: '2026-10-10-search', date: '2026-10-10', audience: 'all', tag: 'Everyone',
     title: 'Search everything, and ask questions',
     what: '<b>🔍 Search</b> at the top right (or press <b>/</b>) finds websites, people, pages, actions and filters as you type, and answers questions like <i>what is a false alarm?</i> or <i>what is the process after dev?</i> from Help.',

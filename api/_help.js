@@ -351,7 +351,16 @@ export const HELP_SECTIONS = [
 <li><b>Picture</b>: a small picture of the website's home page, taken the first time somebody opens the profile, and again after the website is published or once a week. Click it to open the preview.</li>
 <li><b>Name, domain, site ID</b> (with <b>Copy</b>), launch date, last publish and labels; <b>Client contact</b>; <b>View as client</b>, <b>Audit this website</b> (when not audited yet) and <b>Open editor</b>.</li>
 <li><b>Domain health</b>: working or not, when the domain registration must be renewed (red within 7 days), the certificate as information only, speed, when it was last checked, and <b>Check now</b>.</li>
-<li><b>Audit</b>, <b>Form submissions</b>, <b>Comments</b> and <b>Client tickets</b>, each a link into the page that explains it.</li>
+<li><b>Site health</b>, <b>Audit</b>, <b>Form submissions</b>, <b>Comments</b> and <b>Client tickets</b>, each a link into what explains it.</li>
+<li><b>📊 Analytics</b> and <b>🩺 Site health</b> sections, then the website's <b>Form submissions</b> list (it used to be its own tab on the audit page; old links still land here).</li>
+<li><b>👁 View as client</b> (on every profile and on the audit page, for anyone whose role includes <b>Profile: View as client</b>; admins always have it) shows the website's client page exactly as the client sees it. A website not on Audits yet is added first, without a scan.</li>
+</ul>
+<h3>🩺 Site health</h3>
+<ul>
+<li>Google's <b>Lighthouse</b> (the same check as PageSpeed Insights) run on the <b>live</b> website, on <b>📱 Mobile</b> and <b>🖥 Desktop</b>: <b>Performance</b>, <b>Accessibility</b>, <b>Best practices</b> and <b>SEO</b> out of 100, each with a word (Good 90+, Needs work 50–89, Poor below 50) and the change since the last check.</li>
+<li><b>Page speed</b>: how long until something shows, the main content shows, the page stops being frozen, and how much it jumps around; plus what real Chrome visitors experienced over the last 28 days, when Google has enough of them.</li>
+<li><b>Fix first</b>: the biggest time savings. <b>Checks that failed</b>: accessibility, best-practice and SEO checks that did not pass. <b>Performance over the last checks</b> once there are a few.</li>
+<li>Checked on its own the first time the profile is opened and then once a week when somebody opens it; <b>↻ Check now</b> any time (about a minute). Only published websites can be checked. Scores move a few points between runs even when nothing changed.</li>
 </ul>
 <p>Nothing was created to make this work: an audited website's Profile is its audit record, and a website not audited yet is assembled from the Duda list, so every website already has one.</p>
 <h3>Form submissions</h3>
@@ -778,6 +787,16 @@ export const HELP_SECTIONS = [
 <li>📋 One <b>Daily domain report</b> each morning listing everything still open (expired, expiring, down, showing another site). Nothing open means no report.</li>
 </ul>
 <p>Security certificates are not alerted at all. Problems that were already there are not reported again. When more than three arrive at once they come as one message. Clicking an alert opens Live DR Sites on that website. Each admin can switch these off under their account → Notifications → <b>Domain problems on live websites</b>.</p>
+<h4>📈 Trends</h4>
+<p><b>DR Websites</b> in the top menu holds four tabs: <b>Live DR Sites</b> (the list), <b>Not published yet</b>, <b>📈 Trends</b> and <b>🏆 Leaderboards</b>.</p>
+<h4>🏆 Leaderboards</h4>
+<p>Which websites had the most, for <b>This week</b>, <b>This month</b>, <b>This year</b>, <b>Last 30 days</b> or your own dates, with 🥇🥈🥉 for the top three. Click a website to open its profile.</p>
+<ul>
+<li><b>Most enquiries</b>: real form submissions (junk left out). Needs the analysis database that Lead analysis uses.</li>
+<li><b>Most client comments</b>: comments clients left in the Duda editor; the team's own are not counted. (Duda's index keeps the latest ten comments of each conversation, so a very long thread counts its latest ten.)</li>
+<li><b>Most client tickets</b>, <b>Most updated</b> (re-published the most times), <b>Fastest launches</b> (days from created to live) and <b>Most domain problems</b>.</li>
+</ul>
+<p>Numbers are kept for 30 minutes; <b>↻ Reload</b> counts again.</p>
 <h4>📈 Trends</h4>
 <p>The <b>Trends</b> tab shows how the account is growing.</p>
 <ul>
