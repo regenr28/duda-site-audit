@@ -1690,6 +1690,11 @@
   };
   const anChart = (id, title, keys) => `<section class="an-card an-wide"><h3>${title}</h3><div class="viz-legend">${keys.map((k) => `<span><i class="viz-key-line" style="background:${TSERIES[k].color}"></i>${TSERIES[k].label}</span>`).join('')}</div><div class="viz-wrap" id="${id}"><div class="viz-plot"></div></div></section>`;
 
+  /** Is there anything to draw? A line along zero is not a chart. */
+  const anHas = (rows) => (rows || []).some((r) => r.visits > 0);
+  /** For admins: what Duda sent when a breakdown could not be read, so it can be fixed from facts. */
+  const anDiag = (D, why) => (D.manage && why ? `<details class="an-diag small"><summary>Details for the app owner</summary><code>${esc(why)}</code></details>` : '');
+  const anMissing = (title, what, D, why) => `<section class="an-card an-wide"><h3>${title}</h3><div class="small muted">Duda sent the totals above but no ${what} breakdown for this range${why && /^failed/.test(why) ? ' (it refused the request)' : ''}, so there is nothing to draw.</div>${anDiag(D, why)}</section>`;
   function analyticsSection(siteId) {
     if (!can('analytics.view') && !can('analytics.manage')) return '';
     const D = prof.an[anKey(siteId)];
@@ -1730,10 +1735,11 @@
       inner = d.error ? `<div class="note bad">${esc(d.error)}${D.manage && d.detail ? `<div class="small faint mono" style="margin-top:4px">${esc(d.detail)}</div>` : ''}</div>`
         : `<div class="an-tiles">${anTile('Visits', d.totals.visits, d.prev && d.prev.visits)}${anTile('Unique visitors', d.totals.visitors, d.prev && d.prev.visitors)}${anTile('Page views', d.totals.views, d.prev && d.prev.views)}
             ${d.acts ? `${anTile('Form submits', d.acts.forms)}${anTile('Click to call', d.acts.calls)}${anTile('Click to email', d.acts.emails)}${anTile('Click to map', d.acts.maps)}` : ''}</div>
-          <div class="an-grid">${anChart('anDaily', prof.anDays > 90 ? 'Visits per week' : 'Daily visits', ['av', 'au'])}
-            <section class="an-card an-wide"><h3>Visits, last 12 months</h3><div class="viz-wrap" id="anMonths"><div class="viz-plot"></div></div></section>
-            <section class="an-card"><h3>Devices</h3>${anBars(d.devices, 'var(--viz-1)')}</section>
-            <section class="an-card"><h3>Countries</h3>${anBars(d.countries, 'var(--viz-3)')}</section></div>`;
+          <div class="an-grid">${anHas(d.daily) ? anChart('anDaily', prof.anDays > 90 ? 'Visits per week' : 'Daily visits', ['av', 'au']) : anMissing(prof.anDays > 90 ? 'Visits per week' : 'Daily visits', 'day-by-day', D, d.diag && d.diag.daily)}
+            ${anHas(d.months) ? '<section class="an-card an-wide"><h3>Visits, last 12 months</h3><div class="viz-wrap" id="anMonths"><div class="viz-plot"></div></div></section>' : anMissing('Visits, last 12 months', 'month-by-month', D, d.diag && d.diag.months)}
+            <section class="an-card"><h3>Operating systems</h3>${anBars(d.devices, 'var(--viz-1)')}${anDiag(D, d.diag && d.diag.systems)}</section>
+            <section class="an-card"><h3>Browsers</h3>${anBars(d.browsers, 'var(--viz-7)')}</section>
+            <section class="an-card an-wide"><h3>Countries</h3>${anBars(d.countries, 'var(--viz-3)')}${anDiag(D, d.diag && d.diag.countries)}</section></div>`;
     }
     const when = D.at ? `<div class="small faint an-foot">Updated ${esc(ago(new Date(D.at).toISOString()))} · refreshed every 6 hours <button class="linkbtn small" id="anFresh">Refresh now</button></div>` : '';
     return `<section class="pf-an" id="pfAn">${head(tabHtml)}${inner}${prof.anTab === 'add' ? '' : when}</section>`;

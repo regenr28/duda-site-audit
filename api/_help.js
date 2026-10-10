@@ -393,7 +393,7 @@ export const HELP_SECTIONS = [
 <ul>
 <li><b>Visits</b>, <b>Unique visitors</b> and <b>Page views</b>, each with the change against the period before (▲ / ▼).</li>
 <li>What visitors did: <b>Form submits</b>, <b>Click to call</b>, <b>Click to email</b>, <b>Click to map</b>. (The <b>Form submissions</b> card above counts the enquiries this app has stored; Duda's own count can differ slightly.)</li>
-<li><b>Daily visits</b> (weekly for 12 months), <b>Visits, last 12 months</b>, <b>Devices</b> and <b>Countries</b>. Hover a chart for the numbers.</li>
+<li><b>Daily visits</b> (weekly for 12 months), <b>Visits, last 12 months</b>, <b>Operating systems</b>, <b>Browsers</b> and <b>Countries</b>. Hover a chart for the numbers. If Duda sends the totals but no breakdown for a range, the chart says so instead of drawing a flat line.</li>
 <li>No setup: every website has it. Numbers are kept for 6 hours; <b>Refresh now</b> fetches them again.</li>
 </ul>
 <h3>Custom analytics (added per website)</h3>

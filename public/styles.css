@@ -1334,3 +1334,5 @@ html.mk-lock, html.mk-lock body { overflow: hidden; overscroll-behavior: none; }
 .sx-snip mark { background: color-mix(in srgb, var(--warn) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 .sx-foot { padding: 8px 14px; border-top: 1px solid var(--border); }
 @media (max-width: 600px) { .sx-back { padding: 0; } .sx { max-height: 100vh; height: 100%; border-radius: 0; } .sx-foot { display: none; } }
+.an-diag { margin-top: 8px; color: var(--muted); }
+.an-diag code { display: block; white-space: pre-wrap; word-break: break-all; font-size: 11px; margin-top: 4px; background: var(--panel-2); padding: 6px 8px; border-radius: 6px; }

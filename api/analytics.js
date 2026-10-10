@@ -15,7 +15,8 @@ import { redis, P, requireUser, readBody, jparse, can, fetchWithTimeout, globalL
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const TTL = 6 * 3600;
 const CFG = P + 'anprov';                     // hash: duda site id → { ga4: {property,…}, gsc: {siteUrl,…} }
-const cacheKey = (id, days) => P + `an:${id}:${days}`;
+// The "2" makes every answer cached before the reading was fixed get fetched again at once.
+const cacheKey = (id, days) => P + `an2:${id}:${days}`;
 const okId = (id) => /^[A-Za-z0-9_-]{4,64}$/.test(String(id || ''));
 
 export const PROVIDERS = {
@@ -46,25 +47,56 @@ async function duda(path) {
   return text ? JSON.parse(text) : null;
 }
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-const T = (r) => ({ visits: num(r && (r.VISITS ?? r.visits)), visitors: num(r && (r.VISITORS ?? r.visitors)), views: num(r && (r.PAGE_VIEWS ?? r.page_views ?? r.pageViews)) });
-const A = (r) => ({ calls: num(r && r.CLICK_TO_CALLS), maps: num(r && r.CLICK_TO_MAPS), emails: num(r && r.CLICK_TO_EMAILS), forms: num(r && r.FORM_SUBMITS) });
+// Duda puts the numbers at the top of a plain answer ({"VISITS":100,…}) but under "data" in every
+// row of a broken-down one ([{"data":{"VISITS":100,…},"dimension":{"country":"US"}}]).
+const vals = (r) => (r && r.data && typeof r.data === 'object' && !Array.isArray(r.data) ? r.data : r) || {};
+const T = (r) => { const x = vals(r); return { visits: num(x.VISITS ?? x.visits), visitors: num(x.VISITORS ?? x.visitors), views: num(x.PAGE_VIEWS ?? x.page_views ?? x.pageViews) }; };
+const A = (r) => { const x = vals(r); return { calls: num(x.CLICK_TO_CALLS), maps: num(x.CLICK_TO_MAPS), emails: num(x.CLICK_TO_EMAILS), forms: num(x.FORM_SUBMITS) }; };
+const hasNums = (r) => { const x = vals(r); return x && typeof x === 'object' && ('VISITS' in x || 'VISITORS' in x || 'PAGE_VIEWS' in x || 'visits' in x); };
+const DATE_RE = /^\d{4}-\d{2}(-\d{2})?/;
+/** A date written anywhere on one row: a field, the dimension, a date range, or a timestamp. */
+function dateIn(r, key) {
+  const cands = [];
+  const scan = (o, depth) => {
+    if (!o || typeof o !== 'object' || depth > 2) return;
+    for (const [k, v] of Object.entries(o)) {
+      if (typeof v === 'string' && DATE_RE.test(v)) cands.push([k, v.slice(0, 10)]);
+      else if (typeof v === 'number' && v > 1e12 && v < 4e12 && /date|day|time|from|start|period/i.test(k)) cands.push([k, new Date(v).toISOString().slice(0, 10)]);
+      else if (typeof v === 'number' && v > 1e9 && v < 4e9 && /date|day|time|from|start|period/i.test(k)) cands.push([k, new Date(v * 1000).toISOString().slice(0, 10)]);
+      else if (v && typeof v === 'object' && k !== 'data') scan(v, depth + 1);
+    }
+  };
+  scan(r, 0);
+  // Prefer the start of a period over its end.
+  const pick = cands.find(([k]) => /from|start|date|day|period/i.test(k) && !/to$|end/i.test(k)) || cands[0];
+  if (pick) return pick[1];
+  return key && DATE_RE.test(key) ? key.slice(0, 10) : '';
+}
 /**
- * Duda's documentation describes the fields but not every shape a dated answer comes in, so this
- * accepts the likely ones: a list of rows that carry their date, or an object keyed by date.
+ * Day-by-day (or month-by-month) rows from a dated answer. Duda's documentation lists the
+ * dateGranularity values but shows no example answer, so this reads any likely layout: a list of rows
+ * that each carry a date, an object keyed by date, or either of those wrapped one level down.
  */
 function dated(j) {
   const out = [];
-  const dateOf = (r, k) => String((r && (r.date || r.DATE || r.day || r.period || r.from || (r.dimension && (r.dimension.date || r.dimension.Date)))) || k || '').slice(0, 10);
-  if (Array.isArray(j)) j.forEach((r) => { const d = dateOf(r); if (/^\d{4}-\d{2}(-\d{2})?$/.test(d)) out.push(Object.assign({ d }, T(r))); });
-  else if (j && typeof j === 'object') {
-    const rows = j.results || j.data || j.history;
-    if (Array.isArray(rows)) return dated(rows);
-    Object.entries(j).forEach(([k, r]) => { if (/^\d{4}-\d{2}(-\d{2})?/.test(k) && r && typeof r === 'object') out.push(Object.assign({ d: k.slice(0, 10) }, T(r))); });
-  }
-  return out.sort((a, b) => a.d.localeCompare(b.d));
+  const take = (r, key) => { if (!hasNums(r)) return; const d = dateIn(r, key); if (d) out.push(Object.assign({ d }, T(r))); };
+  const walk = (x, depth) => {
+    if (!x || typeof x !== 'object' || depth > 3) return;
+    if (Array.isArray(x)) { x.forEach((r) => take(r)); if (out.length || !x.length) return; x.forEach((r) => walk(r, depth + 1)); return; }
+    const entries = Object.entries(x);
+    if (entries.some(([k, r]) => DATE_RE.test(k) && hasNums(r))) { entries.forEach(([k, r]) => take(r, k)); return; }
+    for (const [, v] of entries) { if (v && typeof v === 'object' && !out.length) walk(v, depth + 1); }
+  };
+  walk(j, 0);
+  const m = new Map(); out.forEach((r) => { const c = m.get(r.d); if (c) { c.visits += r.visits; c.visitors += r.visitors; c.views += r.views; } else m.set(r.d, r); });
+  return [...m.values()].sort((a, b) => a.d.localeCompare(b.d));
 }
 const total = (j) => (Array.isArray(j) ? j.reduce((s, r) => { const t = T(r); return { visits: s.visits + t.visits, visitors: s.visitors + t.visitors, views: s.views + t.views }; }, { visits: 0, visitors: 0, views: 0 }) : T(j));
-const dimRows = (j, pick) => (Array.isArray(j) ? j : []).map((r) => ({ k: pick(r.dimension || {}), v: num(r.VISITS) })).filter((r) => r.k).sort((a, b) => b.v - a.v);
+const dimRows = (j, pick) => (Array.isArray(j) ? j : []).map((r) => ({ k: pick(r.dimension || {}), v: T(r).visits })).filter((r) => r.k).sort((a, b) => b.v - a.v);
+/** What came back, cut short, for an admin and the server log when it could not be read. */
+const sample = (x) => { try { return JSON.stringify(x).slice(0, 400); } catch (e) { return String(x).slice(0, 400); } };
+
+export const _test = { dated, dimRows, T, total };
 
 async function dudaAnalytics(id, days) {
   const R = ranges(days);
@@ -85,16 +117,32 @@ async function dudaAnalytics(id, days) {
   }
   const daily = dated(v(2));
   const months = dated(v(3)).map((r) => Object.assign(r, { d: r.d.slice(0, 7) }));
-  const sysKey = (d) => d.Device || d.device || d.DeviceType || d.Platform || d.OS || d.os || d.Browser || Object.values(d)[0] || '';
-  const geoKey = (d) => d.Country || d.country || Object.values(d)[0] || '';
+  // When the totals have numbers but a breakdown can't be read, keep what Duda sent (cut short) so it
+  // can be fixed from facts, not guesses: in the server log, and on screen for admins.
+  const diag = {};
+  const sum = (rows) => rows.reduce((n, r) => n + r.visits, 0);
+  const tot = v(0) ? total(v(0)).visits : 0;
+  [['daily', 2, daily], ['months', 3, months], ['systems', 5, null], ['countries', 6, null]].forEach(([k, i, rows]) => {
+    const bad = parts[i].status === 'rejected' ? 'failed: ' + String((parts[i].reason || {}).message || '').slice(0, 200)
+      : tot && rows && !sum(rows) ? 'unread: ' + sample(v(i))
+      : tot && !rows && Array.isArray(v(i)) && v(i).length && !dimRows(v(i), () => 'x').some((r) => r.v) ? 'unread: ' + sample(v(i)) : '';
+    if (bad) diag[k] = bad;
+  });
+  if (Object.keys(diag).length) console.warn('[analytics] Duda answer not fully read for', id, JSON.stringify(diag));
+  // Duda breaks traffic down by operating system and browser ({"browser":"Chrome 10","os":"Windows"}).
+  const osKey = (d) => d.os || d.OS || d.device || d.Device || d.platform || '';
+  const brKey = (d) => String(d.browser || d.Browser || '').replace(/\s+[\d.]+$/, '');
+  const geoKey = (d) => d.country || d.Country || '';
   const merge = (rows) => { const m = new Map(); rows.forEach((r) => m.set(r.k, (m.get(r.k) || 0) + r.v)); return [...m.entries()].map(([k, v2]) => ({ k: String(k).slice(0, 40), v: v2 })).sort((a, b) => b.v - a.v).slice(0, 8); };
   return {
     totals: v(0) ? total(v(0)) : daily.reduce((s, r) => ({ visits: s.visits + r.visits, visitors: s.visitors + r.visitors, views: s.views + r.views }), { visits: 0, visitors: 0, views: 0 }),
     prev: v(1) ? total(v(1)) : null,
     daily, months,
     acts: v(4) && !Array.isArray(v(4)) ? A(v(4)) : null,
-    devices: merge(dimRows(v(5), sysKey)),
+    devices: merge(dimRows(v(5), osKey)),
+    browsers: merge(dimRows(v(5), brKey)),
     countries: merge(dimRows(v(6), geoKey)),
+    diag,
   };
 }
 
@@ -232,7 +280,7 @@ export default async function handler(req, res) {
       const failed = (d && d.error) || (g && g.error) || (s && s.error);
       await redis(['SET', cacheKey(id, days), JSON.stringify(data), 'EX', failed ? 600 : TTL]);
     }
-    if (data.duda && data.duda.detail && !manage) delete data.duda.detail;
+    if (data.duda && !manage) { delete data.duda.detail; delete data.duda.diag; }
     return res.status(200).json(Object.assign({}, data, {
       providers: cfg, manage,
       google: { ready: !!sa, email: manage && sa ? sa.client_email : '' },
