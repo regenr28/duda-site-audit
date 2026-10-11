@@ -34,10 +34,20 @@ async function lighthouse(url, strategy) {
   const q = new URLSearchParams({ url, strategy });
   CATS.forEach((c) => q.append('category', c.toUpperCase().replace('-', '_')));
   if (process.env.PAGESPEED_API_KEY) q.set('key', process.env.PAGESPEED_API_KEY);
-  const r = await fetchWithTimeout(`${base}?${q}`, { headers: { Accept: 'application/json' } }, 100000);
-  const j = await r.json().catch(() => ({}));
+  const keyed = !!process.env.PAGESPEED_API_KEY;
+  let r, j;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    r = await fetchWithTimeout(`${base}?${q}`, { headers: { Accept: 'application/json' } }, 100000);
+    j = await r.json().catch(() => ({}));
+    // With our own key a 429 is a short burst limit: wait and try once more. Without one it is
+    // Google's allowance shared by every keyless caller on the internet, which is nearly always spent.
+    if (r.status === 429 && keyed && attempt === 0) { await new Promise((ok) => setTimeout(ok, 6000)); continue; }
+    break;
+  }
   if (!r.ok) {
     const msg = (j.error && j.error.message) || `HTTP ${r.status}`;
+    if (r.status === 429 && !keyed) throw Object.assign(new Error('Site health needs the app\'s own free Google key. Without one, checks share an allowance with everyone else on the internet that is almost always used up.'), { needsKey: true });
+    if ((r.status === 400 || r.status === 403) && /api key|API_KEY|has not been used|is disabled|PERMISSION_DENIED/i.test(msg)) throw Object.assign(new Error('Google refused the app\'s PageSpeed key. Check that the key is right and that the PageSpeed Insights API is enabled for it.'), { needsKey: true });
     throw new Error(r.status === 429 ? 'Google is limiting how many checks can run right now. Try again in a few minutes.' : /FAILED_DOCUMENT_REQUEST|ERRORED_DOCUMENT_REQUEST|NO_FCP|DNS/i.test(msg) ? 'Google could not open the website (it may be down or blocking checks).' : 'The check could not run: ' + msg.slice(0, 160));
   }
   const lh = j.lighthouseResult || {};
@@ -75,18 +85,19 @@ export default async function handler(req, res) {
     if (got !== 'OK') return res.status(200).json(Object.assign(data, { running: true }));
     try {
       const [mob, desk] = await Promise.allSettled([lighthouse(url, 'mobile'), lighthouse(url, 'desktop')]);
-      if (mob.status === 'rejected' && desk.status === 'rejected') throw mob.reason;
+      if (mob.status === 'rejected' && desk.status === 'rejected') throw mob.reason.needsKey ? mob.reason : desk.reason.needsKey ? desk.reason : mob.reason;
       const run = { at: new Date().toISOString(), url, by: me.name, mobile: mob.status === 'fulfilled' ? mob.value : { error: String(mob.reason.message) }, desktop: desk.status === 'fulfilled' ? desk.value : { error: String(desk.reason.message) } };
       data.runs = [run].concat(data.runs || []).slice(0, KEEP);
       // History keeps only the scores of older runs; the details of the latest are what matter.
       data.runs = data.runs.map((r2, i) => (i === 0 ? r2 : { at: r2.at, url: r2.url, by: r2.by, mobile: { scores: (r2.mobile || {}).scores }, desktop: { scores: (r2.desktop || {}).scores } }));
       await redis(['SET', key(id), JSON.stringify(data)], ['DEL', key(id) + ':run']);
-      return res.status(200).json(Object.assign(data, { running: false }));
+      return res.status(200).json(Object.assign(data, { running: false, keyed: !!process.env.PAGESPEED_API_KEY }));
     } catch (e) {
       await redis(['DEL', key(id) + ':run']).catch(() => {});
-      return res.status(502).json({ error: String(e.message || e) });
+      return res.status(502).json({ error: String(e.message || e), needsKey: !!e.needsKey, keyed: !!process.env.PAGESPEED_API_KEY });
     }
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export const _test = { lighthouse };

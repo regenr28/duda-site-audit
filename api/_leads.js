@@ -17,6 +17,7 @@ import { redis, P, packJSON, unpackJSON, jparse, newId, sha } from './_lib.js';
 import { sqlReady } from './_sql.js';
 import { SKIP_KEY, normLabel, leadSig, stableId, realPage, clusterDupes, SAME_WINDOW_MS } from './_leadid.js';
 import { addLeadsSql, leadsFor, summariesFor, seriesFor, whenFor, fromRow, tidySql } from './_leadsql.js';
+import { judgeByRules } from './_judge.js';
 
 // Where enquiries live.
 //
@@ -427,41 +428,85 @@ export function whenSeries(leads) {
 }
 
 /**
- * The people behind the submissions: one contact per person, made automatically from every enquiry.
- *
- * Nothing is stored for this. Contacts are worked out from the enquiries each time, so every new
- * submission is in the list the moment it arrives, a corrected verdict moves with it, and there is
- * no second copy of anyone's details to keep in step (or to forget to delete).
+ * Contacts: the people behind a website's form submissions, one line per person.
  *
  * The same person is recognised by email, else by phone (last 10 digits), else by name; a later
- * enquiry that shares either an email or a phone with an earlier one joins that contact. Junk is
- * left out.
+ * enquiry that shares either an email or a phone with an earlier one joins that contact.
+ *
+ * Spam is FLAGGED, never removed: a sales pitch or a bot is marked "Likely spam" with the reason,
+ * and anyone can say otherwise (rulings: contact key → 'real' | 'junk'). Each submission keeps the
+ * verdict it already has (a person's, or the analysis database's); one without is judged here by
+ * the same rules the analysis uses. A contact is spam when its submissions are more junk than real,
+ * or when the name itself is plainly not a person's (a link, an email, keyboard noise).
  */
 const MSG_KEY = /message|comment|note|details|question|how can|describe|tell us|project|request|inquiry|enquiry/i;
-export function contactsFrom(leads) {
+const digitsOf = (p) => String(p || '').replace(/\D/g, '').slice(-10);
+/** The key a ruling on a contact is stored under: their email, else phone, else name. */
+export const contactKey = (c) => String((c.email || '').toLowerCase() || digitsOf(c.phone) || String(c.name || '').trim().toLowerCase()).slice(0, 160);
+/** Is this a name a person would type? Returns the reason it is not, or ''. */
+export function fakeName(n) {
+  const name = String(n || '').trim();
+  if (!name) return '';
+  if (/https?:|www\.|\.(com|net|org|ru|xyz|top|info|biz)\b/i.test(name)) return 'The name is a web address';
+  if (/@/.test(name)) return 'The name is an email address';
+  // Keyboard noise: "uRnFjKqZ", "xkqzvbn" — long words with no vowels or with the case flipping inside.
+  const words = name.split(/\s+/);
+  if (words.some((w) => w.length >= 7 && (w.slice(1).match(/[a-z][A-Z]/g) || []).length >= 2)) return 'The name looks like random letters';
+  if (words.some((w) => w.length >= 6 && /^[a-z]+$/i.test(w) && !/[aeiouy]/i.test(w))) return 'The name looks like random letters';
+  if (/^\d[\d\s-]{5,}$/.test(name)) return 'The name is a number';
+  return '';
+}
+export function contactsFrom(leads, rulings = {}) {
   const byEmail = new Map(), byPhone = new Map(), byName = new Map(), all = [];
-  const digits = (p) => String(p || '').replace(/\D/g, '').slice(-10);
-  const sorted = leads.filter((l) => l && l.verdict !== 'junk').slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const sorted = leads.filter(Boolean).slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
   for (const l of sorted) {
-    const e = String(l.e || '').trim().toLowerCase(), ph = digits(l.p), nm = String(l.n || '').trim();
+    const e = String(l.e || '').trim().toLowerCase(), ph = digitsOf(l.p), nm = String(l.n || '').trim();
     if (!e && ph.length < 7 && !nm) continue;
     let c = (e && byEmail.get(e)) || (ph.length >= 7 && byPhone.get(ph)) || (!e && ph.length < 7 && nm && byName.get(nm.toLowerCase())) || null;
-    if (!c) { c = { name: '', emails: [], phones: [], first: l.at, last: l.at, count: 0, pages: {}, sources: {}, forms: {}, note: '', ids: [] }; all.push(c); }
+    if (!c) { c = { name: '', emails: [], phones: [], first: l.at, last: l.at, count: 0, pages: {}, sources: {}, forms: {}, note: '', ids: [], junk: 0, real: 0, why: '' }; all.push(c); }
     // The name they give most often (the fullest one on a tie), not just the latest: "M. Santos" once
     // does not replace "Maria Santos" twice.
     if (nm) { c.names = c.names || {}; c.names[nm] = (c.names[nm] || 0) + 1; c.name = Object.entries(c.names).sort((x, y) => y[1] - x[1] || y[0].length - x[0].length)[0][0]; }
     if (e && !c.emails.includes(e)) c.emails.push(e);
-    if (l.p && !c.phones.some((x) => digits(x) === ph)) c.phones.push(String(l.p).trim());
+    if (l.p && !c.phones.some((x) => digitsOf(x) === ph)) c.phones.push(String(l.p).trim());
     c.last = l.at; c.count++; c.ids.push(l.id);
     if (l.pg) c.pages[l.pg] = (c.pages[l.pg] || 0) + 1;
     if (l.src) c.sources[l.src] = (c.sources[l.src] || 0) + 1;
     if (l.fm) c.forms[l.fm] = (c.forms[l.fm] || 0) + 1;
     const f = l.f || {}; const k = Object.keys(f).find((x) => MSG_KEY.test(x) && String(f[x] || '').trim());
     if (k) c.note = String(f[k]).slice(0, 300);
+    const j = l.verdict && l.verdict !== 'unsure' ? { verdict: l.verdict, why: l.why || '' } : judgeByRules(l);
+    if (j.verdict === 'junk') { c.junk++; if (!c.why) c.why = j.why || 'Reads as a sales pitch'; }
+    else if (j.verdict === 'real') c.real++;
     if (e) byEmail.set(e, c); if (ph.length >= 7) byPhone.set(ph, c); if (nm) byName.set(nm.toLowerCase(), c);
   }
   const top = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k]) => k);
-  return all.map((c) => ({ name: c.name, email: c.emails[0] || '', emails: c.emails, phone: c.phones[0] || '', phones: c.phones,
-    first: c.first, last: c.last, count: c.count, page: top(c.pages)[0] || '', source: top(c.sources)[0] || '', form: top(c.forms)[0] || '', note: c.note, ids: c.ids.slice(-20) }))
-    .sort((a, b) => String(b.last).localeCompare(String(a.last)));
+  return all.map((c) => {
+    const out = { name: c.name, email: c.emails[0] || '', emails: c.emails, phone: c.phones[0] || '', phones: c.phones,
+      first: c.first, last: c.last, count: c.count, page: top(c.pages)[0] || '', source: top(c.sources)[0] || '', form: top(c.forms)[0] || '', note: c.note, ids: c.ids.slice(-20) };
+    out.key = contactKey(out);
+    const ruled = rulings[out.key];
+    const fake = c.real ? '' : fakeName(c.name);
+    if (ruled === 'junk') Object.assign(out, { spam: true, why: 'Marked as spam by a person', ruled: true });
+    else if (ruled === 'real') Object.assign(out, { spam: false, why: '', ruled: true });
+    else if (c.junk && c.junk >= c.real) Object.assign(out, { spam: true, why: c.why });
+    else if (fake) Object.assign(out, { spam: true, why: fake });
+    else out.spam = false;
+    return out;
+  }).sort((a, b) => String(b.last).localeCompare(String(a.last)));
 }
+/** A website's rulings on its contacts (contact key → 'real' | 'junk'). One command. */
+export async function contactRulings(siteId) {
+  const [raw] = await redis(['HGETALL', P + 'ctv:' + siteId]);
+  const o = {};
+  if (Array.isArray(raw)) { for (let i = 0; i < raw.length; i += 2) o[raw[i]] = raw[i + 1]; } else Object.assign(o, raw || {});
+  return o;
+}
+/** Somebody says a contact is (or is not) spam; '' forgets the ruling and the rules decide again. */
+export async function ruleContact(siteId, key, verdict) {
+  const k = String(key || '').slice(0, 160);
+  if (!k) throw new Error('Which contact?');
+  if (verdict === 'real' || verdict === 'junk') await redis(['HSET', P + 'ctv:' + siteId, k, verdict]);
+  else await redis(['HDEL', P + 'ctv:' + siteId, k]);
+}
+

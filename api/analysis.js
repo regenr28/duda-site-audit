@@ -17,6 +17,33 @@ import { askAI } from './ai.js';
 
 const NOT_READY = { error: 'The analysis database is not connected yet. Enquiries are still being stored, and everything here will fill in once it is set up.' };
 
+/**
+ * Where the enquiries are, in numbers anybody can read: how many the app holds in its main storage,
+ * how far the one-off fetch of past submissions from Duda has got, and how much of it the analysis
+ * database has (when it is connected). Six reads; nothing is counted twice.
+ */
+async function storeStatus() {
+  const [tot, last, done, pend, st, lock] = await redis(['HGETALL', P + 'leadtot'], ['HGETALL', P + 'leadlast'],
+    ['HLEN', P + 'leadq:done'], ['HLEN', P + 'leadq'], ['GET', P + 'leadq:state'], ['EXISTS', P + 'leadq:lock']);
+  const flat = (x) => { const o = {}; if (Array.isArray(x)) { for (let i = 0; i < x.length; i += 2) o[x[i]] = x[i + 1]; } else Object.assign(o, x || {}); return o; };
+  const t = flat(tot); const l = flat(last);
+  const counts = Object.values(t).map(Number).filter((n) => n > 0);
+  const out = {
+    ready: sqlReady(),
+    kv: { total: counts.reduce((a, b) => a + b, 0), sites: counts.length, newest: Object.values(l).filter(Boolean).sort().pop() || '' },
+    history: { done: Number(done || 0), pending: Number(pend || 0), running: Number(lock || 0) > 0, last: jparse(st) || null },
+    sql: null,
+  };
+  if (out.ready) {
+    try {
+      await ensureSchema();
+      const [r] = await rows('SELECT COUNT(*) AS total, COUNT(DISTINCT site) AS sites, MAX(at) AS newest FROM leads');
+      out.sql = { total: Number(r.total || 0), sites: Number(r.sites || 0), newest: r.newest || '' };
+    } catch (e) { out.sql = { error: String(e.message || e).slice(0, 160) }; }
+  }
+  return out;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
@@ -26,6 +53,7 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       const op = req.query.op || 'overview';
+      if (op === 'status') return res.status(200).json(await storeStatus());
       if (!sqlReady()) return res.status(200).json({ ready: false, ...NOT_READY });
       const months = Math.min(Math.max(Number(req.query.months) || 12, 1), 36);
 

@@ -368,7 +368,12 @@ export const HELP_SECTIONS = [
 <p>What the busy websites do differently: which kinds of page produce enquiries, where they come from, what day and hour people get in touch. Counts only, <b>nobody named</b>, and a row needs <b>at least three websites</b> behind it before it is shown \u2014 otherwise it is one shop's story dressed up as a pattern.</p>
 <p>No single client can see this. It is the one thing that comes from holding hundreds of websites rather than one.</p>
 <h3>Junk and blasts</h3>
-<p>The same message sent to more than one client. Any one shop sees an odd email; across the whole list it is plainly a blast.</p>`,
+<p>The same message sent to more than one client. Any one shop sees an odd email; across the whole list it is plainly a blast.</p>
+<h4>Status: where the enquiries are</h4>
+<p>The top of Lead analysis always shows three things:</p>
+<ul><li><b>Stored in the app</b>: every form submission, kept in the app's main storage with the audits and comments. Each website's Form submissions and Contacts read from here, so nothing depends on the analysis database.</li>
+<li><b>Past submissions fetched from Duda</b>: the one-off fetch of each website's last 12 months, as a percentage of websites done. It runs a few websites at a time while someone has the app open, and finishes by itself.</li>
+<li><b>Analysis database</b>: a separate database that the three tabs here need. Until it is connected they stay empty; once connected, <b>⇪ Bring enquiries in</b> copies everything across and the percentage shows how much it holds.</li></ul>`,
   },
   {
     id: 'profiles', group: 'Collaboration', title: 'Profiles, form submissions and client access', audience: 'all',
@@ -421,7 +426,9 @@ export const HELP_SECTIONS = [
 <p>They never see audit items, severities, false alarm reports, who marked what, anything the team writes to itself, or any other company's website.</p>
 <h3>Checking it yourself \u2014 View as client</h3>
 <p>On a Profile, <b>\ud83d\udc41 View as client</b> opens the real client view for that website, with a dark band across the top so nobody mistakes it for the team's pages. It is not a mock-up: it asks the server for exactly what a client would be given, so if something internal ever did leak, this is where you would see it. <b>Back to the team view</b> returns.</p>
-<p>It is worth a glance after any change that touches a website's page \u2014 it takes five seconds and it is the only way to be sure.</p>`,
+<p>It is worth a glance after any change that touches a website's page \u2014 it takes five seconds and it is the only way to be sure.</p>
+<h4>Spam in Contacts</h4>
+<p>Contacts are split into <b>People</b> and <b>🚫 Likely spam</b>. A contact is likely spam when its messages read as a sales pitch (SEO, backlinks, marketing agencies, "I noticed your website…"), carry a link and ask for nothing a customer would, or when the name is a web address, an email or random letters. Click one to see <b>why</b>. Nothing is deleted: click <b>Not spam, a real person</b> to move it back (or <b>Mark as spam</b> on anyone else). The choice is kept for that website, and clients can do the same on their own page. <b>Export CSV</b> exports the list you are looking at, so People exports without the spam.</p>`,
   },
   {
     id: 'analytics', group: 'Collaboration', title: 'Website analytics', audience: 'all',
@@ -440,7 +447,13 @@ export const HELP_SECTIONS = [
 <li><b>Google Search Console</b>: search clicks, impressions, click rate, average position and the top search queries. Enter the property as Search Console shows it (<code>sc-domain:example.com</code> or the full https:// address). It runs about three days behind.</li>
 </ul>
 <p>Before connecting, give the Google account shown on that screen <b>Viewer</b> access in Google Analytics (Admin → Property access management) or Search Console (Settings → Users and permissions). The app tries it before saving, so a wrong ID or missing access is said straight away. More providers can be added to the same list later.</p>
-<p>Clients never see analytics. <b>See website analytics</b> and <b>Connect custom analytics</b> are separate switches on the Roles screen.</p>`,
+<p>Clients never see analytics. <b>See website analytics</b> and <b>Connect custom analytics</b> are separate switches on the Roles screen.</p>
+<h4>Which pages, and from Google or from ads?</h4>
+<p>Duda's analytics only reports totals, devices (operating system and browser) and countries. It does <b>not</b> say which page was viewed or where a visitor came from. For that, connect the website's <b>Google Analytics</b> (＋ Add custom analytics): its tab shows <b>Top pages</b> and <b>Where visitors came from</b>, with the share that was <b>Organic</b> (Google search, social), <b>Ads</b> (paid search, display) and the rest (direct, referral, email). <b>Search Console</b> adds the searches that found the website and the <b>pages people reach from Google search</b>.</p>
+<h4>Daily visits</h4>
+<p><b>Daily visits</b> is the number of visits each day over the range you picked (30 days, 90 days, or weekly for 12 months), with unique visitors as a second line. <b>Visits, last 12 months</b> is the same month by month.</p>
+<h4>Site health needs a key</h4>
+<p>Site health asks Google's Lighthouse (PageSpeed Insights) to test the live website. Google only runs these reliably for apps with their own free key; without one it answers "Google is limiting how many checks can run". The app owner adds it once (the Site health box shows the steps); <b>Settings → Integrations</b> shows whether it is there.</p>`,
   },
   {
     // Owner only: the one-time Google connection.

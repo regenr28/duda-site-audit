@@ -6,7 +6,7 @@
 // POST /api/leads { op: 'backfill', id, months }   (admins) → pull history from Duda
 // POST /api/leads { op: 'census' }                 (admins) → count submissions per site, store nothing
 import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
-import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, bumpSummary, afterImport, contactsFrom } from './_leads.js';
+import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, bumpSummary, afterImport, contactsFrom, contactRulings, ruleContact } from './_leads.js';
 import { takeLock, unlock, enqueue } from './_queue.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
@@ -73,8 +73,8 @@ export default async function handler(req, res) {
       if (op === 'contacts') {
         // Contacts are names, emails and phones, so they need the same permission as seeing them.
         if (!(await can(me, 'leads.contacts'))) return res.status(403).json({ error: 'Your role does not include enquirers\' contact details.' });
-        const all = await readLeads(id, 24);
-        return res.status(200).json({ contacts: contactsFrom(all), from: all.length });
+        const [all, rulings] = await Promise.all([readLeads(id, 24), contactRulings(id)]);
+        return res.status(200).json({ contacts: contactsFrom(all, rulings), from: all.length, canRule: true });
       }
       const months = Math.min(Math.max(Number(req.query.months) || 12, 1), 24);
       let leads = await readLeads(id, months);
@@ -96,6 +96,14 @@ export default async function handler(req, res) {
     }
 
     const b = readBody(req);
+    // Spam or not, for one contact. Anyone who can see contacts can correct the flag.
+    if (b.op === 'contactVerdict') {
+      if (!(await can(me, 'leads.contacts'))) return res.status(403).json({ error: 'Your role does not include enquirers\' contact details.' });
+      const id = String(b.id || ''); if (!id) return res.status(400).json({ error: 'Which website?' });
+      await ruleContact(id, b.key, b.verdict);
+      await globalLog(me, 'contact-verdict', `marked a contact on ${id} as ${b.verdict === 'junk' ? 'spam' : b.verdict === 'real' ? 'not spam' : 'unsure'}`);
+      return res.status(200).json({ ok: true });
+    }
     if (await denyUnless(res, me, 'leads.import', 'Your role does not allow importing submission history.')) return;
 
     if (b.op === 'backfill') {

@@ -22,6 +22,12 @@ The light bulb glows for anyone whose latest seen note is older than the newest 
 - **Phone (under 900px):** the menu becomes a drawer opened by the burger or **More**; the bottom bar shows Home, Audits and up to two more by role. Clients get their own bottom bar (under 640px). Modals open as bottom sheets.
 - **Tests:** `tests/tk/e2e_nav.py` (menu, Home, + New, themes, phone) and `tests/tk/sweep.py` (every page on a phone, light and dark, no sideways scroll).
 
+## Spam, statuses and analytics notes (update 113)
+- **Contacts spam:** `contactsFrom(leads, rulings)` in `api/_leads.js` judges each submission with `judgeByRules` (`api/_judge.js`, the same rules as Lead analysis) unless it already has a verdict, and flags a contact `spam` with a `why`; plus `fakeName()` for names that are links, emails or random letters. Nothing is hidden on the server. People correct it with `POST /api/leads {op:'contactVerdict', id, key, verdict:'real'|'junk'|''}` (or `/api/client` for clients), stored in the hash `dsa:ctv:<duda id>`.
+- **Lead analysis status:** `GET /api/analysis?op=status` → what the main store holds (`dsa:leadtot`/`dsa:leadlast`), how far the history fetch is (`dsa:leadq`, `dsa:leadq:done`), and the analysis database's count when `LEADS_DB_URL`/`LEADS_DB_TOKEN` are set.
+- **Duda analytics:** the day/month answer is `{"YYYY-MM-DD":[{VISITORS,VISITS,PAGE_VIEWS}]}`; `dated()` adds up each list. Cache key is now `an3:`. Duda's API has only `system` and `geo` breakdowns (no pages, no traffic source), so pages and organic vs ads come from GA4 (`pagePath`, `sessionDefaultChannelGroup`) and Search Console (`page`).
+- **Site health:** without `PAGESPEED_API_KEY` Google's keyless allowance is nearly always spent (HTTP 429). The API now answers `needsKey`, the profile shows the setup steps, auto-checks only run with a key, and a keyed 429 is retried once.
+
 ## 1. Deploy to Vercel (about 15 minutes, no coding)
 
 ### Step 1: Put the files on GitHub

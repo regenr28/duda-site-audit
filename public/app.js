@@ -1709,17 +1709,41 @@
       <div id="anBody"><div class="empty">Loading…</div></div>`;
     if ($('#anMigrate')) $('#anMigrate').onclick = migrateLeads;
     const body = $('#anBody');
-    let d;
-    try { d = await api(`/api/analysis?op=${t === 'junk' ? 'benchmarks' : t}`); }
+    let d, S;
+    try { [d, S] = await Promise.all([api(`/api/analysis?op=${t === 'junk' ? 'benchmarks' : t}`), api('/api/analysis?op=status').catch(() => null)]); }
     catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-    if (d.ready === false) {
-      body.innerHTML = `<div class="note"><b>The analysis database is not connected yet.</b>
-        <div class="small" style="margin-top:4px">Enquiries are still arriving and being stored — nothing is being lost. These pages fill in as soon as it is set up, and <b>Bring enquiries in</b> copies across everything already held.</div></div>`;
-      return;
-    }
-    if (t === 'quiet') return anQuiet(body, d);
-    if (t === 'benchmarks') return anBench(body, d);
-    return anJunk(body, d);
+    if (d.ready === false) { body.innerHTML = anStatus(S, false); return; }
+    body.innerHTML = '<div id="anStat"></div><div id="anIn"></div>';
+    $('#anStat').innerHTML = anStatus(S, true);
+    const inner = $('#anIn');
+    if (t === 'quiet') return anQuiet(inner, d);
+    if (t === 'benchmarks') return anBench(inner, d);
+    return anJunk(inner, d);
+  }
+  /**
+   * "Where are the enquiries, and how far along is everything?" in plain numbers: what the app holds,
+   * how much past history has been fetched from Duda, and how much the analysis database has.
+   */
+  function anStatus(S, ready) {
+    if (!S) return ready ? '' : '<div class="note"><b>The analysis database is not connected yet.</b> Enquiries are still stored; nothing is lost.</div>';
+    const pct = (a, b) => (b ? Math.min(100, Math.round((a / b) * 100)) : 0);
+    const bar = (p, tone) => `<div class="progress an-st-bar"><i style="width:${p}%;background:var(--${tone})"></i></div>`;
+    const H = S.history || {}; const known = (H.done || 0) + (H.pending || 0);
+    const hp = pct(H.done || 0, known);
+    const K = S.kv || {}; const Q = S.sql;
+    const copied = Q && !Q.error ? pct(Q.total, Math.max(K.total || 0, 1)) : 0;
+    const row = (icon, title, value, detail, p, tone) => `<div class="an-st-row"><div class="an-st-i">${icon}</div><div class="an-st-t"><b>${title}</b><div class="small muted">${detail}</div>${p !== null ? bar(p, tone) : ''}</div><div class="an-st-v">${value}</div></div>`;
+    const steps = state.superAdmin && !ready ? `<details class="an-st-how"><summary><b>How to connect it</b> (app owner, about 10 minutes)</summary><ol class="small">
+        <li>Create a free database at <a href="https://turso.tech" target="_blank" rel="noopener">turso.tech</a> (Create database → any name).</li>
+        <li>Copy its <b>Database URL</b> (libsql://…) and create a <b>token</b>.</li>
+        <li>In Vercel → Settings → Environment Variables add <code>LEADS_DB_URL</code> and <code>LEADS_DB_TOKEN</code>, then <b>Redeploy</b>.</li>
+        <li>Come back here and press <b>⇪ Bring enquiries in</b>: it copies everything already held (nothing is deleted).</li></ol></details>` : '';
+    return `<div class="an-status">
+      <div class="an-st-h"><b>Status</b> <span class="small muted">· where your enquiries are right now</span></div>
+      ${row('📥', 'Stored in the app', `${fmtN(K.total || 0)}`, `Every form submission is kept in the app's main storage, the same place as audits and comments — <b>${fmtN(K.sites || 0)}</b> websites${K.newest ? `, newest ${esc(dayLabel(K.newest))}` : ''}. New ones arrive the moment a form is sent.`, null)}
+      ${row('⏳', 'Past submissions fetched from Duda', known ? `${hp}%` : '—', known ? `${fmtN(H.done || 0)} of ${fmtN(known)} websites have their last 12 months fetched${H.pending ? `, ${fmtN(H.pending)} still waiting` : ''}${H.running ? ' · <b>fetching now</b>' : H.pending ? ' · it carries on a few websites at a time while someone has the app open' : ' · finished'}.` : 'Nothing queued yet. It starts by itself while the app is open.', known ? hp : null, hp === 100 ? 'ok' : 'accent')}
+      ${row('🗄', 'Analysis database', ready ? (Q && !Q.error ? `${copied}%` : 'error') : 'Not connected', ready ? (Q && Q.error ? esc(Q.error) : `Connected. It holds ${fmtN(Q ? Q.total : 0)} enquiries from ${fmtN(Q ? Q.sites : 0)} websites${copied < 100 ? ' — press <b>⇪ Bring enquiries in</b> to copy the rest' : ''}.`) : 'Needed only for the three tabs on this page (forms gone quiet, patterns across websites, junk and blasts). Until it is connected those stay empty — <b>nothing is lost</b>, and every enquiry is still on each website\'s Form submissions and Contacts.', ready ? copied : 0, copied === 100 ? 'ok' : 'warn')}
+      ${steps}</div>`;
   }
 
   /** Websites that used to get enquiries and have stopped. The one worth money. */
@@ -1880,7 +1904,7 @@
     // the profile can redraw itself without throwing away a list somebody is reading.
     body.innerHTML = '<div id="pfMain"></div>' + (can('leads.contacts') ? '<h2 id="pfContacts" class="pf-leads-h">👥 Contacts</h2><div id="pfContactsBody"></div>' : '') + '<h2 id="pfLeads" class="pf-leads-h">Form submissions</h2><div id="pfLeadsBody"><div class="empty">Loading…</div></div>';
     renderSiteProfile($('#pfMain'), { s, siteId: s.siteId, cnt: (extra || {}).cnt, generalComments: (extra || {}).generalComments });
-    if (can('leads.contacts')) renderContacts($('#pfContactsBody'), { url: 'team:' + s.siteId, name: s.businessName || s.siteId, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(s.siteId)) });
+    if (can('leads.contacts')) renderContacts($('#pfContactsBody'), { url: 'team:' + s.siteId, name: s.businessName || s.siteId, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(s.siteId)), rule: (key, verdict) => post('/api/leads', { op: 'contactVerdict', id: s.siteId, key, verdict }) });
     renderLeadsTab($('#pfLeadsBody'), s);
     if ((extra || {}).toLeads) setTimeout(() => { const h = $('#pfLeads'); if (h) h.scrollIntoView({ block: 'start' }); }, 80);
   }
@@ -1911,7 +1935,7 @@
     if (!x || !x.published) return `<section class="pf-an">${head}<div class="small muted">Google checks the live website, so this starts once the website is published.</div></section>`;
     if (!H || H.loading) return `<section class="pf-an">${head}<div class="empty">Loading…</div></section>`;
     const run = H.runs && H.runs[0];
-    if (!run) return `<section class="pf-an">${head}${H.error ? `<div class="note bad">${esc(H.error)}</div>` : ''}<div class="small muted">${busy ? 'Google is checking the website on mobile and desktop. This takes about a minute.' : 'Not checked yet. <b>Check now</b> runs Google\'s Lighthouse on the live website, on mobile and desktop.'}</div></section>`;
+    if (!run) return `<section class="pf-an">${head}${H.needsKey || (!H.keyed && !busy) ? hKeyNote(H) : H.error ? `<div class="note bad">${esc(H.error)}</div>` : ''}<div class="small muted">${busy ? 'Google is checking the website on mobile and desktop. This takes about a minute.' : 'Not checked yet. <b>Check now</b> runs Google\'s Lighthouse on the live website, on mobile and desktop.'}</div></section>`;
     const S = run[prof.hTab] || {}; const prev = (H.runs[1] || {})[prof.hTab];
     const delta = (k) => { const a = S.scores && S.scores[k], b = prev && prev.scores && prev.scores[k]; if (a === null || a === undefined || b === null || b === undefined || a === b) return ''; return `<span class="an-d ${a > b ? 'up' : 'down'}">${a > b ? '▲' : '▼'} ${Math.abs(a - b)}</span>`; };
     const V = S.vitals || {}; const F = S.field || {};
@@ -1920,7 +1944,7 @@
     const trend = H.runs.slice().reverse().map((r) => (r[prof.hTab] && r[prof.hTab].scores ? r[prof.hTab].scores.performance : null));
     return `<section class="pf-an">${head}
       <div class="an-tabs" role="tablist"><button role="tab" class="${prof.hTab === 'mobile' ? 'on' : ''}" data-htab="mobile">📱 Mobile</button><button role="tab" class="${prof.hTab === 'desktop' ? 'on' : ''}" data-htab="desktop">🖥 Desktop</button></div>
-      ${H.error ? `<div class="note bad">${esc(H.error)}</div>` : ''}
+      ${H.needsKey ? hKeyNote(H) : H.error ? `<div class="note bad">${esc(H.error)}</div>` : ''}
       ${S.error ? `<div class="note bad">${esc(S.error)}</div>` : `
       <div class="h-gauges">${H_CATS.map(([k, l]) => `<div>${hGauge(S.scores && S.scores[k], l)}<div class="h-delta">${delta(k)}</div></div>`).join('')}</div>
       <div class="an-grid">
@@ -1933,6 +1957,16 @@
       <div class="small faint an-foot">Checked ${esc(fmtFull(run.at))}${run.by ? ' by ' + esc(run.by) : ''} · <span class="mono">${esc(run.url)}</span> · Google Lighthouse. Scores move a few points between runs even when nothing changed.</div>
     </section>`;
   }
+  /** Why Site health cannot run yet, and (for the app owner) exactly how to fix it. */
+  function hKeyNote(H) {
+    return `<div class="note h-key"><b>Site health needs a free Google key to work reliably.</b>
+      <div class="small" style="margin-top:4px">${H.error && H.needsKey ? esc(H.error) + ' ' : ''}Google runs these checks, and without the app's own key every check shares one allowance with everyone else on the internet, which is almost always used up. That is why it has said "Google is limiting…".</div>
+      ${state.superAdmin ? `<details class="small" style="margin-top:6px" open><summary><b>Set it up once (about 5 minutes, free)</b></summary><ol style="margin:6px 0 0;padding-left:20px">
+        <li>Open <a href="https://console.cloud.google.com/apis/library/pagespeedonline.googleapis.com" target="_blank" rel="noopener">PageSpeed Insights API</a> in Google Cloud (any project, e.g. the one used for analytics) and click <b>Enable</b>.</li>
+        <li>Go to <b>APIs &amp; Services → Credentials → Create credentials → API key</b>. Optional: restrict it to the PageSpeed Insights API.</li>
+        <li>In Vercel → Settings → Environment Variables add <code>PAGESPEED_API_KEY</code> with that key, then <b>Redeploy</b>.</li>
+        <li>Come back and click <b>↻ Check now</b>. Every website then checks itself once a week when its profile is opened.</li></ol></details>` : '<div class="small" style="margin-top:4px">Ask the app owner to add it (Settings → Integrations shows whether it is there).</div>'}</div>`;
+  }
   prof.hAuto = {};
   function loadHealth(siteId, x, again) {
     const H = prof.health[siteId];
@@ -1944,7 +1978,7 @@
     }
     // Checked once a week on its own when somebody opens the profile; Check now for any other time.
     // (Asked again on each redraw, because whether it is published is only known once the Duda list is in.)
-    if (H.loading || H.busy || H.running || H.error || prof.hAuto[siteId] || !x || !x.published) return;
+    if (H.loading || H.busy || H.running || H.error || !H.keyed || prof.hAuto[siteId] || !x || !x.published) return;
     const last = H.runs && H.runs[0];
     if (!last || Date.now() - Date.parse(last.at) > 7 * 86400000) { prof.hAuto[siteId] = 1; runHealth(siteId, again); }
   }
@@ -1953,7 +1987,7 @@
     again();
     post('/api/sitehealth', { op: 'run', site: siteId })
       .then((r) => { prof.health[siteId] = Object.assign(r, { busy: false }); if (r.running) setTimeout(() => { delete prof.health[siteId]; again(); }, 30000); again(); })
-      .catch((e) => { prof.health[siteId] = Object.assign({}, H, { busy: false, error: e.message }); again(); });
+      .catch((e) => { prof.health[siteId] = Object.assign({}, H, { busy: false, error: e.message, needsKey: !!(e.data && e.data.needsKey) }); again(); });
   }
   function bindHealth(body, siteId, x, again) {
     if (!can('analytics.view') && !can('analytics.manage')) return;
@@ -1974,6 +2008,15 @@
     const mx = Math.max(1, ...rows.map((r) => r.v));
     return `<div class="hbars">${rows.map((r) => `<div class="hbar an-hbar"><span class="hbar-l" title="${esc(r.k)}">${esc(r.k)}</span><span class="hbar-track"><span class="hbar-fill" style="width:${Math.max(r.v ? 2 : 0, (r.v / mx) * 100)}%;background:${color}"></span></span><b class="hbar-v">${fmtV ? fmtV(r.v) : fmtN(r.v)}</b></div>`).join('')}</div>`;
   };
+  /** Google's channel groups, added up into the answer people ask for: search vs ads vs the rest. */
+  function anSplit(rows) {
+    if (!rows || !rows.length) return '';
+    const sum = (re) => rows.filter((r) => re.test(r.k)).reduce((n, r) => n + r.v, 0);
+    const all = rows.reduce((n, r) => n + r.v, 0) || 1;
+    const org = sum(/organic/i), paid = sum(/paid|display|cross-network|affiliate|ads?\b/i), other = Math.max(0, all - org - paid);
+    const pc = (n) => Math.round((n / all) * 100) + '%';
+    return `<div class="an-split"><div><b>${pc(org)}</b><span>Organic (search, social)</span></div><div><b>${pc(paid)}</b><span>Ads (paid search, display)</span></div><div><b>${pc(other)}</b><span>Direct, referral, email…</span></div></div>`;
+  }
   const anChart = (id, title, keys) => `<section class="an-card an-wide"><h3>${title}</h3><div class="viz-legend">${keys.map((k) => `<span><i class="viz-key-line" style="background:${TSERIES[k].color}"></i>${TSERIES[k].label}</span>`).join('')}</div><div class="viz-wrap" id="${id}"><div class="viz-plot"></div></div></section>`;
 
   /** Is there anything to draw? A line along zero is not a chart. */
@@ -2008,13 +2051,14 @@
         : `<div class="an-tiles">${anTile('Sessions', g.totals.sessions, g.prev && g.prev.sessions)}${anTile('Users', g.totals.users, g.prev && g.prev.users)}${anTile('Page views', g.totals.views, g.prev && g.prev.views)}${anTile('Engagement rate', g.totals.engagement, g.prev && g.prev.engagement, (v) => Math.round(v * 100) + '%')}</div>
           <div class="an-grid">${anChart('anGa', 'Daily sessions', ['gs', 'gu'])}
             <section class="an-card"><h3>Top pages</h3>${anBars(g.pages, 'var(--viz-1)')}</section>
-            <section class="an-card"><h3>Where visitors came from</h3>${anBars(g.channels, 'var(--viz-3)')}</section></div>`;
+            <section class="an-card"><h3>Where visitors came from</h3>${anSplit(g.channels)}${anBars(g.channels, 'var(--viz-3)')}</section></div>`;
     } else if (prof.anTab === 'gsc') {
       const s = D.gsc;
       inner = !s ? '<div class="small faint">Not connected.</div>' : s.error ? `<div class="note bad">${s.error === 'no-access' ? 'Google no longer lets the app read this Search Console site.' : 'Search Console could not be read right now.'}</div>`
         : `<div class="an-tiles">${anTile('Search clicks', s.totals.clicks)}${anTile('Impressions', s.totals.impressions)}${anTile('Click rate', s.totals.ctr, null, (v) => (v * 100).toFixed(1) + '%')}${anTile('Average position', s.totals.position, null, (v) => v ? v.toFixed(1) : '—')}</div>
           <div class="an-grid">${anChart('anSc', 'Search clicks per day', ['sc'])}
-            <section class="an-card an-wide"><h3>Top search queries</h3>${s.queries.length ? `<table class="grid an-q"><thead><tr><th>Query</th><th>Clicks</th><th>Impressions</th><th>Position</th></tr></thead><tbody>${s.queries.map((q) => `<tr><td>${esc(q.k)}</td><td>${fmtN(q.clicks)}</td><td>${fmtN(q.impressions)}</td><td>${q.position.toFixed(1)}</td></tr>`).join('')}</tbody></table>` : '<div class="small faint">No searches recorded for this range.</div>'}</section></div>
+            <section class="an-card an-wide"><h3>Top search queries</h3>${s.queries.length ? `<table class="grid an-q"><thead><tr><th>Query</th><th>Clicks</th><th>Impressions</th><th>Position</th></tr></thead><tbody>${s.queries.map((q) => `<tr><td>${esc(q.k)}</td><td>${fmtN(q.clicks)}</td><td>${fmtN(q.impressions)}</td><td>${q.position.toFixed(1)}</td></tr>`).join('')}</tbody></table>` : '<div class="small faint">No searches recorded for this range.</div>'}</section>
+            ${(s.pages || []).length ? `<section class="an-card an-wide"><h3>Pages people reach from Google search</h3><div class="small faint" style="margin:-4px 0 6px">Organic (unpaid) Google results only.</div><table class="grid an-q"><thead><tr><th>Page</th><th>Clicks</th><th>Impressions</th></tr></thead><tbody>${s.pages.map((q) => `<tr><td>${esc(q.k)}</td><td>${fmtN(q.clicks)}</td><td>${fmtN(q.impressions)}</td></tr>`).join('')}</tbody></table></section>` : ''}</div>
           <div class="small faint">Search Console runs about three days behind; figures are up to ${esc(s.to || '')}.</div>`;
     } else {
       const d = D.duda || {};
@@ -2025,7 +2069,10 @@
             ${anHas(d.months) ? '<section class="an-card an-wide"><h3>Visits, last 12 months</h3><div class="viz-wrap" id="anMonths"><div class="viz-plot"></div></div></section>' : anMissing('Visits, last 12 months', 'month-by-month', D, d.diag && d.diag.months)}
             <section class="an-card"><h3>Operating systems</h3>${anBars(d.devices, 'var(--viz-1)')}${anDiag(D, d.diag && d.diag.systems)}</section>
             <section class="an-card"><h3>Browsers</h3>${anBars(d.browsers, 'var(--viz-7)')}</section>
-            <section class="an-card an-wide"><h3>Countries</h3>${anBars(d.countries, 'var(--viz-3)')}${anDiag(D, d.diag && d.diag.countries)}</section></div>`;
+            <section class="an-card an-wide"><h3>Countries</h3>${anBars(d.countries, 'var(--viz-3)')}${anDiag(D, d.diag && d.diag.countries)}</section>
+            <section class="an-card an-wide"><h3>Which pages, and from Google or from ads?</h3>
+              <div class="small muted">Duda only reports totals, devices and countries: it does not say <b>which page</b> was viewed or whether a visitor came from <b>Google search or an ad</b>. ${prov.ga4 ? 'This website has Google Analytics: open the <b>Google Analytics</b> tab for top pages and organic vs ads.' : prov.gsc ? 'Open the <b>Search Console</b> tab for the pages people reach from Google search. Connect Google Analytics too for every page and for ads.' : 'Connect this website\'s <b>Google Analytics</b> to see its top pages and how many visitors came from Google search vs ads, and <b>Search Console</b> for the searches that found it.'}</div>
+              ${!prov.ga4 && D.manage ? '<button class="btn sm" type="button" data-antab="add" style="margin-top:8px">＋ Add custom analytics</button>' : ''}</section></div>`;
     }
     const when = D.at ? `<div class="small faint an-foot">Updated ${esc(ago(new Date(D.at).toISOString()))} · refreshed every 6 hours <button class="linkbtn small" id="anFresh">Refresh now</button></div>` : '';
     return `<section class="pf-an" id="pfAn">${head(tabHtml)}${inner}${prof.anTab === 'add' ? '' : when}</section>`;
@@ -2237,29 +2284,47 @@
   async function renderContacts(el, opts) {
     if (!el) return;
     const key = opts.url;
-    const st = ctState[key] = ctState[key] || { q: '', open: '', data: null };
+    const st = ctState[key] = ctState[key] || { q: '', open: '', data: null, view: 'people' };
     const draw = () => {
       if (!document.body.contains(el)) return;
       const d = st.data;
       if (!d) { el.innerHTML = '<div class="empty small">Loading…</div>'; return; }
       if (d.error) { el.innerHTML = `<div class="small muted">${esc(d.error)}</div>`; return; }
       const q = st.q.trim().toLowerCase();
-      const list = d.contacts.filter((c) => !q || [c.name, ...c.emails, ...c.phones, c.page, c.source, c.note].some((v) => String(v || '').toLowerCase().includes(q)));
-      const repeat = d.contacts.filter((c) => c.count > 1).length;
+      const people = d.contacts.filter((c) => !c.spam); const spam = d.contacts.filter((c) => c.spam);
+      const pool = st.view === 'spam' ? spam : st.view === 'all' ? d.contacts : people;
+      const list = pool.filter((c) => !q || [c.name, ...c.emails, ...c.phones, c.page, c.source, c.note].some((v) => String(v || '').toLowerCase().includes(q)));
+      const repeat = people.filter((c) => c.count > 1).length;
+      const chip = (k, label, n) => `<button type="button" class="chip ${st.view === k ? 'on' : ''}" data-ctv="${k}">${label} <span class="faint">${n}</span></button>`;
       el.innerHTML = `<div class="ct-bar"><input type="search" class="ct-q" placeholder="Search name, email, phone…" value="${esc(st.q)}" aria-label="Search contacts">
-          <span class="small muted">${d.contacts.length} contact${d.contacts.length === 1 ? '' : 's'} from ${d.from} submission${d.from === 1 ? '' : 's'}${repeat ? ` · ${repeat} came back more than once` : ''}</span><span class="spacer"></span>
-          ${d.contacts.length ? '<button class="btn sm ct-csv" type="button">⬇ Export CSV</button>' : ''}</div>
-        ${!d.contacts.length ? '<div class="small muted">No contacts yet. Each new form submission adds its sender here automatically.</div>' : `
+          ${d.contacts.length ? `<span class="ct-views">${chip('people', 'People', people.length)}${chip('spam', '🚫 Likely spam', spam.length)}${chip('all', 'All', d.contacts.length)}</span>` : ''}
+          <span class="small muted">from ${d.from} submission${d.from === 1 ? '' : 's'}${repeat ? ` · ${repeat} came back more than once` : ''}</span><span class="spacer"></span>
+          ${list.length ? '<button class="btn sm ct-csv" type="button">⬇ Export CSV</button>' : ''}</div>
+        ${st.view === 'spam' && spam.length ? '<div class="small muted" style="margin:-2px 0 8px">Sales pitches, bots and messages sent to many websites. Nothing is deleted: open one and click <b>Not spam</b> if it is a real person.</div>' : ''}
+        ${!d.contacts.length ? '<div class="small muted">No contacts yet. Each new form submission adds its sender here automatically.</div>' : !list.length ? `<div class="small muted">${st.view === 'spam' ? 'Nothing looks like spam.' : 'Nobody matches.'}</div>` : `
         <div class="table-wrap"><table class="grid ct-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Enquiries</th><th>Latest</th><th>Came from</th></tr></thead><tbody>
-        ${list.slice(0, 300).map((c, i) => { const k = (c.email || c.phone || c.name) + i; return `<tr class="ct-row ${st.open === k ? 'open' : ''}" data-ct="${esc(k)}" tabindex="0">
-          <td><b>${esc(c.name || '—')}</b></td><td>${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>${c.emails.length > 1 ? ` <span class="faint small">+${c.emails.length - 1}</span>` : ''}` : '<span class="faint">—</span>'}</td>
+        ${list.slice(0, 300).map((c, i) => { const k = (c.email || c.phone || c.name) + i; return `<tr class="ct-row ${st.open === k ? 'open' : ''}${c.spam ? ' ct-spam' : ''}" data-ct="${esc(k)}" tabindex="0">
+          <td><b>${esc(c.name || '—')}</b>${c.spam ? ` <span class="badge sev-warning" title="${esc(c.why || '')}">Likely spam</span>` : ''}</td><td>${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>${c.emails.length > 1 ? ` <span class="faint small">+${c.emails.length - 1}</span>` : ''}` : '<span class="faint">—</span>'}</td>
           <td>${c.phone ? `<a href="tel:${esc(c.phone.replace(/[^\d+]/g, ''))}">${esc(c.phone)}</a>` : '<span class="faint">—</span>'}</td>
-          <td>${c.count}${c.count > 1 ? ' <span class="badge sev-info">returning</span>' : ''}</td><td class="small">${esc(dayLabel(c.last))}</td><td class="small">${esc(c.source || c.page || c.form || '—')}</td></tr>
-          ${st.open === k ? `<tr class="ct-more"><td colspan="6"><div class="small"><b>First enquiry</b> ${esc(dayLabel(c.first))} · <b>Latest</b> ${esc(isoLabel(c.last))}${c.page ? ` · <b>Page</b> ${esc(c.page)}` : ''}${c.form ? ` · <b>Form</b> ${esc(c.form)}` : ''}${c.emails.length > 1 ? ` · <b>Other emails</b> ${esc(c.emails.slice(1).join(', '))}` : ''}${c.phones.length > 1 ? ` · <b>Other phones</b> ${esc(c.phones.slice(1).join(', '))}` : ''}</div>${c.note ? `<div class="ct-note">“${esc(c.note)}”</div>` : ''}</td></tr>` : ''}`; }).join('')}
+          <td>${c.count}${c.count > 1 && !c.spam ? ' <span class="badge sev-info">returning</span>' : ''}</td><td class="small">${esc(dayLabel(c.last))}</td><td class="small">${esc(c.source || c.page || c.form || '—')}</td></tr>
+          ${st.open === k ? `<tr class="ct-more"><td colspan="6">${c.spam ? `<div class="small ct-why">🚫 <b>Why it looks like spam:</b> ${esc(c.why || 'the rules flagged it')}</div>` : ''}<div class="small"><b>First enquiry</b> ${esc(dayLabel(c.first))} · <b>Latest</b> ${esc(isoLabel(c.last))}${c.page ? ` · <b>Page</b> ${esc(c.page)}` : ''}${c.form ? ` · <b>Form</b> ${esc(c.form)}` : ''}${c.emails.length > 1 ? ` · <b>Other emails</b> ${esc(c.emails.slice(1).join(', '))}` : ''}${c.phones.length > 1 ? ` · <b>Other phones</b> ${esc(c.phones.slice(1).join(', '))}` : ''}</div>${c.note ? `<div class="ct-note">“${esc(c.note)}”</div>` : ''}
+            ${d.canRule && opts.rule ? `<div class="ct-rule">${c.spam ? `<button class="btn sm" type="button" data-ctrule="real" data-ckey="${esc(c.key)}">✓ Not spam, a real person</button>` : `<button class="btn sm ghost" type="button" data-ctrule="junk" data-ckey="${esc(c.key)}">🚫 Mark as spam</button>`}${c.ruled ? ` <button class="btn sm ghost" type="button" data-ctrule="" data-ckey="${esc(c.key)}" title="Forget what was said and let the rules decide">Undo</button><span class="small faint"> · decided by a person</span>` : ''}</div>` : ''}</td></tr>` : ''}`; }).join('')}
         </tbody></table></div>${list.length > 300 ? `<div class="small muted">Showing 300 of ${list.length}. Search to narrow it down, or export them all.</div>` : ''}`}`;
       const qi = $('.ct-q', el); if (qi) qi.oninput = () => { st.q = qi.value; const p = qi.selectionStart; draw(); const n = $('.ct-q', el); if (n) { n.focus(); n.setSelectionRange(p, p); } };
       $$('.ct-row', el).forEach((r) => { const go = () => { st.open = st.open === r.dataset.ct ? '' : r.dataset.ct; draw(); }; r.onclick = (e) => { if (!e.target.closest('a')) go(); }; r.onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
-      const cb = $('.ct-csv', el); if (cb) cb.onclick = () => ctCsv(opts.name, d.contacts);
+      $$('[data-ctv]', el).forEach((b) => (b.onclick = () => { st.view = b.dataset.ctv; st.open = ''; draw(); }));
+      $$('[data-ctrule]', el).forEach((b) => (b.onclick = async (e) => {
+        e.stopPropagation(); b.disabled = true;
+        try {
+          await opts.rule(b.dataset.ckey, b.dataset.ctrule);
+          const c = d.contacts.find((x) => x.key === b.dataset.ckey);
+          if (c) { const v = b.dataset.ctrule; if (v === 'junk') Object.assign(c, { spam: true, why: 'Marked as spam by a person', ruled: true }); else if (v === 'real') Object.assign(c, { spam: false, ruled: true }); }
+          toast(b.dataset.ctrule === 'junk' ? 'Moved to Likely spam' : b.dataset.ctrule === 'real' ? 'Moved back to People' : 'The rules decide again');
+          if (b.dataset.ctrule === '') { st.data = await opts.load(); }
+          st.open = ''; draw();
+        } catch (err) { toast(err.message); b.disabled = false; }
+      }));
+      const cb = $('.ct-csv', el); if (cb) cb.onclick = () => ctCsv(opts.name, list);
     };
     draw();
     try { st.data = await opts.load(); } catch (e) { st.data = { error: e.message }; }
@@ -3752,7 +3817,7 @@
     if (section === 'comments') return clComments(el, site);
     if (section === 'contacts') {
       el.innerHTML = `${clHead(site, 'Contacts', 'Everyone who has filled in a form on your website, one line per person. Added automatically with every new submission.')}<div class="cl-card" id="clCt"></div>`;
-      return renderContacts($('#clCt'), { url: 'client:' + site.id, name: site.name, load: () => capi('/api/client?op=contacts&id=' + encodeURIComponent(site.id)) });
+      return renderContacts($('#clCt'), { url: 'client:' + site.id, name: site.name, load: () => capi('/api/client?op=contacts&id=' + encodeURIComponent(site.id)), rule: (key, verdict) => cpost('/api/client', { op: 'contactVerdict', id: site.id, key, verdict }) });
     }
     if (section === 'requests') return clRequests(el, site);
     if (section === 'leads' || section === 'dashboard') return clLeads(el, site, section);
@@ -4345,6 +4410,8 @@
         ${row('Email (codes, client emails)', !!c.emailEnabled, 'Connected', 'Not connected')}
         ${row('Google sign-in', !!c.googleClientId, 'Connected', 'Not connected')}
         ${row('Google Analytics & Search Console', !!c.analyticsGoogle, 'Connected', 'Not connected')}
+        ${row('Site health (Google PageSpeed key)', !!c.pagespeedKey, 'Connected', 'Not added: Site health will not run reliably')}
+        ${row('Analysis database (Lead analysis)', !!c.leadsDb, 'Connected', 'Not connected: Lead analysis tabs stay empty')}
         ${row('Live updates', !!c.realtime, 'Connected', 'Not connected')}
         <p class="small muted" style="margin-top:12px">Google Analytics and Search Console are then added to each website from its profile (Analytics → Add custom analytics).</p>`;
     }
@@ -5476,7 +5543,7 @@
       ${can('leads.contacts') ? '<h2 id="pfContacts" class="pf-leads-h">👥 Contacts</h2><div id="pfContactsBody"></div>' : ''}
       <h2 id="pfLeads" style="margin-top:22px">Form submissions</h2><div id="drBody"><div class="empty">Loading…</div></div>`;
     renderSiteProfile($('#drProf'), { siteId });
-    if (can('leads.contacts')) renderContacts($('#pfContactsBody'), { url: 'team:' + siteId, name: siteId, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(siteId)) });
+    if (can('leads.contacts')) renderContacts($('#pfContactsBody'), { url: 'team:' + siteId, name: siteId, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(siteId)), rule: (key, verdict) => post('/api/leads', { op: 'contactVerdict', id: siteId, key, verdict }) });
     // The same enquiries view the audited websites get — it only ever needed a Duda site id.
     renderLeadsTab($('#drBody'), { siteId });
   }

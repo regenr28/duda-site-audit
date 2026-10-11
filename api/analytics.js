@@ -16,7 +16,7 @@ const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const TTL = 6 * 3600;
 const CFG = P + 'anprov';                     // hash: duda site id → { ga4: {property,…}, gsc: {siteUrl,…} }
 // The "2" makes every answer cached before the reading was fixed get fetched again at once.
-const cacheKey = (id, days) => P + `an2:${id}:${days}`;
+const cacheKey = (id, days) => P + `an3:${id}:${days}`;
 const okId = (id) => /^[A-Za-z0-9_-]{4,64}$/.test(String(id || ''));
 
 export const PROVIDERS = {
@@ -77,14 +77,18 @@ function dateIn(r, key) {
  * dateGranularity values but shows no example answer, so this reads any likely layout: a list of rows
  * that each carry a date, an object keyed by date, or either of those wrapped one level down.
  */
+// Duda's real answer (seen live): an object keyed by date, each holding a LIST of one row —
+// {"2026-09-11":[{"VISITORS":130,"VISITS":131,"PAGE_VIEWS":178}], …}. A list is added up.
+const arrNums = (r) => Array.isArray(r) && r.length > 0 && r.every((x) => hasNums(x));
+const sumRows = (rows) => rows.reduce((s, x) => { const t = vals(x); return { VISITS: num(s.VISITS) + num(t.VISITS ?? t.visits), VISITORS: num(s.VISITORS) + num(t.VISITORS ?? t.visitors), PAGE_VIEWS: num(s.PAGE_VIEWS) + num(t.PAGE_VIEWS ?? t.page_views ?? t.pageViews) }; }, {});
 function dated(j) {
   const out = [];
-  const take = (r, key) => { if (!hasNums(r)) return; const d = dateIn(r, key); if (d) out.push(Object.assign({ d }, T(r))); };
+  const take = (r, key) => { if (arrNums(r)) r = sumRows(r); if (!hasNums(r)) return; const d = dateIn(r, key); if (d) out.push(Object.assign({ d }, T(r))); };
   const walk = (x, depth) => {
     if (!x || typeof x !== 'object' || depth > 3) return;
     if (Array.isArray(x)) { x.forEach((r) => take(r)); if (out.length || !x.length) return; x.forEach((r) => walk(r, depth + 1)); return; }
     const entries = Object.entries(x);
-    if (entries.some(([k, r]) => DATE_RE.test(k) && hasNums(r))) { entries.forEach(([k, r]) => take(r, k)); return; }
+    if (entries.some(([k, r]) => DATE_RE.test(k) && (hasNums(r) || arrNums(r)))) { entries.forEach(([k, r]) => take(r, k)); return; }
     for (const [, v] of entries) { if (v && typeof v === 'object' && !out.length) walk(v, depth + 1); }
   };
   walk(j, 0);
@@ -210,15 +214,17 @@ async function gsc(siteUrl, days) {
   const end = new Date(Date.now() - 3 * 86400000); const start = new Date(end.getTime() - (days - 1) * 86400000);
   const base = process.env.GSC_BASE || 'https://www.googleapis.com/webmasters/v3';
   const url = `${base}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
-  const [byDate, byQuery] = await Promise.all([
+  const [byDate, byQuery, byPage] = await Promise.all([
     gpost(url, { startDate: ymd(start), endDate: ymd(end), dimensions: ['date'], rowLimit: 500 }),
     gpost(url, { startDate: ymd(start), endDate: ymd(end), dimensions: ['query'], rowLimit: 10 }),
+    gpost(url, { startDate: ymd(start), endDate: ymd(end), dimensions: ['page'], rowLimit: 10 }).catch(() => ({ rows: [] })),
   ]);
   const daily = (byDate.rows || []).map((r) => ({ d: String(r.keys[0]).slice(0, 10), clicks: num(r.clicks), impressions: num(r.impressions) }));
   const clicks = daily.reduce((s, r) => s + r.clicks, 0), impressions = daily.reduce((s, r) => s + r.impressions, 0);
   return {
     totals: { clicks, impressions, ctr: impressions ? clicks / impressions : 0, position: (byDate.rows || []).length ? (byDate.rows || []).reduce((s, r) => s + num(r.position) * num(r.impressions), 0) / (impressions || 1) : 0 },
     daily, queries: (byQuery.rows || []).map((r) => ({ k: String(r.keys[0]).slice(0, 120), clicks: num(r.clicks), impressions: num(r.impressions), position: num(r.position) })),
+    pages: (byPage.rows || []).map((r) => ({ k: String(r.keys[0]).replace(/^https?:\/\/[^/]+/, '') || '/', clicks: num(r.clicks), impressions: num(r.impressions) })),
     to: ymd(end),
   };
 }

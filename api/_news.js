@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-10-spam', date: '2026-10-10', audience: 'all', tag: 'Websites',
+    title: 'Spam flagged in Contacts, daily visit charts fixed, and clearer statuses',
+    what: '<b>Contacts</b> now split <b>People</b> from <b>🚫 Likely spam</b> (sales pitches, bots, links with no question), each with the reason; one click says <b>Not spam</b>. The <b>Daily visits</b> and <b>12 months</b> charts on a profile now draw (Duda sends days in a layout the app did not read). Each profile explains that Duda does not report <b>which pages</b> or <b>organic vs ads</b>, and the Google Analytics tab now shows that split. <b>Lead analysis</b> shows where enquiries are stored and how far everything has got. <b>Site health</b> says plainly when the app\'s Google key is missing, with the steps to add it.',
+    where: ['Open a website\'s <b>Profile</b> → <b>Contacts</b> → <b>Likely spam</b>.', '<b>Lead analysis</b>: the Status box at the top.', 'Profile → <b>📊 Analytics</b> → Daily visits.'],
+    link: '#/help/profiles', linkText: 'How spam is spotted',
+  },
+  {
     id: '2026-10-10-home', date: '2026-10-10', audience: 'all', tag: 'Everyone',
     title: 'A new Home, a grouped menu, phone-friendly navigation, dark mode and colours',
     what: 'The top tabs are now a <b>menu on the left</b>, grouped by what you are doing: <b>Work</b>, <b>Websites</b> and <b>Insights</b>. A new <b>Home</b> page shows what needs you today and your own work, and only the parts your role allows. Two <b>+</b> buttons became one <b>+ New</b>. Each page has a short note on what it is for (including how <b>Audits</b> and <b>Projects</b> differ). On a phone the menu is a bar along the bottom. You can also pick <b>Light</b>, <b>Dark</b> or <b>Auto</b> and one of seven <b>colours</b>, and choose which page the app opens on. All of it follows your account.',

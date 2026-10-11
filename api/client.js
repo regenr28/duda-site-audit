@@ -14,7 +14,7 @@ import { redis, P, requireUser, readBody, unpackJSON, jparse, fetchWithTimeout, 
 import { sideTest, dudaTypes } from './comments.js';
 import { siteRec } from './_tickets.js';
 import { can } from './_lib.js';
-import { readLeads, groupLeads, monthlySeries, whenSeries, getSummary, bumpSummary, contactsFrom } from './_leads.js';
+import { readLeads, groupLeads, monthlySeries, whenSeries, getSummary, bumpSummary, contactsFrom, contactRulings, ruleContact } from './_leads.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 
@@ -131,13 +131,23 @@ export default async function handler(req, res) {
       if (op === 'contacts') {
         // Their own enquirers, made into contacts from the submissions: the client already sees each
         // submission in full, so this shows them nothing new, only grouped by person.
-        const all = await readLeads(rec.siteId || id, 24);
-        return res.status(200).json({ contacts: contactsFrom(all), from: all.length });
+        const sid = rec.siteId || id;
+        const [all, rulings] = await Promise.all([readLeads(sid, 24), contactRulings(sid)]);
+        return res.status(200).json({ contacts: contactsFrom(all, rulings), from: all.length, canRule: true });
       }
       return res.status(400).json({ error: 'Unknown operation' });
     }
 
     const b = readBody(req);
+    // The client can say a contact is or is not spam on their own website.
+    if (b.op === 'contactVerdict') {
+      const id = String(b.id || '');
+      if (!guard(id)) return res.status(404).json({ error: 'Not found' });
+      const rec = await siteRec(id);
+      if (!rec) return res.status(404).json({ error: 'Not found' });
+      await ruleContact(rec.siteId || id, b.key, b.verdict);
+      return res.status(200).json({ ok: true });
+    }
     if (b.op === 'access') {
       const id = String(b.id || '');
       if (!guard(id)) return res.status(404).json({ error: 'Not found' });
