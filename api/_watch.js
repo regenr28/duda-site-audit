@@ -33,13 +33,23 @@ const WNEW = P + 'cwnew';                        // hash: duda id → new proble
 const MAX_PAGES = 150;                               // per website
 const MAX_ISSUES = 25;
 const RECHECK_DAYS = 30;
+export const WWAIT = P + 'cwwait';                    // Duda asked us to slow down: nothing is read until this expires
+const GAP_MS = 1500;                                  // at least this long per website, so Duda is never asked in bursts
+const SUM_V = 2;                                      // summaries written by this version (older failures are retried)
 const DAY = 86400000;
 
 async function duda(path) {
   const user = process.env.DUDA_API_USERNAME, pass = process.env.DUDA_API_PASSWORD;
   if (!user || !pass) throw new Error('Duda API access is not set up.');
-  const r = await fetchWithTimeout(DUDA() + path, { headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'), Accept: 'application/json' } }, 15000);
-  if (!r.ok) throw new Error(`Duda ${r.status}`);
+  let r;
+  try { r = await fetchWithTimeout(DUDA() + path, { headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'), Accept: 'application/json' } }, 15000); }
+  catch (e) { const x = new Error('Duda did not answer'); x.status = 0; throw x; }
+  if (!r.ok) {
+    const x = new Error(`Duda answered ${r.status}`); x.status = r.status;
+    x.retry = Number(r.headers.get('retry-after')) || 0;
+    console.warn('[auto audit] Duda', r.status, path);
+    throw x;
+  }
   return r.json();
 }
 
@@ -218,6 +228,8 @@ export function dueOrder(sites, sums, at = Date.now()) {
   const rank = (x) => {
     const s = sums[x.id]; if (!s || !s.at) return 1;
     if (x.pub && Date.parse(x.pub) > (s.pubAt || 0)) return 0;
+    // A failure recorded before Duda's "slow down" was understood is not a real answer: try again now.
+    if (s.err && (s.v || 0) < SUM_V) return 1;
     if (s.err && at - s.at > DAY) return 1;
     if (at - s.at > RECHECK_DAYS * DAY) return 2;
     return 9;
@@ -225,13 +237,16 @@ export function dueOrder(sites, sums, at = Date.now()) {
   return sites.map((x) => Object.assign({ r: rank(x) }, x)).filter((x) => x.r < 9).sort((a, b) => a.r - b.r || String(b.pub).localeCompare(String(a.pub)));
 }
 export async function watchStatus() {
-  const [sites, [sumRaw, cfg, part, lock]] = await Promise.all([liveList(), redis(['HGETALL', WSUM], ['GET', WCFG], ['GET', WPARTID], ['GET', WLOCK])]);
+  const [sites, [sumRaw, cfg, part, lock, waitRaw]] = await Promise.all([liveList(), redis(['HGETALL', WSUM], ['GET', WCFG], ['GET', WPARTID], ['GET', WLOCK], ['GET', WWAIT])]);
+  const w = jparse(waitRaw) || {};
   const sums = parseSum(sumRaw);
   const due = dueOrder(sites, sums);
   const on = !(jparse(cfg) || {}).off;
   await redis(['SET', WDUE, on ? due.length : 0]).catch(() => {});
   const checked = sites.filter((x) => sums[x.id] && sums[x.id].at);
-  return { on, total: sites.length, checked: checked.length, pending: due.length, running: !!lock,
+  const read = checked.filter((x) => !sums[x.id].err);
+  return { on, total: sites.length, checked: read.length, pending: due.length, running: !!lock,
+    waitUntil: w.until > Date.now() ? w.until : 0, waitWhy: w.until > Date.now() ? w.why || '' : '',
     withIssues: checked.filter((x) => sums[x.id].n).length, critical: checked.filter((x) => sums[x.id].c).length,
     unreadable: checked.filter((x) => sums[x.id].err).length, partial: part || '',
     sums: Object.fromEntries(checked.map((x) => [x.id, { n: sums[x.id].n || 0, c: sums[x.id].c || 0, at: sums[x.id].at, err: sums[x.id].err || '' }])) };
@@ -252,9 +267,15 @@ async function readSite(s, recId, timeLeft) {
   // Exceptions approved on the website's audit, plus "not a problem" said here.
   const okKeys = new Set([...(okRaw || []), ...allow.filter((a) => a.mode !== 'deny').map((a) => a.key)]);
   const pubAt = Date.parse(s.pub) || 0;
-  const skip = async (err) => { await redis(['HSET', WSUM, s.id, JSON.stringify({ at: Date.now(), pubAt, n: 0, c: 0, err })], ['DEL', WPART(s.id)]); return { done: true, err }; };
+  const skip = async (err) => { await redis(['HSET', WSUM, s.id, JSON.stringify({ v: SUM_V, at: Date.now(), pubAt, n: 0, c: 0, err })], ['DEL', WPART(s.id)]); return { done: true, err }; };
   let truth;
-  try { truth = await truthFor(s.id, allow); } catch (e) { return skip('Business Info could not be read from Duda'); }
+  try { truth = await truthFor(s.id, allow); } catch (e) {
+    if (e.status === 404) return skip('Duda no longer has this website');
+    if (e.status === 401 || e.status === 403) return { done: false, stop: 'Duda refused the app\'s API login (' + e.status + '). Check the Duda API access.' };
+    // Too many requests, slow or down: that says nothing about the website. Nothing is recorded,
+    // it stays first in the queue, and the whole check pauses until Duda is ready again.
+    return { done: false, wait: Math.min(Math.max(e.retry || (e.status === 429 ? 120 : 60), 30), 900), why: e.message };
+  }
   if (!truth.businessName && !(truth.phones || []).length && !(truth.emails || []).length) return skip('No Business Info to compare with');
   let part = jparse(partRaw);
   if (part && part.pub !== s.pub) part = null;        // published again since: start over
@@ -279,7 +300,7 @@ async function readSite(s, recId, timeLeft) {
   const result = { at: Date.now(), pub: s.pub, domain: s.domain, name: s.name || truth.businessName, pages: read, issues,
     ref: { name: truth.businessName, phones: truth.phones, emails: truth.emails, zips: (truth.addresses || []).map((a) => a.zip).filter(Boolean) } };
   // t: the serious ones by kind (phone, email, address, name, social): what the DR Websites column lists.
-  const sum = { at: result.at, pubAt, n: issues.length, c: issues.filter((x) => x.sev === 'critical').length, t: critTypes(issues), pages: read };
+  const sum = { v: SUM_V, at: result.at, pubAt, n: issues.length, c: issues.filter((x) => x.sev === 'critical').length, t: critTypes(issues), pages: read };
   const cmds = [['SET', WKEY(s.id), JSON.stringify(result)], ['HSET', WSUM, s.id, JSON.stringify(sum)], ['DEL', WPART(s.id)]];
   if (fresh.length) cmds.push(['HSET', WNEW, s.id, JSON.stringify({ name: result.name, domain: s.domain, n: fresh.length, c: fresh.filter((x) => x.sev === 'critical').length, t: critTypes(fresh), recId: recId || '', first: !prev })]);
   await redis(...cmds);
@@ -300,28 +321,38 @@ export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}
   const started = Date.now();
   const timeLeft = () => budgetMs - (Date.now() - started);
   if (!process.env.DUDA_API_USERNAME || !process.env.DUDA_API_PASSWORD) return { error: 'Duda API access is not set up.', done: [] };
-  const [cfgRaw] = await redis(['GET', WCFG]);
+  const [cfgRaw, waitRaw] = await redis(['GET', WCFG], ['GET', WWAIT]);
   if (!only && (jparse(cfgRaw) || {}).off) return { off: true, done: [] };
+  const waitTill = (jparse(waitRaw) || {}).until || 0;
+  if (waitTill > Date.now()) return only ? { error: 'Duda asked us to slow down for a moment. Try again in a minute or two.', done: [] } : { wait: Math.ceil((waitTill - Date.now()) / 1000), done: [] };
   const lockKey = only ? WLOCK + ':' + only : WLOCK;
   const [got] = await redis(['SET', lockKey, by, 'NX', 'EX', Math.ceil(budgetMs / 1000) + 40]);
   if (got !== 'OK') return { busy: true, done: [] };
-  const done = []; let stopped = false;
+  const done = []; let stopped = false; let wait = 0; let problem = '';
   try {
     const [sites, [sumRaw, partId], amap] = await Promise.all([liveList(), redis(['HGETALL', WSUM], ['GET', WPARTID]), auditMap()]);
     let queue = only ? sites.filter((x) => x.id === only) : dueOrder(sites, parseSum(sumRaw));
     if (!only && partId) { const p = queue.find((x) => x.id === partId); if (p) queue = [p].concat(queue.filter((x) => x !== p)); }
     for (const s of queue) {
       if (timeLeft() < 6000) break;
+      const t0 = Date.now();
       const r = await readSite(s, amap[s.id.toLowerCase()], timeLeft);
+      if (r.wait || r.stop) {
+        wait = r.wait || 900; problem = r.stop || r.why || '';
+        await redis(['SET', WWAIT, JSON.stringify({ until: Date.now() + wait * 1000, why: problem }), 'EX', wait]);
+        break;
+      }
       if (!r.done) { stopped = true; break; }
       done.push(Object.assign({ id: s.id }, r));
+      const rest = GAP_MS - (Date.now() - t0);
+      if (rest > 0 && timeLeft() > rest + 6000) await new Promise((res) => setTimeout(res, rest));
     }
     if (!stopped && partId && done.some((d) => d.id === partId)) await redis(['DEL', WPARTID]);
   } finally {
     await redis(['DEL', lockKey]).catch(() => {});
   }
   const st = await watchStatus().catch(() => ({}));
-  return { done, partial: stopped, pending: st.pending, checked: st.checked, total: st.total };
+  return Object.assign({ done, partial: stopped, pending: st.pending, checked: st.checked, total: st.total, unreadable: st.unreadable }, wait ? { wait, problem } : {});
 }
 
 /** "This is fine for this website": remembered, and taken off its current list straight away. */

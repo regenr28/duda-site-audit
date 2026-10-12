@@ -2059,6 +2059,8 @@
     if (!x || !x.published) return `<section class="pf-an">${head}<div class="small muted">This starts once the website is published.</div></section>`;
     if (W.loading) return `<section class="pf-an">${head}<div class="empty">Loading…</div></section>`;
     if (W.error) return `<section class="pf-an">${head}<div class="note bad">${esc(W.error)}</div></section>`;
+    const wcx = x && x.wc;
+    if (!r && wcx && wcx.e) return `<section class="pf-an">${head}<div class="note unk">Could not be read on ${esc(fmtFull(new Date(wcx.at).toISOString()))}: ${esc(wcx.er || 'unknown reason')}. It is tried again the next day${canAct ? ', or press <b>Check now</b>' : ''}.</div></section>`;
     if (!r) return `<section class="pf-an">${head}<div class="small muted">Not read yet. It is in the queue and will be read automatically${canAct ? ', or press <b>Check now</b>' : ''}.</div></section>`;
     const ref = r.ref || {};
     const refLine = [ref.name, ...(ref.phones || []).map(A.fmtPhone), ...(ref.emails || []), ...(ref.zips || []).map((z) => 'ZIP ' + z)].filter(Boolean).map(esc).join(' · ');
@@ -2130,9 +2132,16 @@
     try {
       for (let i = 0; i < 300; i++) {
         let r; try { r = await post('/api/watch', { op: 'drain' }); } catch (e) { break; }
+        // Duda asked us to slow down: wait as long as it said (this browser only waits; nothing runs).
+        if (r.wait) {
+          wq.stat = Object.assign({}, wq.stat || {}, { waitUntil: Date.now() + r.wait * 1000, waitWhy: r.problem || (wq.stat || {}).waitWhy || '' });
+          if (route().name === 'live' && live.tab === 'published') renderLive();
+          await new Promise((res) => setTimeout(res, Math.min(r.wait, 300) * 1000 + 2000));
+          continue;
+        }
         (r.done || []).forEach((d) => { const x = live.data && live.data.sites.find((y) => y.id === d.id); if (x) x.wc = { n: d.n || 0, c: d.c || 0, t: d.t || {}, at: Date.now(), pubAt: d.pubAt || Date.parse(x.published) || 0, e: d.err ? 1 : 0 }; });
         wq.pending = r.pending || 0;
-        if (typeof r.checked === 'number') wq.stat = Object.assign({}, wq.stat || {}, { checked: r.checked, total: r.total, pending: r.pending });
+        if (typeof r.checked === 'number') wq.stat = Object.assign({}, wq.stat || {}, { checked: r.checked, total: r.total, pending: r.pending, unreadable: r.unreadable, waitUntil: 0 });
         if (route().name === 'live' && live.tab === 'published') renderLive();
         if (!((r.done && r.done.length) || r.partial) || !wq.pending) break;
         await new Promise((res) => setTimeout(res, 2000));
@@ -2154,7 +2163,7 @@
   function autoCell(x) {
     const w = x.wc;
     if (!w) return `<span class="badge subtle" title="Every published website is auto audited; this one has not been read yet">Not yet${wq.pending ? ' · queued' : ''}</span>`;
-    if (w.e) return `<span class="badge subtle" title="The live website could not be read (or has no Business Info to compare with). Tried again tomorrow.">Could not read</span>`;
+    if (w.e) return `<span class="badge subtle" title="${esc((w.er || 'The live website could not be read') + '. Tried again the next day.')}">Could not read</span><div class="small faint">${esc(w.er || '')}</div>`;
     const when = esc(fmtFull(new Date(w.at).toISOString()));
     const rep = acRepub(x);
     const crit = Object.entries(w.t || {}).filter(([, v]) => v).map(([k, v]) => `<span class="ac-t">${(AC_TYPE[k] || ['•'])[0]} ${v} ${esc((AC_TYPE[k] || ['', k, k])[v === 1 ? 1 : 2])}</span>`).join('');
@@ -2169,7 +2178,10 @@
   function watchNote() {
     const s = wq.stat; if (!s) return '';
     const pend = wq.pending || s.pending || 0;
-    return `<span class="small wc-note">🔎 Auto audit: <b>${s.checked}</b> of ${s.total} websites done${!s.on ? ' · <b>paused</b>' : pend ? ` · ${pend} waiting${wq.running ? ' <span class="spin-dot"></span> reading now' : ''}` : ' · up to date'}${state.me && state.me.role === 'admin' ? ` <button class="linkbtn" id="wcPause">${s.on ? 'Pause' : 'Resume'}</button>` : ''}</span>`;
+    const waiting = s.waitUntil && s.waitUntil > Date.now();
+    return `<span class="small wc-note">🔎 Auto audit: <b>${s.checked}</b> of ${s.total} websites done${s.unreadable ? ` · <span title="Websites with no Business Info to compare with, or that did not open. Tried again the next day.">${s.unreadable} could not be read</span>` : ''}${!s.on ? ' · <b>paused</b>'
+      : waiting ? ` · ${pend} waiting · <span title="${esc(s.waitWhy || '')}">⏸ Duda asked us to slow down, carrying on at ${esc(new Date(s.waitUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</span>`
+      : pend ? ` · ${pend} waiting${wq.running ? ' <span class="spin-dot"></span> reading now' : ''}` : ' · up to date'}${state.me && state.me.role === 'admin' ? ` <button class="linkbtn" id="wcPause">${s.on ? 'Pause' : 'Resume'}</button>` : ''}</span>`;
   }
   const anKey = (id) => id + ':' + prof.anDays;
   function anDelta(cur, prev) {

@@ -287,7 +287,7 @@ export default async function handler(req, res) {
     const nm = {}; for (let i = 0; names && i < names.length; i += 2) { const v = names[i + 1]; const j = String(v).startsWith('{') ? jparse(v) : null; nm[names[i]] = j || { n: v, p: null }; }
     const dm = {}; for (let i = 0; doms && i < doms.length; i += 2) dm[doms[i]] = jparse(doms[i + 1]);
     // The live content check's counts for each website: { n: problems, c: serious, at, e: could not read }
-    const wc = {}; for (let i = 0; wsum && i < wsum.length; i += 2) { const v = jparse(wsum[i + 1]); if (v && v.at) wc[wsum[i]] = { n: v.n || 0, c: v.c || 0, t: v.t || {}, at: v.at, pubAt: v.pubAt || 0, e: v.err ? 1 : 0 }; }
+    const wc = {}; for (let i = 0; wsum && i < wsum.length; i += 2) { const v = jparse(wsum[i + 1]); if (v && v.at) wc[wsum[i]] = { n: v.n || 0, c: v.c || 0, t: v.t || {}, at: v.at, pubAt: v.pubAt || 0, e: v.err ? 1 : 0, er: v.err ? String(v.err).slice(0, 120) : '' }; }
     data.sites = data.sites.map((x) => { const m = nm[x.id]; const fresh = m && (m.p === null || m.p === (x.published || '')); return Object.assign({}, x, { name: x.name || (m && m.n !== '-' ? m.n : ''), nameChecked: !!(x.name || fresh), dom: dm[x.id] && (!x.domain || dm[x.id].domain === x.domain || dm[x.id].status === 'nodomain') ? dm[x.id] : null, wc: wc[x.id] || null }); });
     return res.status(200).json(data);
   } catch (e) {

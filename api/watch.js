@@ -54,6 +54,7 @@ export default async function handler(req, res) {
       const r = await runWatch({ only: id, budgetMs: 95000, by: me.email });
       if (r.busy) return res.status(409).json({ error: 'This website is being read right now. Give it a minute.' });
       if (r.error) return res.status(503).json({ error: r.error });
+      if (r.wait) return res.status(503).json({ error: `Duda asked us to slow down (${r.problem || 'too many requests'}). Try again in ${Math.ceil(r.wait / 60)} minute${r.wait > 60 ? 's' : ''}.` });
       const [[raw], ok] = await Promise.all([redis(['GET', WKEY(id)]), okList(id)]);
       return res.status(200).json({ result: jparse(raw), ok, partial: r.partial, found: !!r.done.length || r.partial });
     }
