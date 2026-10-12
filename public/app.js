@@ -77,7 +77,7 @@
   }
   const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
   /** The client endpoints, called as a client — or, while previewing, as that one website's client. */
-  const clientHeaders = () => (state.viewAs ? { 'x-view-as-client': '1', 'x-view-site': state.viewAs } : {});
+  const clientHeaders = () => (state.viewAs ? { 'x-view-as-client': '1', 'x-view-site': state.viewCust ? state.viewCust.sites.join(',') : state.viewAs } : {});
   /** While previewing a role or a person, every request says so, so the server answers as they would be answered. */
   const viewHeaders = () => (state.viewRole ? (state.viewRole.user ? { 'x-view-as-user': state.viewRole.user } : { 'x-view-as-role': state.viewRole.role }) : {});
   const capi = (path) => api(path, { headers: clientHeaders() });
@@ -518,6 +518,7 @@
     ].filter(Boolean) });
     g.push({ title: 'Websites', items: [
       can('live.view') && { key: 'live', href: '#/live', label: 'DR Websites', ic: 'live' },
+      canCust() && { key: 'customers', href: '#/customers', label: 'Customers', ic: 'user' },
       can('ticket.view') && { key: 'requests', href: '#/requests', label: 'Tickets', ic: 'tickets', count: state.tkNew || 0 },
       { key: 'comments', href: '#/comments', label: 'Duda comments', ic: 'comments', dot: cmtWaiting() > 0, soft: !cmtWaiting() && cmtUnread() > 0 },
     ].filter(Boolean) });
@@ -2188,11 +2189,8 @@
             </div>
             ${(x && (x.labels || []).length) ? `<div class="small faint" style="margin:-6px 0 10px">${x.labels.map(esc).join(' · ')}</div>` : ''}
             <div class="pf-owner">
-              <label>Client contact</label>
-              <div class="pf-owner-row" id="pfOwner">${s ? (clientsFor(s.id).length
-                ? clientsFor(s.id).map((c) => `<span class="pill">${esc(c.name)}<span class="faint small"> · ${esc(c.email)}</span></span>`).join('')
-                : '<span class="faint">Nobody yet</span>') + (can('client.manage') ? '<button class="linkbtn" id="pfClient">Manage client access</button>' : '')
-                : '<span class="faint">Add this website to Audits to give a client access.</span>'}</div>
+              <label>Customer</label>
+              <div class="pf-owner-row" id="pfOwner">${canCust() ? custLine(s ? s.id : siteId, siteId, name) : '<span class="faint">—</span>'}</div>
             </div>
             <div class="pf-acts">
               ${can('client.viewas') ? '<button class="btn" id="pfView" title="See this website\'s client page exactly as the client does">👁 View as client</button>' : ''}
@@ -2249,8 +2247,8 @@
     if ($('#pfCopy')) $('#pfCopy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(siteId); toast('Site ID copied'); };
     // Any website's client page can be previewed, on Audits or not: one not on Audits is opened by its
     // Duda site id and described from the Duda list.
-    if ($('#pfView')) $('#pfView').onclick = () => { const id = s ? s.id : siteId; clReset(); state.viewAs = id; location.hash = `#/my/${encodeURIComponent(id)}/overview`; };
-    if ($('#pfClient')) $('#pfClient').onclick = () => openClients(s);
+    if ($('#pfView')) $('#pfView').onclick = () => viewWebsiteAsClient(s ? s.id : siteId, siteId);
+    bindCustLine($('#pfOwner'), s ? s.id : siteId, siteId, name, again);
     $$('[data-gofilter]', body).forEach((b) => (b.onclick = () => { state.ff.sev = b.dataset.gofilter; location.hash = '#/site/' + encodeURIComponent(s.id); }));
     $$('[data-tsite]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = 'published'; live.q = a.dataset.tsite; live.dom = ''; live.audit = ''; live.page = 0; location.hash = '#/live'; }));
     $$('[data-jump]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); const t2 = document.getElementById(a.dataset.jump); if (t2) t2.scrollIntoView({ behavior: 'smooth' }); }));
@@ -2274,10 +2272,7 @@
     bindAnalytics(body, siteId, again);
     bindHealth(body, siteId, x, again);
     if (!liveDR.data && !liveDR.loading && !prof.liveAsked) { prof.liveAsked = true; loadLive(false).then(again).catch(() => {}); }
-    if (s && can('client.manage') && state.clients === null) {
-      state.clients = [];
-      post('/api/users', { op: 'clients' }).then((r) => { state.clients = r.clients || []; again(); }).catch(() => {});
-    }
+    if (canCust() && !state.clients && !prof.cuAsked) { prof.cuAsked = true; loadCustomers().then(again).catch(() => {}); }
     if (!state.leadSums[siteId] && !prof['ls' + siteId]) { prof['ls' + siteId] = 1; loadLeadSums([siteId]).then(again); }
     if (s && can('ticket.view') && !tk && !prof['tk' + s.id]) {
       prof['tk' + s.id] = 1;
@@ -2354,7 +2349,7 @@
     try { st.data = await opts.load(); } catch (e) { st.data = { error: e.message }; }
     draw();
   }
-  const clientsFor = (siteId) => (state.clients || []).filter((c) => (c.sites || []).includes(siteId));
+  const clientsFor = (siteId) => (state.clients || []).filter((c) => c.tag !== 'admin' && (c.sites || []).includes(siteId));
 
   /** Who outside the team can see this website. Admin only. */
   async function openClients(s) {
@@ -2388,6 +2383,266 @@
       };
     };
     draw();
+  }
+
+  // =====================================================================
+  // CUSTOMERS: one person (a profile) with any number of websites
+  //
+  // A customer's account lists its websites by the audit record id when the website is on Audits,
+  // otherwise by its Duda site id (the client pages accept both). Admins can hold a TEST list of
+  // websites too, so they can preview the portal exactly as a customer with several websites would.
+  // =====================================================================
+  const canCust = () => can('client.manage') || can('client.viewas');
+  /** Everyone with a profile, from the server (customers, plus admins' test profiles). */
+  async function loadCustomers(force) {
+    if (state.clients && state.clientsAt && !force) return state.clients;
+    const r = await post('/api/users', { op: 'clients' });
+    state.clients = r.clients || []; state.clientsManage = !!r.manage; state.clientsAt = Date.now();
+    return state.clients;
+  }
+  /** The key a website is stored under on a customer: its audit record when audited, else its Duda id. */
+  const siteKeyFor = (dudaId) => { const a = auditFor(dudaId); return a ? a.id : String(dudaId); };
+  /** Does this customer have this website (by record id or Duda id)? */
+  function custHas(c, dudaId, recId) {
+    return (c.sites || []).some((x) => (recId && x === recId) || sameId(x, dudaId) || (state.sites.find((s) => s.id === x) || {}).siteId === dudaId);
+  }
+  const customersOf = (dudaId, recId) => (state.clients || []).filter((c) => c.tag !== 'admin' && custHas(c, dudaId, recId));
+  /** Every website we know of, for the picker and for labels: published, in build, and on Audits. */
+  function allWebsites() {
+    const out = new Map();
+    const add = (dudaId, name, domain, extra) => { if (!dudaId) return; const k = String(dudaId).toLowerCase(); const was = out.get(k) || {}; out.set(k, Object.assign({ dudaId: String(dudaId), name: '', domain: '' }, was, { name: was.name || name || '', domain: was.domain || domain || '' }, extra || {})); };
+    ((live.data && live.data.sites) || []).forEach((x) => add(x.id, x.name, x.domain || x.defaultDomain, { live: true }));
+    ((live.un && live.un.sites) || []).forEach((x) => add(x.id, x.name, x.domain || x.defaultDomain, { draft: true }));
+    (state.sites || []).forEach((s) => add(s.siteId, s.businessName, '', { recId: s.id }));
+    return [...out.values()].map((w) => Object.assign(w, { key: w.recId || w.dudaId }));
+  }
+  /** What to call a stored website key: its name and domain. */
+  function siteInfo(key) {
+    const rec = state.sites.find((s) => s.id === key);
+    const dudaId = rec ? rec.siteId : key;
+    const w = allWebsites().find((x) => sameId(x.dudaId, dudaId)) || {};
+    return { key, dudaId, recId: rec ? rec.id : w.recId || '', name: w.name || (rec && rec.businessName) || dudaId, domain: w.domain || '', href: rec ? `#/site/${encodeURIComponent(rec.id)}/profile` : `#/dr/${encodeURIComponent(dudaId)}` };
+  }
+  const custStatus = (c) => (c.tag === 'admin' ? '<span class="badge cu-admin">Admin · test profile</span>'
+    : c.temp ? `<span class="badge sev-warning" title="${c.tempExpires ? 'Temporary password works until ' + esc(fmtFull(c.tempExpires)) : ''}">Waiting for first sign-in</span>`
+    : c.status === 'disabled' ? '<span class="badge subtle">Switched off</span>' : '<span class="badge scan-complete">Active</span>');
+  /** Look at the portal exactly as this customer does, with all their websites. */
+  function viewAsCustomer(c) {
+    if (!(c.sites || []).length) { toast('Give them a website first.'); return; }
+    clReset(); state.viewCust = { email: c.email, name: c.name, company: c.company || '', sites: c.sites.slice(), tag: c.tag };
+    state.viewAs = c.sites[0];
+    location.hash = `#/my/${encodeURIComponent(c.sites[0])}/overview`;
+  }
+  /** View a website as a client: as its customer when it has exactly one, otherwise the website alone. */
+  async function viewWebsiteAsClient(key, dudaId) {
+    if (canCust()) { try { await loadCustomers(); } catch (e) { /* the website alone still works */ } }
+    const owners = customersOf(dudaId, key !== dudaId ? key : '');
+    if (owners.length === 1) return viewAsCustomer(owners[0]);
+    clReset(); state.viewAs = key; location.hash = `#/my/${encodeURIComponent(key)}/overview`;
+  }
+
+  // ---------- the website picker (search, then click to add) ----------
+  function sitePickerHtml(id) {
+    return `<div class="cu-pick" id="${id}"><div class="cu-chosen"></div>
+      <input type="search" class="cu-q" placeholder="Search websites by name, domain or site ID…" autocomplete="off" aria-label="Add a website">
+      <div class="cu-res" hidden></div></div>`;
+  }
+  function bindSitePicker(root, chosen, onChange) {
+    const box = $('.cu-chosen', root); const q = $('.cu-q', root); const res = $('.cu-res', root);
+    const draw = () => {
+      box.innerHTML = chosen.length ? chosen.map((k) => { const i = siteInfo(k); return `<span class="cu-chip"><b>${esc(i.name)}</b>${i.domain ? `<span class="faint"> · ${esc(i.domain)}</span>` : ''}<button type="button" data-cux="${esc(k)}" aria-label="Remove ${esc(i.name)}">✕</button></span>`; }).join('')
+        : '<div class="small faint">No websites yet. Search below to add one.</div>';
+      $$('[data-cux]', box).forEach((b) => (b.onclick = () => { chosen.splice(chosen.indexOf(b.dataset.cux), 1); draw(); onChange && onChange(); }));
+    };
+    const search = () => {
+      const t = q.value.trim().toLowerCase();
+      if (!t) { res.hidden = true; return; }
+      const hits = allWebsites().filter((w) => !chosen.some((k) => sameId(siteInfo(k).dudaId, w.dudaId)) && [w.name, w.domain, w.dudaId].some((v) => String(v || '').toLowerCase().includes(t))).slice(0, 8);
+      res.hidden = false;
+      res.innerHTML = hits.length ? hits.map((w) => `<button type="button" class="cu-hit" data-cuadd="${esc(w.key)}"><b>${esc(w.name || w.dudaId)}</b><span class="small faint">${esc(w.domain || '')}${w.draft ? ' · in build' : ''}${w.recId ? ' · on Audits' : ''} · ${esc(w.dudaId)}</span></button>`).join('')
+        : `<div class="small faint" style="padding:8px">${(live.data && live.data.sites) ? 'No website matches.' : 'Loading the website list…'}</div>`;
+      $$('[data-cuadd]', res).forEach((b) => (b.onclick = () => { chosen.push(b.dataset.cuadd); q.value = ''; res.hidden = true; draw(); onChange && onChange(); q.focus(); }));
+    };
+    q.oninput = search; q.onfocus = search;
+    if (!live.data && !live.loading) loadLive(false).then(search).catch(() => {});
+    draw();
+  }
+  /** After an account is made (or a password reset): the temporary password, once, ready to pass on. */
+  function tempBox(c, r) {
+    const url = (r.url || location.origin).replace(/\/+$/, '');
+    const msg = `Hi ${String(c.name || '').split(' ')[0] || 'there'}, your website portal is ready.\n\nSign in at ${url}\nEmail: ${c.email}\nTemporary password: ${r.tempPassword}\n\nYou'll be asked to choose your own password the first time you sign in. The temporary one works for 7 days.`;
+    return `<div class="cu-temp"><div class="cu-temp-h">Temporary password for ${esc(c.name || c.email)}</div>
+      <div class="cu-temp-p"><code>${esc(r.tempPassword)}</code><button type="button" class="btn sm" data-copytxt="${esc(r.tempPassword)}">Copy</button></div>
+      <div class="small muted">Shown only now. It works for 7 days, and the first sign-in asks them to choose their own password.</div>
+      <label class="small"><b>Message to send them</b></label><textarea rows="7" readonly class="cu-msg">${esc(msg)}</textarea>
+      <button type="button" class="btn sm" data-copytxt="${esc(msg)}">Copy message</button></div>`;
+  }
+  const bindCopy = (root) => $$('[data-copytxt]', root).forEach((b) => (b.onclick = () => { try { navigator.clipboard.writeText(b.dataset.copytxt); toast('Copied'); } catch (e) { toast('Select it and copy'); } }));
+
+  /** New customer: name, email, websites, and a temporary password (or an email to set their own). */
+  function openNewCustomer(preset, after) {
+    preset = preset || {};
+    const chosen = (preset.sites || []).slice();
+    modal(`<header><h2>New customer</h2><button class="btn ghost" data-close aria-label="Close">✕</button></header>
+      <div class="body cu-form" id="ncBody">
+        <p class="small muted">A customer is one person with their own sign-in. Give them every website they own; they see all of them in their portal and switch between them.</p>
+        <div class="cu-grid"><label>Name<input id="ncName" maxlength="60" value="${esc(preset.name || '')}" placeholder="Bob Owner"></label>
+          <label>Email<input id="ncEmail" type="email" maxlength="160" placeholder="bob@theircompany.com"></label>
+          <label>Company<input id="ncCo" maxlength="80" value="${esc(preset.company || '')}" placeholder="Buff &amp; Beyond"></label>
+          <label>Phone <span class="faint">(optional)</span><input id="ncPhone" maxlength="40"></label></div>
+        <div class="cu-k">Websites</div>${sitePickerHtml('ncSites')}
+        <div class="cu-k">Their password</div>
+        <label class="cu-radio"><input type="radio" name="ncHow" value="temp" checked> <span><b>Create a temporary password</b> <span class="small muted">— you pass it on; they choose their own at first sign-in</span></span></label>
+        <label class="cu-radio"><input type="radio" name="ncHow" value="email"> <span><b>Email them a link</b> <span class="small muted">— they set their own with Forgot password</span></span></label>
+        <div class="small" id="ncOut"></div>
+      </div>
+      <footer><span class="spacer"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="ncSave">Create customer</button></footer>`, { wide: true });
+    bindSitePicker($('#ncSites'), chosen);
+    setTimeout(() => { const f = $('#ncName'); if (f) f.focus(); }, 50);
+    $('#ncSave').onclick = async (e) => {
+      const name = $('#ncName').value.trim(); const email = $('#ncEmail').value.trim();
+      if (!name) { $('#ncOut').textContent = 'Please enter their name.'; return; }
+      if (!email) { $('#ncOut').textContent = 'Please enter their email.'; return; }
+      e.target.disabled = true; $('#ncOut').textContent = 'Creating…';
+      const temp = $('input[name=ncHow]:checked').value === 'temp';
+      try {
+        const r = await post('/api/users', { op: 'clientSave', mustBeNew: true, email, name, company: $('#ncCo').value.trim(), phone: $('#ncPhone').value.trim(), sites: chosen, temp });
+        const c = { email: email.toLowerCase(), name, company: $('#ncCo').value.trim(), sites: chosen.slice(), tag: 'customer', temp };
+        await loadCustomers(true).catch(() => {});
+        $('#ncBody').innerHTML = `<div class="cu-done">✓ <b>${esc(name)}</b> is set up with ${chosen.length} website${chosen.length === 1 ? '' : 's'}.</div>
+          ${r.tempPassword ? tempBox(c, r) : `<p class="small muted">We emailed ${esc(email)} a link to set their own password.</p>`}`;
+        bindCopy($('#ncBody'));
+        $('footer', $('#ncBody').closest('.modal')).innerHTML = `<span class="spacer"></span>${chosen.length && can('client.viewas') ? '<button class="btn" id="ncView">👁 View as this customer</button>' : ''}<button class="btn primary" data-close>Done</button>`;
+        $$('[data-close]', $('#ncBody').closest('.modal')).forEach((b) => (b.onclick = () => closeModal()));
+        if ($('#ncView')) $('#ncView').onclick = () => { closeModal(); viewAsCustomer(c); };
+        if (after) after(c);
+      } catch (x) {
+        e.target.disabled = false;
+        if (x.data && x.data.exists) {
+          $('#ncOut').innerHTML = `${esc(x.message)} <button class="linkbtn" id="ncAddTo">Add ${chosen.length === 1 ? 'this website' : 'these websites'} to their account</button>`;
+          $('#ncAddTo').onclick = async () => {
+            try {
+              const list = await loadCustomers(true); const ex = list.find((c2) => c2.email === email.toLowerCase());
+              await post('/api/users', { op: 'clientSave', email: ex.email, name: ex.name, sites: [...new Set(ex.sites.concat(chosen))] });
+              await loadCustomers(true); closeModal(); toast(`Added to ${ex.name}`); if (after) after(ex);
+            } catch (y) { toast(y.message); }
+          };
+        } else $('#ncOut').textContent = x.message;
+      }
+    };
+  }
+
+  /** One customer: details, websites, password, and removing the account. Admins: their test websites. */
+  function openCustomer(c0, after) {
+    const c = Object.assign({}, c0); const chosen = (c.sites || []).slice(); const adm = c.tag === 'admin';
+    const manage = can('client.manage');
+    modal(`<header><h2>${esc(c.name)}</h2><span class="spacer"></span>${custStatus(c)}<button class="btn ghost" data-close aria-label="Close">✕</button></header>
+      <div class="body cu-form" id="ocBody">
+        ${adm ? '<p class="small muted">This is a <b>test profile</b> for a member of the team: choose websites, then <b>View as this customer</b> to see the portal exactly as a customer with these websites would. It changes nothing about their own sign-in.</p>' : ''}
+        <div class="cu-grid"><label>Name<input id="ocName" maxlength="60" value="${esc(c.name)}"${adm || !manage ? ' disabled' : ''}></label>
+          <label>Email<input value="${esc(c.email)}" disabled></label>
+          ${adm ? '' : `<label>Company<input id="ocCo" maxlength="80" value="${esc(c.company || '')}"${manage ? '' : ' disabled'}></label>
+          <label>Phone<input id="ocPhone" maxlength="40" value="${esc(c.phone || '')}"${manage ? '' : ' disabled'}></label>`}</div>
+        <div class="cu-k">Websites</div>${manage ? sitePickerHtml('ocSites') : `<div>${chosen.map((k) => `<span class="cu-chip"><b>${esc(siteInfo(k).name)}</b></span>`).join('') || '<span class="faint small">None</span>'}</div>`}
+        ${!adm && manage ? `<div class="cu-k">Password</div><div class="row-gap"><button class="btn sm" id="ocTemp" type="button">New temporary password</button><span class="small muted">${c.temp ? 'They have not chosen their own password yet.' : 'For a customer who forgot theirs. Their current password stops working.'}</span></div><div id="ocTempBox"></div>` : ''}
+        <div class="small" id="ocOut"></div>
+      </div>
+      <footer>${!adm && manage ? '<button class="btn ghost danger" id="ocRemove">Remove customer</button>' : ''}<span class="spacer"></span>
+        ${can('client.viewas') ? '<button class="btn" id="ocView">👁 View as this customer</button>' : ''}${manage ? '<button class="btn primary" id="ocSave">Save</button>' : '<button class="btn" data-close>Close</button>'}</footer>`, { wide: true });
+    if (manage) bindSitePicker($('#ocSites'), chosen);
+    const save = async () => {
+      if (adm) await post('/api/users', { op: 'testSites', email: c.email, sites: chosen });
+      else await post('/api/users', { op: 'clientSave', mustBeNew: false, email: c.email, name: $('#ocName').value.trim(), company: $('#ocCo').value.trim(), phone: $('#ocPhone').value.trim(), sites: chosen });
+      await loadCustomers(true);
+    };
+    if ($('#ocSave')) $('#ocSave').onclick = async (e) => { e.target.disabled = true; try { await save(); closeModal(); toast('Saved'); if (after) after(); } catch (x) { e.target.disabled = false; $('#ocOut').textContent = x.message; } };
+    if ($('#ocView')) $('#ocView').onclick = async () => {
+      try { if (manage) await save(); } catch (x) { $('#ocOut').textContent = x.message; return; }
+      closeModal(); viewAsCustomer(Object.assign({}, c, { sites: chosen }));
+    };
+    if ($('#ocTemp')) $('#ocTemp').onclick = async () => {
+      if (!confirm(`Give ${c.name} a new temporary password? The one they use now stops working.`)) return;
+      try { const r = await post('/api/users', { op: 'clientTemp', email: c.email }); $('#ocTempBox').innerHTML = tempBox(c, r); bindCopy($('#ocTempBox')); loadCustomers(true).catch(() => {}); }
+      catch (x) { $('#ocOut').textContent = x.message; }
+    };
+    if ($('#ocRemove')) $('#ocRemove').onclick = async () => {
+      if (!confirm(`Remove ${c.name}'s customer account? They can no longer sign in. Their websites are not touched.`)) return;
+      try { await post('/api/users', { op: 'clientRemove', email: c.email }); await loadCustomers(true); closeModal(); toast('Customer removed'); if (after) after(); } catch (x) { $('#ocOut').textContent = x.message; }
+    };
+  }
+  /** On a website: pick an existing customer to give it to. */
+  async function openLinkCustomer(key, dudaId, name, after) {
+    await loadCustomers().catch(() => {});
+    const list = (state.clients || []).filter((c) => c.tag !== 'admin' && !custHas(c, dudaId, key !== dudaId ? key : ''));
+    modal(`<header><h2>Add ${esc(name)} to a customer</h2><button class="btn ghost" data-close aria-label="Close">✕</button></header>
+      <div class="body cu-form"><input type="search" id="lcQ" placeholder="Search customers by name, email or company…" autocomplete="off">
+        <div id="lcList" class="cu-list"></div></div>`, { wide: false });
+    const draw = () => {
+      const t = $('#lcQ').value.trim().toLowerCase();
+      const hits = list.filter((c) => !t || [c.name, c.email, c.company].some((v) => String(v || '').toLowerCase().includes(t))).slice(0, 30);
+      $('#lcList').innerHTML = hits.length ? hits.map((c) => `<button type="button" class="cu-hit" data-lc="${esc(c.email)}"><b>${esc(c.name)}</b><span class="small faint">${esc(c.email)}${c.company ? ' · ' + esc(c.company) : ''} · ${c.sites.length} website${c.sites.length === 1 ? '' : 's'}</span></button>`).join('')
+        : '<div class="small faint" style="padding:8px">No customer matches. Close this and use <b>New customer</b> instead.</div>';
+      $$('[data-lc]').forEach((b) => (b.onclick = async () => {
+        const c = list.find((x) => x.email === b.dataset.lc);
+        try { await post('/api/users', { op: 'clientSave', email: c.email, name: c.name, sites: c.sites.concat([key]) }); await loadCustomers(true); closeModal(); toast(`${name} added to ${c.name}`); if (after) after(); }
+        catch (x) { toast(x.message); }
+      }));
+    };
+    $('#lcQ').oninput = draw; draw(); setTimeout(() => { const f = $('#lcQ'); if (f) f.focus(); }, 50);
+  }
+  /** The "Customer" line on a website's profile. */
+  function custLine(key, dudaId, name) {
+    if (!canCust()) return '';
+    if (!state.clients) return '<span class="faint small">Loading…</span>';
+    const owners = customersOf(dudaId, key !== dudaId ? key : '');
+    const manage = can('client.manage');
+    return (owners.length ? owners.map((c) => `<button type="button" class="pill cu-own" data-cuopen="${esc(c.email)}">${esc(c.name)}<span class="faint small"> · ${esc(c.email)}</span>${c.temp ? ' <span class="badge sev-warning">not signed in yet</span>' : ''}</button>`).join('') : '<span class="faint">No customer yet</span>')
+      + (manage ? ` <button class="linkbtn" data-cunew="1">+ New customer</button> <button class="linkbtn" data-culink="1">Add to an existing customer</button>` : '');
+  }
+  function bindCustLine(root, key, dudaId, name, again) {
+    $$('[data-cuopen]', root).forEach((b) => (b.onclick = () => openCustomer((state.clients || []).find((c) => c.email === b.dataset.cuopen), again)));
+    $$('[data-cunew]', root).forEach((b) => (b.onclick = () => openNewCustomer({ sites: [key], company: name }, again)));
+    $$('[data-culink]', root).forEach((b) => (b.onclick = () => openLinkCustomer(key, dudaId, name, again)));
+  }
+
+  // ---------- the Customers page ----------
+  const cuPage = { q: '', f: 'all' };
+  async function renderCustomers() {
+    if (!canCust()) { $('#view').innerHTML = '<div class="empty">Your role does not include customers.</div>'; return; }
+    if (!state.clients) {
+      $('#view').innerHTML = '<div class="page-head"><div><h1>Customers</h1></div></div><div class="empty">Loading…</div>';
+      try { await loadCustomers(); } catch (e) { $('#view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+      if (route().name !== 'customers') return;
+    }
+    if (!live.data && !live.loading) loadLive(false).then(() => { if (route().name === 'customers') renderCustomers(); }).catch(() => {});
+    const all = state.clients || []; const manage = can('client.manage');
+    const custs = all.filter((c) => c.tag !== 'admin'); const adm = all.filter((c) => c.tag === 'admin');
+    const F = [['all', 'Customers', custs.length], ['waiting', 'Waiting for first sign-in', custs.filter((c) => c.temp).length], ['none', 'No websites', custs.filter((c) => !c.sites.length).length], ['multi', 'More than one website', custs.filter((c) => c.sites.length > 1).length], ['admin', 'Admin test profiles', adm.length]];
+    const t = cuPage.q.trim().toLowerCase();
+    let list = cuPage.f === 'admin' ? adm : custs;
+    if (cuPage.f === 'waiting') list = list.filter((c) => c.temp);
+    if (cuPage.f === 'none') list = list.filter((c) => !c.sites.length);
+    if (cuPage.f === 'multi') list = list.filter((c) => c.sites.length > 1);
+    if (t) list = list.filter((c) => [c.name, c.email, c.company, ...c.sites.map((k) => { const i = siteInfo(k); return i.name + ' ' + i.domain; })].some((v) => String(v || '').toLowerCase().includes(t)));
+    $('#view').innerHTML = `<div class="page-head"><div><h1>Customers</h1><div class="muted">One profile per customer, with every website they own. They sign in to see all of them.</div></div>
+        ${manage ? '<button class="btn primary" id="cuNew">+ New customer</button>' : ''}</div>
+      <div class="panel"><div class="toolbar"><input type="search" id="cuQ" placeholder="Search by name, email, company or website…" value="${esc(cuPage.q)}" style="flex:1;min-width:220px"></div>
+        <div class="chips cu-chips">${F.map(([k, l, n]) => `<button class="chipbtn ${cuPage.f === k ? 'active' : ''}" data-cuf="${k}">${l} <span class="tcount">${n}</span></button>`).join('')}</div>
+        ${list.length ? `<div class="cu-cards">${list.map((c) => `<div class="cu-card">
+            <div class="cu-av" style="background:${esc(c.tag === 'admin' ? 'var(--hold)' : 'var(--accent)')}">${esc(clInit(c.name))}</div>
+            <div class="cu-main"><div class="cu-name"><b>${esc(c.name)}</b> ${custStatus(c)}</div>
+              <div class="small muted">${esc(c.email)}${c.company ? ' · ' + esc(c.company) : ''}${c.phone ? ' · ' + esc(c.phone) : ''}</div>
+              <div class="cu-sites">${c.sites.length ? c.sites.map((k) => { const i = siteInfo(k); return `<a class="cu-chip" href="${i.href}"><b>${esc(i.name)}</b>${i.domain ? `<span class="faint"> · ${esc(i.domain)}</span>` : ''}</a>`; }).join('') : '<span class="small faint">No websites yet</span>'}</div></div>
+            <div class="cu-acts">${can('client.viewas') && c.sites.length ? `<button class="btn sm" data-cuview="${esc(c.email)}">👁 View as customer</button>` : ''}<button class="btn sm ghost" data-cuopen="${esc(c.email)}">${manage ? 'Manage' : 'Details'}</button></div>
+          </div>`).join('')}</div>`
+        : `<div class="empty">${cuPage.f === 'admin' ? 'No admins yet.' : all.length ? 'Nobody matches.' : 'No customers yet. Use <b>+ New customer</b>, or open a website\'s profile and add one there.'}</div>`}
+      </div>`;
+    const again = () => { if (route().name === 'customers') renderCustomers(); };
+    if ($('#cuNew')) $('#cuNew').onclick = () => openNewCustomer({}, again);
+    const qi = $('#cuQ'); qi.oninput = (e) => { cuPage.q = e.target.value; const pos = e.target.selectionStart; renderCustomers(); const n = $('#cuQ'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+    $$('[data-cuf]').forEach((b) => (b.onclick = () => { cuPage.f = b.dataset.cuf; renderCustomers(); }));
+    $$('[data-cuview]').forEach((b) => (b.onclick = () => viewAsCustomer(all.find((c) => c.email === b.dataset.cuview))));
+    $$('[data-cuopen]').forEach((b) => (b.onclick = () => openCustomer(all.find((c) => c.email === b.dataset.cuopen), again)));
   }
 
   /**
@@ -3801,7 +4056,7 @@
   const clIc = (k, s) => navIcon(k, s || 18);
   const clInit = (s) => String(s || '').split(/\s+/).filter((w) => /\w/.test(w)).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '•';
   /** Everything the client pages keep while open; emptied when the preview ends or they sign out. */
-  function clReset() { state.cl = { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {}, ov: {}, an: {}, dom: {}, hl: {}, th: {}, acct: null, anDays: 30, anTab: 'duda', hTab: 'mobile' }; }
+  function clReset() { state.viewCust = null; state.cl = { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {}, ov: {}, an: {}, dom: {}, hl: {}, th: {}, acct: null, anDays: 30, anTab: 'duda', hTab: 'mobile' }; }
   const clCache = () => { ['ov', 'an', 'dom', 'hl', 'th'].forEach((k) => { if (!state.cl[k]) state.cl[k] = {}; }); if (!state.cl.anDays) state.cl.anDays = 30; if (!state.cl.anTab) state.cl.anTab = 'duda'; if (!state.cl.hTab) state.cl.hTab = 'mobile'; };
   /** Draw this page again, but only if the client is still looking at it (answers arrive later). */
   function clAgain(site, section) {
@@ -3838,13 +4093,19 @@
     // An older address (from an email or a bookmark) is shown as the new one, without another page load.
     if (r.alias) { try { history.replaceState(null, '', clHref(current, r.section, r.sub)); } catch (e) { /* the old address still works */ } }
     const who = state.cl.who || {};
-    const brand = who.company || current.name || 'Your website';
+    const vc = state.viewCust;
+    const brand = (vc && (vc.company || vc.name)) || who.company || current.name || 'Your website';
+    if (state.viewAs && !vc && canCust() && !state.clients && !state.cl.cuAsked) { state.cl.cuAsked = true; loadCustomers().then(() => { if (clientMode()) renderClient(); }).catch(() => {}); }
+    const owners = state.viewAs && !vc && state.clients ? customersOf(current.siteId, current.id) : [];
     const sec = r.section === 'mark' ? 'requests' : r.section;
     const q = (state.cl.tkq || {})[current.id] || {};
     const badge = (k) => (k === 'requests' ? `<span data-clbadge="requests" class="${q.unread ? 'cp-badge' : ''}">${q.unread || ''}</span>` : '');
     const link = (x, cls) => `<a href="${clHref(current, x.k)}" class="${cls}${sec === x.k ? ' on' : ''}"${sec === x.k ? ' aria-current="page"' : ''}>${clIc(x.ic, cls === 'cp-tab' ? 22 : 18)}<span>${esc(cls === 'cp-tab' ? (x.short || x.label) : x.label)}</span>${badge(x.k)}</a>`;
     const tabs = CL_SECTIONS.filter((x) => x.tab);
-    $('#view').innerHTML = `${state.viewAs ? `<div class="cl-preview">👁 <b>Viewing as the client</b> — this is exactly what they see on <b>${esc(current.name)}</b>.
+    $('#view').innerHTML = `${state.viewAs ? `<div class="cl-preview">👁 ${vc ? `<b>Viewing as ${esc(vc.name)}</b>${vc.tag === 'admin' ? ' (test profile)' : ''} — exactly what they see, ${vc.sites.length} website${vc.sites.length === 1 ? '' : 's'}.`
+          : `<b>Viewing as the client</b> — this is exactly what they see on <b>${esc(current.name)}</b>.
+          ${owners.length ? `<span class="cl-pv-who">Customer: ${owners.map((c) => `<button class="linkbtn" data-pvc="${esc(c.email)}">${esc(c.name)}</button>`).join(', ')}</span>`
+            : can('client.manage') && state.clients ? `<span class="cl-pv-who">No customer account yet.</span> <button class="btn sm primary" id="clMake">+ Create customer account</button>` : ''}`}
         <button class="btn sm" id="clExit">Back to the team view</button></div>` : ''}
       <div class="cp cp-on-${sec}">
         <aside class="cp-side">
@@ -3868,7 +4129,12 @@
     if ($('#cpOut')) $('#cpOut').onclick = clSignOut;
     if ($('#cpMore')) $('#cpMore').onclick = () => clMoreSheet(current);
     if ($('#cpSite')) $('#cpSite').onchange = (e) => clGo(e.target.value, sec === 'edit' || sec === 'account' ? sec : 'overview');
-    if ($('#clExit')) $('#clExit').onclick = () => { closeMarker(true); state.viewAs = ''; clReset(); document.body.classList.remove('client-mode'); location.hash = '#/site/' + encodeURIComponent(current.id); };
+    if ($('#clExit')) $('#clExit').onclick = () => {
+      const back = vc ? '#/customers' : state.sites.some((x) => x.id === current.id) ? '#/site/' + encodeURIComponent(current.id) + '/profile' : '#/dr/' + encodeURIComponent(current.siteId || current.id);
+      closeMarker(true); state.viewAs = ''; clReset(); document.body.classList.remove('client-mode'); location.hash = back;
+    };
+    $$('[data-pvc]').forEach((b) => (b.onclick = () => viewAsCustomer((state.clients || []).find((c) => c.email === b.dataset.pvc))));
+    if ($('#clMake')) $('#clMake').onclick = () => openNewCustomer({ sites: [current.id], company: current.name }, () => { if (clientMode()) renderClient(); });
     if (!state.cl.tkq || !state.cl.tkq[current.id]) clTkQuota(current);
     if (r.section === 'mark') {
       clSection(current, 'requests');
@@ -4550,6 +4816,9 @@
     { route: 'sites', icon: '📋', label: 'Audits', words: 'audits websites list scan home', href: '#/', help: 'audits' },
     { route: 'projects', icon: '🏗', label: 'Projects', words: 'projects build phases dev qa cleanup client handover', href: '#/projects', perm: 'project.view', help: 'projects' },
     { route: 'live', icon: '🌐', label: 'DR Websites', words: 'dr websites live dr sites published websites duda list domains', href: '#/live', perm: 'live.view', help: 'live' },
+    { route: 'customers', icon: '👤', label: 'Customers', words: 'customers customer clients client profile profiles account accounts portal sign in temporary password websites owner owners test profile', href: '#/customers', perm: 'client.viewas', help: 'customers' },
+    { icon: '🔑', label: 'Customers waiting for their first sign-in', words: 'customer temporary password not signed in waiting first sign in', filter: true, act: () => { cuPage.f = 'waiting'; cuPage.q = ''; location.hash = '#/customers'; }, perm: 'client.viewas', help: 'customers' },
+    { icon: '🌐', label: 'Websites without a customer account', words: 'websites no customer no client no profile without account', filter: true, act: () => { live.tab = 'published'; live.q = ''; live.dom = ''; live.audit = ''; live.cust = 'no'; live.page = 0; location.hash = '#/live'; }, perm: 'live.view', help: 'customers' },
     { route: 'live', icon: '🏆', label: 'Leaderboards', words: 'leaderboards ranking top most enquiries comments tickets updated fastest launches winners best', href: '#/live/ranks', perm: 'live.view', help: 'live' },
     { route: 'live', icon: '📈', label: 'Trends', words: 'trends launched unpublished came back republished days to launch growth chart', href: '#/live/trends', perm: 'live.view', help: 'live' },
     { route: 'live', icon: '🌐', label: 'Domain monitoring', words: 'domain monitoring expiring expired redirected down unpublished certificate ssl', href: '#/live/trends', perm: 'live.view', help: 'live' },
@@ -6468,6 +6737,10 @@
     if (live.audit === 'yes') list = list.filter((x) => isAudited(x.id));
     if (live.audit === 'issues') list = list.filter((x) => { const a = auditFor(x.id); return a && a.counts && (a.counts.critical || a.counts.warning); });
     if (live.audit === 'leads') list = list.filter((x) => (state.leadSums[String(x.id)] || {}).total);
+    if (canCust() && !state.clients && !live.cuAsked) { live.cuAsked = true; loadCustomers().then(() => { if (route().name === 'live') renderLive(); }).catch(() => {}); }
+    const hasCust = (x) => customersOf(x.id, (auditFor(x.id) || {}).id).length > 0;
+    if (live.cust === 'yes') list = list.filter(hasCust);
+    if (live.cust === 'no') list = list.filter((x) => !hasCust(x));
     if (live.dom === 'problem') list = list.filter((x) => domProblem(x.dom));
     if (live.dom === 'ok') list = list.filter((x) => x.dom && x.dom.status === 'ok');
     if (live.dom === 'none') list = list.filter((x) => !x.dom);
@@ -6497,6 +6770,7 @@
         <input type="search" id="liveQ" placeholder="Search by name, site ID, domain or label…" value="${esc(live.q)}" style="flex:1;min-width:220px">
         <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option><option value="leads" ${live.audit === 'leads' ? 'selected' : ''}>With enquiries (${all.filter((x) => (state.leadSums[String(x.id)] || {}).total).length})</option></select>
         <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="expiring" ${live.dom === 'expiring' ? 'selected' : ''}>Domain expiring or expired (${all.filter((x) => domExpiring(x.dom)).length})</option><option value="cert" ${live.dom === 'cert' ? 'selected' : ''}>Certificate ending (info only, ${all.filter((x) => domCertFyi(x.dom)).length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
+        ${canCust() ? `<select id="liveCust" aria-label="Customer account"><option value="">Any customer</option><option value="yes" ${live.cust === 'yes' ? 'selected' : ''}>With a customer account (${state.clients ? all.filter(hasCust).length : '…'})</option><option value="no" ${live.cust === 'no' ? 'selected' : ''}>No customer account (${state.clients ? all.filter((x) => !hasCust(x)).length : '…'})</option></select>` : ''}
         <select id="liveSort"><option value="published">Recently published first</option><option value="domain" ${live.sort === 'domain' ? 'selected' : ''}>Domain problems first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
       </div>
       ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}
@@ -6506,7 +6780,7 @@
       ${!d ? `<div class="empty">${live.loading ? 'Loading published sites from Duda…' : 'No data yet.'}</div>` : !list.length ? '<div class="empty">No sites match.</div>' : `
       <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Enquiries</th><th>Comments</th>${can('live.audit') ? '<th>Audit</th>' : ''}<th></th></tr></thead><tbody>
       ${shown.map((x) => { const a = auditFor(x.id); const dom = x.domain || x.defaultDomain; return `<tr>
-        <td><b>${x.name ? esc(x.name) : x.nameChecked ? `<span class="muted">${esc(dom || x.id)}</span>` : '<span class="faint">Loading name…</span>'}</b>${dom ? `<div class="small"><a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a></div>` : ''}${(x.labels || []).length ? `<div class="small faint">${x.labels.map(esc).join(' · ')}</div>` : ''}</td>
+        <td><b>${x.name ? esc(x.name) : x.nameChecked ? `<span class="muted">${esc(dom || x.id)}</span>` : '<span class="faint">Loading name…</span>'}</b>${dom ? `<div class="small"><a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a></div>` : ''}${(x.labels || []).length ? `<div class="small faint">${x.labels.map(esc).join(' · ')}</div>` : ''}${canCust() && state.clients ? (() => { const o = customersOf(x.id, (a || {}).id); return o.length ? `<div class="small cu-row-own">👤 ${o.map((c) => esc(c.name)).join(', ')}</div>` : ''; })() : ''}</td>
         <td class="mono small">${esc(x.id)} <button class="linkbtn" data-copy="${esc(x.id)}" title="Copy site ID">Copy</button></td>
         <td class="dom-cell">${domBadge(x.dom)}</td>
         <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
@@ -6523,6 +6797,7 @@
     $('#liveAudit').onchange = (e) => { live.audit = e.target.value; live.page = 0; renderLive(); };
     $('#liveSort').onchange = (e) => { live.sort = e.target.value; renderLive(); };
     $('#liveDom').onchange = (e) => { live.dom = e.target.value; live.page = 0; renderLive(); };
+    if ($('#liveCust')) $('#liveCust').onchange = (e) => { live.cust = e.target.value; live.page = 0; renderLive(); };
     const cd = $('#liveCheck'); if (cd) cd.onclick = () => checkDomains(true);
     if ($('#liveRefresh')) $('#liveRefresh').onclick = () => loadLive(true);
     bindLiveTabs();
@@ -6684,6 +6959,7 @@
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'requests') return { name: 'requests', site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', id: parts[1] && parts[1] !== 'site' ? decodeURIComponent(parts[1]) : '', page: parts[2] === 'page' };
     if (parts[0] === 'projects') return { name: 'projects' };
+    if (parts[0] === 'customers') return { name: 'customers' };
     if (parts[0] === 'project' && parts[1]) return { name: 'project', id: decodeURIComponent(parts[1]) };
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : parts[1] === 'trends' ? 'trends' : parts[1] === 'ranks' ? 'ranks' : 'published',
       site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', problems: parts[1] === 'problems' };
@@ -6736,6 +7012,7 @@
     if (r.name === 'health') return state.superAdmin ? renderHealth() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
     if (r.name === 'analysis') return can('leads.view') ? renderAnalysis(r.tab) : ($('#view').innerHTML = '<div class="empty">Your role does not include form submissions.</div>');
     if (r.name === 'activity') return renderGlobalActivity();
+    if (r.name === 'customers') return renderCustomers();
     if (r.name === 'removed') return renderRemoved();
     // Arriving on the page is an explicit "show me what's there now", so never trust a list that
     // was loaded at sign-in. Re-renders (filters, searching) reuse what is already loaded.
@@ -7390,7 +7667,7 @@
     $('#sAssign').onchange = async (e) => { await changeSite(s, { assignee: e.target.value }); await loadSite(s.id); renderSite(); };
     $('#sStatus').onchange = async (e) => { await changeSite(s, { status: e.target.value }); await loadSite(s.id); renderSite(); };
     $('#sRescan').onclick = () => requestScan([s.id]);
-    if ($('#sViewAs')) $('#sViewAs').onclick = () => { clReset(); state.viewAs = s.id; location.hash = `#/my/${encodeURIComponent(s.id)}/overview`; };
+    if ($('#sViewAs')) $('#sViewAs').onclick = () => viewWebsiteAsClient(s.id, s.siteId);
     loadPubInfo(s);
     $('#sCsv').onclick = () => exportCsv(s);
     $('#sSum').onclick = () => openSummary(s);

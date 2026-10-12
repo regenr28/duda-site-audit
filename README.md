@@ -22,6 +22,14 @@ The light bulb glows for anyone whose latest seen note is older than the newest 
 - **Phone (under 900px):** the menu becomes a drawer opened by the burger or **More**; the bottom bar shows Home, Audits and up to two more by role. Clients get their own bottom bar (under 640px). Modals open as bottom sheets.
 - **Tests:** `tests/tk/e2e_nav.py` (menu, Home, + New, themes, phone) and `tests/tk/sweep.py` (every page on a phone, light and dark, no sideways scroll).
 
+## Customers (update 115)
+
+- **One customer, many websites.** A customer is a `role: 'client'` user whose `sites` list holds every website they own: the audit record id when the website is on Audits, otherwise its Duda site id (the client endpoints accept both). Managed in `POST /api/users` with `op: 'clients' | 'clientSave' | 'clientTemp' | 'clientRemove' | 'testSites'`, which sit **before** the admins-only gate and check `client.manage` (or `client.viewas` to list) themselves.
+- **Temporary passwords:** `clientSave` for a new customer (unless `temp:false`) and `clientTemp` set `mustChange` + `tempExpires` (7 days) and return the password once. The first sign-in goes to the existing "Choose your own password" screen.
+- **Admin test profiles:** admins carry `testSites` (never `sites`), listed on Customers as "Admin · test profile", used only for previewing.
+- **Previewing a customer:** `state.viewCust` in `public/app.js`; `x-view-site` may hold a comma-separated list, read by `clientSites()` (`api/_lib.js`) and `who()` (`api/_tickets.js`).
+- **Front end:** search "CUSTOMERS: one person" in `public/app.js` (`renderCustomers`, `openNewCustomer`, `openCustomer`, `openLinkCustomer`, `custLine`, `viewAsCustomer`); styles are the `.cu-*` block at the end of `styles.css`. DR Websites has `live.cust` ('yes' / 'no').
+
 ## Client portal (update 114)
 
 - **The client's app** is `renderClient()` and the `CL_SECTIONS` list in `public/app.js` (search "THE CLIENT VIEW"): Overview, Analytics, Website health, Enquiries (Summary / Form submissions / People), Requests, Comments, Edit website, Account. Old addresses (`dashboard`, `leads`, `contacts`, `access`) are rewritten to the new ones (`CL_ALIAS`), so links in emails keep working. Styles are the `.cp-*` block at the end of `styles.css`; on phones (under 760px) the menu becomes a bottom bar plus a **More** sheet.

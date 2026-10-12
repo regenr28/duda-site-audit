@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-12-customers', date: '2026-10-12', audience: 'all', tag: 'Clients',
+    title: 'Customers: one profile with all their websites, and temporary passwords',
+    what: 'A new <b>Customers</b> page lists every customer with all of their websites. Create a customer in seconds with a <b>temporary password</b> to pass on (they choose their own at first sign-in), add every website they own, and <b>👁 View as customer</b> to see their portal with all their websites. Websites show their customer on the Profile and on <b>DR Websites</b>, which can now filter <b>with</b> or <b>without a customer account</b>. Admins have a <b>test profile</b> to try the portal with any websites.',
+    where: ['<b>Websites → Customers</b> in the menu.', 'A website\'s <b>Profile</b> → <b>Customer</b>.', '<b>View as client</b> on a website with no customer: <b>+ Create customer account</b> at the top.'],
+    link: '#/help/customers', linkText: 'How customers work',
+  },
+  {
     id: '2026-10-12-portal', date: '2026-10-12', audience: 'all', tag: 'Clients',
     title: 'A new client portal: website picture, analytics, domain and DNS health, speed, and an account page',
     what: 'The client\'s page is now a proper portal, laid out like our app with clean line icons. <b>Overview</b> shows a picture of their website, whether it is live and working, when the domain renews, and their visits, enquiries, speed and open requests. <b>Analytics</b> shows their visitors (plus pages, organic vs ads and Google search ranking where Google is connected). <b>Website health</b> shows their domain, <b>DNS records</b> in plain words, past outages and Google speed scores. <b>Enquiries</b> brings form submissions and contacts together. <b>Account</b> lets them change their name, phone and password, switch emails off, pick light or dark, see their sign-ins and sign out. Tickets are called <b>Requests</b> on their side. On a phone they get a bottom bar.',

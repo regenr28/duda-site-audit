@@ -53,8 +53,8 @@ export async function who(req, res) {
   await applyPreview(req, u);
   if (viewingAsClient(req)) {
     if (!(await can(u, 'client.viewas'))) { res.status(403).json({ error: 'Your role does not include View as client.' }); return null; }
-    const s = String(req.headers['x-view-site'] || '').slice(0, 64);
-    return { me: u, client: true, preview: true, sites: s ? [s] : [] };
+    const sites = String(req.headers['x-view-site'] || '').split(',').map((x) => x.trim().slice(0, 64)).filter(Boolean).slice(0, 50);
+    return { me: u, client: true, preview: true, sites };
   }
   const view = (await can(u, 'ticket.view')) || (await can(u, 'ticket.manage'));
   return { me: u, client: false, team: true, view, viewas: await can(u, 'client.viewas'), manage: await can(u, 'ticket.manage'),

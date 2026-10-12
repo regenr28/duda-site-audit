@@ -431,7 +431,9 @@ export const viewingAsClient = (req) => String(req.headers['x-view-as-client'] |
  */
 export function clientSites(user, req) {
   if (user.role === 'client') return (user.sites || []).map(String);
-  if (viewingAsClient(req)) { const s = String(req.headers['x-view-site'] || '').slice(0, 64); return s ? [s] : []; }
+  // Previewing: one website, or a customer's whole list (comma-separated). Anyone allowed to preview
+  // may look at any website anyway, so a list grants nothing a single website would not.
+  if (viewingAsClient(req)) return String(req.headers['x-view-site'] || '').split(',').map((x) => x.trim().slice(0, 64)).filter(Boolean).slice(0, 50);
   return [];
 }
 

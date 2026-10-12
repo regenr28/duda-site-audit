@@ -507,6 +507,32 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'customers', group: 'Collaboration', title: 'Customers: one profile, many websites', audience: 'all',
+    html: `<p>A <b>customer</b> is one person with their own sign-in to the client portal. One customer can have <b>any number of websites</b>: they see all of them in their portal and switch between them with the <b>Website</b> picker at the top of their menu.</p>
+<h4>Where to find them</h4>
+<ul>
+<li><b>Websites → Customers</b> lists every customer with their websites. Search by name, email, company or website, and filter: <b>Waiting for first sign-in</b>, <b>No websites</b>, <b>More than one website</b>, and <b>Admin test profiles</b>.</li>
+<li>On any website's <b>Profile</b>, the <b>Customer</b> line shows who owns it, with <b>+ New customer</b> and <b>Add to an existing customer</b>.</li>
+<li>On <b>DR Websites</b>, the <b>Any customer</b> filter shows websites <b>with a customer account</b> or with <b>no customer account</b>, and each row names its customer.</li>
+</ul>
+<h4>Creating a customer</h4>
+<ol>
+<li>Click <b>+ New customer</b> (on Customers, on a website's Profile, or in the band at the top while you <b>View as client</b> a website that has no customer yet).</li>
+<li>Enter their name and email (company and phone are optional), and search to add every website they own.</li>
+<li>Leave <b>Create a temporary password</b> chosen. The app shows the password <b>once</b>, with a ready-made message to copy and send them.</li>
+<li>The first time they sign in, they must choose their own password. The temporary one works for 7 days.</li>
+</ol>
+<p>Prefer email? Choose <b>Email them a link</b> and they set their own password with Forgot password.</p>
+<p>A customer who already exists is never created twice: adding the same email offers to <b>add the website to their account</b> instead.</p>
+<h4>Managing a customer</h4>
+<p>Click <b>Manage</b>: change their name, company or phone, add or remove websites, give them a <b>new temporary password</b> (their current one stops working), or remove the account (their websites are not touched).</p>
+<h4>View as customer</h4>
+<p><b>👁 View as customer</b> opens the portal exactly as they see it, with all their websites. <b>👁 View as client</b> on a website does the same when the website has one customer; a website with no customer shows the portal for that website alone, with <b>+ Create customer account</b> in the band at the top.</p>
+<h4>Admin test profiles</h4>
+<p>Admins are listed under <b>Admin test profiles</b>. Give your own test profile a few websites and use <b>View as customer</b> to try the portal as a customer with several websites. It never changes how you sign in, and nothing is sent to a real customer.</p>
+<p>Only people whose role includes <b>Give clients access to a website</b> can create or change customers; <b>Profile: View as client</b> is enough to see the list and preview.</p>`,
+  },
+  {
     id: 'requests', group: 'Collaboration', title: 'Client tickets (questions and change requests)', audience: 'all',
     html: `<p>Instead of texting or emailing, clients <b>send a ticket</b> from their own page, on a phone or a computer. Tickets arrive on <b>Tickets</b> in the menu.</p>
 <p>Clients call these <b>requests</b>. The <b>Send a request</b> button is on their Overview and on <b>Requests</b>. On a phone it also floats above the bottom bar. It asks which kind, and explains each one right under it:</p>

@@ -88,6 +88,84 @@ export default async function handler(req, res) {
       const why = { not_configured: 'Slack messages are not set up yet. Please contact the app owner.', not_in_slack: `No Slack account uses ${me.email}. Register in the app with the same email you use in Slack.`, missing_scope: 'The Slack connection is missing a permission. Please contact the app owner.', invalid_auth: 'The Slack connection is not valid. Please contact the app owner.' };
       return res.status(200).json({ sent: r.sent, message: r.sent ? 'Sent! Check your Slack.' : why[r.reason] || `Slack said: ${r.reason}` });
     }
+    // ---------- customers (client accounts) ----------
+    // A customer is a person with their own sign-in and a list of websites (one customer, many websites).
+    // Only ever created here, by someone whose role includes "Give clients access", never by signing up,
+    // and a customer can never be given a team role by this path. Admins can also hold a list of
+    // websites as a TEST profile (testSites), used only to preview the client portal as a customer would.
+    if (b.op === 'clients') {
+      if (!(await can(me, 'client.manage')) && !(await can(me, 'client.viewas'))) return res.status(403).json({ error: 'Your role does not include customers.' });
+      const all = await listUsers();
+      const shape = (u, tag) => ({ email: u.email, name: u.name, company: u.company || '', phone: u.phone || '', tag,
+        sites: ((tag === 'admin' ? u.testSites : u.sites) || []).map(String), dudaAccount: u.dudaAccount || '',
+        status: u.status, createdAt: u.createdAt || '', lastSeen: u.lastSeen || '', signedIn: !!(u.passwordChangedAt || u.lastLogin),
+        temp: !!u.mustChange, tempExpires: u.mustChange ? u.tempExpires || '' : '' });
+      const list = all.filter((u) => u.role === 'client').map((u) => shape(u, 'customer'))
+        .concat(all.filter((u) => u.role === 'admin' && u.status === 'active').map((u) => shape(u, 'admin')));
+      return res.status(200).json({ clients: list.sort((a, c) => a.name.localeCompare(c.name)), manage: await can(me, 'client.manage') });
+    }
+    if (['clientSave', 'clientRemove', 'clientTemp', 'testSites'].includes(b.op) && await denyUnless(res, me, 'client.manage', 'Your role does not include managing customers.')) return;
+    const cleanSites = (v) => [...new Set([].concat(v || []).map((x) => String(x).trim().slice(0, 64)).filter((x) => /^[\w-]{1,64}$/.test(x)))].slice(0, 50);
+    const newTemp = (u) => { const temp = tempPassword(); Object.assign(u, hashPassword(temp), { verified: true, mustChange: true, tempExpires: new Date(Date.now() + TEMP_DAYS * 86400000).toISOString() }); return temp; };
+    if (b.op === 'clientSave') {
+      const email = normEmail(b.email);
+      if (!isEmail(email)) return res.status(400).json({ error: 'A valid email address is needed' });
+      const name = String(b.name || '').trim().slice(0, 60) || email.split('@')[0];
+      const sites = cleanSites(b.sites);
+      let u = await getUser(email);
+      if (u && u.role !== 'client') return res.status(409).json({ error: `${u.name} is already on the team — a person can be one or the other, not both.` });
+      const isNew = !u;
+      if (isNew && b.mustBeNew === false) return res.status(404).json({ error: 'No such customer' });
+      if (!isNew && b.mustBeNew) return res.status(409).json({ error: `${u.name} (${email}) is already a customer. Open them on Customers and add the website there.`, exists: true });
+      u = u || { email, name, color: COLORS[Math.floor(Math.random() * COLORS.length)], createdAt: now(), createdBy: me.email };
+      u.name = name; u.role = 'client'; u.status = 'active';
+      if (b.company !== undefined) u.company = String(b.company || '').trim().slice(0, 80);
+      if (b.phone !== undefined) u.phone = String(b.phone || '').trim().slice(0, 40);
+      if (b.dudaAccount !== undefined) u.dudaAccount = String(b.dudaAccount || '').trim().slice(0, 120);
+      u.sites = sites;
+      // New customers get a temporary password to pass on, unless asked to set their own by email.
+      const temp = isNew && b.temp !== false ? newTemp(u) : '';
+      await putUser(u);
+      await bumpAccess();
+      if (isNew) await secLog(email, 'account-created', req, { by: me.email, byName: me.name, role: 'Customer' });
+      await globalLog(me, 'client', `${isNew ? 'created the customer account of' : 'updated'} ${name} (${email}), ${sites.length} website${sites.length === 1 ? '' : 's'}${temp ? ', with a temporary password' : ''}`);
+      if (isNew && !temp) {
+        await sendEmail(email, 'Your website portal is ready', emailShell('Your website portal', `
+          <p>Hi ${esc(name)}, you can now see your website's visitors, enquiries, health and requests in one place.</p>
+          <p>To set your password, open the link below and choose <b>Forgot password</b>.</p>
+          <p><a href="${appUrl(req)}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none">Open your portal</a></p>`)).catch(() => {});
+      }
+      return res.status(200).json({ ok: true, isNew, tempPassword: temp || undefined, tempExpires: temp ? u.tempExpires : undefined, url: appUrl(req) });
+    }
+    // A new temporary password for a customer (they lost it, or it ran out). Their old one stops working.
+    if (b.op === 'clientTemp') {
+      const email = normEmail(b.email);
+      const u = await getUser(email);
+      if (!u || u.role !== 'client') return res.status(404).json({ error: 'No such customer' });
+      const temp = newTemp(u);
+      await putUser(u);
+      await bumpAccess();
+      await secLog(email, 'password-reset-by-admin', req, { by: me.email, byName: me.name });
+      await globalLog(me, 'client', `gave ${u.name} (${email}) a new temporary password`);
+      return res.status(200).json({ ok: true, tempPassword: temp, tempExpires: u.tempExpires, url: appUrl(req) });
+    }
+    // An admin's TEST customer profile: the websites they see when they preview "as themselves".
+    if (b.op === 'testSites') {
+      const u = await getUser(normEmail(b.email));
+      if (!u || u.role !== 'admin') return res.status(404).json({ error: 'Test profiles are for admins only.' });
+      u.testSites = cleanSites(b.sites);
+      await putUser(u);
+      return res.status(200).json({ ok: true });
+    }
+    if (b.op === 'clientRemove') {
+      const email = normEmail(b.email);
+      const u = await getUser(email);
+      if (!u || u.role !== 'client') return res.status(404).json({ error: 'No such client account' });
+      await forgetUser(email);
+      await globalLog(me, 'client', `removed the customer account of ${u.name} (${email})`);
+      return res.status(200).json({ ok: true });
+    }
+
     // Admin actions always check the latest role (not the short session cache), so a just-demoted admin can't act
     const fresh = me.role === 'admin' ? await getUser(me.email) : null;
     if (!fresh || fresh.role !== 'admin' || fresh.status !== 'active') return res.status(403).json({ error: 'Admins only' });
@@ -240,44 +318,6 @@ export default async function handler(req, res) {
     // ---------- client accounts ----------
     // A client is only ever created here, by an admin, with an explicit list of websites. Signing
     // up can never produce one, and a client account can never be given a team role by this path.
-    if (b.op === 'clients') {
-      const all = await listUsers();
-      return res.status(200).json({ clients: all.filter((u) => u.role === 'client').map((u) => ({
-        email: u.email, name: u.name, company: u.company || '', sites: u.sites || [], dudaAccount: u.dudaAccount || '',
-        status: u.status, createdAt: u.createdAt, lastSeen: u.lastSeen || '' })).sort((a, c) => a.name.localeCompare(c.name)) });
-    }
-    if (b.op === 'clientSave') {
-      const email = normEmail(b.email);
-      if (!isEmail(email)) return res.status(400).json({ error: 'A valid email address is needed' });
-      const name = String(b.name || '').trim().slice(0, 60) || email.split('@')[0];
-      const sites = [...new Set([].concat(b.sites || []).map((x) => String(x).slice(0, 64)))].slice(0, 50);
-      let u = await getUser(email);
-      if (u && u.role !== 'client') return res.status(409).json({ error: `${u.name} is already on the team — a person can be one or the other, not both.` });
-      const isNew = !u;
-      u = u || { email, name, color: COLORS[Math.floor(Math.random() * COLORS.length)], createdAt: now() };
-      u.name = name; u.role = 'client'; u.status = 'active';
-      u.company = String(b.company || '').trim().slice(0, 80);
-      u.dudaAccount = String(b.dudaAccount || '').trim().slice(0, 120);
-      u.sites = sites;
-      await putUser(u);
-      await globalLog(me, 'client', `${isNew ? 'gave' : 'updated'} ${name} (${email}) access to ${sites.length} website${sites.length === 1 ? '' : 's'}`);
-      if (isNew) {
-        await sendEmail(email, 'Your website dashboard is ready', emailShell('Your website dashboard', `
-          <p>Hi ${esc(name)}, you can now see your website's enquiries, comments and performance in one place.</p>
-          <p>To set your password, open the link below and choose <b>Forgot password</b>.</p>
-          <p><a href="${appUrl(req)}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none">Open your dashboard</a></p>`)).catch(() => {});
-      }
-      return res.status(200).json({ ok: true, isNew });
-    }
-    if (b.op === 'clientRemove') {
-      const email = normEmail(b.email);
-      const u = await getUser(email);
-      if (!u || u.role !== 'client') return res.status(404).json({ error: 'No such client account' });
-      await forgetUser(email);
-      await globalLog(me, 'client', `removed the client account of ${u.name} (${email})`);
-      return res.status(200).json({ ok: true });
-    }
-
     const target = await getUser(b.email);
     if (!target) return res.status(404).json({ error: 'User not found' });
     const email = normEmail(b.email);
