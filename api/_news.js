@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-13-content', date: '2026-10-13', audience: 'all', tag: 'Websites',
+    title: 'Auto audit: another business\'s contact details on a live website, found automatically',
+    what: 'Every published website is now <b>auto audited</b>: read page by page, <b>blog posts included</b>, and compared with its Business Info. Another business\'s <b>phone, email, address, name or social account</b> is <b>super critical</b>. DR Websites has an <b>Auto audit</b> column (done, when, republished and queued, and the super critical ones). Websites are never added to Audits automatically; when you add one, what was found arrives as <b>audit items</b>, dated, and stays in step after every publish. Audits also flags <b>↻ Republished: rescan</b>. Admins get <b>CRITICAL ERRORS FOUND!</b> on Slack.',
+    where: ['<b>DR Websites</b> → the <b>Auto audit</b> column and filter.', 'A website\'s <b>Profile</b> → <b>🔎 Auto audit</b>.', '<b>Audits</b> → <b>🔎 Auto audited</b> on a row, and <b>↻ Republished since scan</b>.', 'Admins: <b>Notifications → Critical auto audit alerts</b> (on by default).'],
+    link: '#/help/content', linkText: 'How the auto audit works',
+  },
+  {
     id: '2026-10-12-customers', date: '2026-10-12', audience: 'all', tag: 'Clients',
     title: 'Customers: one profile with all their websites, and temporary passwords',
     what: 'A new <b>Customers</b> page lists every customer with all of their websites. Create a customer in seconds with a <b>temporary password</b> to pass on (they choose their own at first sign-in), add every website they own, and <b>👁 View as customer</b> to see their portal with all their websites. Websites show their customer on the Profile and on <b>DR Websites</b>, which can now filter <b>with</b> or <b>without a customer account</b>. Admins have a <b>test profile</b> to try the portal with any websites.',

@@ -22,6 +22,16 @@ The light bulb glows for anyone whose latest seen note is older than the newest 
 - **Phone (under 900px):** the menu becomes a drawer opened by the burger or **More**; the bottom bar shows Home, Audits and up to two more by role. Clients get their own bottom bar (under 640px). Modals open as bottom sheets.
 - **Tests:** `tests/tk/e2e_nav.py` (menu, Home, + New, themes, phone) and `tests/tk/sweep.py` (every page on a phone, light and dark, no sideways scroll).
 
+## Auto audit of live websites (update 116)
+Every published website is read like a visitor reads it (every page in its `sitemap.xml`, blog posts included) and compared with its Duda Business Info. Another business's phone, email, street address, name or social account is **super critical**; a town + ZIP alone is "check".
+- **Where:** DR Websites → **Auto audit** column (done + date/time, "Republished · queued", super critical counts by kind) and filter; website profile → 🔎 Auto audit; Home card. Websites are never added to Audits automatically.
+- **Audits:** adding a website to Audits imports the findings as audit items (code `AUTO_LIVE`, category "Auto audit (live website)", dated). Every later read keeps them in step: new ones added, ones gone from the live site closed as Done (`live-gone`), returning ones reopened. Rescans leave them alone. A False alarm on one becomes "not a problem" for the auto audit. Rows show "🔎 Auto audited <date>"; a website published after its last scan shows **↻ Republished: rescan** (filter + banner with Rescan now).
+- **Files:** `api/_watch.js` (reading, rules, audit sync, alerts), `api/watch.js` (endpoint + daily cron `/api/watch?op=cron`, 22:20 UTC), hooks in `api/store.js` (create, patchFinding) and `api/dudasites.js`.
+- **When:** read once, then again only after a publish (or monthly). Open team browsers carry on the queue (heartbeat carries `dsa:cwdue`); one browser at a time.
+- **Storage:** findings only, max 25 per website (`dsa:cw:<id>`, ~1–3 KB), summaries `dsa:cwsum`, "not a problem" `dsa:cwok:<id>`. ~700 websites ≈ 1–2 MB. About 8–10 commands per website read.
+- **Alerts:** notification group "Critical auto audit alerts" (admins, on by default): "🚨 CRITICAL ERRORS FOUND!" with one Slack block per website (name, "Error found:", counts, "and N more!", link to its audit items). Daily, and at once when a website that was fine is published with one.
+- Set `APP_URL` (e.g. `https://duda-site-audit.vercel.app`) so the links in the daily message are right.
+
 ## Customers (update 115)
 
 - **One customer, many websites.** A customer is a `role: 'client'` user whose `sites` list holds every website they own: the audit record id when the website is on Audits, otherwise its Duda site id (the client endpoints accept both). Managed in `POST /api/users` with `op: 'clients' | 'clientSave' | 'clientTemp' | 'clientRemove' | 'testSites'`, which sit **before** the admins-only gate and check `client.manage` (or `client.viewas` to list) themselves.

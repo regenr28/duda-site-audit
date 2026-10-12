@@ -741,7 +741,7 @@
     // A new client request also changes the count beside "Client requests".
     if (state.notifs.items.some((n) => /^ticket-/.test(n.kind) && Date.parse(n.at) > tkCountAt)) tkCount(true);
   }
-  const NOTIF_TEXT = { 'ticket-new': 'sent a ticket', 'ticket-reply': 'replied on a change request', 'ticket-assign': 'gave you a change request', 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'domain-digest': 'sent the daily domain report', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', security: 'needs a look: repeated wrong passwords', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
+  const NOTIF_TEXT = { 'ticket-new': 'sent a ticket', 'ticket-reply': 'replied on a change request', 'ticket-assign': 'gave you a change request', 'domain-problem': 'has a domain problem', 'domain-expiring': 'has a domain that needs renewing', 'domain-ok': 'is working again', 'domain-digest': 'sent the daily domain report', 'watch-issue': 'found critical errors on a website just published', 'watch-digest': 'found critical errors on live websites', 'scan-done': 'finished the scan', 'rescan-done': 'rescanned a website you completed', 'site-assign': 'assigned a website to you', 'site-unassign': 'took a website off you', 'site-reopen': 'reopened an audit you completed', 'site-removed': 'removed an audit from the Audits list', 'comment-waiting': 'has client comments waiting for an answer', 'false-alarm': 'marked an audit item as False alarm', mention: 'mentioned you', reply: 'replied to you', assign: 'assigned you', signup: 'created an account (Admin for Approval)', security: 'needs a look: repeated wrong passwords', suggestion: 'sent a feature suggestion', 'suggestion-status': 'updated your suggestion', 'suggestion-comment': 'commented on a suggestion', 'fa-status': 'answered your false alarm report', 'fa-note': 'wrote on a false alarm report' };
   function notifLink(n) {
     if (n.kind === 'signup') return '#/?members=1';
     if (/^suggestion/.test(n.kind)) return '#/suggestions';
@@ -756,6 +756,9 @@
     // A domain alert opens Live DR Sites on that one website (or on every domain problem, for a round-up).
     if (/^ticket-/.test(n.kind)) return '#/requests' + (n.ticketId ? '/' + encodeURIComponent(n.ticketId) : '');
     if (/^domain-/.test(n.kind)) return n.dudaSite ? '#/live/site/' + encodeURIComponent(n.dudaSite) : '#/live/problems';
+    // Wrong details: the website's profile (where they are listed), or every website with some.
+    if (n.kind === 'watch-issue') return n.dudaSite ? '#/dr/' + encodeURIComponent(n.dudaSite) : '#/live/content';
+    if (n.kind === 'watch-digest') return '#/live/content';
     if (n.kind === 'comment-waiting') return n.dudaSite ? '#/comments/' + encodeURIComponent(n.dudaSite) : '#/comments';
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
     return `#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
@@ -771,6 +774,7 @@
     { key: 'scans', label: 'Scans', has: (n) => ['scan-done', 'rescan-done'].includes(n.kind) },
     { key: 'audits', label: 'Audits', has: (n) => ['site-assign', 'site-unassign', 'site-reopen', 'site-removed', 'false-alarm', 'fa-status', 'fa-note'].includes(n.kind) },
     { key: 'domains', label: 'Domains', has: (n) => /^domain-/.test(n.kind) },
+    { key: 'content', label: 'Auto audit', has: (n) => /^watch-/.test(n.kind) },
     { key: 'admin', label: 'Admin', has: (n) => n.kind === 'signup' || /^suggestion/.test(n.kind) },
   ];
   let notifTab = 'all';
@@ -838,6 +842,7 @@
       if (r.accessVer && state.accessVer && r.accessVer !== state.accessVer) { state.accessVer = r.accessVer; accessChanged(); }
       else if (r.accessVer) state.accessVer = r.accessVer;
       if (r.lq) onQueueState(r.lq);
+      if (typeof r.wq === 'number') onWatchState(r.wq);
       state.presence = r.presence || {};
       const hadUnread = state.notifs.unread;
       if (r.notifs) state.notifs = r.notifs;
@@ -2020,6 +2025,152 @@
     if ($('#hRun', body)) $('#hRun', body).onclick = () => runHealth(siteId, again);
     $$('[data-htab]', body).forEach((b) => (b.onclick = () => { prof.hTab = b.dataset.htab; again(); }));
   }
+  // ---------- Live content check: wrong details on the published website ----------
+  // Every published website is read like a visitor reads it (all pages in its sitemap, blog posts
+  // included) and compared with its Business Info. The server does the reading; this shows it.
+  prof.watch = {};
+  const WC_TYPE = { phone: '📞 Phone', email: '✉️ Email', address: '📍 Address', name: '🏷 Business name', social: '🔗 Social account' };
+  const wcPlural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  function loadWatch(siteId, again, force) {
+    const W = prof.watch[siteId];
+    if (W && !force && (W.loading || W.at > Date.now() - 60000)) return;
+    prof.watch[siteId] = Object.assign({}, W || {}, { loading: !W });
+    api('/api/watch?op=site&id=' + encodeURIComponent(siteId))
+      .then((r) => { prof.watch[siteId] = { result: r.result, ok: r.ok || [], at: Date.now() }; again(); })
+      .catch((e) => { prof.watch[siteId] = { error: e.message, at: Date.now() }; again(); });
+  }
+  function watchCard(siteId, x) {
+    if (!can('live.view')) return '';
+    const W = prof.watch[siteId]; const r = W && W.result;
+    const n = r ? (r.issues || []).length : 0; const c = r ? r.issues.filter((i) => i.sev === 'critical').length : 0;
+    return `<div class="pf-card"><div class="pf-card-h">Auto audit <a href="#pfWatch" data-jump="pfWatch">open ↓</a></div>
+      ${!x || !x.published ? '<div class="small faint">Not published, so there is nothing live to read.</div>'
+        : !W || W.loading ? '<div class="small faint">Loading…</div>'
+        : W.busy ? '<div class="small faint"><span class="spin-dot"></span> Reading the website…</div>'
+        : !r ? '<div class="pf-big faint">—</div><div class="small faint">Not read yet.</div>'
+        : `<div class="pf-big ${c ? 'wc-bad' : n ? 'wc-warn' : 'wc-ok'}">${n ? n : '✓'}</div><div class="small faint">${n ? `${n === 1 ? 'detail' : 'details'} not theirs${c ? ` · ${c} super critical` : ''}` : 'every detail matches'} · read ${esc(fmtWhen(r.at))}</div>`}</div>`;
+  }
+  function watchSection(siteId, x) {
+    if (!can('live.view')) return '';
+    const W = prof.watch[siteId] || {}; const r = W.result;
+    const canAct = can('live.content');
+    const head = `<div class="an-head"><h2 id="pfWatch">🔎 Auto audit <span class="small faint" style="font-weight:400">· live website</span></h2>${x && x.published && canAct ? `<button class="btn sm" id="wcRun" ${W.busy ? 'disabled' : ''}>${W.busy ? 'Reading the website…' : '↻ Check now'}</button>` : ''}</div>
+      <div class="small muted wc-intro">Every page of the published website, blog posts included, compared with Business Info: another business's name, phone, email, address or social account anywhere on it.</div>`;
+    if (!x || !x.published) return `<section class="pf-an">${head}<div class="small muted">This starts once the website is published.</div></section>`;
+    if (W.loading) return `<section class="pf-an">${head}<div class="empty">Loading…</div></section>`;
+    if (W.error) return `<section class="pf-an">${head}<div class="note bad">${esc(W.error)}</div></section>`;
+    if (!r) return `<section class="pf-an">${head}<div class="small muted">Not read yet. It is in the queue and will be read automatically${canAct ? ', or press <b>Check now</b>' : ''}.</div></section>`;
+    const ref = r.ref || {};
+    const refLine = [ref.name, ...(ref.phones || []).map(A.fmtPhone), ...(ref.emails || []), ...(ref.zips || []).map((z) => 'ZIP ' + z)].filter(Boolean).map(esc).join(' · ');
+    const issues = r.issues || [];
+    const pageLink = (p) => `<a href="https://${esc(r.domain)}${esc(p)}" target="_blank" rel="noopener" class="mono">${esc(p === '/' ? 'Home page' : decodeURIComponent(p).slice(0, 70))} ↗</a>`;
+    const row = (i) => `<li class="wc-item ${i.sev === 'critical' ? 'crit' : 'warn'}">
+        <div class="wc-top"><span class="badge ${i.sev === 'critical' ? 'sev-critical' : 'sev-warning'}">${i.sev === 'critical' ? 'Super critical' : 'Check'}</span>
+          <span class="wc-type">${esc(WC_TYPE[i.type] || i.type)}</span> <b class="wc-val">${esc(i.value)}</b>
+          ${canAct ? `<button class="btn sm ghost wc-ok-btn" data-wcok="${esc(i.k)}" title="This is right for this website (an area they serve, a partner, their own second number). It will not be reported again.">Not a problem</button>` : ''}</div>
+        <div class="small">${esc(i.label)}</div>
+        ${i.ctx && i.ctx !== i.value && !/^(tel|mailto):/i.test(i.ctx) && i.type !== 'social' ? `<div class="small faint wc-ctx">“${esc(i.ctx)}”</div>` : ''}
+        <div class="small wc-pages">On ${(i.pages || []).map(pageLink).join(', ')}${i.n > (i.pages || []).length ? ` <span class="faint">and ${i.n - i.pages.length} more</span>` : ''}</div></li>`;
+    const oks = W.ok || [];
+    return `<section class="pf-an">${head}
+      ${(() => { const au = auditFor(siteId); return au ? `<div class="small wc-meta">On Audits too: what is found here is on its audit as items marked <b>Auto audit</b>, kept in step after every publish. <a href="#/site/${esc(au.id)}">Open the audit items ↗</a></div>` : '<div class="small faint wc-meta">Not on Audits. Adding it to Audits brings these in as audit items, dated.</div>'; })()}
+      ${x && acRepub(x) ? `<div class="note known-note">↻ <b>Published again</b> on ${esc(fmtFull(x.published))}, after this was read. It is queued to be read again; until then, this is the website as it was.</div>` : ''}
+      <div class="small faint wc-meta">Auto audited ${esc(fmtFull(new Date(r.at).toISOString()))}: read ${wcPlural(r.pages || 0, 'page')}${r.pub ? ` (last published ${esc(fmtFull(r.pub))})` : ''}${refLine ? ` · compared with: ${refLine}` : ''}</div>
+      ${issues.length ? `<ul class="wc-list">${issues.map(row).join('')}</ul>
+        <div class="small muted" style="margin-top:6px">Fix it in the Duda editor and publish: the website is read again automatically after every publish.</div>`
+        : '<div class="note good">✅ Nothing on the live website contradicts Business Info.</div>'}
+      ${oks.length ? `<details class="wc-oks small"><summary>${wcPlural(oks.length, 'value')} marked not a problem</summary><ul>${oks.map((k) => `<li><span class="mono">${esc(k.replace(/^(\w+):/, '$1 · '))}</span>${canAct ? ` <button class="linkbtn" data-wcunok="${esc(k)}">Undo</button>` : ''}</li>`).join('')}</ul></details>` : ''}
+    </section>`;
+  }
+  /** Keep the DR Websites row in step with what this profile now knows. */
+  function wcSync(siteId, r) {
+    const x = live.data && live.data.sites.find((y) => sameId(y.id, siteId)); if (!x || !r) return;
+    const t = {}; (r.issues || []).forEach((i) => { if (i.sev === 'critical') t[i.type] = (t[i.type] || 0) + 1; });
+    x.wc = { n: (r.issues || []).length, c: (r.issues || []).filter((i) => i.sev === 'critical').length, t, at: r.at, pubAt: Date.parse(r.pub) || 0, e: 0 };
+  }
+  function bindWatch(body, siteId, x, again) {
+    if (!can('live.view')) return;
+    if (x && x.published) loadWatch(siteId, again);
+    const run = $('#wcRun', body);
+    if (run) run.onclick = async () => {
+      prof.watch[siteId] = Object.assign({}, prof.watch[siteId], { busy: true }); again();
+      try {
+        const r = await post('/api/watch', { op: 'check', id: siteId });
+        prof.watch[siteId] = { result: r.result, ok: r.ok || [], at: Date.now() }; wcSync(siteId, r.result);
+        const n = r.result ? r.result.issues.length : 0;
+        toast(r.partial ? 'The website is big: part of it was read, the rest follows automatically.' : r.result ? (n ? `${wcPlural(n, 'detail')} that ${n === 1 ? 'is' : 'are'} not theirs` : 'Read the whole website: every detail matches') : 'Could not read the website');
+      } catch (e) { prof.watch[siteId] = Object.assign({}, prof.watch[siteId], { busy: false }); toast(e.message); }
+      again();
+    };
+    $$('[data-wcok]', body).forEach((b) => (b.onclick = async () => {
+      b.disabled = true;
+      try { const r = await post('/api/watch', { op: 'ok', id: siteId, key: b.dataset.wcok }); prof.watch[siteId] = { result: r.result, ok: r.ok || [], at: Date.now() }; wcSync(siteId, r.result); toast('Marked not a problem for this website'); }
+      catch (e) { toast(e.message); b.disabled = false; }
+      again();
+    }));
+    $$('[data-wcunok]', body).forEach((b) => (b.onclick = async () => {
+      try { const r = await post('/api/watch', { op: 'unok', id: siteId, key: b.dataset.wcunok }); prof.watch[siteId] = Object.assign({}, prof.watch[siteId], { ok: r.ok || [] }); toast('It will be reported again from the next check'); }
+      catch (e) { toast(e.message); }
+      again();
+    }));
+  }
+
+  // The reading itself is done by whichever team browser is open, a few websites at a time, the same
+  // way the form-history catch-up works: the heartbeat says how many are waiting, and the server's
+  // lock means only one browser reads at once. A quiet day (nothing republished) costs nothing.
+  const wq = { pending: 0, running: false, again: false, stat: null };
+  function onWatchState(n) {
+    wq.pending = n;
+    if (!(n > 0) || !can('live.view')) return;
+    if (wq.running) wq.again = true; else watchDrain();
+  }
+  async function watchDrain() {
+    if (wq.running) { wq.again = true; return; }
+    wq.running = true; wq.again = false;
+    try {
+      for (let i = 0; i < 300; i++) {
+        let r; try { r = await post('/api/watch', { op: 'drain' }); } catch (e) { break; }
+        (r.done || []).forEach((d) => { const x = live.data && live.data.sites.find((y) => y.id === d.id); if (x) x.wc = { n: d.n || 0, c: d.c || 0, t: d.t || {}, at: Date.now(), pubAt: d.pubAt || Date.parse(x.published) || 0, e: d.err ? 1 : 0 }; });
+        wq.pending = r.pending || 0;
+        if (typeof r.checked === 'number') wq.stat = Object.assign({}, wq.stat || {}, { checked: r.checked, total: r.total, pending: r.pending });
+        if (route().name === 'live' && live.tab === 'published') renderLive();
+        if (!((r.done && r.done.length) || r.partial) || !wq.pending) break;
+        await new Promise((res) => setTimeout(res, 2000));
+      }
+    } finally {
+      wq.running = false;
+      if (wq.again) { wq.again = false; setTimeout(watchDrain, 1000); }
+    }
+  }
+  async function loadWatchStat() {
+    if (wq.statAsked || !can('live.view')) return;
+    wq.statAsked = true;
+    try { const s = await api('/api/watch?op=status'); delete s.sums; wq.stat = s; if (route().name === 'live') renderLive(); onWatchState(s.on ? s.pending : 0); } catch (e) { /* the list still works */ }
+  }
+  const AC_TYPE = { phone: ['📞', 'phone', 'phones'], email: ['✉️', 'email', 'emails'], address: ['📍', 'address', 'addresses'], name: ['🏷', 'business name', 'business names'], social: ['🔗', 'social', 'socials'] };
+  /** Published again since the auto audit read it: its results are from before, and it is queued again. */
+  const acRepub = (x) => !!(x && x.wc && !x.wc.e && x.published && Date.parse(x.published) > (x.wc.pubAt || 0) + 1000);
+  /** The DR Websites "Auto audit" column: done (when), republished and queued, and the super critical ones. */
+  function autoCell(x) {
+    const w = x.wc;
+    if (!w) return `<span class="badge subtle" title="Every published website is auto audited; this one has not been read yet">Not yet${wq.pending ? ' · queued' : ''}</span>`;
+    if (w.e) return `<span class="badge subtle" title="The live website could not be read (or has no Business Info to compare with). Tried again tomorrow.">Could not read</span>`;
+    const when = esc(fmtFull(new Date(w.at).toISOString()));
+    const rep = acRepub(x);
+    const crit = Object.entries(w.t || {}).filter(([, v]) => v).map(([k, v]) => `<span class="ac-t">${(AC_TYPE[k] || ['•'])[0]} ${v} ${esc((AC_TYPE[k] || ['', k, k])[v === 1 ? 1 : 2])}</span>`).join('');
+    return `<div class="ac-cell">${rep
+        ? `<span class="badge ac-repub" title="Published again on ${esc(fmtFull(x.published))}, after the auto audit. It is queued to be read again; what is shown is from before.">↻ Republished · queued</span>`
+        : '<span class="badge scan-complete">✓ Auto audit done</span>'}
+      <div class="small faint">${when}</div>
+      ${w.c ? `<a class="ac-crit" href="#/dr/${esc(x.id)}" title="Open the findings on the website's profile"><b>⚠ Super critical (contact info)</b>${crit}</a>`
+        : w.n ? `<a class="small ac-warn" href="#/dr/${esc(x.id)}">${w.n} to check (town / ZIP)</a>` : '<div class="small ac-ok">No contact info problems</div>'}</div>`;
+  }
+  /** One line on DR Websites: how far the check has got, with the pause switch for admins. */
+  function watchNote() {
+    const s = wq.stat; if (!s) return '';
+    const pend = wq.pending || s.pending || 0;
+    return `<span class="small wc-note">🔎 Auto audit: <b>${s.checked}</b> of ${s.total} websites done${!s.on ? ' · <b>paused</b>' : pend ? ` · ${pend} waiting${wq.running ? ' <span class="spin-dot"></span> reading now' : ''}` : ' · up to date'}${state.me && state.me.role === 'admin' ? ` <button class="linkbtn" id="wcPause">${s.on ? 'Pause' : 'Resume'}</button>` : ''}</span>`;
+  }
   const anKey = (id) => id + ':' + prof.anDays;
   function anDelta(cur, prev) {
     if (prev === null || prev === undefined || !Number.isFinite(prev)) return '';
@@ -2215,6 +2366,7 @@
                 ${can('live.domains') ? '<button class="btn sm" id="pfCheck">Check now</button>' : ''}`}
           </div>
           ${healthCard(siteId, x)}
+          ${watchCard(siteId, x)}
           <div class="pf-card">
             <div class="pf-card-h">Audit ${s ? `<a href="#/site/${esc(s.id)}">open ↗</a>` : ''}</div>
             ${s ? `<div class="pf-counts">${sev('critical', 'critical')}${sev('outdated', 'outdated')}${sev('warning', 'warning')}${sev('info', 'info')}</div>
@@ -2239,6 +2391,7 @@
         </div>
         ${analyticsSection(siteId)}
         ${healthSection(siteId, x)}
+        ${watchSection(siteId, x)}
       </div>`;
     // Answers can arrive after the page has been drawn again (the audit page redraws itself), so redraw
     // whichever profile is on screen now, not the one that asked.
@@ -2271,6 +2424,7 @@
     // ---- things fetched once, then the page redraws from what it holds ----
     bindAnalytics(body, siteId, again);
     bindHealth(body, siteId, x, again);
+    bindWatch(body, siteId, x, again);
     if (!liveDR.data && !liveDR.loading && !prof.liveAsked) { prof.liveAsked = true; loadLive(false).then(again).catch(() => {}); }
     if (canCust() && !state.clients && !prof.cuAsked) { prof.cuAsked = true; loadCustomers().then(again).catch(() => {}); }
     if (!state.leadSums[siteId] && !prof['ls' + siteId]) { prof['ls' + siteId] = 1; loadLeadSums([siteId]).then(again); }
@@ -4821,6 +4975,7 @@
     { icon: '🌐', label: 'Websites without a customer account', words: 'websites no customer no client no profile without account', filter: true, act: () => { live.tab = 'published'; live.q = ''; live.dom = ''; live.audit = ''; live.cust = 'no'; live.page = 0; location.hash = '#/live'; }, perm: 'live.view', help: 'customers' },
     { route: 'live', icon: '🏆', label: 'Leaderboards', words: 'leaderboards ranking top most enquiries comments tickets updated fastest launches winners best', href: '#/live/ranks', perm: 'live.view', help: 'live' },
     { route: 'live', icon: '📈', label: 'Trends', words: 'trends launched unpublished came back republished days to launch growth chart', href: '#/live/trends', perm: 'live.view', help: 'live' },
+    { route: 'live', icon: '🔎', label: 'Auto audit (live websites)', words: 'auto audit automatic live content check super critical wrong details another business address phone email social blog copied automatic audit monitoring', href: '#/live/content', perm: 'live.view', help: 'content' },
     { route: 'live', icon: '🌐', label: 'Domain monitoring', words: 'domain monitoring expiring expired redirected down unpublished certificate ssl', href: '#/live/trends', perm: 'live.view', help: 'live' },
     { route: 'analysis', icon: '📊', label: 'Lead analysis', words: 'lead analysis enquiries forms quiet websites submissions', href: '#/analysis', perm: 'leads.view', help: 'analysis' },
     { route: 'activity', icon: '🕑', label: 'Activity', words: 'activity log history who did what', href: '#/activity', perm: 'activity.view', help: 'admin-tools' },
@@ -4849,6 +5004,7 @@
     { icon: '📊', label: 'Team stats', words: 'team stats statistics performance', act: () => openStats(), help: 'stats' },
     // filters
     { icon: '⏳', label: 'Domains expiring or expired', words: 'domains expiring expired renew renewal registration', filter: true, act: () => { trends.dm = 'exp'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
+    { icon: '🔎', label: 'Super critical: contact info that is not theirs', words: 'wrong details another business address phone email social not theirs content check blog', filter: true, act: () => { location.hash = '#/live/content'; }, perm: 'live.view', help: 'content' },
     { icon: '⛔', label: 'Websites down', words: 'websites sites down not loading broken offline domain', filter: true, act: () => { trends.dm = 'down'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
     { icon: '↪', label: 'Domains redirected or showing another site', words: 'redirected redirect another site not pointing hijacked dns', filter: true, act: () => { trends.dm = 'redir'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
     { icon: '🚫', label: 'Custom-domain websites unpublished', words: 'unpublished switched off taken down', filter: true, act: () => { trends.dm = 'unp'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
@@ -5792,7 +5948,7 @@
   setTimeout(aiResumeTick, 8000);
 
   // ---------- Live DR Sites: every published site in the Duda account ----------
-  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'comments', leadJob: null, leadsLoaded: false, queued: {}, q2: null, draining: false };
+  const live = { data: null, loading: false, error: '', q: '', audit: '', dom: '', wc: '', sort: 'published', page: 0, names: null, doms: null, tab: 'published', un: null, unLoading: false, unError: '', unQ: '', unOnly: 'comments', leadJob: null, leadsLoaded: false, queued: {}, q2: null, draining: false };
   const liveDR = live; // alias: some views use a local variable called `live` for scan progress
   const DOM_OK = ['ok'];
   // The security certificate is Duda's job, so a stored 'ssl' result (from before) is not a problem.
@@ -6746,6 +6902,12 @@
     if (live.dom === 'none') list = list.filter((x) => !x.dom);
     if (live.dom === 'expiring') list = list.filter((x) => domExpiring(x.dom));
     if (live.dom === 'cert') list = list.filter((x) => domCertFyi(x.dom));
+    if (live.wc === 'issues') list = list.filter((x) => x.wc && x.wc.n);
+    if (live.wc === 'critical') list = list.filter((x) => x.wc && x.wc.c);
+    if (live.wc === 'clean') list = list.filter((x) => x.wc && !x.wc.n && !x.wc.e);
+    if (live.wc === 'none') list = list.filter((x) => !x.wc || x.wc.e);
+    if (live.wc === 'repub') list = list.filter(acRepub);
+    if (d && can('live.view')) loadWatchStat();
     list = list.slice().sort((a, b) => live.sort === 'domain' ? (domProblem(b.dom) ? 1 : 0) - (domProblem(a.dom) ? 1 : 0) || String(b.published).localeCompare(String(a.published)) : live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
     const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
     const shown = list.slice(live.page * PER, live.page * PER + PER);
@@ -6762,7 +6924,7 @@
       ${d ? `<div class="live-status">
         <span class="small"><b>${d.count}</b> published sites</span>
         <span class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'automatically'}` : ''})</span></span>
-        ${queueNote()}</div>` : ''}
+        ${queueNote()}${watchNote()}</div>` : ''}
       ${liveTabs('published')}
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
 
@@ -6771,6 +6933,7 @@
         <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option><option value="leads" ${live.audit === 'leads' ? 'selected' : ''}>With enquiries (${all.filter((x) => (state.leadSums[String(x.id)] || {}).total).length})</option></select>
         <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="expiring" ${live.dom === 'expiring' ? 'selected' : ''}>Domain expiring or expired (${all.filter((x) => domExpiring(x.dom)).length})</option><option value="cert" ${live.dom === 'cert' ? 'selected' : ''}>Certificate ending (info only, ${all.filter((x) => domCertFyi(x.dom)).length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
         ${canCust() ? `<select id="liveCust" aria-label="Customer account"><option value="">Any customer</option><option value="yes" ${live.cust === 'yes' ? 'selected' : ''}>With a customer account (${state.clients ? all.filter(hasCust).length : '…'})</option><option value="no" ${live.cust === 'no' ? 'selected' : ''}>No customer account (${state.clients ? all.filter((x) => !hasCust(x)).length : '…'})</option></select>` : ''}
+        <select id="liveWc" aria-label="Auto audit"><option value="">Any auto audit</option><option value="critical" ${live.wc === 'critical' ? 'selected' : ''}>Super critical: contact info (${all.filter((x) => x.wc && x.wc.c).length})</option><option value="issues" ${live.wc === 'issues' ? 'selected' : ''}>Auto audit found something (${all.filter((x) => x.wc && x.wc.n).length})</option><option value="clean" ${live.wc === 'clean' ? 'selected' : ''}>Auto audit done, all fine (${all.filter((x) => x.wc && !x.wc.n && !x.wc.e).length})</option><option value="repub" ${live.wc === 'repub' ? 'selected' : ''}>Republished, queued again (${all.filter(acRepub).length})</option><option value="none" ${live.wc === 'none' ? 'selected' : ''}>Not auto audited yet (${all.filter((x) => !x.wc || x.wc.e).length})</option></select>
         <select id="liveSort"><option value="published">Recently published first</option><option value="domain" ${live.sort === 'domain' ? 'selected' : ''}>Domain problems first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
       </div>
       ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}
@@ -6778,7 +6941,7 @@
         ? `<div class="live-progress small sev-warning" style="border-radius:8px"><span class="pulse-dot"></span> ${esc(live.leadJob.note)} <button class="linkbtn" id="liveLeadStop">Stop waiting</button></div>`
         : `<div class="live-progress small muted"><span class="pulse-dot"></span> Fetching form submissions ${live.leadJob.done}/${live.leadJob.total} · <b>${live.leadJob.added}</b> new${live.leadJob.failed ? ` · ${live.leadJob.failed} could not be read` : ''} <button class="linkbtn" id="liveLeadStop">Stop</button></div>`) : ''}
       ${!d ? `<div class="empty">${live.loading ? 'Loading published sites from Duda…' : 'No data yet.'}</div>` : !list.length ? '<div class="empty">No sites match.</div>' : `
-      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Enquiries</th><th>Comments</th>${can('live.audit') ? '<th>Audit</th>' : ''}<th></th></tr></thead><tbody>
+      <div class="table-wrap"><table class="grid live-table"><thead><tr><th>Website</th><th>Site ID</th><th>Domain</th><th>Last published</th><th>Enquiries</th><th>Comments</th><th>Auto audit</th>${can('live.audit') ? '<th>Audit</th>' : ''}<th></th></tr></thead><tbody>
       ${shown.map((x) => { const a = auditFor(x.id); const dom = x.domain || x.defaultDomain; return `<tr>
         <td><b>${x.name ? esc(x.name) : x.nameChecked ? `<span class="muted">${esc(dom || x.id)}</span>` : '<span class="faint">Loading name…</span>'}</b>${dom ? `<div class="small"><a href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ↗</a></div>` : ''}${(x.labels || []).length ? `<div class="small faint">${x.labels.map(esc).join(' · ')}</div>` : ''}${canCust() && state.clients ? (() => { const o = customersOf(x.id, (a || {}).id); return o.length ? `<div class="small cu-row-own">👤 ${o.map((c) => esc(c.name)).join(', ')}</div>` : ''; })() : ''}</td>
         <td class="mono small">${esc(x.id)} <button class="linkbtn" data-copy="${esc(x.id)}" title="Copy site ID">Copy</button></td>
@@ -6786,6 +6949,7 @@
         <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
         <td style="white-space:nowrap">${leadCell(x)}</td>
         <td style="white-space:nowrap">${cmtCell(x.id)}</td>
+        <td class="ac-td">${autoCell(x)}</td>
         ${can('live.audit') ? `<td>${auditCell(x)}</td>` : ''}
         <td style="white-space:nowrap">${a ? `<a class="btn sm" href="#/site/${esc(a.id)}">Open audit</a>` : can('live.audit') ? `<button class="btn sm primary" data-audit="${esc(x.id)}">Audit this website</button>` : ''}
           <a class="btn sm ghost" href="#/dr/${esc(x.id)}" title="Form submissions and details for this website, audited or not">Profile</a>
@@ -6797,6 +6961,12 @@
     $('#liveAudit').onchange = (e) => { live.audit = e.target.value; live.page = 0; renderLive(); };
     $('#liveSort').onchange = (e) => { live.sort = e.target.value; renderLive(); };
     $('#liveDom').onchange = (e) => { live.dom = e.target.value; live.page = 0; renderLive(); };
+    if ($('#liveWc')) $('#liveWc').onchange = (e) => { live.wc = e.target.value; live.page = 0; renderLive(); };
+    if ($('#wcPause')) $('#wcPause').onclick = async () => {
+      try { const s = await post('/api/watch', { op: 'settings', on: !(wq.stat && wq.stat.on) }); delete s.sums; wq.stat = s; wq.pending = s.on ? s.pending : 0; toast(s.on ? 'Auto audit resumed' : 'Auto audit paused'); if (s.on && s.pending) watchDrain(); }
+      catch (e) { toast(e.message); }
+      renderLive();
+    };
     if ($('#liveCust')) $('#liveCust').onchange = (e) => { live.cust = e.target.value; live.page = 0; renderLive(); };
     const cd = $('#liveCheck'); if (cd) cd.onclick = () => checkDomains(true);
     if ($('#liveRefresh')) $('#liveRefresh').onclick = () => loadLive(true);
@@ -6962,7 +7132,7 @@
     if (parts[0] === 'customers') return { name: 'customers' };
     if (parts[0] === 'project' && parts[1]) return { name: 'project', id: decodeURIComponent(parts[1]) };
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : parts[1] === 'trends' ? 'trends' : parts[1] === 'ranks' ? 'ranks' : 'published',
-      site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', problems: parts[1] === 'problems' };
+      site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', problems: parts[1] === 'problems', content: parts[1] === 'content' };
     // A website's profile addressed by its DUDA site id, so it works for one that has no record.
     if (parts[0] === 'dr' && parts[1]) return { name: 'dr', siteId: decodeURIComponent(parts[1]) };
     // …/false-alarms/<key> comes from a notification: open the queue ON that report, not at the top of a list of 40.
@@ -7033,8 +7203,9 @@
       live.tab = r.tab;
       // From a domain alert: show that one website (or every domain problem), then settle on the plain
       // address so the filter can be changed by hand without the link putting it back.
-      if (r.site || r.problems) {
-        live.q = r.site || ''; live.dom = r.problems ? 'problem' : ''; live.audit = ''; live.page = 0;
+      if (r.site || r.problems || r.content) {
+        live.q = r.site || ''; live.dom = r.problems ? 'problem' : ''; live.audit = ''; live.page = 0; live.tab = 'published';
+        live.wc = r.content ? 'critical' : '';
         history.replaceState(null, '', '#/live');
       }
       return renderLive();
@@ -7077,6 +7248,8 @@
         const exp = L.filter((x) => x.dom && domExpiring(x.dom)).length;
         cards.push(card('#/live/problems', bad, 'Domain problems', bad ? 'Down, redirected or showing another site' : 'Every live domain is fine', bad ? 'bad' : 'good'));
         cards.push(card('#/live/trends', exp, 'Domains to renew', exp ? 'Expiring within 60 days' : 'Nothing to renew soon', exp ? 'warn' : 'good'));
+        const wcAny = L.filter((x) => x.wc && x.wc.n).length; const wcBad = L.filter((x) => x.wc && x.wc.c).length; const wcRead = L.filter((x) => x.wc).length;
+        cards.push(card('#/live/content', wcRead ? wcBad : '…', 'Super critical on live sites', !wcRead ? 'Auto audit not done yet: starts by itself' : wcBad ? 'Another business\'s phone, email, address or name' : `Nothing found on ${wcRead} websites auto audited${wcAny ? ` · ${wcAny} to check` : ''}`, wcBad ? 'bad' : wcRead ? 'good' : ''));
       } else cards.push(card('#/live', '…', 'Domain health', live.error ? 'Could not load your websites' : 'Loading your websites', ''));
     }
     if (cmt.sites) { const w = cmtWaiting(); cards.push(card('#/comments', w, 'Clients waiting', w ? 'Comments with no reply yet' : 'Every client has been answered', w ? 'bad' : 'good')); }
@@ -7215,6 +7388,38 @@
     if (!chips.length && done) chips.push('<span class="badge scan-complete">No open issues</span>');
     return `<span class="chips">${chips.join('')}</span>`;
   }
+  /**
+   * Published again in Duda after the audit's last scan: the audit items describe the website as it
+   * was, so it needs a rescan to confirm they are still there (and to find anything new).
+   * Returns the publish date, or '' when it is up to date (or not known yet).
+   */
+  function repubSince(s) {
+    const lx = liveOf(s.siteId); const fin = s.scan && s.scan.finishedAt;
+    if (!lx || !lx.published || !fin) return '';
+    return Date.parse(lx.published) > Date.parse(fin) + 60000 ? lx.published : '';
+  }
+  function repubBadge(s) {
+    const p = repubSince(s); if (!p) return '';
+    return `<div style="margin-top:4px"><span class="badge repub" title="Published again on ${esc(fmtFull(p))}, after the last scan on ${esc(fmtFull(s.scan.finishedAt))}. Rescan to make sure the audit items are still there and to catch anything new.">↻ Republished: rescan</span></div>`;
+  }
+  /** "Auto audited Oct 13, 12:14 AM · 3 super critical": what the auto audit brought into this audit. */
+  function autoLine(s) {
+    const al = s.autoLive; if (!al || !al.at) return '';
+    return `<div class="small auto-line" title="The auto audit reads the live website after every publish. What it finds is added here as audit items marked Auto audit.">🔎 Auto audited ${esc(fmtFull(al.at))}${al.c ? ` · <b style="color:var(--crit)">${al.c} super critical</b>` : al.n ? ` · ${al.n} to check` : ' · contact info fine'}</div>`;
+  }
+  /** In an audit item the auto audit found: when, where on the live website, and what happened since. */
+  function autoItemNote(f) {
+    const al = f.autoLive || {};
+    const why = f.auto && f.auto.why;
+    const link = (p) => f.liveDomain ? `<a href="https://${esc(f.liveDomain)}${esc(p)}" target="_blank" rel="noopener" class="mono">${esc(p === '/' ? 'Home page' : p)} ↗</a>` : `<span class="mono">${esc(p)}</span>`;
+    return `<div class="note known-note auto-note"><b>🔎 Found by the auto audit on the live website</b>
+      <div class="small">First found ${esc(fmtFull(al.first || f.at))}${al.at && al.at !== al.first ? ` · last checked ${esc(fmtFull(al.at))}` : ''}${al.pub ? ` · website as published ${esc(fmtFull(al.pub))}` : ''}</div>
+      <div class="small">On ${(f.pages || [f.path || '/']).map(link).join(', ')}</div>
+      ${why === 'live-gone' ? '<div class="small"><b>✓ No longer on the live website</b>, so it was closed as Done automatically.</div>'
+        : why === 'live-back' ? '<div class="small"><b>↺ Back on the live website</b> after it was gone, so it was reopened.</div>'
+        : why === 'live-ok' ? '<div class="small">Marked <b>not a problem</b> for this website, so the auto audit no longer reports it.</div>'
+        : '<div class="small faint">Fix it in the Duda editor and publish: the auto audit reads the website again and closes this by itself. A False alarm here also tells the auto audit it is not a problem.</div>'}</div>`;
+  }
   /** Is this audited site still published in Duda? (null = unknown, list not loaded yet) */
   /**
    * Where a website stands in Duda: published, not published yet, or not there at all.
@@ -7245,9 +7450,10 @@
       (!f.q || (s.businessName + ' ' + s.siteId + ' ' + s.editorUrl + ' ' + (s.addedByName || '')).toLowerCase().includes(f.q.toLowerCase())) &&
       (!f.live || (f.live === 'gone' || f.live === 'draft' ? dudaState(s.siteId) === f.live : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)) &&
       (!f.oldChecks || newChecksFor(s).length) &&
+      (!f.repub || repubSince(s)) &&
       (!f.clar || ((s.counts || {}).clarification || 0) > 0))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-    const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0 };
+    const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0, repub: state.sites.filter((s) => repubSince(s)).length };
     state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
     $('#view').innerHTML = staleBanner() + `
       <div class="page-head"><div><h1>Audits</h1><div class="muted">${state.sitesScoped
@@ -7267,6 +7473,7 @@
           <select id="fwho"><option value="">Everyone</option><option value="_mine" ${f.assignee === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${f.assignee === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${u.email === f.assignee ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
           ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="draft" ${f.live === 'draft' ? 'selected' : ''}>Not published yet (${state.sites.filter((x) => dudaState(x.siteId) === 'draft').length})</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>Not found in Duda (${state.sites.filter((x) => dudaState(x.siteId) === 'gone').length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${state.sites.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
           ${tot.oldChecks ? `<button class="btn sm ${f.oldChecks ? 'primary' : ''}" id="foldck" title="These were scanned before the newest checks existed. Their items are unchanged — a rescan is what adds the new ones.">✨ Scanned before the newest checks (${tot.oldChecks})</button>` : ''}
+          ${tot.repub || f.repub ? `<button class="btn sm ${f.repub ? 'primary' : ''}" id="frepub" title="Published again in Duda after their last scan: rescan to check the audit items are still there">↻ Republished since scan (${tot.repub})</button>` : ''}
           <span class="spacer"></span>
           <button class="btn sm" id="rescanAll">Rescan all shown</button>
         </div>
@@ -7285,11 +7492,12 @@
                   return lx && domProblem(lx.dom) ? `<div><span class="badge sev-critical" title="${esc(lx.dom.detail || '')}">🌐 ${esc(lx.dom.label)}</span></div>` : '';
                 })()}
                 ${(s.counts || {}).clarification ? `<div><span class="badge fs-clarification" title="Someone asked a question and is waiting for an answer">❓ ${s.counts.clarification} waiting on an answer</span></div>` : ''}
+                ${autoLine(s)}
                 <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtDate(s.createdAt)) : ''}</div></td>
               <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}">${userOptions(s.assignee)}</select></span></td>
               <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
                 ${s.completedAt ? `<div class="small faint" title="Marked Complete ${esc(fmtFull(s.completedAt))}">by ${esc(nameOf(s.completedBy, s.completedByName))}${s.scan && s.scan.finishedAt && new Date(s.scan.finishedAt) > new Date(s.completedAt) ? ' · rescanned since' : ''}</div>` : ''}</td>
-              <td>${scanBadge(s)}${fixedCodes(s).size
+              <td>${scanBadge(s)}${repubBadge(s)}${fixedCodes(s).size
                 ? `<div style="margin-top:4px"><span class="badge ck-fixed" title="A check that produced items on this website has since been corrected. Those items may not be real — open the website and rescan to replace them.">⚠ A check was corrected — rescan</span></div>`
                 : newChecksFor(s).length ? `<div style="margin-top:4px"><span class="badge ck-new" title="New audit checks were added after this scan. The items here are unchanged — rescan to add what the new checks find.">✨ New checks available</span></div>` : ''}</td>
               <td>${issueChips(c, s.scan && s.scan.state === 'complete', s.id)}</td>
@@ -7305,8 +7513,9 @@
     $('#fwho').onchange = (e) => { f.assignee = e.target.value; renderSites(); };
     if ($('#flive')) $('#flive').onchange = (e) => { f.live = e.target.value; renderSites(); };
     if ($('#foldck')) $('#foldck').onclick = () => { f.oldChecks = !f.oldChecks; renderSites(); };
+    if ($('#frepub')) $('#frepub').onclick = () => { f.repub = !f.repub; renderSites(); };
     if ($('#statClar')) $('#statClar').onclick = () => { f.clar = !f.clar; renderSites(); };
-    if ($('#sfClear')) $('#sfClear').onclick = () => { Object.assign(f, { q: '', status: '', assignee: '', live: '', oldChecks: false, clar: false }); renderSites(); };
+    if ($('#sfClear')) $('#sfClear').onclick = () => { Object.assign(f, { q: '', status: '', assignee: '', live: '', oldChecks: false, clar: false, repub: false }); renderSites(); };
     $('#rescanAll').onclick = () => {
       const todo = list.filter((s) => !state.scanning[s.id] && !otherClaim(s.id)), busy = list.length - todo.length;
       if (!todo.length) { toast('Every website shown is already queued or scanning.'); return; }
@@ -7763,6 +7972,7 @@
   const pick = { site: '', ids: new Set() };
   function recheckWhyNot(f) {
     if (f.gone) return 'already closed by a rescan';
+    if (f.code === 'AUTO_LIVE') return 'found on the live website by the auto audit, which reads it again after every publish';
     if (f.manual) return 'written by hand, so no scan can see it';
     if (/^AI_PENDING/.test(f.code)) return 'waiting for the AI — it resumes on its own';
     if (f.status === 'false') return 'marked False alarm';
@@ -8401,6 +8611,7 @@
         if (st === 'gone') return `<div class="note unk dom-banner"><b>Not found in Duda.</b> Duda lists this website neither as published nor as a draft, so it looks deleted or moved to another account. The audit is kept for reference.</div>`;
         const lx = liveOf(s.siteId);
         return lx && domProblem(lx.dom) ? `<div class="note bad dom-banner"><b>🌐 Domain problem: ${esc(lx.domain)} · ${esc(lx.dom.label)}.</b> ${esc(lx.dom.detail)} <span class="faint">Checked ${esc(ago(new Date(lx.dom.checkedAt).toISOString()))}.</span> This needs the customer (domain / DNS), so fix it before auditing the site.</div>` : ''; })()}
+      ${(() => { const p = repubSince(s); return p ? `<div class="note dom-banner repub-banner"><b>↻ Published again since the last scan.</b> Duda says this website was published on ${esc(fmtFull(p))}, after the last scan on ${esc(fmtFull(s.scan.finishedAt))}. Rescan to make sure the audit items are still there and to catch anything new.${can('site.scan') ? ' <button class="btn sm" id="repubRescan">↻ Rescan now</button>' : ''}</div>` : ''; })()}
       ${staleBanner()}${newChecksBanner(s)}${stillBanner(s)}
       ${t.fromBrief ? `<div class="note" style="margin-bottom:12px"><b>Checked against the client’s brief.</b>
         <div class="small" style="margin-top:3px">The business details on this website’s project come from the document the client supplied, so they are what every item below is measured against. Duda’s own Business Info is still accepted — nothing is flagged for using a value Duda holds.</div></div>` : ''}
@@ -8514,6 +8725,7 @@
         </tbody></table></div></details>` : ''}`;
 
     $$('[data-sev]', body).forEach((b) => (b.onclick = () => { ff.sev = b.dataset.sev; renderSite(); }));
+    if ($('#repubRescan', body)) $('#repubRescan', body).onclick = () => requestScan([s.id]);
     if ($('#ffCmt', body)) $('#ffCmt', body).onclick = () => { ff.cmt = !ff.cmt; renderSite(); };
     runHint();
     $('#ffq') && ($('#ffq').oninput = (e) => { ff.q = e.target.value; const p = e.target.selectionStart; renderSite(); const i = $('#ffq'); i.focus(); i.setSelectionRange(p, p); });
@@ -8858,7 +9070,7 @@
           <div class="small">${f.gone.why === 'check-corrected' ? 'The check that raised it was changed, so this item was closed. If it still needs fixing, the changed check raises it again, possibly as one new item instead of several.' : 'It was there on the previous scan and gone on this one, so it was closed as Done.'} ${esc(f.gone.byName || nameOf(f.gone.by))} rescanned ${esc(fmtWhen(Date.parse(f.gone.at)))}.</div></div>` : ''}
         ${!f.gone && f.auto && f.auto.why === 'still-there' ? `<div class="note unk" style="margin:8px 0"><b>\u26A0 Marked Done, but still on the website</b><div class="small">${esc(nameOf(f.auto.ref, 'Someone'))} marked this Done${f.auto.at ? ' on ' + esc(fmtWhen(Date.parse(f.auto.at))) : ''}. ${esc(nameOf(f.statusBy, 'The next rescan'))} rescanned${f.statusAt ? ' on ' + esc(fmtWhen(Date.parse(f.statusAt))) : ''} and it was still there, so it was reopened. If the scan is wrong about it, mark it <b>False alarm</b> instead.</div></div>` : ''}
         ${!f.gone && f.auto && f.auto.why === 'came-back' ? `<div class="note unk" style="margin:8px 0"><b>\u21BA Back on the website</b><div class="small">This was closed as Done on an earlier rescan, then the latest scan found it again, so it was reopened.</div></div>` : ''}
-        ${f.manual ? `<div class="small faint">Written by ${esc(nameOf(f.by, f.byName))} · ${esc(fmtWhen(Date.parse(f.at)))}${f.device ? ' · ' + esc(A.DEVICE_LABEL[f.device] || f.device) : ''}</div>` : ''}
+        ${f.code === 'AUTO_LIVE' ? autoItemNote(f) : f.manual ? `<div class="small faint">Written by ${esc(nameOf(f.by, f.byName))} · ${esc(fmtWhen(Date.parse(f.at)))}${f.device ? ' · ' + esc(A.DEVICE_LABEL[f.device] || f.device) : ''}</div>` : ''}
         ${f.detailHtml ? `<div class="dr-detail rich">${cleanRich(f.detailHtml)}</div>` : f.detail ? `<div class="dr-detail">${esc(f.detail)}</div>` : ''}
         ${f.shot ? `<a href="${f.shot}" target="_blank" rel="noopener" title="Open the full size"><img src="${f.shot}" class="dr-shot" alt="Screenshot added with this item"></a>` : ''}
         ${f.challenge ? `<div class="note bad" style="margin-top:10px"><b>Reopened by ${esc(f.challenge.byName || f.challenge.by)}</b> — ${f.challenge.was === 'done' ? 'was marked Done, but it is still wrong' : 'was called a False alarm, but it is real'}
@@ -8889,7 +9101,7 @@
           : `<div class="small faint" style="margin-top:8px">Can't be rechecked on its own: ${esc(recheckWhyNot(f))}.</div>`) : ''}
         ${['done', 'false'].includes(f.status || '') && can('item.status') ? `<button class="linkbtn" id="drChallenge" style="margin-top:6px"
           title="Reopen it and tell whoever closed it why">↺ This is not ${f.status === 'done' ? 'done' : 'a false alarm'} — reopen it</button>` : ''}
-        ${f.manual && (f.by === state.me.email || can('item.add')) ? `<button class="linkbtn danger" id="drRmItem" style="margin-top:6px;margin-left:10px">Remove this item</button>` : ''}
+        ${f.manual && f.code !== 'AUTO_LIVE' && (f.by === state.me.email || can('item.add')) ? `<button class="linkbtn danger" id="drRmItem" style="margin-top:6px;margin-left:10px">Remove this item</button>` : ''}
         <div class="k" style="margin-top:14px">Assignee</div>
         <span class="member-select">${avatar(effWho(f, s))}<select id="drWho">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span>
         <h3 style="margin-top:22px">Discussion <span class="faint">(${comments.filter((c) => !c.deleted).length})</span></h3>

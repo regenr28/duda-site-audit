@@ -13,6 +13,7 @@ import { sqlReady, ensureSchema, rows as sqlRows } from './_sql.js';
 import { sideTest, dudaTypes, tailOf } from './comments.js';
 import { listUsers, slackRoster, can } from './_lib.js';
 import { getTickets, listIds } from './_tickets.js';
+import { WSUM, watchStatus } from './_watch.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const KEY = P + 'dudasites';
@@ -101,6 +102,8 @@ async function loadList(scope, me, force) {
     // Every published website should have its form history. Anything already pulled or already
     // waiting is ignored, so this is just "keep the queue in step with the account".
     if (!drafts) await enqueue(sites.map((x) => x.id), 'listed').catch(() => {});
+    // A website published since its last content check is now waiting for one: say so on the heartbeat.
+    if (!drafts) await watchStatus().catch(() => {});
     return next;
   } catch (e) {
     await redis(['DEL', key + ':lock']).catch(() => {});
@@ -278,12 +281,14 @@ export default async function handler(req, res) {
     // Merge remembered business names and domain checks
     // One extra command: whether the form-history catch-up has work, so opening this page (or a pull
     // that just queued 700 websites) starts it at once instead of waiting for the next heartbeat.
-    const [names, doms, lqLen] = await redis(['HGETALL', NAMES], ['HGETALL', DOMS], ['HLEN', P + 'leadq']);
+    const [names, doms, lqLen, wsum] = await redis(['HGETALL', NAMES], ['HGETALL', DOMS], ['HLEN', P + 'leadq'], ['HGETALL', WSUM]);
     data.lq = { pending: Number(lqLen || 0) };
     data.runs = await lastRuns(['pull', 'domains', 'leads']).catch(() => ({}));
     const nm = {}; for (let i = 0; names && i < names.length; i += 2) { const v = names[i + 1]; const j = String(v).startsWith('{') ? jparse(v) : null; nm[names[i]] = j || { n: v, p: null }; }
     const dm = {}; for (let i = 0; doms && i < doms.length; i += 2) dm[doms[i]] = jparse(doms[i + 1]);
-    data.sites = data.sites.map((x) => { const m = nm[x.id]; const fresh = m && (m.p === null || m.p === (x.published || '')); return Object.assign({}, x, { name: x.name || (m && m.n !== '-' ? m.n : ''), nameChecked: !!(x.name || fresh), dom: dm[x.id] && (!x.domain || dm[x.id].domain === x.domain || dm[x.id].status === 'nodomain') ? dm[x.id] : null }); });
+    // The live content check's counts for each website: { n: problems, c: serious, at, e: could not read }
+    const wc = {}; for (let i = 0; wsum && i < wsum.length; i += 2) { const v = jparse(wsum[i + 1]); if (v && v.at) wc[wsum[i]] = { n: v.n || 0, c: v.c || 0, t: v.t || {}, at: v.at, pubAt: v.pubAt || 0, e: v.err ? 1 : 0 }; }
+    data.sites = data.sites.map((x) => { const m = nm[x.id]; const fresh = m && (m.p === null || m.p === (x.published || '')); return Object.assign({}, x, { name: x.name || (m && m.n !== '-' ? m.n : ''), nameChecked: !!(x.name || fresh), dom: dm[x.id] && (!x.domain || dm[x.id].domain === x.domain || dm[x.id].status === 'nodomain') ? dm[x.id] : null, wc: wc[x.id] || null }); });
     return res.status(200).json(data);
   } catch (e) {
     return res.status(502).json({ error: String(e.message || e) });

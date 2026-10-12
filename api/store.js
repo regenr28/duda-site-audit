@@ -64,6 +64,8 @@ function summary(site, comments) {
     people: site.people || [site.addedBy, site.assignee].filter(Boolean),
     ...(site.completedAt ? { completedBy: site.completedBy, completedByName: site.completedByName, completedAt: site.completedAt } : {}),
     ...(site.verify ? { verify: { at: site.verify.at, ok: site.verify.ok, still: site.verify.still } } : {}),
+    // When the auto audit last read the live website for this audit, and what it found then.
+    ...(site.autoLive ? { autoLive: { at: site.autoLive.at, pub: site.autoLive.pub, n: site.autoLive.n, c: site.autoLive.c } } : {}),
   };
 }
 // The website list loads every summary at once, so keep each one small (no scan log, no AI details)
@@ -83,7 +85,7 @@ async function canSeeSite(me, site) {
   return [].concat(site.people || [], site.assignee || '', site.addedBy || '').some((e) => e && normEmail(e) === mine);
 }
 
-async function saveIndex(id) {
+export async function saveIndex(id) {
   const l = await loadSite(id);
   // Version counters let open browsers ask "anything new?" with one tiny read instead of reloading everything
   if (l) await redis(['HSET', P + 'index', id, JSON.stringify(summary(l.site, l.comments))], ['INCR', P + 'ver:index'], ['INCR', P + 'ver:s:' + id]);
@@ -370,6 +372,14 @@ export default async function handler(req, res) {
         // its history is queued now; if it is not published yet, the PUBLISH webhook queues it the
         // day it goes live, so by the time anyone onboards the customer the data is waiting.
         enqueue([b.siteId], 'audit').catch(() => {});
+        // Already read by the auto audit? What it found on the live website arrives as audit items,
+        // dated, so QA starts from it instead of finding it again.
+        try {
+          const w = await import('./_watch.js');
+          const [cw] = await redis(['GET', w.WKEY(b.siteId)]);
+          const r = jparse(cw);
+          if (r && (r.issues || []).length) await w.syncAudit(site.id, r);
+        } catch (e) { /* the audit is made either way */ }
         return res.status(200).json(await saveIndex(site.id));
       }
       case 'scanState': {
@@ -983,6 +993,15 @@ export default async function handler(req, res) {
           cmds.push(['HSET', P + 'fstate:' + b.siteId, f.id, JSON.stringify(next)]);
         });
         if (cmds.length) await redis(...cmds);
+        // An auto-audit item called a False alarm is "not a problem" for the auto audit too, so the
+        // live website is not flagged for it again; taking the False alarm back undoes that.
+        const liveRuled = touched.filter((t) => t.kind === 'status' && t.f.code === 'AUTO_LIVE' && t.f.liveKey && l.site.siteId && (t.to === 'false' || t.from === 'false'));
+        if (liveRuled.length) {
+          try {
+            const w = await import('./_watch.js');
+            for (const t of liveRuled) { if (t.to === 'false') await w.markOk(l.site.siteId, t.f.liveKey); else await w.unmarkOk(l.site.siteId, t.f.liveKey); }
+          } catch (e) { /* the status change stands either way */ }
+        }
         // False alarms feed the admins' review list, so the checks can be improved
         const faCmds = [];
         const faKeys = touched.filter((t) => t.kind === 'status' && (t.to === 'false' || t.from === 'false')).map((t) => b.siteId + ':' + t.f.id);

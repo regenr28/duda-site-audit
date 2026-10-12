@@ -6,6 +6,18 @@
       "memory": 1769,
       "includeFiles": "node_modules/@sparticuz/chromium/**"
     },
+    "api/watch.js": {
+      "maxDuration": 120,
+      "includeFiles": "public/engine.js"
+    },
+    "api/dudasites.js": {
+      "maxDuration": 120,
+      "includeFiles": "public/engine.js"
+    },
+    "api/store.js": {
+      "maxDuration": 120,
+      "includeFiles": "public/engine.js"
+    },
     "api/*.js": {
       "maxDuration": 120
     }
@@ -43,6 +55,10 @@
     {
       "path": "/api/dudasites?op=sweep",
       "schedule": "50 21 * * *"
+    },
+    {
+      "path": "/api/watch?op=cron",
+      "schedule": "20 22 * * *"
     }
   ]
 }

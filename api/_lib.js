@@ -498,6 +498,8 @@ export const NOTIFY_GROUPS = [
     desc: 'A suggestion is sent, answered, or commented on.' },
   { key: 'domains', label: 'Domain problems on live websites', kinds: ['domain-problem', 'domain-expiring', 'domain-ok', 'domain-digest'], channels: ['bell', 'popup', 'slack'], admin: true,
     desc: 'A live website\'s domain stops working, shows another site, or its registration is about to run out or has expired; it works again; plus one daily report of everything still open. (Security certificates are Duda\'s job and are not reported.)' },
+  { key: 'livecontent', label: 'Critical auto audit alerts', kinds: ['watch-issue', 'watch-digest'], channels: ['bell', 'popup', 'slack'], admin: true,
+    desc: 'CRITICAL ERRORS FOUND: the auto audit finds another business\'s phone, email, address, name or social account on a live website. Sent at once when a website is published with one, and as one daily summary of every website, each with a link to its audit items. On by default.' },
   { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed', 'security'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
     desc: 'Someone signs up and needs approving, an audit is removed from the list, or an account gets repeated wrong passwords.' },
   { key: 'projects', label: 'Projects you are on', kinds: ['project-assign', 'project-late', 'project-note'], channels: ['bell', 'popup', 'slack', 'email'],
@@ -558,6 +560,8 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   'domain-expiring': 'has a domain that needs renewing',
   'domain-ok': 'is working again',
   'domain-digest': 'sent the daily domain report',
+  'watch-issue': 'found critical errors on a website just published',
+  'watch-digest': 'found critical errors on live websites',
   'ticket-new': 'sent a ticket',
   'ticket-reply': 'replied on a change request',
   'ticket-assign': 'gave you a client change request',
@@ -648,6 +652,8 @@ function notifLink(n) {
   if (/^suggestion/.test(n.kind || '')) return base + '/#/suggestions';
   if (n.kind === 'comment-waiting' && n.dudaSite) return `${base}/#/comments/${encodeURIComponent(n.dudaSite)}`;
   if (/^ticket-/.test(n.kind || '')) return `${base}/#/requests${n.ticketId ? '/' + encodeURIComponent(n.ticketId) : ''}`;
+  if (n.kind === 'watch-digest') return `${base}/#/live/content`;
+  if (n.kind === 'watch-issue' && n.dudaSite) return `${base}/#/dr/${encodeURIComponent(n.dudaSite)}`;
   if (n.kind === 'domain-digest') return `${base}/#/live/trends`;
   if (/^domain-/.test(n.kind || '')) return n.dudaSite ? `${base}/#/live/site/${encodeURIComponent(n.dudaSite)}` : `${base}/#/live/problems`;
   if (n.siteId) return `${base}/#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
@@ -670,7 +676,13 @@ export async function slackDM(email, n, known) {
     const body = Array.isArray(n.lines) && n.lines.length
       ? '\n' + n.lines.slice(0, 12).map((l) => String(l).slice(0, 200)).join('\n')
       : (n.text ? `\n> ${String(n.text).replace(/\n+/g, ' ').slice(0, 400)}` : '');
-    const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: head + body } }];
+    // A report about several websites arrives as one block per website (name, what was found, its
+    // own link), which is how it reads best on a phone. Slack allows 50 blocks.
+    const secs = Array.isArray(n.sections) && n.sections.length ? n.sections : null;
+    const blocks = secs
+      ? [{ type: 'section', text: { type: 'mrkdwn', text: head } }].concat(secs.slice(0, 40).map((t) => ({ type: 'section', text: { type: 'mrkdwn', text: String(t).slice(0, 2900) } })),
+        secs.length > 40 ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `…and ${secs.length - 40} more websites` }] }] : [])
+      : [{ type: 'section', text: { type: 'mrkdwn', text: head + body } }];
     const buttons = [];
     if (link) buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open in Site Auditor' }, url: link });
     if (n.editorUrl) buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open in Duda editor' }, url: n.editorUrl });
@@ -744,6 +756,7 @@ export const PERMISSIONS = [
     { key: 'live.view', label: 'See Live DR Sites', desc: 'The list of every website in the Duda account. Without this the page is not in the top bar at all.' },
     { key: 'live.pull', label: 'Pull the list from Duda', desc: 'Fetch the websites again rather than using what was last pulled.' },
     { key: 'live.domains', label: 'Check domains', desc: 'Open every live domain to see it still shows the right website.' },
+    { key: 'live.content', label: 'Auto audit: check now and rule on findings', desc: 'Read a website again on the spot, and mark something the check found as not a problem for that website (an area they serve, a partner\'s phone). Everybody who can see Live DR Sites can see the findings.' },
     { key: 'live.audit', label: 'See the audit column and start audits from there', desc: 'The Audit column and the "Audit this website" button. Usually QA rather than everybody.' },
   ] },
   { group: 'Website analytics', items: [

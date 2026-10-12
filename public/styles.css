@@ -1766,3 +1766,33 @@ table.cp-dns td.mono { word-break: break-all; }
   .cl-preview { flex-wrap: wrap; }
 }
 .cu-temp .btn { align-self: flex-start; }
+
+/* ---------- Live content check (website profile, DR Websites) ---------- */
+.pf-big.wc-bad { color: var(--crit); } .pf-big.wc-warn { color: var(--warn); } .pf-big.wc-ok { color: var(--ok); }
+.wc-intro { margin: 4px 0 10px; max-width: 760px; }
+.wc-meta { margin-bottom: 10px; }
+.wc-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.wc-item { border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0; padding: 9px 12px; background: var(--panel); }
+.wc-item.crit { border-left-color: var(--crit); }
+.wc-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+.wc-type { font-size: 12px; color: var(--muted); }
+.wc-val { overflow-wrap: anywhere; }
+.wc-ok-btn { margin-left: auto; }
+.wc-ctx { margin: 3px 0; font-style: italic; overflow-wrap: anywhere; }
+.wc-pages { margin-top: 3px; overflow-wrap: anywhere; }
+.wc-pages a { font-size: 12px; }
+.wc-oks { margin-top: 12px; } .wc-oks summary { cursor: pointer; color: var(--muted); } .wc-oks ul { margin: 6px 0 0; padding-left: 18px; }
+.wc-note { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.wc-badge { display: inline-block; margin-top: 3px; text-decoration: none; }
+@media (max-width: 640px) { .wc-ok-btn { margin-left: 0; } }
+/* Auto audit column on DR Websites */
+.ac-td { min-width: 190px; }
+.ac-cell { display: grid; gap: 2px; justify-items: start; }
+.badge.ac-repub { background: var(--info-soft); color: var(--info); }
+.ac-crit { display: grid; gap: 1px; margin-top: 3px; padding: 5px 8px; border-radius: 6px; background: var(--crit-soft); color: var(--crit); font-size: 12px; text-decoration: none; }
+.ac-crit:hover { text-decoration: underline; }
+.ac-t { color: var(--text); }
+.ac-warn { color: var(--warn); } .ac-ok { color: var(--ok); }
+/* Audits: republished since the last scan */
+.badge.repub { background: var(--info-soft); color: var(--info); }
+.auto-line { margin-top: 3px; }

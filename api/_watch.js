@@ -1,0 +1,458 @@
+// Live content watch: every published website, read like a visitor reads it, and checked against its
+// Business Info for the details that cost us customers when they are wrong — another business's
+// name, phone, email, address or social account (on a blog post, a footer, a map, anywhere).
+//
+// Why it is cheap enough to run on ~700 websites:
+//   · A website's content only changes when it is published. So each website is read once, then
+//     again only after Duda says it was published since (or a month later, in case Business Info
+//     changed). The day-to-day work is "the handful published yesterday".
+//   · It reads plain HTML (no browser), from the sitemap, a few pages at a time, inside a time budget.
+//     A website too big for one run carries on where it stopped next time.
+//   · Only the findings are stored (at most 25 per website, 5 pages each), never page content, so the
+//     database cannot fill up with it.
+//
+// The rules are the audit's own: the reference is built with the audit engine's buildTruth(), names
+// are matched with its matchesBusiness(), socials with its socialHandle(), and anything a team member
+// approved for an audited website (its Business Info exceptions) is respected.
+import crypto from 'node:crypto';
+import { redis, P, jparse, unpackJSON, packJSON, fetchWithTimeout, listUsers, notifyUser, appUrl, newId } from './_lib.js';
+import '../public/engine.js';
+
+const A = () => globalThis.DudaAudit;
+const DUDA = () => process.env.DUDA_API_BASE || 'https://api.duda.co/api';
+const PROTO = () => process.env.WATCH_PROTOCOL || 'https';
+export const WKEY = (id) => P + 'cw:' + id;      // one website's latest result
+export const WSUM = P + 'cwsum';                   // hash: duda id → { at, pub, n, c, pages, partial }
+export const WOK = (id) => P + 'cwok:' + id;      // set: values a person said are fine for this website
+const WPART = (id) => P + 'cwpart:' + id;       // a website stopped half way (the next run carries on)
+const WPARTID = P + 'cwpartid';                  // …and which one, so it is finished first
+const WLOCK = P + 'cwlock';
+export const WDUE = P + 'cwdue';                 // how many websites are waiting (rides on the heartbeat)
+export const WCFG = P + 'cwcfg';                 // { off: true } pauses everything
+const WNEW = P + 'cwnew';                        // hash: duda id → new problems not yet in a daily report
+const MAX_PAGES = 150;                               // per website
+const MAX_ISSUES = 25;
+const RECHECK_DAYS = 30;
+const DAY = 86400000;
+
+async function duda(path) {
+  const user = process.env.DUDA_API_USERNAME, pass = process.env.DUDA_API_PASSWORD;
+  if (!user || !pass) throw new Error('Duda API access is not set up.');
+  const r = await fetchWithTimeout(DUDA() + path, { headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'), Accept: 'application/json' } }, 15000);
+  if (!r.ok) throw new Error(`Duda ${r.status}`);
+  return r.json();
+}
+
+// ---------- reading a page ----------
+const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', copy: '©', ndash: '–', mdash: '—', rsquo: '’', lsquo: '‘', hellip: '…', reg: '®', trade: '™' };
+const decode = (s) => String(s || '').replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, e) => {
+  if (e[0] === '#') { const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10); return Number.isFinite(n) ? String.fromCodePoint(n) : m; }
+  return ENT[e.toLowerCase()] !== undefined ? ENT[e.toLowerCase()] : m;
+});
+/** What a visitor reads, with the HTML taken away (scripts, styles and hidden templates dropped). */
+export function textOf(html) {
+  return decode(String(html)
+    .replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<noscript[\s\S]*?<\/noscript>|<template[\s\S]*?<\/template>|<!--[\s\S]*?-->/gi, ' ')
+    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|section|footer|header|td|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')).replace(/[ \t ]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
+}
+const attrs = (html, tag, attr) => [...String(html).matchAll(new RegExp(`<${tag}\\b[^>]*\\b${attr}\\s*=\\s*("([^"]*)"|'([^']*)')`, 'gi'))].map((m) => decode(m[2] !== undefined ? m[2] : m[3]));
+function jsonLd(html) {
+  const out = [];
+  for (const m of String(html).matchAll(/<script[^>]+type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try { const walk = (o) => { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) return o.forEach(walk); out.push(o); if (o['@graph']) walk(o['@graph']); }; walk(JSON.parse(m[1])); } catch (e) { /* not JSON */ }
+  }
+  return out;
+}
+const SOCIAL = [['facebook', /(^|\.)(facebook\.com|fb\.com|fb\.me)$/i], ['instagram', /(^|\.)instagram\.com$/i], ['youtube', /(^|\.)(youtube\.com|youtu\.be)$/i], ['tiktok', /(^|\.)tiktok\.com$/i],
+  ['twitter', /(^|\.)(twitter\.com|x\.com)$/i], ['linkedin', /(^|\.)linkedin\.com$/i], ['yelp', /(^|\.)yelp\.com$/i], ['pinterest', /(^|\.)pinterest\.com$/i]];
+const netOf = (u) => { for (const [n, re] of SOCIAL) if (re.test(u.hostname)) return n; return ''; };
+const STATES = 'AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC';
+const CITY_ZIP = new RegExp(`(\\d{1,6}\\s+[A-Z0-9][A-Za-z0-9.'#\\- ]{1,40}?,?\\s+)?\\b((?:[A-Z][a-z.']+[ -]){0,2}[A-Z][a-z.']+),\\s*(${STATES})\\.?,?\\s+(\\d{5})(?:-\\d{4})?\\b`, 'g');
+const PHONE_TXT = /(?:\+?1[\s.-]?)?\(?\b([2-9]\d{2})\)?[\s.-]?(\d{3})[\s.-](\d{4})\b/g;
+const EMAIL_TXT = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+const IGNORE_EMAIL = /(@|\.)(example\.(com|org)|sentry\.io|wixpress\.com|duda\.co|multiscreensite\.com|dudamobile\.com|domain\.com|email\.com|yourdomain\.com)$|\.(png|jpe?g|gif|webp|svg|css|js)$/i;
+const NOT_A_NAME = /powered|design|website|built|developed|created|marketing|privacy|terms|all rights|reserved|^\W*$/i;
+const snip = (text, at, len) => String(text).slice(Math.max(0, at - 50), at + len + 60).replace(/\s+/g, ' ').trim().slice(0, 160);
+
+/**
+ * Everything on one page that does not match the website's Business Info.
+ * Returns [{ type, value, sev, label, ctx }] — type is the audit's own: phone, email, name, social, address.
+ */
+export function checkPage(html, truth, path) {
+  const A2 = A(); const out = [];
+  const add = (type, value, sev, label, ctx) => out.push({ type, value: String(value).slice(0, 160), sev, label, ctx: String(ctx || '').slice(0, 160), path });
+  const text = textOf(html);
+  const phones = new Set(truth.phones || []);
+  const emails = new Set((truth.emails || []).map((e) => e.toLowerCase()));
+  const zips = new Set((truth.addresses || []).map((a) => String(a.zip || '').slice(0, 5)).filter(Boolean));
+  const hrefs = attrs(html, 'a', 'href');
+  // Phones: links first (a tap calls them), then numbers written in the text.
+  const seenP = new Set();
+  if (phones.size) {
+    hrefs.filter((h) => /^tel:/i.test(h)).forEach((h) => {
+      const d = A2.normPhone(h.replace(/^tel:/i, '')).slice(-10);
+      if (d.length === 10 && !phones.has(d) && !seenP.has(d)) { seenP.add(d); add('phone', A2.fmtPhone(d), 'critical', 'Phone number that is not in Business Info (a tap calls it)', h); }
+    });
+    for (const m of text.matchAll(PHONE_TXT)) {
+      const d = m[1] + m[2] + m[3];
+      if (!phones.has(d) && !seenP.has(d)) { seenP.add(d); add('phone', A2.fmtPhone(d), 'critical', 'Phone number that is not in Business Info', snip(text, m.index, m[0].length)); }
+    }
+  }
+  // Emails
+  if (emails.size) {
+    const seenE = new Set();
+    const consider = (e, ctx, how) => { e = e.toLowerCase().replace(/^mailto:/, '').split('?')[0]; if (!/@/.test(e) || IGNORE_EMAIL.test(e) || emails.has(e) || seenE.has(e)) return; seenE.add(e); add('email', e, 'critical', how, ctx); };
+    hrefs.filter((h) => /^mailto:/i.test(h)).forEach((h) => consider(h, h, 'Email address that is not in Business Info (a tap writes to it)'));
+    for (const m of text.matchAll(EMAIL_TXT)) consider(m[0], snip(text, m.index, m[0].length), 'Email address that is not in Business Info');
+  }
+  // Social accounts: a link to a profile that is not one of theirs, or that looks like another business.
+  const seenS = new Set();
+  hrefs.forEach((h) => {
+    let u; try { u = new URL(h); } catch (e) { return; }
+    const net = netOf(u); if (!net || A2.isShareLink(u)) return;
+    const handle = A2.socialHandle(net, u.href); if (!handle || seenS.has(net + handle)) return;
+    seenS.add(net + handle);
+    const mine = (truth.socials && truth.socials[net]) || [];
+    const c = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (mine.some((x) => c(x) === c(handle))) return;
+    if (truth.businessName && !A2.matchesBusiness(handle, truth)) add('social', u.href, mine.length ? 'critical' : 'warning', mine.length ? `${net[0].toUpperCase() + net.slice(1)} link to an account that is not theirs` : `${net[0].toUpperCase() + net.slice(1)} link that looks like another business`, handle);
+  });
+  // Addresses: "City, ST 12345" with a ZIP that is none of theirs — in the text, and on a map.
+  if (zips.size) {
+    const seenA = new Set();
+    for (const m of text.matchAll(CITY_ZIP)) {
+      const zip = m[4]; if (zips.has(zip) || seenA.has(zip)) continue;
+      seenA.add(zip);
+      const full = m[0].replace(/\s+/g, ' ').trim();
+      add('address', full, m[1] ? 'critical' : 'warning', m[1] ? 'Street address that is not theirs' : 'A town and ZIP that are not theirs (check it is not just an area they serve)', snip(text, m.index, m[0].length));
+    }
+    attrs(html, 'iframe', 'src').filter((s) => /google\.[a-z.]+\/maps|maps\.google/i.test(s)).forEach((s) => {
+      let q = ''; try { const u = new URL(s, 'https://x.invalid'); q = u.searchParams.get('q') || u.searchParams.get('query') || ''; } catch (e) { /* ignore */ }
+      const zm = /\b(\d{5})\b/.exec(q);
+      if (zm && !zips.has(zm[1]) && !seenA.has(zm[1])) { seenA.add(zm[1]); add('address', q, 'critical', 'Map showing an address that is not theirs', q); }
+    });
+  }
+  // The business name: the copyright line, and the business data Google reads (JSON-LD).
+  if (truth.businessName) {
+    const cm = /(?:©|\(c\)|copyright)\s*(?:\d{4}\s*(?:[-–]\s*\d{2,4})?)?\s*(?:by\s+)?([^\n|•·]{3,70})/i.exec(text);
+    if (cm) {
+      const tail = cm[1].replace(/all rights reserved.*$/i, '').replace(/[.,\s]+$/, '').trim();
+      if (/[a-z]{3}/i.test(tail) && !NOT_A_NAME.test(tail) && !A2.matchesBusiness(tail, truth)) add('name', tail, 'critical', 'Copyright line names a different business', cm[0].slice(0, 120));
+    }
+    jsonLd(html).forEach((o) => {
+      const t = [].concat(o['@type'] || []).join(' ');
+      if (!/LocalBusiness|Organization|AutoRepair|Store|Service|Business/i.test(t)) return;
+      if (o.name && !A2.matchesBusiness(String(o.name), truth)) add('name', String(o.name), 'critical', 'Google business data (schema) names a different business', t);
+      if (o.telephone && phones.size) { const d = A2.normPhone(String(o.telephone)).slice(-10); if (d.length === 10 && !phones.has(d)) add('phone', A2.fmtPhone(d), 'critical', 'Google business data (schema) has a phone that is not in Business Info', String(o.telephone)); }
+    });
+  }
+  return out;
+}
+
+// ---------- one website ----------
+/** The reference for one website: Duda's Business Info, minus anything struck out on its audit. */
+async function truthFor(dudaId, allow) {
+  const [site, content] = await Promise.all([duda(`/sites/multiscreen/${encodeURIComponent(dudaId)}`), duda(`/sites/multiscreen/${encodeURIComponent(dudaId)}/content`).catch(() => null)]);
+  const t = A().buildTruth({ site, content: content || {} });
+  return A().truthWithout(t, allow);
+}
+async function pagesFor(domain) {
+  const base = `${PROTO()}://${domain}`;
+  const urls = [];
+  const read = async (u, depth) => {
+    if (urls.length >= MAX_PAGES || depth > 1) return;
+    const r = await fetchWithTimeout(u, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SiteAuditor/1.0; content check)', Accept: 'application/xml,text/xml' } }, 8000).catch(() => null);
+    if (!r || !r.ok) return;
+    const xml = (await r.text().catch(() => '')).slice(0, 2000000);
+    const locs = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => decode(m[1]));
+    if (/<sitemapindex/i.test(xml)) { for (const l of locs.slice(0, 4)) await read(l, depth + 1); return; }
+    locs.forEach((l) => { try { const x = new URL(l); if (x.hostname.replace(/^www\./, '') === domain.replace(/^www\./, '').replace(/:\d+$/, '') || x.host === domain) urls.push(x.pathname + x.search); } catch (e) { /* skip */ } });
+  };
+  await read(base + '/sitemap.xml', 0);
+  const list = [...new Set(['/'].concat(urls))].slice(0, MAX_PAGES);
+  return list;
+}
+const bare = (h) => String(h || '').toLowerCase().replace(/^www\./, '').replace(/:\d+$/, '');
+/** One page's HTML, or '' — including when the domain sends the visitor to some other website. */
+async function fetchPage(domain, path) {
+  const r = await fetchWithTimeout(`${PROTO()}://${domain}${path}`, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36 SiteAuditor-content-check', Accept: 'text/html' } }, 9000).catch(() => null);
+  if (!r || !r.ok || !/html/i.test(r.headers.get('content-type') || 'text/html')) return '';
+  try { if (r.url && bare(new URL(r.url).host) !== bare(domain)) return ''; } catch (e) { /* keep */ }
+  return (await r.text().catch(() => '')).slice(0, 800000);
+}
+/**
+ * The identity of a finding, used to merge it across pages and to remember "not a problem".
+ * An address is known by its ZIP, so saying a town is fine covers every page that mentions it.
+ */
+export function keyOf(f) {
+  if (f.type === 'address') { const z = /(\d{5})(?!.*\d{5})/.exec(f.value); if (z) return 'address:' + z[1]; }
+  return A().allowKey(f.type, f.value) || f.type + ':' + String(f.value).toLowerCase();
+}
+/** One finding per value, listing up to five pages it is on. */
+function merge(found, okKeys) {
+  const by = new Map();
+  found.forEach((f) => {
+    const key = keyOf(f);
+    if (okKeys.has(key)) return;
+    const g = by.get(key) || Object.assign({ k: key, pages: [], n: 0 }, f);
+    g.n++; if (g.pages.length < 5 && !g.pages.includes(f.path)) g.pages.push(f.path);
+    if (f.sev === 'critical') g.sev = 'critical';
+    by.set(key, g);
+  });
+  return [...by.values()].map(({ path, ...g }) => g).sort((a, b) => (a.sev === b.sev ? b.n - a.n : a.sev === 'critical' ? -1 : 1)).slice(0, MAX_ISSUES);
+}
+
+// ---------- the queue ----------
+async function liveList() {
+  const [raw] = await redis(['GET', P + 'dudasites']);
+  const list = unpackJSON(raw);
+  return ((list && list.sites) || []).filter((x) => x.domain).map((x) => ({ id: String(x.id), name: x.name || '', domain: x.domain, pub: x.published || '' }));
+}
+const parseSum = (raw) => { const o = {}; for (let i = 0; raw && i < raw.length; i += 2) o[raw[i]] = jparse(raw[i + 1]) || {}; return o; };
+/**
+ * Which websites need reading, most urgent first: published since their last check, never read,
+ * then a month old. One that could not be read is tried again the next day, not a month later.
+ */
+export function dueOrder(sites, sums, at = Date.now()) {
+  const rank = (x) => {
+    const s = sums[x.id]; if (!s || !s.at) return 1;
+    if (x.pub && Date.parse(x.pub) > (s.pubAt || 0)) return 0;
+    if (s.err && at - s.at > DAY) return 1;
+    if (at - s.at > RECHECK_DAYS * DAY) return 2;
+    return 9;
+  };
+  return sites.map((x) => Object.assign({ r: rank(x) }, x)).filter((x) => x.r < 9).sort((a, b) => a.r - b.r || String(b.pub).localeCompare(String(a.pub)));
+}
+export async function watchStatus() {
+  const [sites, [sumRaw, cfg, part, lock]] = await Promise.all([liveList(), redis(['HGETALL', WSUM], ['GET', WCFG], ['GET', WPARTID], ['GET', WLOCK])]);
+  const sums = parseSum(sumRaw);
+  const due = dueOrder(sites, sums);
+  const on = !(jparse(cfg) || {}).off;
+  await redis(['SET', WDUE, on ? due.length : 0]).catch(() => {});
+  const checked = sites.filter((x) => sums[x.id] && sums[x.id].at);
+  return { on, total: sites.length, checked: checked.length, pending: due.length, running: !!lock,
+    withIssues: checked.filter((x) => sums[x.id].n).length, critical: checked.filter((x) => sums[x.id].c).length,
+    unreadable: checked.filter((x) => sums[x.id].err).length, partial: part || '',
+    sums: Object.fromEntries(checked.map((x) => [x.id, { n: sums[x.id].n || 0, c: sums[x.id].c || 0, at: sums[x.id].at, err: sums[x.id].err || '' }])) };
+}
+
+/** dudaId → its audit record (for the exceptions people approved there). */
+async function auditMap() {
+  const [raw] = await redis(['HGETALL', P + 'index']);
+  const out = {}; for (let i = 0; raw && i < raw.length; i += 2) { const v = jparse(raw[i + 1]); if (v && v.siteId) out[String(v.siteId).toLowerCase()] = raw[i]; }
+  return out;
+}
+
+/** Read one website (or carry on reading it). Returns { done:false } when the time ran out first. */
+async function readSite(s, recId, timeLeft) {
+  const [recRaw, okRaw, prevRaw, partRaw] = await redis(recId ? ['GET', P + 'site:' + recId] : ['GET', P + 'none'], ['SMEMBERS', WOK(s.id)], ['GET', WKEY(s.id)], ['GET', WPART(s.id)]);
+  const rec = unpackJSON(recRaw) || {};
+  const allow = rec.allow || [];
+  // Exceptions approved on the website's audit, plus "not a problem" said here.
+  const okKeys = new Set([...(okRaw || []), ...allow.filter((a) => a.mode !== 'deny').map((a) => a.key)]);
+  const pubAt = Date.parse(s.pub) || 0;
+  const skip = async (err) => { await redis(['HSET', WSUM, s.id, JSON.stringify({ at: Date.now(), pubAt, n: 0, c: 0, err })], ['DEL', WPART(s.id)]); return { done: true, err }; };
+  let truth;
+  try { truth = await truthFor(s.id, allow); } catch (e) { return skip('Business Info could not be read from Duda'); }
+  if (!truth.businessName && !(truth.phones || []).length && !(truth.emails || []).length) return skip('No Business Info to compare with');
+  let part = jparse(partRaw);
+  if (part && part.pub !== s.pub) part = null;        // published again since: start over
+  const pages = part ? part.pages : await pagesFor(s.domain);
+  let i = part ? part.i : 0; let read = part ? part.read || 0 : 0; const found = part ? part.found : [];
+  while (i < pages.length && timeLeft() > 4000) {
+    const batch = pages.slice(i, i + 8);
+    const htmls = await Promise.all(batch.map((p) => fetchPage(s.domain, p)));
+    htmls.forEach((h, k) => { if (h) { read++; found.push(...checkPage(h, truth, batch[k])); } });
+    i += batch.length;
+    if (found.length > 400) found.splice(400);
+  }
+  if (i < pages.length) {
+    await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
+    return { done: false };
+  }
+  if (!read) return skip('The website could not be opened (see Domain health)');
+  const issues = merge(found, okKeys);
+  const prev = jparse(prevRaw);
+  const before = new Set(((prev && prev.issues) || []).map((x) => x.k));
+  const fresh = issues.filter((x) => !before.has(x.k));
+  const result = { at: Date.now(), pub: s.pub, domain: s.domain, name: s.name || truth.businessName, pages: read, issues,
+    ref: { name: truth.businessName, phones: truth.phones, emails: truth.emails, zips: (truth.addresses || []).map((a) => a.zip).filter(Boolean) } };
+  // t: the serious ones by kind (phone, email, address, name, social): what the DR Websites column lists.
+  const sum = { at: result.at, pubAt, n: issues.length, c: issues.filter((x) => x.sev === 'critical').length, t: critTypes(issues), pages: read };
+  const cmds = [['SET', WKEY(s.id), JSON.stringify(result)], ['HSET', WSUM, s.id, JSON.stringify(sum)], ['DEL', WPART(s.id)]];
+  if (fresh.length) cmds.push(['HSET', WNEW, s.id, JSON.stringify({ name: result.name, domain: s.domain, n: fresh.length, c: fresh.filter((x) => x.sev === 'critical').length, t: critTypes(fresh), recId: recId || '', first: !prev })]);
+  await redis(...cmds);
+  // A website that had been read before and has just been published WITH a wrong detail is told
+  // about now; everything else waits for the once-a-day report, so the first pass through 700
+  // websites does not bury the admins.
+  // A website on Audits gets what was found as audit items (and loses the ones fixed since).
+  if (recId) await syncAudit(recId, result).catch(() => {});
+  if (prev && fresh.some((x) => x.sev === 'critical')) await alertNow(s, result.name, fresh, recId).catch(() => {});
+  return { done: true, n: issues.length, c: sum.c, t: sum.t, pubAt, fresh: fresh.length };
+}
+
+/**
+ * Read as many websites as fit in the time budget. One run at a time (a lock), and a website too
+ * big to finish carries on next run. `only` reads just that website now (Check now), beside any run.
+ */
+export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}) {
+  const started = Date.now();
+  const timeLeft = () => budgetMs - (Date.now() - started);
+  if (!process.env.DUDA_API_USERNAME || !process.env.DUDA_API_PASSWORD) return { error: 'Duda API access is not set up.', done: [] };
+  const [cfgRaw] = await redis(['GET', WCFG]);
+  if (!only && (jparse(cfgRaw) || {}).off) return { off: true, done: [] };
+  const lockKey = only ? WLOCK + ':' + only : WLOCK;
+  const [got] = await redis(['SET', lockKey, by, 'NX', 'EX', Math.ceil(budgetMs / 1000) + 40]);
+  if (got !== 'OK') return { busy: true, done: [] };
+  const done = []; let stopped = false;
+  try {
+    const [sites, [sumRaw, partId], amap] = await Promise.all([liveList(), redis(['HGETALL', WSUM], ['GET', WPARTID]), auditMap()]);
+    let queue = only ? sites.filter((x) => x.id === only) : dueOrder(sites, parseSum(sumRaw));
+    if (!only && partId) { const p = queue.find((x) => x.id === partId); if (p) queue = [p].concat(queue.filter((x) => x !== p)); }
+    for (const s of queue) {
+      if (timeLeft() < 6000) break;
+      const r = await readSite(s, amap[s.id.toLowerCase()], timeLeft);
+      if (!r.done) { stopped = true; break; }
+      done.push(Object.assign({ id: s.id }, r));
+    }
+    if (!stopped && partId && done.some((d) => d.id === partId)) await redis(['DEL', WPARTID]);
+  } finally {
+    await redis(['DEL', lockKey]).catch(() => {});
+  }
+  const st = await watchStatus().catch(() => ({}));
+  return { done, partial: stopped, pending: st.pending, checked: st.checked, total: st.total };
+}
+
+/** "This is fine for this website": remembered, and taken off its current list straight away. */
+export async function markOk(id, key) {
+  const [prevRaw, sumRaw] = await redis(['SADD', WOK(id), key], ['GET', WKEY(id)], ['HGET', WSUM, id]).then((r) => r.slice(1));
+  const prev = jparse(prevRaw); if (!prev) return null;
+  prev.issues = (prev.issues || []).filter((x) => x.k !== key);
+  const sum = Object.assign(jparse(sumRaw) || {}, { n: prev.issues.length, c: prev.issues.filter((x) => x.sev === 'critical').length });
+  sum.t = critTypes(prev.issues);
+  await redis(['SET', WKEY(id), JSON.stringify(prev)], ['HSET', WSUM, id, JSON.stringify(sum)]);
+  const recId = (await auditMap())[String(id).toLowerCase()];
+  if (recId) await syncAudit(recId, prev, { ok: key }).catch(() => {});
+  return prev;
+}
+/** Undo "not a problem" (it shows again from the next check). */
+export async function unmarkOk(id, key) { await redis(['SREM', WOK(id), key]); }
+export async function okList(id) { const [r] = await redis(['SMEMBERS', WOK(id)]); return r || []; }
+
+/** How many serious findings of each kind: { phone: 2, email: 1 }. */
+export function critTypes(list) {
+  const t = {}; (list || []).forEach((x) => { if (x.sev === 'critical') t[x.type] = (t[x.type] || 0) + 1; }); return t;
+}
+
+// ---------- the audit items of a website that is on Audits ----------
+const TYPE_WORD = { phone: 'Phone number', email: 'Email address', address: 'Address', name: 'Business name', social: 'Social account' };
+const liveId = (k) => 'live-' + crypto.createHash('sha1').update(String(k)).digest('hex').slice(0, 12);
+const KEEP_GONE_MS = 45 * DAY;
+const pairs = (arr, json) => { const o = {}; for (let i = 0; arr && i < arr.length; i += 2) o[arr[i]] = json ? jparse(arr[i + 1]) || {} : arr[i + 1]; return o; };
+/**
+ * Bring a website's auto-audit findings into its audit as items.
+ *
+ * They are the audit's own items from then on (numbered, assignable, with a status), marked as
+ * found by the auto audit with the date and time. Every later read keeps them in step: a new
+ * finding is added, one no longer on the live website closes itself as Done, and one that comes
+ * back reopens. A rescan of the audit leaves them alone (it reads the Duda preview, not the live
+ * website, so it cannot judge them). `opts.ok` is a finding just ruled "not a problem": it closes
+ * as False alarm instead of Done.
+ */
+export async function syncAudit(recId, result, opts = {}) {
+  if (!recId || !result) return null;
+  const [raw, fnumRaw, seqRaw, fstRaw] = await redis(['GET', P + 'site:' + recId], ['HGETALL', P + 'fnum:' + recId], ['GET', P + 'seq:' + recId], ['HGETALL', P + 'fstate:' + recId]);
+  const site = unpackJSON(raw); if (!site) return null;
+  const nums = pairs(fnumRaw); const st = pairs(fstRaw, true);
+  let seq = Number(seqRaw || 0);
+  const at = new Date(result.at || Date.now()).toISOString(); const nowIso = new Date().toISOString();
+  const old = new Map((site.findings || []).filter((f) => f.code === 'AUTO_LIVE').map((f) => [f.liveKey, f]));
+  const others = (site.findings || []).filter((f) => f.code !== 'AUTO_LIVE');
+  const numAdd = []; const stAdd = []; let added = 0, closed = 0, back = 0;
+  const live = (result.issues || []).map((i) => {
+    const prev = old.get(i.k); old.delete(i.k);
+    const id = prev ? prev.id : liveId(i.k);
+    const pages = (i.pages || []).slice(0, 5);
+    const f = { id, code: 'AUTO_LIVE', manual: true, liveKey: i.k, liveType: i.type,
+      severity: i.sev === 'critical' ? 'critical' : 'warning', category: 'Auto audit (live website)',
+      message: `${TYPE_WORD[i.type] || 'Detail'} that is not theirs: ${i.value}`, found: i.value,
+      detail: i.label + (i.ctx && i.ctx !== i.value && !/^(tel|mailto):/i.test(i.ctx) && i.type !== 'social' ? `\n“${i.ctx}”` : ''),
+      path: pages[0] || '/', pages, liveDomain: result.domain || '',
+      autoLive: { at, pub: result.pub || '', first: prev && prev.autoLive ? prev.autoLive.first : at },
+      by: '', byName: 'Auto audit', at: prev ? prev.at : at };
+    if (!nums[id]) { seq++; nums[id] = String(seq); numAdd.push(id, String(seq)); added++; }
+    const cur = st[id];
+    if (cur && cur.status === 'done' && cur.auto === 'live-gone') { stAdd.push(id, JSON.stringify({ status: 'open', assignee: cur.assignee || '', updatedBy: '', updatedAt: nowIso, auto: 'live-back' })); back++; }
+    return f;
+  });
+  const gone = [];
+  old.forEach((f) => {
+    const cur = st[f.id] || {};
+    const goneAt = (f.autoLive && f.autoLive.gone) || at;
+    if (Date.now() - Date.parse(goneAt) > KEEP_GONE_MS) return;         // long fixed: let it go
+    gone.push(Object.assign({}, f, { autoLive: Object.assign({}, f.autoLive, { gone: goneAt }) }));
+    if (cur.status === 'done' || cur.status === 'false') return;      // somebody already decided
+    const ok = opts.ok && opts.ok === f.liveKey;
+    stAdd.push(f.id, JSON.stringify(Object.assign({}, cur, { status: ok ? 'false' : 'done', updatedBy: opts.by || '', updatedAt: nowIso, auto: ok ? 'live-ok' : 'live-gone' })));
+    closed++;
+  });
+  site.findings = others.concat(live, gone);
+  site.autoLive = { at, pub: result.pub || '', n: live.length, c: live.filter((f) => f.severity === 'critical').length };
+  const cmds = [['SET', P + 'site:' + recId, packJSON(site)]];
+  if (numAdd.length) cmds.push(['HSET', P + 'fnum:' + recId, ...numAdd], ['SET', P + 'seq:' + recId, String(seq)]);
+  if (stAdd.length) cmds.push(['HSET', P + 'fstate:' + recId, ...stAdd]);
+  if (added || closed || back) {
+    const bits = [added && `added ${added} item${added === 1 ? '' : 's'}`, closed && `closed ${closed} no longer on the live website`, back && `reopened ${back} that came back`].filter(Boolean);
+    const e = { id: newId(6), at: nowIso, by: '', byName: 'Auto audit', type: 'auto-audit', text: `auto audit of the live website: ${bits.join(', ')}` };
+    cmds.push(['LPUSH', P + 'act:' + recId, JSON.stringify(e)], ['LTRIM', P + 'act:' + recId, 0, 299]);
+  }
+  await redis(...cmds);
+  const { saveIndex } = await import('./store.js');
+  await saveIndex(recId);
+  return { added, closed, back };
+}
+
+// ---------- telling the admins ----------
+async function admins() { return (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active'); }
+const COUNT_WORD = { phone: ['phone number incorrect', 'phone numbers incorrect'], email: ['email address incorrect', 'email addresses incorrect'],
+  address: ['address that is not theirs', 'addresses that are not theirs'], name: ['incorrect business name found', 'incorrect business names found'],
+  social: ['social account that is not theirs', 'social accounts that are not theirs'] };
+/**
+ * One website in the alert, the way admins asked for it:
+ *   *Business name* / Error found: / 5 phone numbers incorrect / 1 incorrect business name found / and 5 more! / link
+ */
+function siteBlock(x) {
+  const types = Object.entries(x.t || {}).sort((a, b) => b[1] - a[1]);
+  const shown = types.slice(0, 2);
+  const more = (x.n || 0) - shown.reduce((a, [, v]) => a + v, 0);
+  const rows = shown.map(([k, v]) => `${v} ${(COUNT_WORD[k] || ['problem', 'problems'])[v === 1 ? 0 : 1]}`);
+  if (more > 0) rows.push(`and ${more} more!`);
+  const base = appUrl();
+  const href = !base ? '' : x.recId ? `${base}/#/site/${encodeURIComponent(x.recId)}/findings` : `${base}/#/dr/${encodeURIComponent(x.id)}`;
+  const name = String(x.name || x.domain || x.id).replace(/[*_~<>]/g, '');
+  return { rows, line: `${name}: ${rows.join(', ')}`,
+    slack: `*${name}*\nError found:\n${rows.map((r) => (/^and \d+ more!$/.test(r) ? '_' + r + '_' : '• ' + r)).join('\n')}${href ? `\n<${href}|${x.recId ? 'Audit items' : 'Auto audit findings'}>` : ''}` };
+}
+async function sendCritical(items, kind) {
+  const blocks = items.map(siteBlock);
+  const m = { kind, urgent: true, by: '', byName: 'Auto audit', siteName: '', dudaSite: items.length === 1 ? items[0].id : '', count: items.length,
+    headline: `🚨 *CRITICAL ERRORS FOUND!*${items.length > 1 ? ` (${items.length} websites)` : ''}`,
+    sections: blocks.map((b) => b.slack), lines: blocks.map((b) => b.line), text: blocks.map((b) => b.line).join('\n') };
+  await Promise.all((await admins()).map((u) => notifyUser(u.email, m).catch(() => {})));
+}
+async function alertNow(s, name, fresh, recId) {
+  await sendCritical([{ id: s.id, name, domain: s.domain, n: fresh.length, t: critTypes(fresh), recId: recId || '' }], 'watch-issue');
+}
+/** Once a day: every website where new serious problems were found since the last report, in one message. */
+export async function watchDigest() {
+  const [raw] = await redis(['HGETALL', WNEW]);
+  const items = []; for (let i = 0; raw && i < raw.length; i += 2) { const v = jparse(raw[i + 1]); if (v) items.push(Object.assign({ id: raw[i] }, v)); }
+  await redis(['DEL', WNEW]);
+  // Only the serious ones (contact details that are not theirs) are worth a message; a town and ZIP
+  // to check waits on the website's profile.
+  const crit = items.filter((x) => x.c).sort((a, b) => b.c - a.c || b.n - a.n);
+  if (!crit.length) return 0;
+  await sendCritical(crit, 'watch-digest');
+  return crit.length;
+}

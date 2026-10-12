@@ -812,6 +812,47 @@ export const HELP_SECTIONS = [
   },
 
   {
+    id: 'content', group: 'Live DR Sites', title: 'Auto audit: super critical errors on live websites', audience: 'all',
+    html: `<p>The <b>auto audit</b> reads every <b>published</b> website the way a visitor does — every page in its sitemap, <b>blog posts included</b> — and compares it with its <b>Business Info</b>. It catches the mistake that loses customers: <b>another business's</b> contact details on a client's live website, usually in a blog post or section copied from another site. It never adds websites to Audits by itself.</p>
+<h4>What it looks for</h4>
+<ul>
+<li><b>Super critical (contact info)</b>: a 📞 phone number, ✉️ email, 📍 street address or map, 🏷 business name (copyright line, or the business data Google reads) or 🔗 social account (Facebook, Instagram, YouTube, TikTok, X, LinkedIn, Yelp, Pinterest) that is not theirs. "Share this page" buttons are ignored.</li>
+<li><b>Check</b>: a town and ZIP on their own that are not theirs — often just an area they serve.</li>
+</ul>
+<p>Anything approved as correct on the website's audit (its <b>Business Info exceptions</b>) is respected, and anything struck out of Business Info there is treated as not theirs.</p>
+<h4>DR Websites: the Auto audit column</h4>
+<ul>
+<li><b>✓ Auto audit done</b> with the date and time, then <b>⚠ Super critical (contact info)</b> with how many of each kind (📞 2 phones · ✉️ 1 email…), or <b>No contact info problems</b>.</li>
+<li><b>↻ Republished · queued</b>: published again since; it is read again automatically and what is shown is from before.</li>
+<li><b>Not yet</b> / <b>Could not read</b>. The <b>Auto audit</b> filter lists any of these, and the line at the top shows how far it has got.</li>
+</ul>
+<h4>When a website is added to Audits</h4>
+<ul>
+<li>What the auto audit found arrives in the audit as <b>audit items</b>, in the category <b>Auto audit (live website)</b>, each saying when it was found, when it was last checked, and the live pages it is on.</li>
+<li>They stay in step after every publish: a new one is added, one no longer on the live website <b>closes itself as Done</b>, one that comes back reopens. A rescan leaves them alone (it reads the Duda preview, not the live website).</li>
+<li>Marking one <b>False alarm</b> tells the auto audit too, so it is not reported again for that website.</li>
+<li>The audit row on Audits shows <b>🔎 Auto audited</b> with the date and time.</li>
+</ul>
+<h4>Republished since the last scan</h4>
+<p>When Duda says a website on Audits was published after its last scan, Audits shows <b>↻ Republished: rescan</b> (and a <b>Republished since scan</b> filter), and the audit page says so with a <b>Rescan now</b> button, so the audit items are confirmed still there and anything new is caught.</p>
+<h4>On a website's profile</h4>
+<p>An <b>Auto audit</b> card and a <b>🔎 Auto audit</b> section with each finding, what it says, and links to the exact pages. <b>Not a problem</b> remembers a value that is right for that website (Undo is underneath); <b>↻ Check now</b> reads it again on the spot.</p>
+<h4>When it runs</h4>
+<ul>
+<li>A website is read once, then <b>again only after it is published</b>, and once a month in case Business Info changed.</li>
+<li>It runs once a day by itself, and while anybody on the team has the app open it carries on a few websites at a time in the background (only one browser reads at once).</li>
+<li>Only the findings are kept (at most 25 per website), never the pages, so it does not fill the database.</li>
+</ul>
+<h4>Critical auto audit alerts (admins)</h4>
+<p>On by default, on the bell, as a pop-up and on Slack. Each admin can switch them off under <b>Notifications → Critical auto audit alerts</b>.</p>
+<ul>
+<li>🚨 <b>CRITICAL ERRORS FOUND!</b> once a day: every website with new super critical errors, each with its name, what was found (<i>5 phone numbers incorrect · 1 incorrect business name found · and 5 more!</i>) and a link to its audit items (or its auto audit findings when it is not on Audits).</li>
+<li>The same message at once when a website that was fine is <b>published with</b> one.</li>
+</ul>
+<p class="small muted">Admins can pause the auto audit from the line at the top of DR Websites.</p>`,
+  },
+
+  {
     id: 'live', group: 'Live DR Sites', title: 'Live DR Sites', audience: 'all',
     html: `<p><b>Live DR Sites</b> lists every <b>published</b> website in the Duda account, so you can pick what to audit. A second tab, <b>Not published yet</b>, lists the websites still in build — the ones clients are reviewing and commenting on, which never appeared anywhere before. It starts on the ones <b>with comments</b>, and can also show those in Audits, or every unpublished website. Any website we are receiving comments for appears here even when Duda's own draft list leaves it out (it says so on the row). Both tabs have a <b>Comments</b> column.</p>
 <ul>
