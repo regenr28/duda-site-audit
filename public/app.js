@@ -2159,10 +2159,10 @@
     wq.polling = true;
     try {
       const L = await api('/api/watch?op=live');
-      wq.live = L; wq.liveAt = Date.now(); wq.skew = (L.serverNow || Date.now()) - Date.now();
+      wq.live = L; wq.liveAt = Date.now(); wq.liveErr = ''; wq.skew = (L.serverNow || Date.now()) - Date.now();
       if (L.stat) wq.pending = L.paused ? 0 : L.stat.pending;
-      if (!wq.started && L.stat && L.stat.pending && !L.paused && !L.wait) { wq.started = true; onWatchState(L.stat.pending); }
-    } catch (e) { /* the list still works */ } finally { wq.polling = false; }
+      if (L.stat && L.stat.pending && !L.paused && !L.wait && !L.running && !wq.running) onWatchState(L.stat.pending);
+    } catch (e) { wq.liveErr = e.message || 'no answer'; wq.liveAt = Date.now() - 5000; } finally { wq.polling = false; }
     paintAutoPanel();
   }
   const acNow = () => Date.now() + (wq.skew || 0);
@@ -2174,7 +2174,7 @@
   const acWho = (by) => (!by || by === 'auto' ? '' : by === 'cron' ? 'on the daily schedule' : `in ${esc(nameOf(by, by.split('@')[0]))}'s open app`);
   const AC_REASON = { open: 'the website did not open', nobi: 'no Business Info in Duda to compare with', gone: 'no longer in Duda', other: 'other' };
   function autoPanelHtml() {
-    const L = wq.live; if (!L || !L.stat) return '<div class="small faint">🔎 Auto audit: loading its status…</div>';
+    const L = wq.live; if (!L || !L.stat) return `<div class="small faint">🔎 Auto audit: ${wq.liveErr ? 'could not load its status (' + esc(wq.liveErr) + '). Trying again in a few seconds.' : 'loading its status…'}</div>`;
     const S = L.stat; const admin = state.me && state.me.role === 'admin';
     const pend = L.paused ? S.pending : (wq.pending || S.pending || 0);
     const pct = (n) => (S.total ? Math.max(0, Math.min(100, (n / S.total) * 100)) : 0);

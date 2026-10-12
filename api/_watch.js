@@ -44,7 +44,8 @@ const WRECENT = P + 'cwrecent';                       // the last few websites f
 const WSTAT = P + 'cwstat';                           // the counts and what is next, as of the end of the last run
 const WLASTRUN = P + 'cwlastrun';                     // { at, by, done }
 const WLASTOK = P + 'cwlastok';                       // a domain that opened fine a moment ago (to tell "blocked" from "this website is broken")
-const WBACKOFF = P + 'cwbackoff';                     // how many waits in a row (each one longer)
+const WBACKOFF = P + 'cwbackoff';
+const STAT_V = 1;                                     // the saved status's shape; a new shape is worked out afresh                     // how many waits in a row (each one longer)
 // Why a website could not be read, in groups the status panel counts.
 export const ERR_KIND = { nobi: 'No Business Info in Duda to compare with', open: 'The website did not open', gone: 'Duda no longer has this website', other: 'Something else' };
 const DAY = 86400000;
@@ -275,7 +276,7 @@ export async function watchStatus() {
     withIssues: read.filter((x) => sums[x.id].n).length, critical: read.filter((x) => sums[x.id].c).length,
     unreadable: bad.length, reasons, retryAt,
     next: due.slice(0, 3).map((x) => ({ id: x.id, name: x.name || '', domain: x.domain, why: x.r === 0 ? 'published again' : x.r === 1 ? (sums[x.id] && sums[x.id].err ? 'trying again' : 'not read yet') : 'monthly check' })),
-    at: Date.now() };
+    at: Date.now(), v: STAT_V };
   await redis(['SET', WDUE, on ? due.length : 0], ['SET', WSTAT, JSON.stringify(stat)]).catch(() => {});
   return Object.assign({}, stat, { running: !!lock, runningBy: lock || '',
     waitUntil: w.until > Date.now() ? w.until : 0, waitWhy: w.until > Date.now() ? w.why || '' : '', partial: part || '',
@@ -288,7 +289,12 @@ export async function watchStatus() {
 export async function watchLive() {
   const [now, stat, wait, recent, cfg, lock, last] = await redis(['GET', WNOW], ['GET', WSTAT], ['GET', WWAIT], ['LRANGE', WRECENT, 0, 7], ['GET', WCFG], ['GET', WLOCK], ['GET', WLASTRUN]);
   const w = jparse(wait) || {}; const c = jparse(cfg) || {};
-  return { now: jparse(now), stat: jparse(stat), wait: w.until > Date.now() ? w : null, recent: (recent || []).map((x) => jparse(x)).filter(Boolean),
+  // No saved status yet (just deployed), or an old shape, or an hour old with nothing running:
+  // work it out now. That also tells the open apps how many websites are waiting, which is what
+  // starts the reading.
+  let st = jparse(stat);
+  if (!st || st.v !== STAT_V || (!lock && !now && Date.now() - (st.at || 0) > 3600000)) { const full = await watchStatus(); delete full.sums; st = full; }
+  return { now: jparse(now), stat: st, wait: w.until > Date.now() ? w : null, recent: (recent || []).map((x) => jparse(x)).filter(Boolean),
     paused: c.off ? { by: c.by || '', at: c.at || 0 } : null, running: !!lock, runningBy: lock || '', lastRun: jparse(last), serverNow: Date.now() };
 }
 /** Forget every "could not be read", so all of them are tried again on the next run (admins). */
