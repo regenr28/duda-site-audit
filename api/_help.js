@@ -414,16 +414,20 @@ export const HELP_SECTIONS = [
 <h3>Client access</h3>
 <p>A client can be given their own sign-in that shows them their website and nothing else. On the Profile, use <b>Manage client access</b> (admins only): add a person by name and email, and they get an email saying their dashboard is ready. They set their own password with <b>Forgot password</b> \u2014 we never set one for them.</p>
 <p>A client account is <b>not</b> a team member. They never appear in Members, in @mentions or as an assignee, and the team's pages refuse their account outright rather than hiding things from it.</p>
-<p><b>One person, several websites:</b> a client's account lists the websites they may see. Give one person two websites and both appear in their sidebar, each with its own enquiries, comments and dashboard. Nothing else needs setting up.</p>
+<p><b>One person, several websites:</b> a client's account lists the websites they may see. Give one person two websites and a <b>Website</b> picker appears at the top of their menu; each website has its own pages. Nothing else needs setting up.</p>
 <h3>What a client sees</h3>
-<p>Their own left-hand menu, one entry per website they were given:</p>
+<p>Their own portal, laid out like the team's app: a menu on the left with line icons (on a phone, a bar along the bottom with <b>Home, Analytics, Enquiries, Requests</b> and <b>More</b>).</p>
 <ul>
-<li><b>Dashboard</b> \u2014 enquiries this month against last, all enquiries, busiest page, top source, a bar per month, and breakdowns by page, by source and by day of the week.</li>
-<li><b>Form Submissions</b> \u2014 every enquiry, filterable by page, form and source, with the contact details clickable.</li>
-<li><b>Comments</b> \u2014 the conversation about their website.</li>
-<li><b>Access website</b> \u2014 opens their website's editor, signed in as them, without a Duda password. The link is made at the moment they click it and lasts about two minutes, so there is nothing to keep or share.</li>
+<li><b>Overview</b> \u2014 a picture of their website's home page, whether it is <b>live and working</b>, when it was last published and launched, when the <b>domain renews</b> (with a reminder under 60 days), and four tiles: visits in the last 30 days, enquiries in the last 30 days, speed on mobile and open requests. Buttons to visit the website, edit it, or send a request.</li>
+<li><b>Analytics</b> \u2014 visits, visitors, page views and what visitors did (form sent, tapped to call…), per day and per month, devices, browsers and countries, for 30 days, 90 days or 12 months. If the website has <b>Google Analytics</b> connected they also get <b>Pages &amp; sources</b> (most visited pages, organic vs ads); with <b>Search Console</b>, <b>Google search</b> (the searches that found them and their <b>average position</b>, i.e. their ranking).</li>
+<li><b>Website health</b> \u2014 their <b>domain</b> (does it open the website, registration renewal date and registrar, secure connection, response time, last checked), their <b>DNS records</b> in plain words (where the website and email live, who manages the DNS) with a warning not to change them without the team, <b>outages</b> in the last 12 months, and Google's <b>speed and quality</b> scores on a phone and a computer. Speed is checked automatically once a week when they open the page (needs the app's PageSpeed key); they cannot run it more often.</li>
+<li><b>Enquiries</b> \u2014 a <b>Summary</b> (charts by month, page, source and day), every <b>Form submission</b> (filterable), and <b>People</b> (their contacts, with likely spam set aside).</li>
+<li><b>Requests</b> \u2014 their questions and change requests (this used to be called Tickets).</li>
+<li><b>Comments</b> \u2014 the conversation about their website in the editor.</li>
+<li><b>Edit website</b> \u2014 opens their website's editor, signed in as them, without a Duda password. The link is made at the moment they click it and lasts about two minutes.</li>
+<li><b>Account</b> \u2014 their name, email (read-only: ask us to change it), company, and phone number; <b>change password</b>; switch emails about their requests on or off; light / dark and colour; their own recent sign-ins; and <b>Sign out</b>.</li>
 </ul>
-<p>They never see audit items, severities, false alarm reports, who marked what, anything the team writes to itself, or any other company's website.</p>
+<p>They never see audit items, severities, false alarm reports, who marked what, anything the team writes to itself, who connected their analytics, our Google account, or any other company's website.</p>
 <h3>Checking it yourself \u2014 View as client</h3>
 <p>On a Profile, <b>\ud83d\udc41 View as client</b> opens the real client view for that website, with a dark band across the top so nobody mistakes it for the team's pages. It is not a mock-up: it asks the server for exactly what a client would be given, so if something internal ever did leak, this is where you would see it. <b>Back to the team view</b> returns.</p>
 <p>It is worth a glance after any change that touches a website's page \u2014 it takes five seconds and it is the only way to be sure.</p>
@@ -505,7 +509,7 @@ export const HELP_SECTIONS = [
   {
     id: 'requests', group: 'Collaboration', title: 'Client tickets (questions and change requests)', audience: 'all',
     html: `<p>Instead of texting or emailing, clients <b>send a ticket</b> from their own page, on a phone or a computer. Tickets arrive on <b>Tickets</b> in the menu.</p>
-<p>The <b>✉️ Send a ticket</b> button is on their Dashboard and on <b>Tickets</b>. On a phone it also floats at the bottom of every screen. It asks which kind, and explains each one right under it:</p>
+<p>Clients call these <b>requests</b>. The <b>Send a request</b> button is on their Overview and on <b>Requests</b>. On a phone it also floats above the bottom bar. It asks which kind, and explains each one right under it:</p>
 <ul>
 <li><b>💬 General question</b>: anything not about the website's content or design, such as billing, the domain, email or their account. They type the question and can add a photo or screenshot.</li>
 <li><b>🖍 Website change</b>: a change request for the website. They mark it on a picture of the page, as below. Each mark becomes its own ticket, with a picture of exactly where.</li>
@@ -521,7 +525,8 @@ export const HELP_SECTIONS = [
 <p class="small muted">Nothing is installed in the website. The page passes through the app with a small helper added, so real visitors are never affected. It runs locked down inside the app, so it cannot see or act on the client's account.</p>
 <p><b>Layers</b> (pull the panel up) lists every mark with its number. Each one can be hidden or locked, so it does not get moved by accident. <b>Hide sent</b> clears the finished ones out of the way, and the marks fade while the page is being moved. If the connection drops, a request waits and sends itself when the connection is back. A retry never sends it twice.</p>
 <h4>The daily limit</h4>
-<p>Each client can send a set number of tickets a day (10 to start), questions and changes together. After that they can keep marking, and the drafts wait for the next day. Admins change the number, or set a different one for one client, under <b>Tickets → ⚙ Settings</b>.</p>
+<p>Each client can send a set number of tickets a day (10 to start), questions and changes together. After that they can keep marking, and the drafts wait for the next day. Admins change the default under <b>Tickets → ⚙ Settings</b>.</p>
+<p><b>A different limit for one customer:</b> in the same settings, under <b>A different limit for one client</b>, choose the client and type any number up to 10,000, tick <b>No limit</b> for unlimited, or set 0 to pause their requests. Their page then says "No daily limit" or shows their own number.</p>
 <h4>On our side</h4>
 <ul>
 <li>Questions have no page tools or change check: answer them and set a status. Filter the list to <b>💬 General questions</b> or <b>🖍 Website changes</b>.</li>

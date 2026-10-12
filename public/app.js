@@ -414,7 +414,13 @@
     applyLook(next);
     if (state.me) state.me.look = next;
     if (!state.me) return;
-    try { const r = await post('/api/users', { op: 'profile', name: state.me.name, lookMode: next.mode, lookTheme: next.theme, startPage: next.start }); if (r.user) state.me = r.user; }
+    if (state.viewAs) return;                // previewing a client: this device only, nobody's account changes
+    try {
+      // Clients save it through their own endpoint (they cannot reach the team's).
+      const r = state.me.role === 'client' ? await post('/api/client', { op: 'profile', lookMode: next.mode, lookTheme: next.theme })
+        : await post('/api/users', { op: 'profile', name: state.me.name, lookMode: next.mode, lookTheme: next.theme, startPage: next.start });
+      if (r.user) state.me = r.user;
+    }
     catch (e) { toast('Changed on this device only: ' + e.message); }
   }
   function lookIcon() {
@@ -484,6 +490,24 @@
     help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
     more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+    // the client portal's own
+    pulse: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+    pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    palette: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.5-.8 1.5-1.5 0-.4-.2-.8-.4-1.1-.3-.3-.4-.6-.4-1 0-.8.7-1.4 1.5-1.4H16a5 5 0 0 0 5-5c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="14.5" cy="7" r="1"/>',
+    out: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+    ext: '<path d="M14 3h7v7"/><path d="M10 14L21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>',
+    send: '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20z"/>',
+    check: '<path d="M20 6L9 17l-5-5"/>',
+    rocket: '<path d="M5 15c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="M12 15l-3-3a22 22 0 0 1 2-4A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22 22 0 0 1-4 2z"/><path d="M9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5"/>',
+    calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    alert: '<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+    server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   };
   const navIcon = (k, s) => `<svg viewBox="0 0 24 24" width="${s || 20}" height="${s || 20}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_IC[k] || ''}</svg>`;
   function navGroups() {
@@ -2225,7 +2249,7 @@
     if ($('#pfCopy')) $('#pfCopy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(siteId); toast('Site ID copied'); };
     // Any website's client page can be previewed, on Audits or not: one not on Audits is opened by its
     // Duda site id and described from the Duda list.
-    if ($('#pfView')) $('#pfView').onclick = () => { const id = s ? s.id : siteId; state.viewAs = id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(id)}/dashboard`; };
+    if ($('#pfView')) $('#pfView').onclick = () => { const id = s ? s.id : siteId; clReset(); state.viewAs = id; location.hash = `#/my/${encodeURIComponent(id)}/overview`; };
     if ($('#pfClient')) $('#pfClient').onclick = () => openClients(s);
     $$('[data-gofilter]', body).forEach((b) => (b.onclick = () => { state.ff.sev = b.dataset.gofilter; location.hash = '#/site/' + encodeURIComponent(s.id); }));
     $$('[data-tsite]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = 'published'; live.q = a.dataset.tsite; live.dom = ''; live.audit = ''; live.page = 0; location.hash = '#/live'; }));
@@ -2624,8 +2648,8 @@
     if (mk.readonly || !q) { el.textContent = ''; return; }
     const reset = new Date(q.resetAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     el.className = 'mk-quota' + (q.left ? '' : ' out');
-    el.textContent = mk.preview ? 'Preview — nothing is sent' : q.left ? `${q.left} of ${q.limit} left today` : `Daily limit reached · resets ${reset}`;
-    el.title = q.left ? `You can send ${q.limit} requests a day. The count starts again at ${reset}.` : `You have used today's ${q.limit} requests. You can keep marking — your drafts wait here and can be sent after ${reset}.`;
+    el.textContent = mk.preview ? 'Preview — nothing is sent' : q.unlimited ? 'No daily limit' : q.left ? `${q.left} of ${q.limit} left today` : `Daily limit reached · resets ${reset}`;
+    el.title = q.unlimited ? 'You can send as many requests as you need.' : q.left ? `You can send ${q.limit} requests a day. The count starts again at ${reset}.` : `You have used today's ${q.limit} requests. You can keep marking — your drafts wait here and can be sent after ${reset}.`;
   }
 
   // ---------------------------------------------------------------- browsing the website live
@@ -3221,7 +3245,7 @@
       m.status = 'sent'; m.ticket = r.ticket; m.retry = false; m.err = '';
       if (r.quota) mk.quota = r.quota;
       if (mk.tickets && !mk.tickets.some((t) => t.id === r.ticket.id)) mk.tickets.unshift(r.ticket);
-      toast(`Sent — ticket #${r.ticket.num}`);
+      toast(`Sent — request #${r.ticket.num}`);
       if (live && !r.again) tkAttach(r.ticket.id);
     } catch (e) {
       const d = e.data || {};
@@ -3379,7 +3403,9 @@
   // ---------------------------------------------------------------- the client's list of requests
   const tkCta = () => `<div class="cl-cta"><div><b>Need a change, or have a question?</b>
       <div class="small muted">Send it here instead of texting or emailing — from your phone or computer — and it comes straight to our team.</div></div>
-      <button class="btn primary" data-sendticket>✉️ Send a ticket</button></div>`;
+      <button class="btn primary" data-sendticket>${navIcon('send', 16)} Send a request</button></div>`;
+  /** "3 of 10 requests left today", or that there is no daily limit for this client. */
+  const tkLeft = (q, reset) => (!q || q.limit === undefined ? '' : q.unlimited ? 'No daily limit on requests' : q.left ? `${q.left} of ${q.limit} requests left today` : `Today's ${q.limit} requests are used${reset ? ` · more after ${reset}` : ' — you can still prepare a website change; it waits until tomorrow.'}`);
   /** Wire every "Send a ticket" button on the page (the card, and the floating one on phones). */
   function tkBindSend(site) { $$('[data-sendticket]').forEach((b) => (b.onclick = () => tkChooser(site))); }
   const TK_TYPES = [
@@ -3390,10 +3416,10 @@
   function tkChooser(site) {
     const q = (state.cl.tkq || {})[site.id];
     const quota = q && q.quota;
-    modal(`<header><h2>Send a ticket</h2><button class="btn ghost" data-close aria-label="Close">✕</button></header>
+    modal(`<header><h2>Send a request</h2><button class="btn ghost" data-close aria-label="Close">✕</button></header>
       <div class="body tk-choose">
         ${TK_TYPES.map((t) => `<button class="tk-opt" data-tkt="${t.k}"><span class="tk-opt-i">${t.icon}</span><span class="tk-opt-t"><b>${esc(t.title)}</b><span>${esc(t.tip)}</span></span><span class="tk-opt-go">›</span></button>`).join('')}
-        ${quota ? `<div class="small muted tk-choose-q">${quota.left ? `${quota.left} of ${quota.limit} tickets left today` : `Today's ${quota.limit} tickets are used — you can still prepare a website change; it waits until tomorrow.`}</div>` : ''}
+        ${quota ? `<div class="small muted tk-choose-q">${esc(tkLeft(quota))}</div>` : ''}
       </div>`, { sheet: true });
     $$('[data-tkt]').forEach((b) => (b.onclick = () => {
       closeModal();
@@ -3455,25 +3481,25 @@
     state.cl.tkq = state.cl.tkq || {};
     if (state.cl.tkq[site.id] && !force) return state.cl.tkq[site.id];
     try { state.cl.tkq[site.id] = await capi(`/api/tickets?op=quota&site=${encodeURIComponent(site.id)}`); } catch (e) { state.cl.tkq[site.id] = null; }
-    const a = $(`.cl-nav a[href$="/requests"]`);
     const u = (state.cl.tkq[site.id] || {}).unread || 0;
-    if (a) a.innerHTML = `<span class="cl-ic">🎫</span>Tickets${u ? ` <span class="cl-dot" title="${u} with news for you">${u}</span>` : ''}`;
+    $$('[data-clbadge="requests"]').forEach((b) => { b.className = u ? 'cp-badge' : ''; b.textContent = u || ''; b.title = u ? `${u} with news for you` : ''; });
+    if (clRoute().section === 'overview') clAgain(site, 'overview');
     return state.cl.tkq[site.id];
   }
   async function clRequests(el, site) {
-    el.innerHTML = clHead(site, 'Tickets', 'Your questions and change requests for this website.') + tkCta(site) + '<div class="empty">Loading…</div>';
+    el.innerHTML = clHead(site, 'Requests', 'Your questions and change requests for this website.') + tkCta(site) + '<div class="empty">Loading…</div>';
     tkBindSend(site);
-    let d; try { d = await capi(`/api/tickets?op=mine&site=${encodeURIComponent(site.id)}`); } catch (e) { el.innerHTML = clHead(site, 'Tickets', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
+    let d; try { d = await capi(`/api/tickets?op=mine&site=${encodeURIComponent(site.id)}`); } catch (e) { el.innerHTML = clHead(site, 'Requests', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
     const list = d.tickets || []; const q = d.quota || {};
     const f = state.cl.tkFilter || 'open';
     const isOpen = (t) => !['done', 'closed'].includes(t.status);
     // Anything with news for them is shown whatever the filter — a reply on a finished one included.
     const shown = list.filter((t) => t.unread || (f === 'all' ? true : f === 'done' ? !isOpen(t) : isOpen(t)));
     const reset = q.resetAt ? new Date(q.resetAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
-    el.innerHTML = clHead(site, 'Tickets', 'Your questions and change requests for this website.') + tkCta(site)
+    el.innerHTML = clHead(site, 'Requests', 'Your questions and change requests for this website.') + tkCta(site)
       + `<div class="cl-tk-bar"><span class="chips">${[['open', 'Open', list.filter(isOpen).length], ['done', 'Finished', list.filter((t) => !isOpen(t)).length], ['all', 'All', list.length]].map(([k, l, n]) =>
           `<button class="chipbtn ${f === k ? 'active' : ''}" data-tkf="${k}">${l} <span class="tcount">${n}</span></button>`).join('')}</span>
-        <span class="small muted">${d.preview ? 'Preview — nothing is sent from here.' : q.limit ? (q.left ? `${q.left} of ${q.limit} tickets left today` : `Today's ${q.limit} tickets are used · more after ${esc(reset)}`) : ''}</span></div>
+        <span class="small muted">${d.preview ? 'Preview — nothing is sent from here.' : esc(tkLeft(q, reset))}</span></div>
       ${shown.length ? shown.map((t) => `<div class="cl-card tk-card${t.unread ? ' news' : ''}" data-tk="${esc(t.id)}">
           ${t.img ? `<button class="tk-thumb${t.type === 'question' ? ' q' : ''}" data-img="${esc(t.img)}" aria-label="Open the picture"><img src="${esc(t.img)}" alt="" loading="lazy"></button>` : `<div class="tk-thumb none">${t.type === 'question' ? '💬' : 'No picture'}</div>`}
           <div class="tk-body">
@@ -3483,7 +3509,7 @@
             <div class="tk-acts">${t.type === 'question' ? '' : '<button class="btn sm" data-see>See it on the page</button>'}${d.preview ? '' : '<button class="btn sm ghost" data-rep>Reply</button>'}</div>
             <div class="tk-rep" hidden><textarea rows="2" maxlength="2000" placeholder="${t.status === 'clarify' ? 'Answer the team’s question…' : 'Add something for the team…'}"></textarea><button class="btn sm primary" data-send>Send</button></div>
           </div></div>`).join('')
-        : `<div class="cl-card"><div class="empty">${list.length ? 'Nothing here.' : 'No tickets yet. Tap <b>Send a ticket</b> to ask a question or point out something to change.'}</div></div>`}`;
+        : `<div class="cl-card"><div class="empty">${list.length ? 'Nothing here.' : 'No requests yet. Tap <b>Send a request</b> to ask a question or point out something to change.'}</div></div>`}`;
     tkBindSend(site);
     $$('[data-tkf]', el).forEach((b) => (b.onclick = () => { state.cl.tkFilter = b.dataset.tkf; clRequests(el, site); }));
     $$('[data-img]', el).forEach((b) => (b.onclick = () => lightbox(b.dataset.img)));
@@ -3700,12 +3726,13 @@
       modal(`<header><h2>Change request settings</h2><button class="btn ghost" data-close>✕</button></header>
         <div class="body tk-set">
           <label class="tk-set-row"><span><b>Requests each client may send a day</b><div class="small muted">Counted from midnight (${esc(d.tz)}). Clients can keep marking after the limit — drafts wait until the next day.</div></span>
-            <input type="number" id="tsDaily" min="1" max="200" value="${s.daily}"></label>
-          <div class="tk-set-row col"><b>Different limit for some clients</b>
-            ${Object.keys(over).length ? Object.entries(over).map(([e, n]) => `<div class="row-gap"><span>${esc((d.clients.find((c) => c.email === e) || {}).name || e)} <span class="faint small">${esc(e)}</span></span><span class="spacer"></span>
-              <input type="number" min="0" max="200" value="${n}" data-ov="${esc(e)}" style="width:80px"><button class="btn sm ghost" data-ovx="${esc(e)}">Remove</button></div>`).join('') : '<div class="small faint">Everyone gets the number above.</div>'}
-            ${d.clients.length ? `<div class="row-gap"><select id="tsOvWho"><option value="">Add a client…</option>${d.clients.filter((c) => over[c.email] === undefined).map((c) => `<option value="${esc(c.email)}">${esc(c.name || c.email)}</option>`).join('')}</select>
-              <span class="small faint">0 pauses sending for that client.</span></div>` : ''}</div>
+            <input type="number" id="tsDaily" min="1" max="10000" value="${s.daily}"></label>
+          <div class="tk-set-row col"><b>A different limit for one client</b><div class="small muted">For a customer who needs more (or fewer) than the default above — any number up to 10,000, <b>No limit</b> for unlimited, or 0 to pause their requests.</div>
+            ${Object.keys(over).length ? Object.entries(over).map(([e, n]) => `<div class="row-gap tk-ov"><span class="tk-ov-who">${esc((d.clients.find((c) => c.email === e) || {}).name || e)} <span class="faint small">${esc(e)}</span></span><span class="spacer"></span>
+              <input type="number" min="0" max="10000" value="${n < 0 ? '' : n}" data-ov="${esc(e)}" style="width:96px" aria-label="Requests a day"${n < 0 ? ' disabled placeholder="∞"' : ''}>
+              <label class="small tk-ov-u"><input type="checkbox" data-ovu="${esc(e)}"${n < 0 ? ' checked' : ''}> No limit</label>
+              <button class="btn sm ghost" data-ovx="${esc(e)}">Remove</button></div>`).join('') : '<div class="small faint">Every client gets the default above.</div>'}
+            ${d.clients.length ? `<div class="row-gap"><select id="tsOvWho"><option value="">Choose a client…</option>${d.clients.filter((c) => over[c.email] === undefined).map((c) => `<option value="${esc(c.email)}">${esc(c.name || c.email)}</option>`).join('')}</select></div>` : '<div class="small faint">No client accounts yet.</div>'}</div>
           <div class="tk-set-row col"><b>Who is told when a request arrives</b><div class="small muted">Nobody ticked = everyone whose role can answer change requests.</div>
             <div class="tk-set-team">${d.team.map((u) => `<label><input type="checkbox" data-nt="${esc(u.email)}"${(s.notify || []).includes(u.email.toLowerCase()) ? ' checked' : ''}> ${esc(u.name)}</label>`).join('')}</div></div>
           <label class="tk-set-row"><span><b>Email clients when their request is answered</b><div class="small muted">${d.email ? 'When someone writes to them, or a request is done, closed or needs their answer.' : 'Email is not switched on for this app, so nothing is emailed yet.'}</div></span>
@@ -3718,10 +3745,11 @@
         <footer><span class="spacer"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="tsSave">Save</button></footer>`, { wide: true });
       const grab = () => {
         s.daily = Number($('#tsDaily').value) || s.daily; s.freshHours = Number($('#tsFresh').value); s.emailClients = $('#tsEmail').checked;
-        $$('[data-ov]').forEach((i) => { over[i.dataset.ov] = Number(i.value); });
+        $$('[data-ov]').forEach((i) => { const u = $(`[data-ovu="${CSS.escape(i.dataset.ov)}"]`); over[i.dataset.ov] = u && u.checked ? -1 : Math.max(0, Number(i.value) || 0); });
         s.notify = $$('[data-nt]').filter((c) => c.checked).map((c) => c.dataset.nt.toLowerCase());
       };
       $$('[data-ovx]').forEach((b) => (b.onclick = () => { grab(); delete over[b.dataset.ovx]; draw(); }));
+      $$('[data-ovu]').forEach((c) => (c.onchange = () => { grab(); if (!c.checked) over[c.dataset.ovu] = s.daily; draw(); }));
       const ow = $('#tsOvWho'); if (ow) ow.onchange = () => { if (!ow.value) return; grab(); over[ow.value] = s.daily; draw(); };
       $('#tsSave').onclick = async () => {
         grab();
@@ -3747,20 +3775,40 @@
   // its own answers — so there is no path by which an audit item, a false alarm report, a team note
   // or another company's website can reach this screen, even if a template here were wrong.
   // =====================================================================
+  // The client's menu. Older addresses (dashboard, leads, contacts, access) still land on the right page,
+  // so links in emails and bookmarks keep working.
   const CL_SECTIONS = [
-    { k: 'dashboard', label: 'Dashboard', short: 'Home', icon: '📊' },
-    { k: 'requests', label: 'Tickets', icon: '🎫' },
-    { k: 'leads', label: 'Form Submissions', short: 'Forms', icon: '✉️' },
-    { k: 'contacts', label: 'Contacts', icon: '👥' },
-    { k: 'comments', label: 'Comments', icon: '💬' },
-    { k: 'access', label: 'Access website', short: 'Website', icon: '↗' },
+    { k: 'overview', label: 'Overview', short: 'Home', ic: 'home', tab: 1 },
+    { k: 'analytics', label: 'Analytics', ic: 'analysis', tab: 1 },
+    { k: 'health', label: 'Website health', short: 'Health', ic: 'pulse' },
+    { k: 'enquiries', label: 'Enquiries', ic: 'mail', tab: 1 },
+    { k: 'requests', label: 'Requests', ic: 'tickets', tab: 1 },
+    { k: 'comments', label: 'Comments', ic: 'comments' },
+    { k: 'edit', label: 'Edit website', short: 'Edit', ic: 'pen' },
+    { k: 'account', label: 'Account', ic: 'user' },
   ];
+  const CL_DESC = { health: 'Domain, DNS records and speed', comments: 'Your comments on the website', edit: 'Open your website editor', account: 'Your details, password and emails' };
+  const CL_ALIAS = { dashboard: 'overview', leads: 'enquiries', contacts: 'enquiries', access: 'edit', tickets: 'requests' };
   const clRoute = () => {
     const parts = location.hash.replace(/^#/, '').split('/').filter(Boolean);
-    if (parts[0] !== 'my') return { site: '', section: 'dashboard' };
-    return { site: parts[1] ? decodeURIComponent(parts[1]) : '', section: parts[2] === 'mark' || CL_SECTIONS.some((s) => s.k === parts[2]) ? parts[2] : 'dashboard' };
+    if (parts[0] !== 'my') return { site: '', section: 'overview', sub: '' };
+    const raw = parts[2] || 'overview';
+    const section = raw === 'mark' ? 'mark' : CL_SECTIONS.some((s) => s.k === raw) ? raw : CL_ALIAS[raw] || 'overview';
+    return { site: parts[1] ? decodeURIComponent(parts[1]) : '', section, sub: raw === 'contacts' ? 'people' : raw === 'leads' ? 'list' : (parts[3] || ''), alias: !!CL_ALIAS[raw] };
   };
-  const clGo = (site, section) => { location.hash = `#/my/${encodeURIComponent(site)}/${section || 'dashboard'}`; };
+  const clGo = (site, section, sub) => { location.hash = `#/my/${encodeURIComponent(site)}/${section || 'overview'}${sub ? '/' + sub : ''}`; };
+  const clHref = (site, section, sub) => `#/my/${encodeURIComponent(site.id)}/${section}${sub ? '/' + sub : ''}`;
+  const clIc = (k, s) => navIcon(k, s || 18);
+  const clInit = (s) => String(s || '').split(/\s+/).filter((w) => /\w/.test(w)).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '•';
+  /** Everything the client pages keep while open; emptied when the preview ends or they sign out. */
+  function clReset() { state.cl = { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {}, ov: {}, an: {}, dom: {}, hl: {}, th: {}, acct: null, anDays: 30, anTab: 'duda', hTab: 'mobile' }; }
+  const clCache = () => { ['ov', 'an', 'dom', 'hl', 'th'].forEach((k) => { if (!state.cl[k]) state.cl[k] = {}; }); if (!state.cl.anDays) state.cl.anDays = 30; if (!state.cl.anTab) state.cl.anTab = 'duda'; if (!state.cl.hTab) state.cl.hTab = 'mobile'; };
+  /** Draw this page again, but only if the client is still looking at it (answers arrive later). */
+  function clAgain(site, section) {
+    const r = clRoute();
+    if (r.site !== site.id || (r.section === 'mark' ? 'requests' : r.section) !== section) return;
+    const el = $('#clMain'); if (el) clSection(site, section, r.sub, true);
+  }
 
   async function clLoadSites() {
     if (state.cl.sites || state.cl.loading) return;
@@ -3769,70 +3817,356 @@
     catch (e) { state.cl.error = e.message; state.cl.sites = []; }
     state.cl.loading = false;
   }
+  function clSignOut() { closeMarker(true); clReset(); document.body.classList.remove('client-mode'); logout(); }
 
   /** The whole page: our own chrome, so nothing of the team's can be on screen by accident. */
   async function renderClient() {
     document.body.classList.add('client-mode');
+    clCache();
     await clLoadSites();
     const sites = state.cl.sites || [];
     const r = clRoute();
     const current = sites.find((s) => s.id === r.site) || sites[0];
     if (!current) {
-      $('#view').innerHTML = `<div class="cl-shell"><div class="cl-main"><div class="empty">
-        ${state.cl.error ? esc(state.cl.error) : 'No websites have been shared with you yet. Your account manager can add them.'}</div></div></div>`;
+      $('#view').innerHTML = `<div class="cp cp-solo"><main class="cp-main"><div class="cl-card"><div class="empty">
+        ${state.cl.error ? esc(state.cl.error) : 'No websites have been shared with you yet. Your account manager can add them.'}</div>
+        ${state.viewAs ? '' : '<div style="text-align:center;padding-bottom:10px"><button class="btn" id="cpOut0">Sign out</button></div>'}</div></main></div>`;
+      if ($('#cpOut0')) $('#cpOut0').onclick = clSignOut;
       return;
     }
-    if (!r.site || r.site !== current.id) { clGo(current.id, r.section); return; }
-
+    if (!r.site || r.site !== current.id) { clGo(current.id, r.section === 'mark' ? 'requests' : r.section, r.sub); return; }
+    // An older address (from an email or a bookmark) is shown as the new one, without another page load.
+    if (r.alias) { try { history.replaceState(null, '', clHref(current, r.section, r.sub)); } catch (e) { /* the old address still works */ } }
+    const who = state.cl.who || {};
+    const brand = who.company || current.name || 'Your website';
+    const sec = r.section === 'mark' ? 'requests' : r.section;
+    const q = (state.cl.tkq || {})[current.id] || {};
+    const badge = (k) => (k === 'requests' ? `<span data-clbadge="requests" class="${q.unread ? 'cp-badge' : ''}">${q.unread || ''}</span>` : '');
+    const link = (x, cls) => `<a href="${clHref(current, x.k)}" class="${cls}${sec === x.k ? ' on' : ''}"${sec === x.k ? ' aria-current="page"' : ''}>${clIc(x.ic, cls === 'cp-tab' ? 22 : 18)}<span>${esc(cls === 'cp-tab' ? (x.short || x.label) : x.label)}</span>${badge(x.k)}</a>`;
+    const tabs = CL_SECTIONS.filter((x) => x.tab);
     $('#view').innerHTML = `${state.viewAs ? `<div class="cl-preview">👁 <b>Viewing as the client</b> — this is exactly what they see on <b>${esc(current.name)}</b>.
         <button class="btn sm" id="clExit">Back to the team view</button></div>` : ''}
-      <div class="cl-shell">
-        <aside class="cl-side">
-          <div class="cl-brand">${esc((state.cl.who && state.cl.who.company) || (state.cl.who && state.cl.who.name) || 'Your websites')}<button class="btn ghost sm" id="clLook" type="button" title="Light, dark and colour" aria-label="Appearance" style="float:right">🎨</button></div>
-          <div class="cl-side-k">Websites</div>
-          ${sites.map((s) => `<div class="cl-site${s.id === current.id ? ' on' : ''}">
-            <button class="cl-sitebtn" data-clsite="${esc(s.id)}">${esc(s.name)}<div class="cl-dom">${esc(s.domain || '')}</div></button>
-            ${s.id === current.id ? `<nav class="cl-nav">${CL_SECTIONS.map((x) => `<a href="#/my/${encodeURIComponent(s.id)}/${x.k}" class="${r.section === x.k || (r.section === 'mark' && x.k === 'requests') ? 'on' : ''}"><span class="cl-ic">${x.icon}</span><span class="cl-lb-f">${esc(x.label)}</span><span class="cl-lb-s">${esc(x.short || x.label)}</span>${x.k === 'requests' && state.cl.tkq && state.cl.tkq[s.id] && state.cl.tkq[s.id].unread ? ` <span class="cl-dot">${state.cl.tkq[s.id].unread}</span>` : ''}</a>`).join('')}</nav>` : ''}
-          </div>`).join('')}
+      <div class="cp cp-on-${sec}">
+        <aside class="cp-side">
+          <div class="cp-brand"><span class="cp-logo" aria-hidden="true">${esc(clInit(brand))}</span><div class="cp-brand-t"><b>${esc(brand)}</b><span>Client portal</span></div>
+            <button class="cp-iconbtn" id="cpLookTop" type="button" aria-label="Appearance" title="Light, dark and colour">${clIc('palette', 18)}</button></div>
+          ${sites.length > 1 ? `<label class="cp-pick"><span class="cp-k">Website</span><select id="cpSite" aria-label="Choose a website">${sites.map((s) => `<option value="${esc(s.id)}"${s.id === current.id ? ' selected' : ''}>${esc(s.name)}${s.domain ? ' — ' + esc(s.domain) : ''}</option>`).join('')}</select></label>`
+            : `<div class="cp-one"><span class="cp-k">Website</span><b>${esc(current.name)}</b>${current.domain ? `<span class="cp-one-d">${esc(current.domain)}</span>` : ''}</div>`}
+          <nav class="cp-nav" aria-label="Your website">${CL_SECTIONS.map((x) => link(x, 'cp-link')).join('')}</nav>
+          <div class="cp-foot">
+            <button class="cp-link" id="cpLook" type="button">${clIc('palette')}<span>Appearance</span></button>
+            ${state.viewAs ? '' : `<button class="cp-link" id="cpOut" type="button">${clIc('out')}<span>Sign out</span></button>`}
+          </div>
         </aside>
-        <main class="cl-main" id="clMain"><div class="empty">Loading…</div></main>
-        <button class="cl-fab" data-sendticket aria-label="Send a ticket">✉️ Send ticket</button>
+        <main class="cp-main" id="clMain"><div class="empty">Loading…</div></main>
+        <nav class="cp-tabs" aria-label="Your website">${tabs.map((x) => link(x, 'cp-tab')).join('')}<button class="cp-tab${tabs.some((x) => x.k === sec) ? '' : ' on'}" id="cpMore" type="button">${clIc('more', 22)}<span>More</span></button></nav>
+        <button class="cp-fab" data-sendticket type="button">${clIc('send', 18)} Send request</button>
       </div>`;
     tkBindSend(current);
-    if ($('#clLook')) $('#clLook').onclick = (e) => toggleLookPop(e.currentTarget);
-    $$('[data-clsite]').forEach((b) => (b.onclick = () => clGo(b.dataset.clsite, 'dashboard')));
-    if ($('#clExit')) $('#clExit').onclick = () => { closeMarker(true); state.viewAs = ''; state.cl = { sites: null, site: null, leads: null, comments: null, loading: false, error: '', months: 12, group: 'pages', pick: {} }; document.body.classList.remove('client-mode'); location.hash = '#/site/' + encodeURIComponent(current.id); };
+    if ($('#cpLook')) $('#cpLook').onclick = (e) => toggleLookPop(e.currentTarget);
+    if ($('#cpLookTop')) $('#cpLookTop').onclick = () => clLookSheet();
+    if ($('#cpOut')) $('#cpOut').onclick = clSignOut;
+    if ($('#cpMore')) $('#cpMore').onclick = () => clMoreSheet(current);
+    if ($('#cpSite')) $('#cpSite').onchange = (e) => clGo(e.target.value, sec === 'edit' || sec === 'account' ? sec : 'overview');
+    if ($('#clExit')) $('#clExit').onclick = () => { closeMarker(true); state.viewAs = ''; clReset(); document.body.classList.remove('client-mode'); location.hash = '#/site/' + encodeURIComponent(current.id); };
     if (!state.cl.tkq || !state.cl.tkq[current.id]) clTkQuota(current);
     if (r.section === 'mark') {
       clSection(current, 'requests');
       if (!mk.on || mk.route !== location.hash) { openMarker(current, { onClose: () => clGo(current.id, 'requests') }); mk.route = location.hash; }
       return;
     }
-    clSection(current, r.section);
+    clSection(current, sec, r.sub);
+  }
+  function clMoreSheet(site) {
+    const rest = CL_SECTIONS.filter((x) => !x.tab);
+    modal(`<header><h2>More</h2><button class="btn ghost" data-close aria-label="Close">✕</button></header>
+      <div class="body cp-more">${rest.map((x) => `<a class="cp-more-i" href="${clHref(site, x.k)}" data-close>${clIc(x.ic, 22)}<span><b>${esc(x.label)}</b><small>${esc(CL_DESC[x.k] || '')}</small></span></a>`).join('')}
+        <button class="cp-more-i" id="cpmLook" type="button">${clIc('palette', 22)}<span><b>Appearance</b><small>Light, dark and colour</small></span></button>
+        ${state.viewAs ? '' : `<button class="cp-more-i" id="cpmOut" type="button">${clIc('out', 22)}<span><b>Sign out</b><small>${esc((state.cl.who || {}).email || '')}</small></span></button>`}</div>`, { sheet: true });
+    $('#cpmLook').onclick = () => { closeModal(); clLookSheet(); };
+    if ($('#cpmOut')) $('#cpmOut').onclick = () => { closeModal(); clSignOut(); };
+  }
+  function clLookSheet() {
+    modal(`<header><h2>Appearance</h2><button class="btn ghost" data-close aria-label="Close">✕</button></header><div class="body" id="cpLookBody"></div>`, { sheet: true });
+    const body = $('#cpLookBody'); const draw = () => { body.innerHTML = lookHtml({ labels: true }); bindLook(body, draw); }; draw();
   }
 
-  async function clSection(site, section) {
+  async function clSection(site, section, sub, redraw) {
     const el = $('#clMain'); if (!el) return;
-    if (section === 'access') return clAccess(el, site);
-    if (section === 'comments') return clComments(el, site);
-    if (section === 'contacts') {
-      el.innerHTML = `${clHead(site, 'Contacts', 'Everyone who has filled in a form on your website, one line per person. Added automatically with every new submission.')}<div class="cl-card" id="clCt"></div>`;
-      return renderContacts($('#clCt'), { url: 'client:' + site.id, name: site.name, load: () => capi('/api/client?op=contacts&id=' + encodeURIComponent(site.id)), rule: (key, verdict) => cpost('/api/client', { op: 'contactVerdict', id: site.id, key, verdict }) });
-    }
+    if (!redraw) window.scrollTo(0, 0);
+    if (section === 'overview') return clOverview(el, site);
+    if (section === 'analytics') return clAnalytics(el, site);
+    if (section === 'health') return clHealth(el, site);
+    if (section === 'enquiries') return clEnquiries(el, site, sub);
     if (section === 'requests') return clRequests(el, site);
-    if (section === 'leads' || section === 'dashboard') return clLeads(el, site, section);
+    if (section === 'comments') return clComments(el, site);
+    if (section === 'edit') return clAccess(el, site);
+    if (section === 'account') return clAccount(el, site);
   }
 
   function clHead(site, title, sub) {
     return `<div class="cl-head"><div><h1>${esc(title)}</h1><div class="cl-sub">${esc(sub || '')}</div></div>
-      ${site.domain ? `<a class="btn ghost" href="https://${esc(site.domain)}" target="_blank" rel="noopener">Open ${esc(site.domain)} ↗</a>` : ''}</div>`;
+      ${site.domain ? `<a class="btn ghost cp-visit" href="https://${esc(site.domain)}" target="_blank" rel="noopener">${clIc('ext', 16)} ${esc(site.domain)}</a>` : ''}</div>`;
+  }
+  const clDate = (v) => { const d = new Date(typeof v === 'number' ? v : Date.parse(v)); return isNaN(d) ? '' : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); };
+  const clDays = (ms) => Math.floor((ms - Date.now()) / 86400000);
+  const CL_DOWN = ['dns', 'http', 'down', 'timeout', 'error'];
+  /** The one-line state of the website, from the client's side: what it means, not how it was found. */
+  function clState(live, d, domain) {
+    if (!live) return ['wait', 'Not published yet', 'Your website goes live once it is published.'];
+    if (!live.domain) return ['info', 'Live on a temporary address', 'It does not have a domain of its own yet.'];
+    if (!d) return ['info', 'Live', 'The first check of your domain runs within a day.'];
+    if (d.status === 'ok') return ['good', 'Live and working', `${domain} opens your website.`];
+    if (['redirect', 'hijacked', 'notduda'].includes(d.status)) return ['bad', 'Domain needs attention', `${domain} is not showing your website right now. Your team has been told.`];
+    if (CL_DOWN.includes(d.status)) return ['bad', 'Not reachable', `${domain} did not open when it was last checked. Your team has been told.`];
+    return ['info', 'Live', ''];
+  }
+  const clDot = (k) => `<span class="cp-state ${k[0]}"><i aria-hidden="true"></i>${esc(k[1])}</span>`;
+  function clRegLine(reg, short) {
+    if (!reg || !reg.expires) return '';
+    const n = clDays(reg.expires);
+    if (short && n >= 0) return `Domain renews by <b>${esc(clDate(reg.expires))}</b> (${n} day${n === 1 ? '' : 's'}).`;
+    if (n < 0) return `<b class="cp-bad">Domain registration expired on ${esc(clDate(reg.expires))}.</b> Renew it${reg.registrar ? ` with ${esc(reg.registrar)}` : ''} straight away, or the website stays offline.`;
+    return `Domain renews by <b>${esc(clDate(reg.expires))}</b> (${n} day${n === 1 ? '' : 's'})${reg.registrar ? ` with ${esc(reg.registrar)}` : ''}.${n <= 60 ? ' <b class="cp-warn">Please renew it before then — if it lapses, the website goes offline.</b>' : ''}`;
+  }
+
+  // ---------- Overview ----------
+  function clLoad(store, key, url, site, section, map) {
+    if (state.cl[store][key]) return state.cl[store][key];
+    state.cl[store][key] = { loading: true };
+    capi(url).then((r) => { state.cl[store][key] = map ? map(r) : r; clAgain(site, section); })
+      .catch((e) => { state.cl[store][key] = { failed: e.message }; clAgain(site, section); });
+    return state.cl[store][key];
+  }
+  function clThumb(site, O) {
+    const T = state.cl.th[site.id];
+    if (!T && O && !O.loading && !O.failed) {
+      state.cl.th[site.id] = { asking: true };
+      cpost('/api/capture', { op: 'thumb', id: site.id, pub: (O.live && O.live.published) || '' })
+        .then((r) => { state.cl.th[site.id] = { at: r.at || 0, none: !r.at }; clAgain(site, 'overview'); })
+        .catch(() => { state.cl.th[site.id] = { at: 0, none: true }; clAgain(site, 'overview'); });
+    }
+    return state.cl.th[site.id] || { asking: true };
+  }
+  function clOverview(el, site) {
+    const O = clLoad('ov', site.id, '/api/client?op=site&id=' + encodeURIComponent(site.id), site, 'overview');
+    const A = clLoad('an', site.id + ':30', `/api/client?op=analytics&id=${encodeURIComponent(site.id)}&days=30`, site, 'overview');
+    if (O.loading) { el.innerHTML = clHead(site, 'Overview', '') + '<div class="empty">Loading…</div>'; return; }
+    if (O.failed) { el.innerHTML = clHead(site, 'Overview', '') + `<div class="cl-card"><div class="empty">${esc(O.failed)}</div></div>`; return; }
+    const live = O.live; const d = O.domain; const dom = (live && live.domain) || site.domain;
+    const st = clState(live, d, dom);
+    const T = clThumb(site, O);
+    const src = T.at ? `/api/capture?op=thumb&id=${encodeURIComponent(site.id)}&site=${encodeURIComponent(site.siteId || site.id)}&v=${T.at}` : '';
+    const q = (state.cl.tkq || {})[site.id] || {};
+    const L = O.leads || {};
+    const H = O.health; const perf = H && H.mobile ? H.mobile.performance : null; const [hc, hw] = hBand(perf);
+    const D = A && !A.loading && !A.failed && A.duda && !A.duda.error ? A.duda : null;
+    const tile = (href, k, v, s, cls) => `<a class="cl-tile cp-tl${cls ? ' ' + cls : ''}" href="${href}"><div class="cl-t-k">${k}</div><div class="cl-t-v">${v}</div><div class="cl-t-d">${s}</div></a>`;
+    el.innerHTML = clHead(site, 'Overview', `Everything about ${site.name} in one place.`) + `
+      <section class="cl-card cp-hero">
+        <a class="cp-shot" ${dom ? `href="https://${esc(dom)}" target="_blank" rel="noopener"` : ''} aria-label="${esc(site.name)}">
+          ${src ? `<img src="${esc(src)}" alt="Your website's home page">` : `<span class="cp-shot-wait">${clIc('globe', 34)}<span>${T.asking ? 'Taking a picture of your website…' : 'No picture yet'}</span></span>`}
+        </a>
+        <div class="cp-hero-b">
+          ${clDot(st)}
+          <h2>${esc(site.name)}</h2>
+          ${dom ? `<a class="cp-dom" href="https://${esc(dom)}" target="_blank" rel="noopener">${esc(dom)} ${clIc('ext', 14)}</a>` : ''}
+          ${st[2] ? `<p class="small muted">${esc(st[2])}</p>` : ''}
+          <ul class="cp-facts">
+            ${live && live.published ? `<li>${clIc('check', 15)} Last published ${esc(clDate(live.published))}</li>` : ''}
+            ${live && live.first ? `<li>${clIc('rocket', 15)} Live since ${esc(clDate(live.first))}</li>` : ''}
+            ${d && d.reg && d.reg.expires ? `<li>${clIc('calendar', 15)} <span>${clRegLine(d.reg)}</span></li>` : ''}
+          </ul>
+          <div class="cp-acts">
+            ${dom ? `<a class="btn primary" href="https://${esc(dom)}" target="_blank" rel="noopener">${clIc('ext', 16)} Visit website</a>` : ''}
+            <a class="btn" href="${clHref(site, 'edit')}">${clIc('pen', 16)} Edit website</a>
+            <button class="btn" data-sendticket type="button">${clIc('send', 16)} Send a request</button>
+          </div>
+        </div>
+      </section>
+      <div class="cl-tiles">
+        ${tile(clHref(site, 'analytics'), 'Visits · 30 days', !A || A.loading ? '…' : D ? fmtN(D.totals.visits) : '—', D ? (anDelta(D.totals.visits, D.prev && D.prev.visits) || '<span class="faint">last 30 days</span>') : '<span class="faint">' + (A && A.loading ? 'loading' : 'not available yet') + '</span>')}
+        ${tile(clHref(site, 'enquiries'), 'Enquiries · 30 days', fmtN(L.d30 || 0), `<span class="faint">${fmtN(L.total || 0)} in all${L.last ? ' · latest ' + esc(clDate(L.last)) : ''}</span>`)}
+        ${tile(clHref(site, 'health'), 'Speed on mobile', perf === null || perf === undefined ? '—' : perf, perf === null || perf === undefined ? `<span class="faint">${live ? 'not checked yet' : 'after publishing'}</span>` : `<span class="h-chip-t ${hc}">${hw}</span> <span class="faint">of 100</span>`)}
+        ${tile(clHref(site, 'requests'), 'Open requests', q.open === undefined ? '…' : q.open, `<span class="faint">${q.unread ? `${q.unread} with news for you` : 'questions and changes'}</span>`)}
+      </div>
+      <div class="cl-two">
+        <section class="cl-card"><div class="cl-card-h cp-ch">Visits, last 30 days <a href="${clHref(site, 'analytics')}">Analytics →</a></div>
+          ${D && anHas(D.daily) ? '<div class="viz-wrap" id="cpOvChart"><div class="viz-plot"></div></div>' : `<div class="small faint">${!A || A.loading ? 'Loading…' : D ? 'No visits recorded in the last 30 days.' : 'Visitor numbers are not available yet.'}</div>`}</section>
+        <section class="cl-card"><div class="cl-card-h cp-ch">Your domain <a href="${clHref(site, 'health')}">Details →</a></div>
+          ${clDot(st)}
+          <ul class="cp-facts tight">
+            ${d && d.reg && d.reg.expires ? `<li>${clIc('calendar', 15)} <span>${clRegLine(d.reg, true)}</span></li>` : ''}
+            ${d && d.ssl ? `<li>${clIc('lock', 15)} Secure connection (https) is on — renewed automatically.</li>` : ''}
+            ${d && d.checkedAt ? `<li>${clIc('clock', 15)} Checked ${esc(ago(new Date(d.checkedAt).toISOString()))}</li>` : ''}
+          </ul></section>
+      </div>
+      ${tkCta()}`;
+    tkBindSend(site);
+    if (D && $('#cpOvChart')) { const S = anSeries(A.range, D.daily, [['av', 'visits'], ['au', 'visitors']], 'day'); drawLines($('#cpOvChart'), { B: S.B, g: 'day', series: S.series }); }
+  }
+
+  // ---------- Analytics ----------
+  function clAnalytics(el, site) {
+    const days = state.cl.anDays;
+    const A = clLoad('an', site.id + ':' + days, `/api/client?op=analytics&id=${encodeURIComponent(site.id)}&days=${days}`, site, 'analytics');
+    const chips = [[30, '30 days'], [90, '90 days'], [365, '12 months']].map(([n, l]) => `<button class="chipbtn ${days === n ? 'active' : ''}" data-cpdays="${n}">${l}</button>`).join('');
+    const head = clHead(site, 'Analytics', 'How many people visit your website, and where they come from.') + `<div class="cp-bar"><span class="chips">${chips}</span></div>`;
+    const bindDays = () => $$('[data-cpdays]', el).forEach((b) => (b.onclick = () => { state.cl.anDays = Number(b.dataset.cpdays); clAnalytics(el, site); }));
+    if (A.loading) { el.innerHTML = head + '<div class="empty">Loading your visitor numbers…</div>'; bindDays(); return; }
+    if (A.failed) { el.innerHTML = head + `<div class="cl-card"><div class="empty">${esc(A.failed)}</div></div>`; bindDays(); return; }
+    const has = A.has || {};
+    const tabs = [['duda', 'Visitors']].concat(has.ga4 ? [['ga4', 'Pages & sources']] : []).concat(has.gsc ? [['gsc', 'Google search']] : []);
+    if (!tabs.some((t) => t[0] === state.cl.anTab)) state.cl.anTab = 'duda';
+    const tab = state.cl.anTab;
+    let inner = '';
+    if (tab === 'ga4') {
+      const g = A.ga4;
+      inner = !g || g.error ? '<div class="cl-card"><div class="small muted">Google Analytics could not be read right now. Please try again later.</div></div>'
+        : `<div class="an-tiles">${anTile('Sessions', g.totals.sessions, g.prev && g.prev.sessions)}${anTile('Visitors', g.totals.users, g.prev && g.prev.users)}${anTile('Page views', g.totals.views, g.prev && g.prev.views)}${anTile('Engaged visits', g.totals.engagement, g.prev && g.prev.engagement, (v) => Math.round(v * 100) + '%')}</div>
+          <div class="an-grid">${anChart('cpAnGa', 'Visits per day', ['gs', 'gu'])}
+            <section class="an-card"><h3>Most visited pages</h3>${anBars(g.pages, 'var(--viz-1)')}</section>
+            <section class="an-card"><h3>Where visitors came from</h3>${anSplit(g.channels)}${anBars(g.channels, 'var(--viz-3)')}</section></div>`;
+    } else if (tab === 'gsc') {
+      const s = A.gsc;
+      inner = !s || s.error ? '<div class="cl-card"><div class="small muted">Google search figures could not be read right now. Please try again later.</div></div>'
+        : `<div class="an-tiles">${anTile('Clicks from Google', s.totals.clicks)}${anTile('Times shown on Google', s.totals.impressions)}${anTile('Click rate', s.totals.ctr, null, (v) => (v * 100).toFixed(1) + '%')}${anTile('Average position', s.totals.position, null, (v) => (v ? v.toFixed(1) : '—'))}</div>
+          <div class="small muted cp-note">Average position is where your website appears in Google's results on average: 1 is the top of the first page, 10 is the bottom of it.</div>
+          <div class="an-grid">${anChart('cpAnSc', 'Clicks from Google per day', ['sc'])}
+            <section class="an-card an-wide"><h3>Searches that found you</h3>${s.queries.length ? `<div class="table-wrap"><table class="grid an-q"><thead><tr><th>Search</th><th>Clicks</th><th>Shown</th><th>Position</th></tr></thead><tbody>${s.queries.map((x) => `<tr><td>${esc(x.k)}</td><td>${fmtN(x.clicks)}</td><td>${fmtN(x.impressions)}</td><td>${x.position.toFixed(1)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small faint">No searches recorded for this range.</div>'}</section>
+            ${(s.pages || []).length ? `<section class="an-card an-wide"><h3>Pages people reach from Google</h3><div class="table-wrap"><table class="grid an-q"><thead><tr><th>Page</th><th>Clicks</th><th>Shown</th></tr></thead><tbody>${s.pages.map((x) => `<tr><td>${esc(x.k)}</td><td>${fmtN(x.clicks)}</td><td>${fmtN(x.impressions)}</td></tr>`).join('')}</tbody></table></div></section>` : ''}</div>
+          <div class="small faint">Google reports search about three days behind; figures run to ${esc(s.to || '')}.</div>`;
+    } else {
+      const d = A.duda || {};
+      inner = d.error ? `<div class="cl-card"><div class="small muted">${esc(d.error)}</div></div>`
+        : `<div class="an-tiles">${anTile('Visits', d.totals.visits, d.prev && d.prev.visits)}${anTile('Visitors', d.totals.visitors, d.prev && d.prev.visitors)}${anTile('Page views', d.totals.views, d.prev && d.prev.views)}
+            ${d.acts ? `${anTile('Form sent', d.acts.forms)}${anTile('Tapped to call', d.acts.calls)}${anTile('Tapped to email', d.acts.emails)}${anTile('Opened the map', d.acts.maps)}` : ''}</div>
+          <div class="an-grid">${anHas(d.daily) ? anChart('cpAnDaily', days > 90 ? 'Visits per week' : 'Visits per day', ['av', 'au']) : `<section class="an-card an-wide"><h3>Visits over time</h3><div class="small faint">Nothing to draw for this range yet.</div></section>`}
+            ${anHas(d.months) ? '<section class="an-card an-wide"><h3>Visits, last 12 months</h3><div class="viz-wrap" id="cpAnMonths"><div class="viz-plot"></div></div></section>' : ''}
+            <section class="an-card"><h3>Devices</h3>${anBars(d.devices, 'var(--viz-1)')}</section>
+            <section class="an-card"><h3>Browsers</h3>${anBars(d.browsers, 'var(--viz-7)')}</section>
+            <section class="an-card an-wide"><h3>Countries</h3>${anBars(d.countries, 'var(--viz-3)')}</section>
+            ${has.ga4 ? '' : `<section class="an-card an-wide"><h3>Which pages, and from Google or from ads?</h3><div class="small muted">These numbers come from your website platform, which counts visits but not which page they viewed or whether they came from a Google search or an ad. If you would like that, ask your team to connect <b>Google Analytics</b> to your website${has.gsc ? '' : ' (and <b>Google Search Console</b> for the searches that find you)'}.</div></section>`}</div>`;
+    }
+    el.innerHTML = head + (tabs.length > 1 ? `<div class="an-tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" class="${tab === k ? 'on' : ''}" data-cptab="${k}">${l}</button>`).join('')}</div>` : '') + inner
+      + (A.at ? `<div class="small faint an-foot">Updated ${esc(ago(new Date(A.at).toISOString()))} · refreshed every few hours</div>` : '');
+    bindDays();
+    $$('[data-cptab]', el).forEach((b) => (b.onclick = () => { state.cl.anTab = b.dataset.cptab; clAnalytics(el, site); }));
+    const g = days > 90 ? 'week' : 'day';
+    if (tab === 'duda' && A.duda && !A.duda.error) {
+      if ($('#cpAnDaily')) { const S = anSeries(A.range, A.duda.daily, [['av', 'visits'], ['au', 'visitors']], g); drawLines($('#cpAnDaily'), { B: S.B, g, series: S.series }); }
+      if ($('#cpAnMonths')) {
+        const B = makeBuckets(Date.parse(A.range.yFrom + 'T00:00:00'), Date.parse(A.range.to + 'T00:00:00'), 'month');
+        const by = {}; (A.duda.months || []).forEach((r) => { by[r.d] = (by[r.d] || 0) + r.visits; });
+        drawColumns($('#cpAnMonths'), { B, g: 'month', series: [{ key: 'mv', values: B.map((b) => { const dt = new Date(b.s); return by[`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`] || 0; }) }] });
+      }
+    }
+    if (tab === 'ga4' && A.ga4 && !A.ga4.error && $('#cpAnGa')) { const S = anSeries(A.range, A.ga4.daily, [['gs', 'sessions'], ['gu', 'users']], g); drawLines($('#cpAnGa'), { B: S.B, g, series: S.series }); }
+    if (tab === 'gsc' && A.gsc && !A.gsc.error && $('#cpAnSc')) {
+      const end = A.gsc.to || A.range.to; const start = new Date(Date.parse(end + 'T00:00:00') - (days - 1) * DAY_MS).toISOString().slice(0, 10);
+      const S = anSeries({ from: start, to: end }, A.gsc.daily, [['sc', 'clicks']], g); drawLines($('#cpAnSc'), { B: S.B, g, series: S.series });
+    }
+  }
+
+  // ---------- Website health: domain, DNS, outages, speed ----------
+  const CL_VIT = [['lcp', 'Main content appears', 'How long until the biggest thing on the page shows.'], ['fcp', 'Something appears', 'How long until visitors see anything at all.'],
+    ['tbt', 'Page busy', 'Time the page could not respond to a tap while loading.'], ['cls', 'Things jumping around', 'How much the page moves while it loads (lower is better).'], ['si', 'Fills in', 'How quickly the visible page is drawn.']];
+  const CL_CAT = { performance: 'Speed', accessibility: 'Easy to use for everyone', 'best-practices': 'Built the right way', seo: 'Ready for Google' };
+  function clOutages(list) {
+    const ev = (list || []).slice().reverse(); const out = []; let open = null;
+    ev.forEach((e) => { if (e.kind === 'down') { if (!open) open = { from: e.at, cls: e.cls }; } else if (open) { out.push(Object.assign(open, { to: e.at })); open = null; } });
+    if (open) out.push(open);
+    return out.reverse();
+  }
+  const clDur = (ms) => { const m = Math.round(ms / 60000); return m < 90 ? `${Math.max(1, m)} minute${m === 1 ? '' : 's'}` : m < 2880 ? `${Math.round(m / 60)} hours` : `${Math.round(m / 1440)} days`; };
+  function clHealth(el, site) {
+    const Dm = clLoad('dom', site.id, '/api/client?op=domain&id=' + encodeURIComponent(site.id), site, 'health');
+    const Hl = clLoad('hl', site.id, '/api/client?op=health&id=' + encodeURIComponent(site.id), site, 'health');
+    const head = clHead(site, 'Website health', 'Is your website reachable, is your domain in order, and how fast is it?');
+    if (Dm.loading && Hl.loading) { el.innerHTML = head + '<div class="empty">Checking…</div>'; return; }
+    // --- domain ---
+    let domHtml = '<section class="cl-card"><div class="empty small">Loading your domain…</div></section>';
+    if (Dm.failed) domHtml = `<section class="cl-card"><div class="small muted">${esc(Dm.failed)}</div></section>`;
+    else if (!Dm.loading) {
+      const c = Dm.check; const st = clState(Dm.live, c, Dm.domain);
+      const outs = clOutages(Dm.incidents);
+      const dns = Dm.dns;
+      const rows = [
+        ['Address', Dm.domain ? `<a href="https://${esc(Dm.domain)}" target="_blank" rel="noopener">${esc(Dm.domain)}</a>` : '<span class="faint">No domain of its own yet</span>'],
+        ['Opens your website?', !Dm.live ? '<span class="faint">Not published yet</span>' : !c ? '<span class="faint">Not checked yet</span>' : c.status === 'ok' ? `<span class="cp-ok">${clIc('check', 15)} Yes</span>` : `<span class="cp-bad">${clIc('alert', 15)} No — your team has been told</span>`],
+        ['Registration', c && c.reg && c.reg.expires ? clRegLine(c.reg) : c && c.reg ? '<span class="faint">Your domain\'s registry does not publish a renewal date.</span>' : '<span class="faint">Not known yet</span>'],
+        ['Secure connection (https)', c && c.ssl ? `On — renewed automatically by your website platform${c.ssl.issuer ? ` <span class="faint">(${esc(c.ssl.issuer)})</span>` : ''}` : '<span class="faint">Not known yet</span>'],
+        ['Response time', c && c.ms ? `${(c.ms / 1000).toFixed(1)} seconds for the home page to answer` : '<span class="faint">—</span>'],
+        ['Last checked', c && c.checkedAt ? esc(new Date(c.checkedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) + ' <span class="faint">· checked every day</span>' : '<span class="faint">—</span>'],
+      ];
+      domHtml = `<section class="cl-card"><div class="cp-sec-h">${clIc('globe', 20)}<h2>Your domain</h2>${clDot(st)}</div>
+          ${st[2] ? `<p class="small muted cp-lead">${esc(st[2])}</p>` : ''}
+          <dl class="cp-dl">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></section>
+        <section class="cl-card"><div class="cp-sec-h">${clIc('server', 20)}<h2>DNS records</h2></div>
+          ${!Dm.domain ? '<div class="small faint">Your website does not have a domain of its own yet, so there are no DNS records to show.</div>'
+            : !dns ? '<div class="small faint">The DNS records could not be read right now. Please try again later.</div>'
+            : `<p class="small muted cp-lead">DNS records tell the internet where your domain's website and email live.${dns.dnsBy ? ` Your DNS is managed at <b>${esc(dns.dnsBy)}</b>.` : ''}${dns.mailBy ? ` Email for ${esc(dns.reg)} is handled by <b>${esc(dns.mailBy)}</b>.` : ''}</p>
+              ${dns.records.length ? `<div class="table-wrap"><table class="grid cp-dns"><thead><tr><th>Type</th><th>Name</th><th>Points to</th><th>What it does</th></tr></thead><tbody>${dns.records.map((x) => `<tr><td><span class="badge subtle mono">${esc(x.type)}</span></td><td class="mono">${esc(x.name)}</td><td class="mono">${esc(x.value)}${x.pri !== undefined ? ` <span class="faint">(priority ${x.pri})</span>` : ''}</td><td class="small muted">${{ A: 'Where the website lives', AAAA: 'Where the website lives (newer addresses)', CNAME: 'Sends this name to another address', NS: 'Who manages the DNS', MX: 'Where email is delivered' }[x.type] || ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small faint">No records were found.</div>'}
+              <div class="note small cp-dns-note">${clIc('alert', 15)} Changing these records can take your website or email offline. Please ask your team before changing anything.</div>
+              <div class="small faint">Looked up ${esc(ago(new Date(dns.at).toISOString()))}.</div>`}</section>
+        <section class="cl-card"><div class="cp-sec-h">${clIc('clock', 20)}<h2>Outages in the last 12 months</h2></div>
+          ${!Dm.live ? '<div class="small faint">Starts once your website is published.</div>' : outs.length ? `<ul class="cp-outs">${outs.map((o) => `<li class="${o.to ? '' : 'open'}"><b>${esc(clDate(o.from))}</b> — ${o.cls === 'redirect' ? 'the domain showed another page' : 'the website could not be reached'}${o.to ? `, back after ${clDur(o.to - o.from)}` : ', <b>still not working</b>'}</li>`).join('')}</ul>` : `<div class="cp-ok small">${clIc('check', 15)} No outages recorded. Your domain is checked every day.</div>`}</section>`;
+    }
+    // --- speed ---
+    let spHtml = '';
+    if (Hl.failed) spHtml = `<section class="cl-card"><div class="small muted">${esc(Hl.failed)}</div></section>`;
+    else if (!Hl.loading) {
+      const run = (Hl.runs || [])[0];
+      if (run && Hl.keyed && Date.now() - Date.parse(run.at) > 7 * 86400000 && !Hl.asked) clHealthRun(site);
+      if (!run && Hl.keyed && Hl.published && !Hl.asked) clHealthRun(site);
+      const tabsH = `<div class="an-tabs" role="tablist"><button role="tab" class="${state.cl.hTab === 'mobile' ? 'on' : ''}" data-cph="mobile">Phone</button><button role="tab" class="${state.cl.hTab === 'desktop' ? 'on' : ''}" data-cph="desktop">Computer</button></div>`;
+      const S = run && run[state.cl.hTab] || {};
+      const V = S.vitals || {};
+      spHtml = `<section class="cl-card"><div class="cp-sec-h">${clIc('pulse', 20)}<h2>Speed and quality</h2></div>
+        ${!Hl.published ? '<div class="small faint">Google checks the live website, so this starts once your website is published.</div>'
+          : !run ? `<div class="small muted">${Hl.busy || Hl.running ? '<span class="spin-dot"></span> Google is checking your website on a phone and a computer. This takes about a minute.' : Hl.keyed ? 'Not checked yet.' : 'Speed checks have not been switched on for your website yet. Your team can turn them on.'}</div>`
+          : `<p class="small muted cp-lead">Google's Lighthouse scores your website out of 100. 90 or more is good; 50 to 89 needs work.</p>${tabsH}
+            ${S.error ? '<div class="small muted">This part of the check did not finish. It will run again next week.</div>' : `
+            <div class="h-gauges">${H_CATS.map(([k]) => `<div>${hGauge(S.scores && S.scores[k], CL_CAT[k])}</div>`).join('')}</div>
+            <div class="an-grid">
+              <section class="an-card an-wide"><h3>How fast it loads</h3><div class="h-vitals">${CL_VIT.map(([k, l, t]) => V[k] ? `<div class="h-vit ${V[k].score >= 0.9 ? 'good' : V[k].score >= 0.5 ? 'ok' : 'bad'}"><div class="an-l">${l}</div><div class="h-vit-v">${esc(V[k].txt || '')}</div><div class="small faint">${t}</div></div>` : '').join('')}</div></section>
+              <section class="an-card"><h3>What would make it faster</h3>${(S.opps || []).length ? `<ol class="h-list">${S.opps.map((o) => `<li>${esc(o.t)} <span class="faint">· about ${(o.ms / 1000).toFixed(1)}s faster</span></li>`).join('')}</ol>` : '<div class="small faint">Nothing big to gain.</div>'}</section>
+              <section class="an-card"><h3>Checks that did not pass</h3>${(S.fails || []).length ? `<ul class="h-list">${S.fails.map((f2) => `<li>${esc(f2.t)}</li>`).join('')}</ul>` : '<div class="small faint">Everything passed.</div>'}</section>
+            </div>`}
+            <div class="small faint an-foot">Checked ${esc(clDate(run.at))} · checked again every week${Hl.busy ? ' · <span class="spin-dot"></span> checking now' : ''}. Scores move a few points between checks even when nothing changed. If you would like help improving them, send your team a request.</div>`}
+        </section>`;
+    }
+    el.innerHTML = head + domHtml + spHtml;
+    $$('[data-cph]', el).forEach((b) => (b.onclick = () => { state.cl.hTab = b.dataset.cph; clHealth(el, site); }));
+  }
+  function clHealthRun(site) {
+    const H = state.cl.hl[site.id]; H.asked = true; H.busy = true;
+    cpost('/api/client', { op: 'healthRun', id: site.id })
+      .then((r) => { state.cl.hl[site.id] = Object.assign(r, { asked: true, busy: false }); clAgain(site, 'health'); })
+      .catch(() => { H.busy = false; clAgain(site, 'health'); });
+  }
+
+  // ---------- Enquiries: a summary, every submission, and the people behind them ----------
+  function clEnquiries(el, site, sub) {
+    const tab = ['summary', 'list', 'people'].includes(sub) ? sub : 'summary';
+    el.innerHTML = clHead(site, 'Enquiries', 'Form submissions from your website, and the people who sent them.')
+      + `<div class="an-tabs cp-subtabs" role="tablist">${[['summary', 'Summary'], ['list', 'Form submissions'], ['people', 'People']].map(([k, l]) => `<a role="tab" class="${tab === k ? 'on' : ''}" href="${clHref(site, 'enquiries', k)}">${l}</a>`).join('')}</div><div id="clEnq"></div>`;
+    const box = $('#clEnq');
+    if (tab === 'people') {
+      box.innerHTML = '<p class="small muted cp-lead">Everyone who has filled in a form on your website, one line per person. Messages that look like spam are set aside; you can say they are not.</p><div class="cl-card" id="clCt"></div>';
+      return renderContacts($('#clCt'), { url: 'client:' + site.id, name: site.name, load: () => capi('/api/client?op=contacts&id=' + encodeURIComponent(site.id)), rule: (key, verdict) => cpost('/api/client', { op: 'contactVerdict', id: site.id, key, verdict }) });
+    }
+    return clLeads(box, site, tab === 'summary' ? 'dashboard' : 'leads');
   }
 
   async function clAccess(el, site) {
-    el.innerHTML = `${clHead(site, 'Access your website', 'Open the editor without a separate login.')}
-      <div class="cl-card"><p>This opens <b>${esc(site.name)}</b> in the website editor, signed in as you. The link is made fresh each time you click and is only valid for a couple of minutes, so there is nothing to keep or share.</p>
-      <button class="btn primary" id="clOpen">Open my website editor ↗</button>
-      <div class="small muted" id="clOpenNote" style="margin-top:10px"></div></div>`;
+    el.innerHTML = `${clHead(site, 'Edit your website', 'Open the website editor without a separate login.')}
+      <div class="cl-card cp-edit"><div class="cp-edit-i">${clIc('pen', 28)}</div><div>
+      <p>This opens <b>${esc(site.name)}</b> in the website editor, signed in as you. The link is made fresh each time you click and only works for a couple of minutes, so there is nothing to keep or share.</p>
+      <p class="small muted">Editing works best on a computer. For anything you would rather we change for you, <button class="linkbtn" data-sendticket type="button">send a request</button>.</p>
+      <button class="btn primary" id="clOpen">${clIc('ext', 16)} Open my website editor</button>
+      <div class="small muted" id="clOpenNote" style="margin-top:10px"></div></div></div>`;
+    tkBindSend(site);
     $('#clOpen').onclick = async () => {
       const note = $('#clOpenNote'); note.textContent = 'Preparing your link…';
       try { const r = await cpost('/api/client', { op: 'access', id: site.id }); note.textContent = ''; window.open(r.url, '_blank', 'noopener'); }
@@ -3840,12 +4174,69 @@
     };
   }
 
+  // ---------- Account ----------
+  async function clAccount(el, site) {
+    el.innerHTML = clHead(site, 'Your account', 'Your details, password, emails and how the portal looks.') + '<div class="empty">Loading…</div>';
+    let a, log;
+    try { [a, log] = await Promise.all([capi('/api/client?op=account'), capi('/api/client?op=seclog').catch(() => ({ entries: [] }))]); }
+    catch (e) { el.innerHTML = clHead(site, 'Your account', '') + `<div class="cl-card"><div class="empty">${esc(e.message)}</div></div>`; return; }
+    if (clRoute().section !== 'account') return;
+    const A = a.account || {}; const pv = !!a.preview; const dis = pv ? ' disabled' : '';
+    el.innerHTML = clHead(site, 'Your account', 'Your details, password, emails and how the portal looks.')
+      + (pv ? '<div class="note small">Preview: this is where the client manages their own account. Their details are not shown to you here, and nothing can be changed while previewing.</div>' : '') + `
+      <div class="cp-acct">
+        <section class="cl-card"><div class="cp-sec-h">${clIc('user', 20)}<h2>Your details</h2></div>
+          <form id="caForm" class="cp-form">
+            <label>Name<input name="name" value="${esc(A.name || '')}" maxlength="60" autocomplete="name"${dis} required></label>
+            <label>Email<input value="${esc(A.email || '')}" disabled><span class="small faint">This is how you sign in. To change it, ask your account manager.</span></label>
+            ${A.company ? `<label>Company<input value="${esc(A.company)}" disabled></label>` : ''}
+            <label>Phone<input name="phone" value="${esc(A.phone || '')}" maxlength="40" inputmode="tel" autocomplete="tel"${dis} placeholder="So your team can call you back"></label>
+            <div><button class="btn primary"${dis}>Save details</button> <span class="small" id="caOut"></span></div>
+          </form></section>
+        <section class="cl-card"><div class="cp-sec-h">${clIc('lock', 20)}<h2>Password</h2></div>
+          <form id="cpwForm" class="cp-form">
+            <label>Current password<input type="password" name="cur" autocomplete="current-password"${dis} required></label>
+            <label>New password<input type="password" name="pw" minlength="8" autocomplete="new-password"${dis} required><span class="small faint">At least 8 characters.</span></label>
+            <label>New password again<input type="password" name="pw2" minlength="8" autocomplete="new-password"${dis} required></label>
+            <div><button class="btn"${dis}>Change password</button> <span class="small" id="cpwOut"></span></div>
+            ${A.passwordChangedAt ? `<div class="small faint">Last changed ${esc(clDate(A.passwordChangedAt))}.</div>` : ''}
+          </form></section>
+        <section class="cl-card"><div class="cp-sec-h">${clIc('mail', 20)}<h2>Emails</h2></div>
+          <label class="cp-check"><input type="checkbox" id="caMail"${A.emailOff ? '' : ' checked'}${dis}> <span><b>Email me about my requests</b><span class="small muted">When the team replies, needs an answer from you, or finishes one.</span></span></label>
+          ${a.email ? '' : '<div class="small faint">Emails are not switched on for this portal yet, so none are sent at the moment.</div>'}</section>
+        <section class="cl-card"><div class="cp-sec-h">${clIc('palette', 20)}<h2>Appearance</h2></div><div id="caLook"></div></section>
+        <section class="cl-card cp-wide"><div class="cp-sec-h">${clIc('shield', 20)}<h2>Recent sign-ins</h2></div>
+          <p class="small muted cp-lead">If you see a sign-in you do not recognise, change your password and tell your team.</p>
+          ${pv ? '<div class="small faint">Not shown while previewing.</div>' : secRows((log.entries || []).slice(0, 12))}</section>
+        ${pv ? '' : `<section class="cl-card cp-wide cp-outbox"><div><b>Sign out</b><div class="small muted">Signed in as ${esc(A.email || '')}</div></div><button class="btn" id="caOutBtn">${clIc('out', 16)} Sign out</button></section>`}
+      </div>`;
+    const lookBox = $('#caLook'); const drawLook = () => { lookBox.innerHTML = lookHtml({ labels: true }); bindLook(lookBox, drawLook); }; drawLook();
+    if (pv) return;
+    $('#caForm').onsubmit = async (e) => {
+      e.preventDefault(); const f = e.target; const out = $('#caOut'); out.textContent = 'Saving…';
+      try { const r = await cpost('/api/client', { op: 'profile', name: f.name.value, phone: f.phone.value }); out.textContent = 'Saved'; if (state.me && r.account) state.me.name = r.account.name; if (state.cl.who) state.cl.who.name = r.account.name; }
+      catch (x) { out.textContent = x.message; }
+    };
+    $('#cpwForm').onsubmit = async (e) => {
+      e.preventDefault(); const f = e.target; const out = $('#cpwOut');
+      if (f.pw.value !== f.pw2.value) { out.textContent = 'The two new passwords are not the same.'; return; }
+      out.textContent = 'Changing…';
+      try { await post('/api/auth', { op: 'changePassword', current: f.cur.value, password: f.pw.value }); f.reset(); out.textContent = 'Password changed.'; toast('Password changed'); }
+      catch (x) { out.textContent = x.message; }
+    };
+    $('#caMail').onchange = async (e) => {
+      try { await cpost('/api/client', { op: 'profile', emailOff: !e.target.checked }); toast(e.target.checked ? 'You will get emails about your requests' : 'Emails about your requests are off'); }
+      catch (x) { toast(x.message); e.target.checked = !e.target.checked; }
+    };
+    $('#caOutBtn').onclick = clSignOut;
+  }
+
   async function clComments(el, site) {
     el.innerHTML = `${clHead(site, 'Comments', 'Your comments on the website and the team\'s replies.')}<div class="empty">Loading…</div>`;
     let d; try { d = await capi('/api/client?op=comments&id=' + encodeURIComponent(site.id)); } catch (e) { el.innerHTML = clHead(site, 'Comments', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
     const list = d.threads || [];
     const open = list.filter((t) => t.status === 'open').length;
-    el.innerHTML = `${clHead(site, 'Comments', list.length ? `${list.length} conversation${list.length === 1 ? '' : 's'} on your website${open ? `, ${open} still open` : ''}.` : '')}
+    el.innerHTML = `${clHead(site, 'Comments', list.length ? `${list.length} conversation${list.length === 1 ? '' : 's'} on your website${open ? `, ${open} still open` : ''}.` : 'Your comments on the website and the team\'s replies.')}
       ${list.length ? list.map((t) => `<div class="cl-card cl-cmts"><div class="cl-cmt-top"><b>${t.page ? esc(t.page) : 'Your website'}</b>${t.device ? ` <span class="faint small">· ${esc(t.device.toLowerCase())}</span>` : ''}<span class="badge ${t.status === 'open' ? 'fs-clarification' : 'scan-complete'}">${t.status === 'open' ? 'Open' : 'Resolved'}</span></div>
         ${t.comments.map((c) => `<div class="cl-cmt${c.team ? '' : ' mine'}"><div class="cl-cmt-h"><b>${c.team ? 'Your team' : 'You'}</b><span class="faint small">${esc(isoLabel(c.at))}</span></div><div class="cl-cmt-b">${esc(c.text).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>`).join('')
       : '<div class="cl-card"><div class="empty">No comments yet. Comments you leave on your website in the editor, and the team\'s replies, appear here.</div></div>'}`;
@@ -3854,65 +4245,65 @@
   const isoLabel = (v) => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
   const dayLabel = (v) => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); };
 
+  /** The enquiry summary (charts) or the list, drawn into `el` — the Enquiries page supplies the heading. */
   async function clLeads(el, site, section) {
-    el.innerHTML = clHead(site, section === 'dashboard' ? 'Dashboard' : 'Form Submissions', '') + '<div class="empty">Loading…</div>';
+    el.innerHTML = '<div class="empty">Loading…</div>';
     const pick = state.cl.pick[site.id] || {};
     const q = ['op=leads', 'id=' + encodeURIComponent(site.id), 'months=' + state.cl.months];
     ['page', 'form', 'source'].forEach((k) => { if (pick[k]) q.push(k + '=' + encodeURIComponent(pick[k])); });
-    let d; try { d = await capi('/api/client?' + q.join('&')); } catch (e) { el.innerHTML = clHead(site, 'Form Submissions', '') + `<div class="empty">${esc(e.message)}</div>`; return; }
+    let d; try { d = await capi('/api/client?' + q.join('&')); } catch (e) { el.innerHTML = `<div class="cl-card"><div class="empty">${esc(e.message)}</div></div>`; return; }
+    if (!document.body.contains(el)) return;
     state.cl.leads = d;
     const rows = d.leads || [];
-    const sum = (n) => rows.length && n;
     const last30 = (d.series || []).slice(-1)[0] || { n: 0 };
     const prev30 = (d.series || []).slice(-2)[0] || { n: 0 };
     const delta = prev30.n ? Math.round(((last30.n - prev30.n) / prev30.n) * 100) : 0;
-
+    const bp = busiestPage((d.groups || {}).pages);
     const tiles = `<div class="cl-tiles">
       <div class="cl-tile"><div class="cl-t-k">Enquiries this month</div><div class="cl-t-v">${last30.n}</div>
-        ${!prev30.n ? '<div class="cl-t-d faint">first month</div>'
+        ${!prev30.n ? `<div class="cl-t-d faint">${d.total ? 'none last month' : 'none yet'}</div>`
           : delta === 0 ? '<div class="cl-t-d faint">same as last month</div>'
           : `<div class="cl-t-d ${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)}% vs last month</div>`}</div>
       <div class="cl-tile"><div class="cl-t-k">All enquiries</div><div class="cl-t-v">${d.total}</div><div class="cl-t-d faint">in the last ${state.cl.months} months</div></div>
-      <div class="cl-tile"><div class="cl-t-k">Busiest page</div><div class="cl-t-v sm">${esc((busiestPage((d.groups || {}).pages) || {}).k || '—')}</div><div class="cl-t-d faint">${busiestPage((d.groups || {}).pages) ? busiestPage(d.groups.pages).n + ' enquiries' : 'not recorded yet'}</div></div>
-      <div class="cl-tile"><div class="cl-t-k">Top source</div><div class="cl-t-v sm">${esc(((d.groups || {}).sources || [])[0] ? d.groups.sources[0].k : '—')}</div><div class="cl-t-d faint">${((d.groups || {}).sources || [])[0] ? d.groups.sources[0].n + ' enquiries' : ''}</div></div>
+      <div class="cl-tile"><div class="cl-t-k">Busiest page</div><div class="cl-t-v sm">${esc((bp || {}).k || '—')}</div><div class="cl-t-d faint">${bp ? bp.n + ' enquiries' : 'not recorded yet'}</div></div>
+      <div class="cl-tile"><div class="cl-t-k">Top source</div><div class="cl-t-v sm">${esc(((d.groups || {}).sources || [])[0] ? d.groups.sources[0].k : '—')}</div><div class="cl-t-d faint">${((d.groups || {}).sources || [])[0] ? d.groups.sources[0].n + ' enquiries' : 'not recorded yet'}</div></div>
     </div>`;
 
     if (section === 'dashboard') {
-      el.innerHTML = clHead(site, 'Dashboard', `Where your enquiries come from, over the last ${state.cl.months} months.`) + tkCta() + tiles
-        + `<div class="cl-card"><div class="cl-card-h">Enquiries each month</div>${barChart(d.series || [])}</div>
+      el.innerHTML = tiles + (d.total ? `<div class="cl-card"><div class="cl-card-h">Enquiries each month</div>${barChart(d.series || [])}</div>
            <div class="cl-two">
              <div class="cl-card"><div class="cl-card-h">By page</div>${pageBars((d.groups || {}).pages || [])}</div>
              <div class="cl-card"><div class="cl-card-h">By source</div>${hBars((d.groups || {}).sources || [])}</div>
            </div>
-           <div class="cl-card"><div class="cl-card-h">When people get in touch</div>${dowChart((d.when || {}).dow || [])}</div>`;
-      tkBindSend(site);
+           <div class="cl-card"><div class="cl-card-h">When people get in touch</div>${dowChart((d.when || {}).dow || [])}</div>`
+        : '<div class="cl-card"><div class="empty">No enquiries recorded yet for this website. Every form sent from your website will appear here.</div></div>');
       return;
     }
 
     const groups = d.groups || {};
     const chip = (k, g) => (g || []).slice(0, 8).map((x) => `<button class="pill${pick[k] === x.k ? ' on' : ''}" data-clf="${esc(k)}" data-clv="${esc(x.k)}">${esc(x.k)} <b>${x.n}</b></button>`).join('');
-    el.innerHTML = clHead(site, 'Form Submissions', `${d.matched} of ${d.total} enquiries.`) + tiles
-      + `<div class="cl-card">
+    el.innerHTML = `<div class="small muted cp-lead">${d.matched} of ${d.total} enquiries.</div>`
+      + (d.total ? `<div class="cl-card">
           <div class="cl-filters"><div class="cl-f-row"><span class="cl-f-k">Page</span>${chip('page', groups.pages)}</div>
             ${(groups.forms || []).filter((f) => f.k !== '—').length ? `<div class="cl-f-row"><span class="cl-f-k">Form</span>${chip('form', groups.forms)}</div>` : ''}
             ${(groups.sources || []).filter((f) => f.k !== '—').length ? `<div class="cl-f-row"><span class="cl-f-k">Source</span>${chip('source', groups.sources)}</div>` : ''}
             ${Object.keys(pick).length ? '<button class="linkbtn" id="clClear">Clear filters</button>' : ''}</div>
-        </div>
-        ${rows.length ? `<div class="cl-card cl-leadlist">${rows.map((l) => `<div class="cl-lead">
+        </div>` : '')
+      + (rows.length ? `<div class="cl-card cl-leadlist">${rows.map((l) => `<div class="cl-lead">
             <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${pageLabel(l.pg)}</div></div>
             <div class="cl-l-who"><b>${esc(l.n || 'No name given')}</b>
               <div class="small">${l.e ? `<a href="mailto:${esc(l.e)}">${esc(l.e)}</a>` : ''}${l.e && l.p ? ' · ' : ''}${l.p ? `<a href="tel:${esc(l.p.replace(/[^\d+]/g, ''))}">${esc(l.p)}</a>` : ''}</div></div>
             <div class="cl-l-what">${Object.entries(l.f || {}).map(([k, v]) => `<div><span class="faint">${esc(k)}:</span> ${esc(v)}</div>`).join('') || '<span class="faint">—</span>'}</div>
             <div class="cl-l-src">${l.src ? `<span class="pill sm">${esc(l.src)}</span>` : ''}</div>
           </div>`).join('')}</div>`
-        : `<div class="cl-card"><div class="empty">${d.total ? 'Nothing matches those filters.' : 'No enquiries recorded yet for this website.'}</div></div>`}`;
-    $$('[data-clf]').forEach((b) => (b.onclick = () => {
+        : `<div class="cl-card"><div class="empty">${d.total ? 'Nothing matches those filters.' : 'No enquiries recorded yet for this website.'}</div></div>`);
+    $$('[data-clf]', el).forEach((b) => (b.onclick = () => {
       const k = b.dataset.clf; const v = b.dataset.clv;
       const p2 = Object.assign({}, state.cl.pick[site.id] || {});
       if (p2[k] === v) delete p2[k]; else p2[k] = v;
       state.cl.pick[site.id] = p2; clLeads(el, site, section);
     }));
-    if ($('#clClear')) $('#clClear').onclick = () => { state.cl.pick[site.id] = {}; clLeads(el, site, section); };
+    if ($('#clClear', el)) $('#clClear', el).onclick = () => { state.cl.pick[site.id] = {}; clLeads(el, site, section); };
   }
 
   // --- small charts, drawn with plain elements so nothing has to be loaded ---
@@ -6999,7 +7390,7 @@
     $('#sAssign').onchange = async (e) => { await changeSite(s, { assignee: e.target.value }); await loadSite(s.id); renderSite(); };
     $('#sStatus').onchange = async (e) => { await changeSite(s, { status: e.target.value }); await loadSite(s.id); renderSite(); };
     $('#sRescan').onclick = () => requestScan([s.id]);
-    if ($('#sViewAs')) $('#sViewAs').onclick = () => { state.viewAs = s.id; state.cl.sites = null; location.hash = `#/my/${encodeURIComponent(s.id)}/dashboard`; };
+    if ($('#sViewAs')) $('#sViewAs').onclick = () => { clReset(); state.viewAs = s.id; location.hash = `#/my/${encodeURIComponent(s.id)}/overview`; };
     loadPubInfo(s);
     $('#sCsv').onclick = () => exportCsv(s);
     $('#sSum').onclick = () => openSummary(s);
@@ -9717,7 +10108,7 @@
         <li class="panel"><h3>Report back</h3><p><b>📋 Summary</b> on any audit writes a short note for the group chat: what was checked, every critical fix in plain words and how it was verified, and what is left.</p></li>
         <li class="panel"><h3>Talk it through</h3><p>Use a website's <b>Comments</b> tab. Type <b>@</b> to tag a teammate and <b>#12</b> to link an item. Click <b>Reply</b> to quote someone.</p></li>
         <li class="panel"><h3>Hear from the client</h3><p>Comments left in the <b>Duda editor</b> arrive on their own, for every website in the account — published or not, on the Audits list or not. See them under <b>Duda comments</b> in the menu. Nothing notifies you about them, except when a client has been waiting 24 hours for an answer.</p></li>
-        <li class="panel"><h3>Take client tickets</h3><p>From their phone or computer, clients <b>Send a ticket</b>: a general question, or a website change marked right on a picture of their own page (highlight, tap, box, circle or arrow). Each one arrives on <b>Tickets</b>, and for changes the app says whether that spot has changed since.</p></li>
+        <li class="panel"><h3>Take client tickets</h3><p>From their phone or computer, clients <b>Send a request</b>: a general question, or a website change marked right on a picture of their own page (highlight, tap, box, circle or arrow). Each one arrives on <b>Tickets</b>, and for changes the app says whether that spot has changed since.</p></li>
         <li class="panel"><h3>Watch every live website</h3><p>Every website has one <b>Profile</b>: its picture, domain health, audit, form submissions, comments, tickets and <b>📊 Analytics</b> (visits, visitors and clicks from Duda, plus Google Analytics or Search Console when added). Every live domain is checked daily, and admins are alerted the moment one goes down, shows another site or expires.</p></li>
         <li class="panel"><h3>Find anything</h3><p>Press <b>/</b> to search websites, people, pages and filters, or ask a question like <i>what is a false alarm?</i>. The <b>⚙ gear</b> holds the app's settings: the team, roles, notifications and your security log.</p></li>
         <li class="panel"><h3>See who did what</h3><p>Each website has an <b>Activity log</b> (scans, rescans, statuses and comments, with date and time). Admins also get an app-wide <b>Activity</b> page. The dots at the top right show who's online: green is active, grey is idle for an hour or more.</p></li>

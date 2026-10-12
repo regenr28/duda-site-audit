@@ -9,6 +9,7 @@
 // POST /api/capture { op:'test', site? }                         → admins: check pictures work on this server
 // GET  /api/capture?op=thumb&site=<duda id>                      → the team: a website's small thumbnail (image)
 // POST /api/capture { op:'thumb', site:<duda id>, pub }          → the team: take it if missing, or older than its last publish / a week
+//      (clients: the same with id=<their website's record id> instead of site — only their own websites)
 //
 // `site` is always the website's record id in this app; the page itself is opened on the Duda
 // preview of that website's draft, so it shows what the team is working on, not just what is live.
@@ -39,8 +40,16 @@ const THUMB_W = 480;
 const thumbKey = (id) => P + 'thumb:' + id;
 const okDudaId = (id) => /^[A-Za-z0-9_-]{4,64}$/.test(String(id || ''));
 async function thumbOp(req, res, w, b) {
-  if (!w.team) return res.status(404).json({ error: 'Not found' });
-  const site = String((req.method === 'GET' ? req.query.site : b.site) || '');
+  let site = String((req.method === 'GET' ? req.query.site : b.site) || '');
+  if (!w.team) {
+    // A client: only the picture of a website they were given, named by its record id (never by a
+    // Duda id they could guess). Previewing team members come through here with their headers.
+    const rid = String((req.method === 'GET' ? req.query.id : b.id) || '');
+    if (!w.client || !rid || !mayseeSite(w, rid)) return res.status(404).json({ error: 'Not found' });
+    const rec = await siteRec(rid);
+    if (!rec) return res.status(404).json({ error: 'Not found' });
+    site = String(rec.siteId || rid);
+  }
   if (!okDudaId(site)) return res.status(400).json({ error: 'Unknown website' });
   const [raw] = await redis(['GET', thumbKey(site)]);
   const t = raw ? JSON.parse(raw) : null;

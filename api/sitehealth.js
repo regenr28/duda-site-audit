@@ -66,6 +66,37 @@ async function lighthouse(url, strategy) {
   return { scores, vitals, field, opps, fails, final: String(lh.finalDisplayedUrl || lh.finalUrl || url).slice(0, 300) };
 }
 
+/** The stored checks for one website (the latest in full, older ones as scores only). */
+export async function readHealth(id) {
+  const [raw, lock] = await redis(['GET', key(id)], ['GET', key(id) + ':run']);
+  return Object.assign(jparse(raw) || { runs: [] }, { running: !!lock, keyed: !!process.env.PAGESPEED_API_KEY });
+}
+/**
+ * Check one website now, on mobile and desktop, and store it. Shared by the team's Check now and
+ * the client's weekly automatic check (api/client.js). Only one check per website runs at a time.
+ */
+export async function runHealth(id, byName, lockBy) {
+  const [raw] = await redis(['GET', key(id)]);
+  const data = jparse(raw) || { runs: [] };
+  const url = await liveUrl(id);
+  if (!url) throw Object.assign(new Error('This website is not published, so there is nothing live for Google to check yet.'), { status: 400 });
+  const [got] = await redis(['SET', key(id) + ':run', lockBy || 'auto', 'NX', 'EX', 180]);
+  if (got !== 'OK') return Object.assign(data, { running: true, keyed: !!process.env.PAGESPEED_API_KEY });
+  try {
+    const [mob, desk] = await Promise.allSettled([lighthouse(url, 'mobile'), lighthouse(url, 'desktop')]);
+    if (mob.status === 'rejected' && desk.status === 'rejected') throw mob.reason.needsKey ? mob.reason : desk.reason.needsKey ? desk.reason : mob.reason;
+    const run = { at: new Date().toISOString(), url, by: byName || '', mobile: mob.status === 'fulfilled' ? mob.value : { error: String(mob.reason.message) }, desktop: desk.status === 'fulfilled' ? desk.value : { error: String(desk.reason.message) } };
+    data.runs = [run].concat(data.runs || []).slice(0, KEEP);
+    // History keeps only the scores of older runs; the details of the latest are what matter.
+    data.runs = data.runs.map((r2, i) => (i === 0 ? r2 : { at: r2.at, url: r2.url, by: r2.by, mobile: { scores: (r2.mobile || {}).scores }, desktop: { scores: (r2.desktop || {}).scores } }));
+    await redis(['SET', key(id), JSON.stringify(data)], ['DEL', key(id) + ':run']);
+    return Object.assign(data, { running: false, keyed: !!process.env.PAGESPEED_API_KEY });
+  } catch (e) {
+    await redis(['DEL', key(id) + ':run']).catch(() => {});
+    throw e;
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
@@ -74,28 +105,11 @@ export default async function handler(req, res) {
   try {
     const id = String((req.method === 'GET' ? req.query.site : (readBody(req) || {}).site) || '');
     if (!okId(id)) return res.status(400).json({ error: 'Unknown website' });
-    const [raw, lock] = await redis(['GET', key(id)], ['GET', key(id) + ':run']);
-    const data = jparse(raw) || { runs: [] };
-    if (req.method === 'GET') return res.status(200).json(Object.assign(data, { running: !!lock, keyed: !!process.env.PAGESPEED_API_KEY }));
+    if (req.method === 'GET') return res.status(200).json(await readHealth(id));
     const b = readBody(req) || {};
     if (b.op !== 'run') return res.status(400).json({ error: 'Unknown op' });
-    const url = await liveUrl(id);
-    if (!url) return res.status(400).json({ error: 'This website is not published, so there is nothing live for Google to check yet.' });
-    const [got] = await redis(['SET', key(id) + ':run', me.email, 'NX', 'EX', 180]);
-    if (got !== 'OK') return res.status(200).json(Object.assign(data, { running: true }));
-    try {
-      const [mob, desk] = await Promise.allSettled([lighthouse(url, 'mobile'), lighthouse(url, 'desktop')]);
-      if (mob.status === 'rejected' && desk.status === 'rejected') throw mob.reason.needsKey ? mob.reason : desk.reason.needsKey ? desk.reason : mob.reason;
-      const run = { at: new Date().toISOString(), url, by: me.name, mobile: mob.status === 'fulfilled' ? mob.value : { error: String(mob.reason.message) }, desktop: desk.status === 'fulfilled' ? desk.value : { error: String(desk.reason.message) } };
-      data.runs = [run].concat(data.runs || []).slice(0, KEEP);
-      // History keeps only the scores of older runs; the details of the latest are what matter.
-      data.runs = data.runs.map((r2, i) => (i === 0 ? r2 : { at: r2.at, url: r2.url, by: r2.by, mobile: { scores: (r2.mobile || {}).scores }, desktop: { scores: (r2.desktop || {}).scores } }));
-      await redis(['SET', key(id), JSON.stringify(data)], ['DEL', key(id) + ':run']);
-      return res.status(200).json(Object.assign(data, { running: false, keyed: !!process.env.PAGESPEED_API_KEY }));
-    } catch (e) {
-      await redis(['DEL', key(id) + ':run']).catch(() => {});
-      return res.status(502).json({ error: String(e.message || e), needsKey: !!e.needsKey, keyed: !!process.env.PAGESPEED_API_KEY });
-    }
+    try { return res.status(200).json(await runHealth(id, me.name, me.email)); }
+    catch (e) { return res.status(e.status || 502).json({ error: String(e.message || e), needsKey: !!e.needsKey, keyed: !!process.env.PAGESPEED_API_KEY }); }
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }

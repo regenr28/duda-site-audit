@@ -232,6 +232,30 @@ const googleError = (e) => (e && e.message === 'no-access' ? 'no-access' : Strin
 
 async function readCfg(id) { const [raw] = await redis(['HGET', CFG, id]); return jparse(raw) || {}; }
 
+/**
+ * One website's analytics for one range, from the 6-hour cache or freshly from Duda and Google.
+ * Shared by the team's profile and the client's own pages (api/client.js), which trims it further.
+ */
+export async function siteAnalytics(id, days, fresh) {
+  const sa = serviceAccount();
+  const [cached, rawCfg] = await redis(['GET', cacheKey(id, days)], ['HGET', CFG, id]);
+  const cfg = jparse(rawCfg) || {};
+  let data = !fresh ? jparse(cached) : null;
+  if (!data) {
+    const [d, g, s] = await Promise.all([
+      dudaAnalytics(id, days).catch((e) => ({ error: 'Duda analytics could not be read right now.', detail: String(e.message || '').slice(0, 200) })),
+      cfg.ga4 && sa ? ga4(cfg.ga4.property, days).catch((e) => ({ error: googleError(e) })) : null,
+      cfg.gsc && sa ? gsc(cfg.gsc.siteUrl, days).catch((e) => ({ error: googleError(e) })) : null,
+    ]);
+    data = { at: Date.now(), days, range: ranges(days), duda: d, ga4: g, gsc: s };
+    // A failed read is kept only briefly, so it is tried again soon.
+    const failed = (d && d.error) || (g && g.error) || (s && s.error);
+    await redis(['SET', cacheKey(id, days), JSON.stringify(data), 'EX', failed ? 600 : TTL]);
+  }
+  return { data, cfg };
+}
+export const okSiteId = okId;
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
@@ -272,20 +296,7 @@ export default async function handler(req, res) {
     const id = String(req.query.site || '');
     if (!okId(id)) return res.status(400).json({ error: 'Unknown website' });
     const days = [30, 90, 365].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
-    const [cached, rawCfg] = await redis(['GET', cacheKey(id, days)], ['HGET', CFG, id]);
-    const cfg = jparse(rawCfg) || {};
-    let data = !req.query.fresh ? jparse(cached) : null;
-    if (!data) {
-      const [d, g, s] = await Promise.all([
-        dudaAnalytics(id, days).catch((e) => ({ error: 'Duda analytics could not be read right now.', detail: String(e.message || '').slice(0, 200) })),
-        cfg.ga4 && sa ? ga4(cfg.ga4.property, days).catch((e) => ({ error: googleError(e) })) : null,
-        cfg.gsc && sa ? gsc(cfg.gsc.siteUrl, days).catch((e) => ({ error: googleError(e) })) : null,
-      ]);
-      data = { at: Date.now(), days, range: ranges(days), duda: d, ga4: g, gsc: s };
-      // A failed read is kept only briefly, so it is tried again soon.
-      const failed = (d && d.error) || (g && g.error) || (s && s.error);
-      await redis(['SET', cacheKey(id, days), JSON.stringify(data), 'EX', failed ? 600 : TTL]);
-    }
+    const { data, cfg } = await siteAnalytics(id, days, !!req.query.fresh);
     if (data.duda && !manage) { delete data.duda.detail; delete data.duda.diag; }
     return res.status(200).json(Object.assign({}, data, {
       providers: cfg, manage,

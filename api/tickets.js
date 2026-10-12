@@ -13,9 +13,9 @@
 //   POST { op:'status', ids, status }   { op:'reply', id, text }   { op:'note', id, text }
 //   POST { op:'assign', ids, email }    { op:'checked', id, result, now }   { op:'opened', id }
 //   GET/POST ?op=settings        admins: daily allowance, who is told, emails to clients
-import { redis, P, newId, now, unpackJSON, listUsers, listRoles, canWith, notifyUser, globalLog, sendEmail, emailEnabled, emailShell,
+import { redis, P, newId, now, getUser, unpackJSON, listUsers, listRoles, canWith, notifyUser, globalLog, sendEmail, emailEnabled, emailShell,
   esc, appUrl, readBody, normEmail } from './_lib.js';
-import { who, mayseeSite, settings, saveSettings, quota, today, getCap, keepCapCmds, getTickets, listIds, putTicketCmd, newSetCmd,
+import { who, mayseeSite, settings, saveSettings, quota, today, limitFor, getCap, keepCapCmds, getTickets, listIds, putTicketCmd, newSetCmd,
   clientTicket, teamTicket, STATUSES, KINDS, TZ, cleanPath, cleanReplay, siteRec as tkSiteRec } from './_tickets.js';
 import { DEVICES } from './_devices.js';
 
@@ -52,6 +52,9 @@ function editorLink(t) {
 }
 async function emailClient(cfg, t, subject, line) {
   if (!cfg.emailClients || !emailEnabled() || !t.by) return;
+  // A client can switch these emails off for themselves (their Account page).
+  const u = await getUser(t.by).catch(() => null);
+  if (u && u.emailOff) return;
   const link = `${appUrl()}/#/my/${encodeURIComponent(t.site)}/requests`;
   const body = `<p>${line}</p>
     <div style="border:1px solid #e3e5ea;border-radius:10px;padding:12px 14px;margin:14px 0;color:#444"><b>Ticket #${t.num}</b> · ${esc(t.path || '/')}<br>${esc(String(t.text || '').slice(0, 300))}</div>
@@ -88,7 +91,7 @@ export default async function handler(req, res) {
         if (!mayseeSite(w, site)) return res.status(404).json({ error: 'Not found' });
         const q = await quota(w.me.email);
         const all = await getTickets(await listIds(site, 300));
-        if (op === 'quota') return res.status(200).json({ quota: q, preview: w.preview, unread: all.filter((t) => t.cu).length, total: all.length });
+        if (op === 'quota') return res.status(200).json({ quota: q, preview: w.preview, unread: all.filter((t) => t.cu).length, total: all.length, open: all.filter((t) => !['done', 'closed'].includes(t.status)).length });
         return res.status(200).json({ tickets: all.map((t) => clientTicket(t, w.me)), quota: q, preview: w.preview, statuses: Object.fromEntries(Object.entries(STATUSES).map(([k, v]) => [k, v.client])) });
       }
       if (op === 'seen') {
@@ -144,8 +147,8 @@ export default async function handler(req, res) {
         const { day } = today();
         const dayKey = P + `tkday:${w.me.email}:${day}`;
         const [used] = await redis(['INCR', dayKey], ['EXPIRE', dayKey, 172800]);
-        const limit = cfg.over && cfg.over[w.me.email] !== undefined ? cfg.over[w.me.email] : cfg.daily;
-        if (used > limit) {
+        const limit = limitFor(cfg, w.me.email);
+        if (limit >= 0 && used > limit) {
           await redis(['DECR', dayKey]);
           return fail(429, { error: limit ? `You have sent ${limit} ticket${limit === 1 ? '' : 's'} today, which is your daily limit.` : 'Sending tickets is paused on your account. Please contact your account manager.',
             limited: true, quota: await quota(w.me.email, cfg) });

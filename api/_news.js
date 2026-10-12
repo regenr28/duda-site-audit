@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-10-12-portal', date: '2026-10-12', audience: 'all', tag: 'Clients',
+    title: 'A new client portal: website picture, analytics, domain and DNS health, speed, and an account page',
+    what: 'The client\'s page is now a proper portal, laid out like our app with clean line icons. <b>Overview</b> shows a picture of their website, whether it is live and working, when the domain renews, and their visits, enquiries, speed and open requests. <b>Analytics</b> shows their visitors (plus pages, organic vs ads and Google search ranking where Google is connected). <b>Website health</b> shows their domain, <b>DNS records</b> in plain words, past outages and Google speed scores. <b>Enquiries</b> brings form submissions and contacts together. <b>Account</b> lets them change their name, phone and password, switch emails off, pick light or dark, see their sign-ins and sign out. Tickets are called <b>Requests</b> on their side. On a phone they get a bottom bar.',
+    where: ['Open any website\'s <b>Profile</b> → <b>👁 View as client</b> to see it as they do.'],
+    link: '#/help/profiles', linkText: 'What a client sees',
+  },
+  {
+    id: '2026-10-12-limit', date: '2026-10-12', audience: 'admin', tag: 'Clients',
+    title: 'Request limits per customer: any number, or no limit',
+    what: 'The daily request limit is still 10 by default, but one customer can now get <b>any number up to 10,000</b> or <b>No limit</b> at all (or 0 to pause them).',
+    where: ['<b>Tickets → ⚙ Settings → A different limit for one client</b>.'],
+    link: '#/help/requests', linkText: 'How limits work',
+  },
+  {
     id: '2026-10-10-spam', date: '2026-10-10', audience: 'all', tag: 'Websites',
     title: 'Spam flagged in Contacts, daily visit charts fixed, and clearer statuses',
     what: '<b>Contacts</b> now split <b>People</b> from <b>🚫 Likely spam</b> (sales pitches, bots, links with no question), each with the reason; one click says <b>Not spam</b>. The <b>Daily visits</b> and <b>12 months</b> charts on a profile now draw (Duda sends days in a layout the app did not read). Each profile explains that Duda does not report <b>which pages</b> or <b>organic vs ads</b>, and the Google Analytics tab now shows that split. <b>Lead analysis</b> shows where enquiries are stored and how far everything has got. <b>Site health</b> says plainly when the app\'s Google key is missing, with the steps to add it.',

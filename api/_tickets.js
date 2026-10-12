@@ -65,19 +65,22 @@ export const mayseeSite = (w, site) => (w.client ? w.sites.includes(String(site)
 
 // ---------- settings ----------
 export const DEFAULTS = { daily: 10, over: {}, notify: [], emailClients: true, freshHours: 6 };
+export const MAX_DAILY = 10000;      // the most a limit can be set to
+export const UNLIMITED = -1;         // stored for a client with no daily limit
 export async function settings() {
   const [raw] = await redis(['GET', P + 'tkcfg']);
   return Object.assign({}, DEFAULTS, jparse(raw, {}) || {});
 }
 export async function saveSettings(cfg) {
   const clean = {
-    daily: Math.max(1, Math.min(200, Math.round(Number(cfg.daily) || DEFAULTS.daily))),
+    daily: Math.max(1, Math.min(MAX_DAILY, Math.round(Number(cfg.daily) || DEFAULTS.daily))),
     over: {}, notify: [].concat(cfg.notify || []).map((e) => String(e).toLowerCase().trim()).filter((e) => /@/.test(e)).slice(0, 50),
     emailClients: cfg.emailClients !== false,
     freshHours: Math.max(0, Math.min(72, Number(cfg.freshHours) >= 0 ? Number(cfg.freshHours) : DEFAULTS.freshHours)),
   };
   Object.entries(cfg.over || {}).forEach(([k, v]) => {
-    const n = Number(v); if (/@/.test(k) && Number.isFinite(n) && n >= 0) clean.over[k.toLowerCase()] = Math.min(200, Math.round(n));
+    // A number of requests a day for this one client, 0 to pause them, or UNLIMITED (-1) for no limit at all.
+    const n = Number(v); if (/@/.test(k) && Number.isFinite(n) && n >= UNLIMITED) clean.over[k.toLowerCase()] = n < 0 ? UNLIMITED : Math.min(MAX_DAILY, Math.round(n));
   });
   await redis(['SET', P + 'tkcfg', JSON.stringify(clean)]);
   return clean;
@@ -98,6 +101,8 @@ export async function quota(email, cfg) {
   const { day, resetAt } = today();
   const [used] = await redis(['GET', P + `tkday:${email}:${day}`]);
   const limit = limitFor(cfg, email);
+  // No limit: "left" stays a big number so every "is there any left?" check simply says yes.
+  if (limit < 0) return { used: Number(used) || 0, limit: null, unlimited: true, left: 999999, resetAt, day };
   return { used: Number(used) || 0, limit, left: Math.max(0, limit - (Number(used) || 0)), resetAt, day };
 }
 
