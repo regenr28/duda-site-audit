@@ -826,6 +826,13 @@ export const HELP_SECTIONS = [
 <li><b>↻ Republished · queued</b>: published again since; it is read again automatically and what is shown is from before.</li>
 <li><b>Not yet</b> / <b>Could not read</b>. The <b>Auto audit</b> filter lists any of these, and the line at the top shows how far it has got.</li>
 </ul>
+<h4>The status panel (top of DR Websites)</h4>
+<ul>
+<li>A coloured dot and one line saying what it is doing <b>right now</b>: <b>Reading now</b> (which website, which page, for how long, and in whose open app), <b>Taking a break</b> (why, with a countdown and the time it carries on), <b>waiting to be read</b>, <b>Idle</b> (with when it next runs), or <b>Paused</b> (by whom, since when).</li>
+<li>The counts: read, could not be read (and why, in groups), waiting; <b>Next up</b>; and the <b>Latest</b> results as they happen. It refreshes itself every 10 seconds while the auto audit is busy.</li>
+<li>When the websites' servers refuse us or Duda asks us to slow down, it takes a break (5 minutes, then longer if it happens again) and <b>marks nothing as failed</b>; it carries on with the same website afterwards.</li>
+<li>Admins: <b>Retry the N that could not be read</b> tries all of them again now, and <b>Pause</b> / <b>Resume</b>.</li>
+</ul>
 <h4>When a website is added to Audits</h4>
 <ul>
 <li>What the auto audit found arrives in the audit as <b>audit items</b>, in the category <b>Auto audit (live website)</b>, each saying when it was found, when it was last checked, and the live pages it is on.</li>

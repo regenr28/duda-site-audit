@@ -2134,15 +2134,15 @@
         let r; try { r = await post('/api/watch', { op: 'drain' }); } catch (e) { break; }
         // Duda asked us to slow down: wait as long as it said (this browser only waits; nothing runs).
         if (r.wait) {
-          wq.stat = Object.assign({}, wq.stat || {}, { waitUntil: Date.now() + r.wait * 1000, waitWhy: r.problem || (wq.stat || {}).waitWhy || '' });
-          if (route().name === 'live' && live.tab === 'published') renderLive();
+          pollAuto(true);
           await new Promise((res) => setTimeout(res, Math.min(r.wait, 300) * 1000 + 2000));
           continue;
         }
+        if (r.off || r.busy) { pollAuto(true); break; }
         (r.done || []).forEach((d) => { const x = live.data && live.data.sites.find((y) => y.id === d.id); if (x) x.wc = { n: d.n || 0, c: d.c || 0, t: d.t || {}, at: Date.now(), pubAt: d.pubAt || Date.parse(x.published) || 0, e: d.err ? 1 : 0 }; });
         wq.pending = r.pending || 0;
-        if (typeof r.checked === 'number') wq.stat = Object.assign({}, wq.stat || {}, { checked: r.checked, total: r.total, pending: r.pending, unreadable: r.unreadable, waitUntil: 0 });
-        if (route().name === 'live' && live.tab === 'published') renderLive();
+        pollAuto(true);
+        if ((r.done || []).length && route().name === 'live' && live.tab === 'published' && !document.activeElement?.matches?.('input,select')) renderLive();
         if (!((r.done && r.done.length) || r.partial) || !wq.pending) break;
         await new Promise((res) => setTimeout(res, 2000));
       }
@@ -2151,11 +2151,95 @@
       if (wq.again) { wq.again = false; setTimeout(watchDrain, 1000); }
     }
   }
-  async function loadWatchStat() {
-    if (wq.statAsked || !can('live.view')) return;
-    wq.statAsked = true;
-    try { const s = await api('/api/watch?op=status'); delete s.sums; wq.stat = s; if (route().name === 'live') renderLive(); onWatchState(s.on ? s.pending : 0); } catch (e) { /* the list still works */ }
+  // ---------- the live status panel on DR Websites ----------
+  // One small read (no website lists) every 10 seconds while the auto audit is busy, every 5 minutes
+  // while it is idle, and only while DR Websites is on screen. The timers tick in the browser.
+  async function pollAuto(force) {
+    if (!can('live.view') || (wq.polling && !force)) return;
+    wq.polling = true;
+    try {
+      const L = await api('/api/watch?op=live');
+      wq.live = L; wq.liveAt = Date.now(); wq.skew = (L.serverNow || Date.now()) - Date.now();
+      if (L.stat) wq.pending = L.paused ? 0 : L.stat.pending;
+      if (!wq.started && L.stat && L.stat.pending && !L.paused && !L.wait) { wq.started = true; onWatchState(L.stat.pending); }
+    } catch (e) { /* the list still works */ } finally { wq.polling = false; }
+    paintAutoPanel();
   }
+  const acNow = () => Date.now() + (wq.skew || 0);
+  const acClock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const acLeft = (ms) => { const s = Math.max(0, Math.round((ms - acNow()) / 1000)); return s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+  const acAgo = (ms) => { const s = Math.max(0, Math.round((acNow() - ms) / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
+  /** The next daily run (6:20 AM in Manila: 22:20 UTC in vercel.json), in this browser's time. */
+  function acNextDaily() { const d = new Date(acNow()); const t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 22, 20); return t > acNow() ? t : t + 86400000; }
+  const acWho = (by) => (!by || by === 'auto' ? '' : by === 'cron' ? 'on the daily schedule' : `in ${esc(nameOf(by, by.split('@')[0]))}'s open app`);
+  const AC_REASON = { open: 'the website did not open', nobi: 'no Business Info in Duda to compare with', gone: 'no longer in Duda', other: 'other' };
+  function autoPanelHtml() {
+    const L = wq.live; if (!L || !L.stat) return '<div class="small faint">🔎 Auto audit: loading its status…</div>';
+    const S = L.stat; const admin = state.me && state.me.role === 'admin';
+    const pend = L.paused ? S.pending : (wq.pending || S.pending || 0);
+    const pct = (n) => (S.total ? Math.max(0, Math.min(100, (n / S.total) * 100)) : 0);
+    // ---- what is happening right now ----
+    let dot = 'idle', head = '', sub = '';
+    if (L.paused) {
+      dot = 'paused'; head = `Paused${L.paused.by ? ' by ' + esc(L.paused.by) : ''}${L.paused.at ? ' at ' + esc(acClock(L.paused.at)) : ''}`;
+      sub = `Nothing is read until an admin presses <b>Resume</b>. ${pend} website${pend === 1 ? '' : 's'} waiting.`;
+    } else if (L.wait) {
+      dot = 'wait'; head = `Taking a break: <span data-acleft="${L.wait.until}">${acLeft(L.wait.until)}</span> left`;
+      sub = `${esc(L.wait.why || 'Asked to slow down')}. Carrying on at <b>${esc(acClock(L.wait.until))}</b>${L.wait.site ? ` with ${esc(L.wait.site)}` : ''}; nothing is marked as failed meanwhile.`;
+    } else if (L.now) {
+      dot = 'run'; head = `Reading now: <b>${esc(L.now.name || L.now.domain)}</b>${L.now.name ? ` <span class="faint">${esc(L.now.domain)}</span>` : ''}${L.now.n ? ` · page ${L.now.i} of ${L.now.n}` : ' · opening it'}`;
+      sub = `Started <span data-acago="${L.now.at}">${acAgo(L.now.at)}</span> ago ${acWho(L.now.by)}.`;
+    } else if (pend) {
+      dot = 'queue'; head = `${pend} website${pend === 1 ? '' : 's'} waiting to be read`;
+      sub = wq.running ? 'Starting the next one now…' : `It starts by itself within about 90 seconds while anyone on the team has the app open, and at <b>${esc(acClock(acNextDaily()))}</b> every day regardless.`;
+    } else {
+      dot = 'idle'; head = 'Idle: every website has been tried';
+      sub = `Next: a website is read again as soon as it is published, and everything else at <b>${esc(acClock(acNextDaily()))}</b> daily.${S.unreadable ? ` The ${S.unreadable} that could not be read are tried again by themselves${S.retryAt ? ' from ' + esc(fmtFull(new Date(S.retryAt).toISOString())) : ' the next day'}.` : ''}`;
+    }
+    const reasons = Object.entries(S.reasons || {}).sort((x, y) => y[1] - x[1]).map(([k, v]) => `${v} ${esc(AC_REASON[k] || k)}`).join(' · ');
+    const nxt = (S.next || []).filter((x) => !L.now || x.id !== L.now.id).slice(0, 3);
+    const recent = (L.recent || []).slice(0, 5);
+    const ev = (e) => `<li class="${e.wait ? 'w' : e.err ? 'x' : e.c ? 'c' : 'ok'}"><span class="ac-ev-i">${e.wait ? '⏳' : e.err ? '✗' : e.c ? '⚠' : '✓'}</span><a href="#/dr/${esc(e.id)}">${esc(e.name || e.domain)}</a>
+      <span class="small faint">${e.wait ? esc(e.why || 'taking a break') : e.err ? esc(e.err) : e.c ? `${e.c} super critical${e.n > e.c ? ` · ${e.n - e.c} to check` : ''}` : e.n ? `${e.n} to check` : 'nothing wrong'}${e.pages ? ` · ${e.pages} page${e.pages === 1 ? '' : 's'}` : ''} · ${esc(acClock(e.at))}</span></li>`;
+    return `<div class="ac-p-head"><div class="ac-p-title">🔎 Auto audit <span class="ac-dot ${dot}"></span><span class="ac-p-state">${head}</span></div>
+        <div class="ac-p-acts">${admin && S.unreadable && !L.paused ? `<button class="btn sm" id="acRetry" title="Forget every 'could not be read' and try all of them again now">↻ Retry the ${S.unreadable} that could not be read</button>` : ''}
+          ${admin ? `<button class="btn sm ${L.paused ? 'primary' : 'ghost'}" id="acPause" title="${L.paused ? 'Start reading websites again' : 'Stop the auto audit until an admin resumes it'}">${L.paused ? '▶ Resume' : 'Pause'}</button>` : ''}</div></div>
+      <div class="small muted ac-p-sub">${sub}</div>
+      <div class="ac-bar" role="img" aria-label="${S.checked} read, ${S.unreadable} could not be read, ${pend} waiting, of ${S.total}"><i class="ok" style="width:${pct(S.checked)}%"></i><i class="bad" style="width:${pct(S.unreadable)}%"></i></div>
+      <div class="ac-counts small"><span><i class="ac-k ok"></i><b>${S.checked}</b> read</span><span><i class="ac-k bad"></i><b>${S.unreadable}</b> could not be read</span><span><i class="ac-k q"></i><b>${pend}</b> waiting</span><span class="faint">of ${S.total} published websites</span>
+        ${S.critical ? `<a href="#/live/content" class="ac-crit-link">⚠ <b>${S.critical}</b> with super critical errors</a>` : ''}</div>
+      ${reasons ? `<div class="small ac-p-row"><b>Could not be read:</b> ${reasons}</div>` : ''}
+      ${nxt.length && !L.paused ? `<div class="small ac-p-row"><b>Next up:</b> ${nxt.map((x) => `<a href="#/dr/${esc(x.id)}">${esc(x.name || x.domain)}</a> <span class="faint">(${esc(x.why)})</span>`).join(' · ')}</div>` : ''}
+      ${recent.length ? `<details class="small ac-p-row" ${wq.recentOpen ? 'open' : ''}><summary><b>Latest</b>: ${ev(recent[0]).replace(/^<li[^>]*>|<\/li>$/g, '')}</summary><ul class="ac-ev">${recent.slice(1).map(ev).join('')}</ul></details>` : ''}`;
+  }
+  function paintAutoPanel() {
+    const el = $('#acPanel'); if (!el) return;
+    el.innerHTML = autoPanelHtml();
+    const d = $('details', el); if (d) d.ontoggle = () => { wq.recentOpen = d.open; };
+    const pb = $('#acPause', el);
+    if (pb) pb.onclick = async () => {
+      pb.disabled = true;
+      try { const on = !!(wq.live && wq.live.paused); wq.live = await post('/api/watch', { op: 'settings', on }); wq.liveAt = Date.now(); toast(on ? 'Auto audit resumed' : 'Auto audit paused'); if (on) onWatchState((wq.live.stat || {}).pending || 0); }
+      catch (e) { toast(e.message); }
+      paintAutoPanel();
+    };
+    const rb = $('#acRetry', el);
+    if (rb) rb.onclick = async () => {
+      if (!confirm(`Try all ${(wq.live.stat || {}).unreadable} websites that could not be read again now?`)) return;
+      rb.disabled = true;
+      try { const r = await post('/api/watch', { op: 'retry' }); wq.live = r.live; wq.liveAt = Date.now(); toast(`${r.retried} websites queued again`); (live.data ? live.data.sites : []).forEach((x) => { if (x.wc && x.wc.e) x.wc = null; }); onWatchState((r.live.stat || {}).pending || 0); renderLive(); }
+      catch (e) { toast(e.message); rb.disabled = false; }
+    };
+  }
+  // The timers, and the next read: once a second, only while DR Websites is on screen.
+  setInterval(() => {
+    if (document.hidden || route().name !== 'live' || live.tab !== 'published' || !$('#acPanel')) return;
+    $$('[data-acleft]').forEach((s) => { const u = Number(s.dataset.acleft); s.textContent = acLeft(u); if (u <= acNow()) wq.liveAt = 0; });
+    $$('[data-acago]').forEach((s) => { s.textContent = acAgo(Number(s.dataset.acago)); });
+    const L = wq.live;
+    const busy = !L || L.running || L.now || L.wait || (!L.paused && L.stat && L.stat.pending > 0) || wq.running;
+    if (!wq.liveAt || Date.now() - wq.liveAt > (busy ? 10000 : 300000)) pollAuto();
+  }, 1000);
   const AC_TYPE = { phone: ['📞', 'phone', 'phones'], email: ['✉️', 'email', 'emails'], address: ['📍', 'address', 'addresses'], name: ['🏷', 'business name', 'business names'], social: ['🔗', 'social', 'socials'] };
   /** Published again since the auto audit read it: its results are from before, and it is queued again. */
   const acRepub = (x) => !!(x && x.wc && !x.wc.e && x.published && Date.parse(x.published) > (x.wc.pubAt || 0) + 1000);
@@ -2173,15 +2257,6 @@
       <div class="small faint">${when}</div>
       ${w.c ? `<a class="ac-crit" href="#/dr/${esc(x.id)}" title="Open the findings on the website's profile"><b>⚠ Super critical (contact info)</b>${crit}</a>`
         : w.n ? `<a class="small ac-warn" href="#/dr/${esc(x.id)}">${w.n} to check (town / ZIP)</a>` : '<div class="small ac-ok">No contact info problems</div>'}</div>`;
-  }
-  /** One line on DR Websites: how far the check has got, with the pause switch for admins. */
-  function watchNote() {
-    const s = wq.stat; if (!s) return '';
-    const pend = wq.pending || s.pending || 0;
-    const waiting = s.waitUntil && s.waitUntil > Date.now();
-    return `<span class="small wc-note">🔎 Auto audit: <b>${s.checked}</b> of ${s.total} websites done${s.unreadable ? ` · <span title="Websites with no Business Info to compare with, or that did not open. Tried again the next day.">${s.unreadable} could not be read</span>` : ''}${!s.on ? ' · <b>paused</b>'
-      : waiting ? ` · ${pend} waiting · <span title="${esc(s.waitWhy || '')}">⏸ Duda asked us to slow down, carrying on at ${esc(new Date(s.waitUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</span>`
-      : pend ? ` · ${pend} waiting${wq.running ? ' <span class="spin-dot"></span> reading now' : ''}` : ' · up to date'}${state.me && state.me.role === 'admin' ? ` <button class="linkbtn" id="wcPause">${s.on ? 'Pause' : 'Resume'}</button>` : ''}</span>`;
   }
   const anKey = (id) => id + ':' + prof.anDays;
   function anDelta(cur, prev) {
@@ -6919,7 +6994,6 @@
     if (live.wc === 'clean') list = list.filter((x) => x.wc && !x.wc.n && !x.wc.e);
     if (live.wc === 'none') list = list.filter((x) => !x.wc || x.wc.e);
     if (live.wc === 'repub') list = list.filter(acRepub);
-    if (d && can('live.view')) loadWatchStat();
     list = list.slice().sort((a, b) => live.sort === 'domain' ? (domProblem(b.dom) ? 1 : 0) - (domProblem(a.dom) ? 1 : 0) || String(b.published).localeCompare(String(a.published)) : live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
     const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
     const shown = list.slice(live.page * PER, live.page * PER + PER);
@@ -6936,7 +7010,8 @@
       ${d ? `<div class="live-status">
         <span class="small"><b>${d.count}</b> published sites</span>
         <span class="small muted" title="${d.manual ? 'Pulled manually' : 'Pulled automatically (every 6 hours)'}">Last pulled <b>${esc(fmtFull(isoOf(d.at)))}</b> <span class="faint">(${esc(ago(isoOf(d.at)))}${d.byName ? ` · ${d.manual ? 'by ' + esc(d.byName) : 'automatically'}` : ''})</span></span>
-        ${queueNote()}${watchNote()}</div>` : ''}
+        ${queueNote()}</div>` : ''}
+      ${d && can('live.view') ? `<div class="panel ac-panel" id="acPanel">${autoPanelHtml()}</div>` : ''}
       ${liveTabs('published')}
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
 
@@ -6974,11 +7049,7 @@
     $('#liveSort').onchange = (e) => { live.sort = e.target.value; renderLive(); };
     $('#liveDom').onchange = (e) => { live.dom = e.target.value; live.page = 0; renderLive(); };
     if ($('#liveWc')) $('#liveWc').onchange = (e) => { live.wc = e.target.value; live.page = 0; renderLive(); };
-    if ($('#wcPause')) $('#wcPause').onclick = async () => {
-      try { const s = await post('/api/watch', { op: 'settings', on: !(wq.stat && wq.stat.on) }); delete s.sums; wq.stat = s; wq.pending = s.on ? s.pending : 0; toast(s.on ? 'Auto audit resumed' : 'Auto audit paused'); if (s.on && s.pending) watchDrain(); }
-      catch (e) { toast(e.message); }
-      renderLive();
-    };
+    paintAutoPanel(); if (!wq.liveAt || Date.now() - wq.liveAt > 10000) pollAuto();
     if ($('#liveCust')) $('#liveCust').onchange = (e) => { live.cust = e.target.value; live.page = 0; renderLive(); };
     const cd = $('#liveCheck'); if (cd) cd.onclick = () => checkDomains(true);
     if ($('#liveRefresh')) $('#liveRefresh').onclick = () => loadLive(true);

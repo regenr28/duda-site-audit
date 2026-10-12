@@ -30,12 +30,23 @@ const WLOCK = P + 'cwlock';
 export const WDUE = P + 'cwdue';                 // how many websites are waiting (rides on the heartbeat)
 export const WCFG = P + 'cwcfg';                 // { off: true } pauses everything
 const WNEW = P + 'cwnew';                        // hash: duda id → new problems not yet in a daily report
-const MAX_PAGES = 150;                               // per website
+const MAX_PAGES = 100;                               // per website
+const BATCH = 4;                                     // pages read at once (gently: every website sits on the same Duda servers)
+const BATCH_GAP_MS = 300;
 const MAX_ISSUES = 25;
 const RECHECK_DAYS = 30;
 export const WWAIT = P + 'cwwait';                    // Duda asked us to slow down: nothing is read until this expires
 const GAP_MS = 1500;                                  // at least this long per website, so Duda is never asked in bursts
-const SUM_V = 2;                                      // summaries written by this version (older failures are retried)
+const SUM_V = 3;                                      // summaries written by this version (older failures are retried)
+// What the status panel shows, kept in small keys so watching it costs almost nothing.
+const WNOW = P + 'cwnow';                             // the website being read right now { id, name, domain, i, n, at, by }
+const WRECENT = P + 'cwrecent';                       // the last few websites finished (or not), newest first
+const WSTAT = P + 'cwstat';                           // the counts and what is next, as of the end of the last run
+const WLASTRUN = P + 'cwlastrun';                     // { at, by, done }
+const WLASTOK = P + 'cwlastok';                       // a domain that opened fine a moment ago (to tell "blocked" from "this website is broken")
+const WBACKOFF = P + 'cwbackoff';                     // how many waits in a row (each one longer)
+// Why a website could not be read, in groups the status panel counts.
+export const ERR_KIND = { nobi: 'No Business Info in Duda to compare with', open: 'The website did not open', gone: 'Duda no longer has this website', other: 'Something else' };
 const DAY = 86400000;
 
 async function duda(path) {
@@ -172,7 +183,7 @@ async function pagesFor(domain) {
   const urls = [];
   const read = async (u, depth) => {
     if (urls.length >= MAX_PAGES || depth > 1) return;
-    const r = await fetchWithTimeout(u, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SiteAuditor/1.0; content check)', Accept: 'application/xml,text/xml' } }, 8000).catch(() => null);
+    const r = await fetchWithTimeout(u, { headers: { 'User-Agent': UA, Accept: 'application/xml,text/xml' } }, 8000).catch(() => null);
     if (!r || !r.ok) return;
     const xml = (await r.text().catch(() => '')).slice(0, 2000000);
     const locs = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => decode(m[1]));
@@ -184,12 +195,21 @@ async function pagesFor(domain) {
   return list;
 }
 const bare = (h) => String(h || '').toLowerCase().replace(/^www\./, '').replace(/:\d+$/, '');
-/** One page's HTML, or '' — including when the domain sends the visitor to some other website. */
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
+/** Answers that mean "you are asking too fast" rather than "this website is broken". */
+const SLOW_DOWN = new Set([403, 429, 503]);
+/**
+ * One page: { html } or { html: '', status, why } saying exactly what went wrong, including when
+ * the domain sends the visitor to some other website.
+ */
 async function fetchPage(domain, path) {
-  const r = await fetchWithTimeout(`${PROTO()}://${domain}${path}`, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36 SiteAuditor-content-check', Accept: 'text/html' } }, 9000).catch(() => null);
-  if (!r || !r.ok || !/html/i.test(r.headers.get('content-type') || 'text/html')) return '';
-  try { if (r.url && bare(new URL(r.url).host) !== bare(domain)) return ''; } catch (e) { /* keep */ }
-  return (await r.text().catch(() => '')).slice(0, 800000);
+  let r;
+  try { r = await fetchWithTimeout(`${PROTO()}://${domain}${path}`, { headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9' } }, 9000); }
+  catch (e) { return { html: '', status: 0, why: e && e.name === 'AbortError' ? 'did not answer within 9 seconds' : 'could not be reached' }; }
+  if (!r.ok) return { html: '', status: r.status, why: `answered ${r.status}` };
+  if (!/html/i.test(r.headers.get('content-type') || 'text/html')) return { html: '', status: r.status, why: 'is not a web page' };
+  try { if (r.url && bare(new URL(r.url).host) !== bare(domain)) return { html: '', status: r.status, why: `opens another website (${new URL(r.url).host})` }; } catch (e) { /* keep */ }
+  return { html: (await r.text().catch(() => '')).slice(0, 800000), status: r.status };
 }
 /**
  * The identity of a finding, used to merge it across pages and to remember "not a problem".
@@ -236,20 +256,48 @@ export function dueOrder(sites, sums, at = Date.now()) {
   };
   return sites.map((x) => Object.assign({ r: rank(x) }, x)).filter((x) => x.r < 9).sort((a, b) => a.r - b.r || String(b.pub).localeCompare(String(a.pub)));
 }
+/** Which group a recorded failure belongs to (older ones only have the sentence). */
+const errKind = (x) => x.ek || (/Business Info/i.test(x.err || '') && !/could not be read/i.test(x.err || '') ? 'nobi' : /no longer/i.test(x.err || '') ? 'gone' : /open|answered|reach|another website|web page/i.test(x.err || '') ? 'open' : 'other');
 export async function watchStatus() {
   const [sites, [sumRaw, cfg, part, lock, waitRaw]] = await Promise.all([liveList(), redis(['HGETALL', WSUM], ['GET', WCFG], ['GET', WPARTID], ['GET', WLOCK], ['GET', WWAIT])]);
   const w = jparse(waitRaw) || {};
   const sums = parseSum(sumRaw);
   const due = dueOrder(sites, sums);
-  const on = !(jparse(cfg) || {}).off;
-  await redis(['SET', WDUE, on ? due.length : 0]).catch(() => {});
+  const cfgv = jparse(cfg) || {};
+  const on = !cfgv.off;
   const checked = sites.filter((x) => sums[x.id] && sums[x.id].at);
   const read = checked.filter((x) => !sums[x.id].err);
-  return { on, total: sites.length, checked: read.length, pending: due.length, running: !!lock,
-    waitUntil: w.until > Date.now() ? w.until : 0, waitWhy: w.until > Date.now() ? w.why || '' : '',
-    withIssues: checked.filter((x) => sums[x.id].n).length, critical: checked.filter((x) => sums[x.id].c).length,
-    unreadable: checked.filter((x) => sums[x.id].err).length, partial: part || '',
-    sums: Object.fromEntries(checked.map((x) => [x.id, { n: sums[x.id].n || 0, c: sums[x.id].c || 0, at: sums[x.id].at, err: sums[x.id].err || '' }])) };
+  const bad = checked.filter((x) => sums[x.id].err);
+  const reasons = {}; bad.forEach((x) => { const k = errKind(sums[x.id]); reasons[k] = (reasons[k] || 0) + 1; });
+  // Retried by themselves the next day: when the soonest of them comes round again.
+  const retryAt = bad.length ? Math.min(...bad.map((x) => (sums[x.id].at || 0) + DAY)) : 0;
+  const stat = { on, pausedBy: cfgv.by || '', pausedAt: cfgv.at || 0, total: sites.length, checked: read.length, pending: due.length,
+    withIssues: read.filter((x) => sums[x.id].n).length, critical: read.filter((x) => sums[x.id].c).length,
+    unreadable: bad.length, reasons, retryAt,
+    next: due.slice(0, 3).map((x) => ({ id: x.id, name: x.name || '', domain: x.domain, why: x.r === 0 ? 'published again' : x.r === 1 ? (sums[x.id] && sums[x.id].err ? 'trying again' : 'not read yet') : 'monthly check' })),
+    at: Date.now() };
+  await redis(['SET', WDUE, on ? due.length : 0], ['SET', WSTAT, JSON.stringify(stat)]).catch(() => {});
+  return Object.assign({}, stat, { running: !!lock, runningBy: lock || '',
+    waitUntil: w.until > Date.now() ? w.until : 0, waitWhy: w.until > Date.now() ? w.why || '' : '', partial: part || '',
+    sums: Object.fromEntries(checked.map((x) => [x.id, { n: sums[x.id].n || 0, c: sums[x.id].c || 0, at: sums[x.id].at, err: sums[x.id].err || '' }])) });
+}
+/**
+ * The live status panel: what is happening right now, in one cheap read (no website lists).
+ * Polled every few seconds by a browser showing DR Websites while the auto audit is busy.
+ */
+export async function watchLive() {
+  const [now, stat, wait, recent, cfg, lock, last] = await redis(['GET', WNOW], ['GET', WSTAT], ['GET', WWAIT], ['LRANGE', WRECENT, 0, 7], ['GET', WCFG], ['GET', WLOCK], ['GET', WLASTRUN]);
+  const w = jparse(wait) || {}; const c = jparse(cfg) || {};
+  return { now: jparse(now), stat: jparse(stat), wait: w.until > Date.now() ? w : null, recent: (recent || []).map((x) => jparse(x)).filter(Boolean),
+    paused: c.off ? { by: c.by || '', at: c.at || 0 } : null, running: !!lock, runningBy: lock || '', lastRun: jparse(last), serverNow: Date.now() };
+}
+/** Forget every "could not be read", so all of them are tried again on the next run (admins). */
+export async function retryFailed() {
+  const [raw] = await redis(['HGETALL', WSUM]);
+  const ids = []; for (let i = 0; raw && i < raw.length; i += 2) { const v = jparse(raw[i + 1]); if (v && v.err) ids.push(raw[i]); }
+  if (ids.length) await redis(['HDEL', WSUM, ...ids], ['DEL', WWAIT], ['DEL', WBACKOFF]);
+  await watchStatus();
+  return ids.length;
 }
 
 /** dudaId → its audit record (for the exceptions people approved there). */
@@ -259,6 +307,10 @@ async function auditMap() {
   return out;
 }
 
+/** The status panel's "reading now" line. A short expiry, so a run that died does not look alive. */
+async function nowReading(s, i, n, by) {
+  await redis(['SET', WNOW, JSON.stringify({ id: s.id, name: s.name || '', domain: s.domain, i, n, at: Date.now(), by: by || s._by || '' }), 'EX', 90]).catch(() => {});
+}
 /** Read one website (or carry on reading it). Returns { done:false } when the time ran out first. */
 async function readSite(s, recId, timeLeft) {
   const [recRaw, okRaw, prevRaw, partRaw] = await redis(recId ? ['GET', P + 'site:' + recId] : ['GET', P + 'none'], ['SMEMBERS', WOK(s.id)], ['GET', WKEY(s.id)], ['GET', WPART(s.id)]);
@@ -267,32 +319,61 @@ async function readSite(s, recId, timeLeft) {
   // Exceptions approved on the website's audit, plus "not a problem" said here.
   const okKeys = new Set([...(okRaw || []), ...allow.filter((a) => a.mode !== 'deny').map((a) => a.key)]);
   const pubAt = Date.parse(s.pub) || 0;
-  const skip = async (err) => { await redis(['HSET', WSUM, s.id, JSON.stringify({ v: SUM_V, at: Date.now(), pubAt, n: 0, c: 0, err })], ['DEL', WPART(s.id)]); return { done: true, err }; };
+  const skip = async (err, ek) => {
+    console.warn('[auto audit] could not read', s.id, s.domain, '-', err);
+    await redis(['HSET', WSUM, s.id, JSON.stringify({ v: SUM_V, at: Date.now(), pubAt, n: 0, c: 0, err, ek: ek || 'other' })], ['DEL', WPART(s.id)]);
+    return { done: true, err, ek: ek || 'other' };
+  };
   let truth;
   try { truth = await truthFor(s.id, allow); } catch (e) {
-    if (e.status === 404) return skip('Duda no longer has this website');
+    if (e.status === 404) return skip('Duda no longer has this website', 'gone');
     if (e.status === 401 || e.status === 403) return { done: false, stop: 'Duda refused the app\'s API login (' + e.status + '). Check the Duda API access.' };
     // Too many requests, slow or down: that says nothing about the website. Nothing is recorded,
     // it stays first in the queue, and the whole check pauses until Duda is ready again.
     return { done: false, wait: Math.min(Math.max(e.retry || (e.status === 429 ? 120 : 60), 30), 900), why: e.message };
   }
-  if (!truth.businessName && !(truth.phones || []).length && !(truth.emails || []).length) return skip('No Business Info to compare with');
+  if (!truth.businessName && !(truth.phones || []).length && !(truth.emails || []).length) return skip('No Business Info in Duda to compare with', 'nobi');
   let part = jparse(partRaw);
   if (part && part.pub !== s.pub) part = null;        // published again since: start over
-  const pages = part ? part.pages : await pagesFor(s.domain);
   let i = part ? part.i : 0; let read = part ? part.read || 0 : 0; const found = part ? part.found : [];
+  let pages = part ? part.pages : null;
+  if (!part) {
+    // The home page first, on its own: if it does not open, nothing else will, and how it fails says
+    // whether this website is broken or whether the servers want us to slow down.
+    const home = await fetchPage(s.domain, '/');
+    if (!home.html) {
+      if (SLOW_DOWN.has(home.status) || home.status === 0) {
+        const [okDomain] = await redis(['GET', WLASTOK]);
+        const control = okDomain && okDomain !== s.domain ? await fetchPage(okDomain, '/') : { html: '' };
+        // A website that opened a minute ago does not open either: it is us, not them. Wait.
+        if (!control.html && okDomain) return { done: false, wait: true, why: `Websites stopped answering us (${home.why})` };
+      }
+      return skip(`The home page ${home.why}`, 'open');
+    }
+    await redis(['SET', WLASTOK, s.domain, 'EX', 6 * 3600]);
+    read = 1; found.push(...checkPage(home.html, truth, '/'));
+    pages = (await pagesFor(s.domain)).filter((p) => p !== '/');
+    pages.unshift('/'); i = 1;
+  }
+  let lastNote = 0;
   while (i < pages.length && timeLeft() > 4000) {
-    const batch = pages.slice(i, i + 8);
-    const htmls = await Promise.all(batch.map((p) => fetchPage(s.domain, p)));
-    htmls.forEach((h, k) => { if (h) { read++; found.push(...checkPage(h, truth, batch[k])); } });
+    if (i - lastNote >= 20) { lastNote = i; await nowReading(s, i, pages.length); }
+    const batch = pages.slice(i, i + BATCH);
+    const got = await Promise.all(batch.map((p) => fetchPage(s.domain, p)));
+    got.forEach((g, k) => { if (g.html) { read++; found.push(...checkPage(g.html, truth, batch[k])); } });
     i += batch.length;
     if (found.length > 400) found.splice(400);
+    // Most of a batch refused: the servers want a break. Keep what was read and carry on later.
+    if (got.filter((g) => !g.html && (SLOW_DOWN.has(g.status) || g.status === 0)).length > batch.length / 2) {
+      await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
+      return { done: false, wait: true, why: `Websites stopped answering us (${(got.find((g) => !g.html) || {}).why || 'refused'})` };
+    }
+    if (i < pages.length) await new Promise((res) => setTimeout(res, BATCH_GAP_MS));
   }
   if (i < pages.length) {
     await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
     return { done: false };
   }
-  if (!read) return skip('The website could not be opened (see Domain health)');
   const issues = merge(found, okKeys);
   const prev = jparse(prevRaw);
   const before = new Set(((prev && prev.issues) || []).map((x) => x.k));
@@ -301,7 +382,7 @@ async function readSite(s, recId, timeLeft) {
     ref: { name: truth.businessName, phones: truth.phones, emails: truth.emails, zips: (truth.addresses || []).map((a) => a.zip).filter(Boolean) } };
   // t: the serious ones by kind (phone, email, address, name, social): what the DR Websites column lists.
   const sum = { v: SUM_V, at: result.at, pubAt, n: issues.length, c: issues.filter((x) => x.sev === 'critical').length, t: critTypes(issues), pages: read };
-  const cmds = [['SET', WKEY(s.id), JSON.stringify(result)], ['HSET', WSUM, s.id, JSON.stringify(sum)], ['DEL', WPART(s.id)]];
+  const cmds = [['SET', WKEY(s.id), JSON.stringify(result)], ['HSET', WSUM, s.id, JSON.stringify(sum)], ['DEL', WPART(s.id)], ['DEL', WBACKOFF]];
   if (fresh.length) cmds.push(['HSET', WNEW, s.id, JSON.stringify({ name: result.name, domain: s.domain, n: fresh.length, c: fresh.filter((x) => x.sev === 'critical').length, t: critTypes(fresh), recId: recId || '', first: !prev })]);
   await redis(...cmds);
   // A website that had been read before and has just been published WITH a wrong detail is told
@@ -310,7 +391,7 @@ async function readSite(s, recId, timeLeft) {
   // A website on Audits gets what was found as audit items (and loses the ones fixed since).
   if (recId) await syncAudit(recId, result).catch(() => {});
   if (prev && fresh.some((x) => x.sev === 'critical')) await alertNow(s, result.name, fresh, recId).catch(() => {});
-  return { done: true, n: issues.length, c: sum.c, t: sum.t, pubAt, fresh: fresh.length };
+  return { done: true, n: issues.length, c: sum.c, t: sum.t, pubAt, fresh: fresh.length, pages: read };
 }
 
 /**
@@ -324,7 +405,7 @@ export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}
   const [cfgRaw, waitRaw] = await redis(['GET', WCFG], ['GET', WWAIT]);
   if (!only && (jparse(cfgRaw) || {}).off) return { off: true, done: [] };
   const waitTill = (jparse(waitRaw) || {}).until || 0;
-  if (waitTill > Date.now()) return only ? { error: 'Duda asked us to slow down for a moment. Try again in a minute or two.', done: [] } : { wait: Math.ceil((waitTill - Date.now()) / 1000), done: [] };
+  if (waitTill > Date.now()) return only ? { error: `The auto audit is taking a break (${(jparse(waitRaw) || {}).why || 'asked to slow down'}) until ${new Date(waitTill).toISOString().slice(11, 16)} UTC. Try again then.`, done: [] } : { wait: Math.ceil((waitTill - Date.now()) / 1000), problem: (jparse(waitRaw) || {}).why || '', done: [] };
   const lockKey = only ? WLOCK + ':' + only : WLOCK;
   const [got] = await redis(['SET', lockKey, by, 'NX', 'EX', Math.ceil(budgetMs / 1000) + 40]);
   if (got !== 'OK') return { busy: true, done: [] };
@@ -336,20 +417,27 @@ export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}
     for (const s of queue) {
       if (timeLeft() < 6000) break;
       const t0 = Date.now();
+      s._by = by; await nowReading(s, 0, 0, by);
       const r = await readSite(s, amap[s.id.toLowerCase()], timeLeft);
       if (r.wait || r.stop) {
-        wait = r.wait || 900; problem = r.stop || r.why || '';
-        await redis(['SET', WWAIT, JSON.stringify({ until: Date.now() + wait * 1000, why: problem }), 'EX', wait]);
+        // Each wait in a row is longer: 5, 10, 20, 40, then 60 minutes. Duda's own "retry after" wins.
+        const [n] = await redis(['INCR', WBACKOFF], ['EXPIRE', WBACKOFF, 6 * 3600]).then((x) => [Number(x[0]) || 1]);
+        wait = typeof r.wait === 'number' ? r.wait : r.stop ? 900 : Math.min(300 * 2 ** Math.min(n - 1, 4), 3600);
+        problem = r.stop || r.why || '';
+        console.warn('[auto audit] waiting', wait, 's -', problem);
+        await redis(['SET', WWAIT, JSON.stringify({ until: Date.now() + wait * 1000, why: problem, site: s.name || s.domain }), 'EX', wait],
+          ['LPUSH', WRECENT, JSON.stringify({ at: Date.now(), id: s.id, name: s.name || '', domain: s.domain, wait: true, why: problem })], ['LTRIM', WRECENT, 0, 9]);
         break;
       }
       if (!r.done) { stopped = true; break; }
       done.push(Object.assign({ id: s.id }, r));
+      await redis(['LPUSH', WRECENT, JSON.stringify({ at: Date.now(), id: s.id, name: s.name || '', domain: s.domain, n: r.n || 0, c: r.c || 0, err: r.err || '', pages: r.pages || 0 })], ['LTRIM', WRECENT, 0, 9]);
       const rest = GAP_MS - (Date.now() - t0);
       if (rest > 0 && timeLeft() > rest + 6000) await new Promise((res) => setTimeout(res, rest));
     }
     if (!stopped && partId && done.some((d) => d.id === partId)) await redis(['DEL', WPARTID]);
   } finally {
-    await redis(['DEL', lockKey]).catch(() => {});
+    await redis(['DEL', lockKey], ['DEL', WNOW], ['SET', WLASTRUN, JSON.stringify({ at: Date.now(), by, done: done.length, only: only || '' })]).catch(() => {});
   }
   const st = await watchStatus().catch(() => ({}));
   return Object.assign({ done, partial: stopped, pending: st.pending, checked: st.checked, total: st.total, unreadable: st.unreadable }, wait ? { wait, problem } : {});

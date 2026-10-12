@@ -1796,3 +1796,26 @@ table.cp-dns td.mono { word-break: break-all; }
 /* Audits: republished since the last scan */
 .badge.repub { background: var(--info-soft); color: var(--info); }
 .auto-line { margin-top: 3px; }
+/* Auto audit status panel (DR Websites) */
+.ac-panel { padding: 12px 14px; margin: 10px 0 4px; }
+.ac-p-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ac-p-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
+.ac-p-state { font-weight: 400; }
+.ac-p-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.ac-p-sub { margin: 3px 0 8px; }
+.ac-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--faint); flex: none; }
+.ac-dot.run { background: var(--ok); box-shadow: 0 0 0 0 var(--ok); animation: acPulse 1.6s infinite; }
+.ac-dot.queue { background: var(--info); } .ac-dot.wait { background: var(--warn); } .ac-dot.paused { background: var(--crit); }
+@keyframes acPulse { 0% { box-shadow: 0 0 0 0 rgba(21,128,61,.45); } 70% { box-shadow: 0 0 0 7px rgba(21,128,61,0); } 100% { box-shadow: 0 0 0 0 rgba(21,128,61,0); } }
+@media (prefers-reduced-motion: reduce) { .ac-dot.run { animation: none; } }
+.ac-bar { display: flex; height: 8px; border-radius: 6px; overflow: hidden; background: var(--panel-2); border: 1px solid var(--border); gap: 2px; }
+.ac-bar i { display: block; height: 100%; } .ac-bar i.ok { background: var(--ok); } .ac-bar i.bad { background: var(--warn); }
+.ac-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; margin-top: 6px; }
+.ac-k { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.ac-k.ok { background: var(--ok); } .ac-k.bad { background: var(--warn); } .ac-k.q { background: var(--panel-2); border: 1px solid var(--border-strong); }
+.ac-crit-link { color: var(--crit); }
+.ac-p-row { margin-top: 6px; overflow-wrap: anywhere; }
+.ac-p-row summary { cursor: pointer; }
+.ac-ev { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; }
+.ac-ev-i { display: inline-block; width: 18px; }
+.ac-ev li.x .ac-ev-i, .ac-ev li.c .ac-ev-i { color: var(--crit); } .ac-ev li.ok .ac-ev-i { color: var(--ok); } .ac-ev li.w .ac-ev-i { color: var(--warn); }
