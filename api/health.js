@@ -7,7 +7,7 @@
 // Owner only. It names the services the app is built on, which nothing else in the app does.
 import {
   redis, redisRaw, P, requireUser, readBody, jparse, OWNER_EMAIL, unpackJSON, now,
-  emailEnabled, slackBotEnabled, listUsers, KV_CEILING, KV_MONTHLY_COMMANDS, kvCostUpTo,
+  emailEnabled, slackBotEnabled, listUsers, KV_CEILING, KV_MONTHLY_COMMANDS, kvCostUpTo, dbKind, kvCapped,
 } from './_lib.js';
 import { sqlReady, rows as sqlRows, ensureSchema } from './_sql.js';
 import { _test as ai } from './ai.js';
@@ -16,7 +16,8 @@ import { lastRuns } from './leadq.js';
 
 // What the free allowances are. Kept here, in one place, so a figure that changes is changed once.
 const LIMITS = {
-  kvBytes: 256 * 1024 * 1024,     // key-value store: total data
+  // key-value store: total data. Supabase Pro includes 8 GB of database disk (SUPABASE_DB_BYTES to change).
+  kvBytes: dbKind() === 'supabase' ? (Number(process.env.SUPABASE_DB_BYTES) || 8 * 1024 * 1024 * 1024) : 256 * 1024 * 1024,
   kvCmds: KV_CEILING,             // key-value store: the app's own monthly cap (the first 500K are free)
   sqlBytes: 5 * 1024 * 1024 * 1024, // analysis database: total data
   sqlWrites: 10000000,            // analysis database: rows written a month
@@ -53,6 +54,16 @@ const pctOf = (used, limit) => (limit ? Math.min(100, Math.round((used / limit) 
  */
 async function measureKv() {
   const [keys] = await redisRaw(['DBSIZE']);
+  // Supabase can say exactly how much the app's tables take, so no estimate is needed.
+  if (dbKind() === 'supabase') {
+    const [exact] = await redisRaw(['DSA.BYTES']);
+    const [idxN] = await redisRaw(['HLEN', P + 'index']);
+    const snap = { at: now(), bytes: Number(exact) || 0, keys: Number(keys || 0), sites: Number(idxN) || 0 };
+    await redisRaw(['SET', P + 'health:kv', JSON.stringify(snap)],
+      ['LPUSH', P + 'health:kvlog', JSON.stringify({ at: snap.at, bytes: snap.bytes })],
+      ['LTRIM', P + 'health:kvlog', 0, 23]);
+    return snap;
+  }
   const [idx] = await redisRaw(['HGETALL', P + 'index']);
   const flat = {};
   if (Array.isArray(idx)) { for (let i = 0; i < idx.length; i += 2) flat[idx[i]] = idx[i + 1]; }
@@ -199,7 +210,7 @@ export default async function handler(req, res) {
     const sqlPct = sqlInfo && !sqlInfo.error ? pctOf(sqlInfo.bytes, LIMITS.sqlBytes) : 0;
     if (!kvSnap) alerts.push({ level: 'warning', text: 'The key-value store has never been measured. Press Measure now to find out where it stands.' });
     if (kvPct >= 70) alerts.push({ level: kvPct >= 85 ? 'critical' : 'serious', text: `The key-value store is ${kvPct}% full. When it fills, the whole app stops writing — not just one feature.` });
-    if (projected > LIMITS.kvCmds * 0.85) alerts.push({ level: 'serious', text: `At this rate the month ends at about ${projected.toLocaleString()} commands, close to the app's own cap of ${LIMITS.kvCmds.toLocaleString()} — where it pauses itself to keep the bill down.` });
+    if (kvCapped() && projected > LIMITS.kvCmds * 0.85) alerts.push({ level: 'serious', text: `At this rate the month ends at about ${projected.toLocaleString()} commands, close to the app's own cap of ${LIMITS.kvCmds.toLocaleString()} — where it pauses itself to keep the bill down.` });
     if (sqlPct >= 70) alerts.push({ level: sqlPct >= 85 ? 'critical' : 'serious', text: `The analysis database is ${sqlPct}% full.` });
     // The note is written to stand alone, so it may already name the thing — don't say it twice.
     const say = (c) => (c.note.toLowerCase().startsWith(c.label.toLowerCase()) ? c.note : `${c.label}: ${c.note}`);
@@ -213,7 +224,7 @@ export default async function handler(req, res) {
     // every load without ever becoming noise.
     if (kvPct >= 85) await alertOwner('kv-full', `The main database is ${kvPct}% full. When it fills the app stops saving anything — not just one feature.`, { cooldownMs: 6 * 3600 * 1000 }).catch(() => {});
     else if (kvPct >= 70) await alertOwner('kv-high', `The main database is ${kvPct}% full and still growing.`, { cooldownMs: 24 * 3600 * 1000 }).catch(() => {});
-    if (projected > LIMITS.kvCmds * 0.85) await alertOwner('cmd-high', `At the current rate this month will use about ${projected.toLocaleString()} database commands, close to the app's own cap of ${LIMITS.kvCmds.toLocaleString()}.`, { cooldownMs: 24 * 3600 * 1000 }).catch(() => {});
+    if (kvCapped() && projected > LIMITS.kvCmds * 0.85) await alertOwner('cmd-high', `At the current rate this month will use about ${projected.toLocaleString()} database commands, close to the app's own cap of ${LIMITS.kvCmds.toLocaleString()}.`, { cooldownMs: 24 * 3600 * 1000 }).catch(() => {});
     if (sqlPct >= 85) await alertOwner('sql-full', `The analysis database is ${sqlPct}% full.`, { cooldownMs: 12 * 3600 * 1000 }).catch(() => {});
     const hookConn = connections.find((c) => c.key === 'hook');
     if (hookConn && hookConn.ok && hookConn.stale) await alertOwner('hook-quiet', `No form submission or comment has arrived from Duda for over three days. If that is not simply a quiet week, the webhook may have stopped — new enquiries would not be reaching the app.`, { cooldownMs: 24 * 3600 * 1000 }).catch(() => {});
@@ -229,7 +240,8 @@ export default async function handler(req, res) {
         perDay: Math.round(kvPerDay), history: kvLog.slice().reverse(),
         daysLeft: kvPerDay > 0 ? Math.round((LIMITS.kvBytes * 0.85 - kvUsed) / kvPerDay) : null,
       },
-      commands: {
+      db: dbKind(),
+      commands: !kvCapped() ? { used, projected, dayOfMonth, daysInMonth, uncapped: true } : {
         used, limit: LIMITS.kvCmds, pct: pctOf(used, LIMITS.kvCmds), ...band(pctOf(projected, LIMITS.kvCmds)),
         projected, dayOfMonth, daysInMonth,
         free: KV_MONTHLY_COMMANDS, costSoFar: kvCostUpTo(Math.max(0, used - KV_MONTHLY_COMMANDS)), costCap: kvCostUpTo(Math.max(0, LIMITS.kvCmds - KV_MONTHLY_COMMANDS)),

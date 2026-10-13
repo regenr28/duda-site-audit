@@ -431,7 +431,7 @@ GUIDE SECTION IDS: ${helpFor(role).map((x) => x.id + ' = ' + x.title).join('; ')
 GUIDE:
 ${guide}`;
 // Last line of defence: never let tech names slip into an answer
-const TECH_WORDS = /\b(vercel|upstash|redis|ably|node\.?js|serverless|next\.?js|github|gemini|google ai studio|groq|cerebras|mistral|openrouter|cloudflare|anthropic|claude|openai|chatgpt|gpt-?[\w.-]*|llama|qwen|deepseek|gpt-oss|env(ironment)? variables?|api[_ ]?keys?|[A-Z][A-Z0-9]+_(API_)?(KEY|TOKEN|SECRET|PASSWORD|URL|EMAILS?|OWNER))\b/gi;
+const TECH_WORDS = /\b(vercel|upstash|redis|supabase|postgres(ql)?|ably|node\.?js|serverless|next\.?js|github|gemini|google ai studio|groq|cerebras|mistral|openrouter|cloudflare|anthropic|claude|openai|chatgpt|gpt-?[\w.-]*|llama|qwen|deepseek|gpt-oss|env(ironment)? variables?|api[_ ]?keys?|[A-Z][A-Z0-9]+_(API_)?(KEY|TOKEN|SECRET|PASSWORD|URL|EMAILS?|OWNER))\b/gi;
 function scrubHelp(t) { return String(t || '').replace(TECH_WORDS, '[not shared]').slice(0, 4000); }
 async function helpAnswer(req, res, me, list) {
   if (!list.length) return res.status(400).json({ error: 'The Help assistant is not available right now. The guide below covers everything.' });

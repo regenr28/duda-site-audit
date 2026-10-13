@@ -1,4 +1,4 @@
-// Team data (Upstash Redis).
+// Team data (the key-value store: Upstash Redis, or Supabase via supabase/setup.sql).
 // GET  /api/store?op=list | site&id= | notifs
 // POST /api/store { op: create | scanState | saveScan | patchSite | patchFinding | comment | deleteComment | deleteSite | readNotifs, ... }
 //

@@ -1324,7 +1324,10 @@
       <div class="k" style="margin-top:18px">Storage and allowances</div>
       <div class="hx-tiles">
         ${meter({ title: 'Main database', value: bytes(d.kv.used), of: bytes(d.kv.limit), pct: d.kv.pct, state: d.kv.state, label: d.kv.label, foot: kvFoot })}
-        ${meter({ title: 'Commands this month (against the app\u2019s cap)', value: d.commands.used.toLocaleString(), of: d.commands.limit.toLocaleString(), pct: d.commands.pct, state: d.commands.state, label: d.commands.label, foot: cmdFoot })}
+        ${d.commands.uncapped ? `<div class="hx-tile"><div class="hx-k">Database requests this month</div>
+          <div class="hx-v">${d.commands.used.toLocaleString()}</div>
+          <div class="hx-note">Day ${d.commands.dayOfMonth} of ${d.commands.daysInMonth} · on course for about ${d.commands.projected.toLocaleString()}.<br>Supabase does not charge per request, so there is no monthly cap to watch here.</div></div>`
+          : meter({ title: 'Commands this month (against the app\u2019s cap)', value: d.commands.used.toLocaleString(), of: d.commands.limit.toLocaleString(), pct: d.commands.pct, state: d.commands.state, label: d.commands.label, foot: cmdFoot })}
         ${d.sql && !d.sql.error ? meter({ title: 'Analysis database', value: bytes(d.sql.used), of: bytes(d.sql.limit), pct: d.sql.pct, state: d.sql.state, label: d.sql.label,
           foot: `${d.sql.leads.toLocaleString()} enquiries across ${d.sql.sites} websites`
             + (d.sql.monthsLeft !== null && d.sql.monthsLeft < 600 ? ` · <b>about ${d.sql.monthsLeft} months</b> at this rate` : '')

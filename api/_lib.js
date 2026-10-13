@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 export const UA_DESKTOP = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
 export const P = process.env.STORE_PREFIX || 'dsa:';
 
-// ---------- Redis (Upstash REST) ----------
+// ---------- The database: Upstash Redis, or Supabase (Postgres) speaking the same commands ----------
 // Accepts default names or names with a custom prefix added by the Vercel integration (e.g. dr_site_audit_KV_REST_API_URL)
 const findEnv = (suffixes) => {
   for (const s of suffixes) if (process.env[s]) return process.env[s];
@@ -14,7 +14,16 @@ const findEnv = (suffixes) => {
 };
 const R_URL = findEnv(['KV_REST_API_URL', 'UPSTASH_REDIS_REST_URL']);
 const R_TOKEN = findEnv(['KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN']);
-export const hasRedis = () => !!(R_URL && R_TOKEN);
+// Supabase: the project URL and its SECRET key (sb_secret_… or the older service_role key). The
+// tables and the one function the app calls are created by supabase/setup.sql. When both are set,
+// Supabase is used, whatever else is connected.
+const SB_URL = String(findEnv(['SUPABASE_URL']) || '').replace(/\/+$/, '');
+const SB_KEY = findEnv(['SUPABASE_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) || '';
+/** Which database this installation uses: 'supabase', 'upstash', or '' when none is connected. */
+export const dbKind = () => (SB_URL && SB_KEY ? 'supabase' : R_URL && R_TOKEN ? 'upstash' : '');
+export const hasRedis = () => !!dbKind();
+/** Only Upstash charges per command, so only there does the app cap its own monthly commands. */
+export const kvCapped = () => dbKind() === 'upstash';
 
 /**
  * How many commands this month, counted by the app itself.
@@ -50,12 +59,34 @@ const FLUSH_AT = 50;
 const FLUSH_MS = 60000;
 
 async function send(cmds) {
+  if (dbKind() === 'supabase') return sendSupabase(cmds);
   const r = await fetch(`${R_URL}/pipeline`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${R_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(cmds),
   });
   if (!r.ok) throw new Error(`Redis ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const out = await r.json();
+  return out.map((x) => { if (x.error) throw new Error(x.error); return x.result; });
+}
+
+/**
+ * The same commands, answered by Supabase: one call to public.dsa_exec, one answer per command, in
+ * the shape Upstash gives. A secret key (sb_secret_…) goes in the apikey header only; the older
+ * service_role key is a token and goes in both.
+ */
+async function sendSupabase(cmds) {
+  const headers = { apikey: SB_KEY, 'Content-Type': 'application/json' };
+  if (/^eyJ/.test(SB_KEY)) headers.Authorization = `Bearer ${SB_KEY}`;
+  const r = await fetch(`${SB_URL}/rest/v1/rpc/dsa_exec`, { method: 'POST', headers, body: JSON.stringify({ cmds }) });
+  if (!r.ok) {
+    const text = (await r.text()).slice(0, 300);
+    if (r.status === 404 || /dsa_exec/.test(text) && /not find|does not exist/i.test(text)) {
+      throw new Error('The Supabase database is not set up yet: run supabase/setup.sql in its SQL Editor.');
+    }
+    if (r.status === 401 || r.status === 403) throw new Error(`Supabase refused the key (${r.status}). SUPABASE_SECRET_KEY must be the project's secret key, not the publishable one.`);
+    throw new Error(`Supabase ${r.status}: ${text}`);
+  }
   const out = await r.json();
   return out.map((x) => { if (x.error) throw new Error(x.error); return x.result; });
 }
@@ -73,7 +104,7 @@ async function run(cmds, count) {
   if (knownMonth !== month) { knownMonth = month; knownTotal = 0; }
   // The cap. Past it, the app stops itself — exactly what a provider's budget cap would do, but
   // without depending on the provider offering one. It lifts on the 1st, or when the ceiling is raised.
-  if (count && knownTotal >= KV_CEILING) {
+  if (count && kvCapped() && knownTotal >= KV_CEILING) {
     throw new Error('The app has reached its monthly database budget and has paused itself so the bill stays capped. It starts again on the 1st of next month, or sooner if the owner raises the limit.');
   }
   let flushing = 0;
@@ -107,7 +138,7 @@ export async function redisRaw(...cmds) { return run(cmds, false); }
  */
 let pacedKey = '';
 async function paceCheck(total) {
-  if (!(total > 0)) return;
+  if (!(total > 0) || !kvCapped()) return;
   const d = new Date();
   const month = d.toISOString().slice(0, 7);
   const daysIn = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();

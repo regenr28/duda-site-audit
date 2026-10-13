@@ -102,7 +102,17 @@ Every published website is read like a visitor reads it (every page in its `site
 | `ALLOWED_EDITOR_HOSTS` | `responsivesiteeditor.com` | optional. Add your white-label editor domain(s). |
 
 ### Step 4: Shared storage (required)
-Vercel project → **Storage** → **Create Database** → **Upstash for Redis** (Free) → **Connect to Project**. Accounts, websites, comments, screenshots and activity are all stored there.
+Use **one** of these. Accounts, websites, comments, screenshots and activity are all stored there.
+
+**Supabase (Postgres)** — what 8bit Creative uses (update 124):
+1. In Supabase, create a project (region: East US / North Virginia, next to the app). Keep the Data API on.
+2. **SQL Editor → New query**, paste all of [`supabase/setup.sql`](supabase/setup.sql), **Run**. It ends with "Ready". Running it again is safe.
+3. **Project Settings → API Keys**: copy the **Project URL** and a **secret** key (`sb_secret_…`; the older `service_role` key also works). Never the publishable/anon key.
+4. In Vercel, add them as **Sensitive** variables: `SUPABASE_URL` and `SUPABASE_SECRET_KEY`. When both are set, the app uses Supabase even if Upstash is still connected.
+
+The app's records live in their own schema (`dsa_kv`) that the public Data API does not expose; one function, `public.dsa_exec`, answers the app's requests and only the secret key may call it. To bring the data of an existing installation across: add `COPY_FROM_URL` and `COPY_FROM_TOKEN` (the OLD Upstash database's REST URL and its read-only token), redeploy, sign in as the app owner (`SUGGESTIONS_OWNER`), open **Settings → 📦 Move data in** and press the button. It copies everything (people and their access, audits, items, statuses, notes, Duda comments, form submissions, auto audit results), checks it section by section, and only ever reads the old database. Remove both variables when done. System health shows the exact size of the app's tables; Supabase does not charge per request, so the monthly command cap only applies on Upstash.
+
+**Upstash for Redis**: Vercel project → **Storage** → **Create Database** → **Upstash for Redis** (Free) → **Connect to Project**.
 
 ### Step 5: Deploy
 Click **Deploy**. After changing variables, use **Deployments → ⋯ → Redeploy**. Open the `*.vercel.app` URL and create your account first, so you become admin.
