@@ -82,6 +82,9 @@ Every published website is read like a visitor reads it (every page in its `site
 | `MISTRAL_API_KEY` | free key from console.mistral.ai (Experiment plan) | optional, **free**, no card (phone check). Mistral Medium. |
 | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Workers AI token + account ID from dash.cloudflare.com | optional, **free**, no card. gpt-oss-120b, 10,000 neurons a day. |
 | `AI_GATEWAY_API_KEY` | key from Vercel → AI Gateway | optional, paid. Add it once you have budget. (Or `ANTHROPIC_API_KEY`.) |
+| `ANTHROPIC_API_KEY` | Claude Console → API keys | optional, paid. Claude answers first when set (default model `claude-haiku-5-5`, `ANTHROPIC_MODEL` to change). |
+| `OPENAI_API_KEY` | platform.openai.com → API keys | optional, paid. ChatGPT's models answer next (default `gpt-5-mini`, `OPENAI_MODEL` to change). |
+| `ANTHROPIC_DAILY_LIMIT`, `OPENAI_DAILY_LIMIT` | a number | the most AI requests a day to each paid one (each checks up to about 45 items); after that the free ones take over. 0 = no cap. |
 | `AI_ORDER` | `gateway,cerebras,cloudflare,groq,mistral,anthropic` (default) | optional. The order the models are tried in. |
 | `AI_OFF` | `gemini,openrouter` (default) | optional. Models that sit out even when a key is set, because their free terms train on or log what we send. Name one in `AI_ORDER` to bring it back, or set `AI_OFF=` (empty) for all of them. |
 | `DUDA_HOOK_KEY` | (none) | optional. The secret in the listening address. **Leave it unset** — the app makes one for itself when an admin clicks Connect. Set it only if you want to choose the value yourself; it then wins, and you must reconnect for Duda to learn the new address. |

@@ -13,11 +13,15 @@
 //   CEREBRAS_API_KEY    Cerebras, free tier, no card (about 1M tokens a day).                        CEREBRAS_MODEL (default gpt-oss-120b)
 //   MISTRAL_API_KEY     Mistral "Experiment" plan, free, no card (phone check).                      MISTRAL_MODEL (default mistral-medium-latest)
 //   CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID  Cloudflare Workers AI, 10,000 free "neurons" a day, no card. CLOUDFLARE_MODEL (default @cf/openai/gpt-oss-120b)
-//   ANTHROPIC_API_KEY   Anthropic API directly (paid).                                               ANTHROPIC_MODEL (default claude-haiku-4-5)
-// Order: AI_ORDER (default "gateway,cerebras,cloudflare,groq,mistral,anthropic"). Only providers with a key take part.
+//   ANTHROPIC_API_KEY   Anthropic API (Claude Console, paid).                                        ANTHROPIC_MODEL (default claude-haiku-5-5)
+//   OPENAI_API_KEY      OpenAI API (ChatGPT's platform, paid).                                       OPENAI_MODEL (default gpt-5-mini)
+// Order: AI_ORDER (default "anthropic,openai,gateway,cerebras,cloudflare,groq,mistral"): the paid ones answer first when
+// their key is set (better judgement), the free ones take over when a paid one is down or at its cap. Only providers
+// with a key take part, so without the paid keys nothing changes.
 // AI_OFF (default "gemini,openrouter") sits out providers whose free terms don't suit client work, even if a key is set.
 // Naming one in AI_ORDER switches it back on; AI_OFF="" switches them all on.
-// Our own daily request cap per provider: <GEMINI|GROQ|OPENROUTER|CEREBRAS|MISTRAL|CLOUDFLARE|AI_GATEWAY|ANTHROPIC>_DAILY_LIMIT (0 = no cap).
+// Our own daily request cap per provider: <GEMINI|GROQ|OPENROUTER|CEREBRAS|MISTRAL|CLOUDFLARE|AI_GATEWAY|ANTHROPIC|OPENAI>_DAILY_LIMIT (0 = no cap).
+// For the paid ones that cap is the spending limit: one request checks up to about 45 text blocks or 50 image alt texts.
 // Results are cached for 60 days so rescans don't use any quota.
 import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL, can } from './_lib.js';
 import { helpFor, helpText } from './_help.js';
@@ -26,7 +30,7 @@ import { newsFor, latestNewsId } from './_news.js';
 // ---------- made-up names: the team never sees which AI company or model is used ----------
 // Only the app owner (SUGGESTIONS_OWNER) sees real provider and model names, for troubleshooting.
 // Rename with AI_ALIASES, e.g. "gemini=Nova,groq=Orion".
-const ALIASES = Object.assign({ gateway: 'Atlas', gemini: 'Nova', groq: 'Orion', openrouter: 'Vega', anthropic: 'Lyra', cerebras: 'Sirius', mistral: 'Altair', cloudflare: 'Polaris' },
+const ALIASES = Object.assign({ gateway: 'Atlas', gemini: 'Nova', groq: 'Orion', openrouter: 'Vega', anthropic: 'Lyra', openai: 'Rigel', cerebras: 'Sirius', mistral: 'Altair', cloudflare: 'Polaris' },
   Object.fromEntries(String(process.env.AI_ALIASES || '').split(',').map((x) => x.split('=').map((y) => y.trim())).filter((x) => x[0] && x[1])));
 const aliasOf = (id) => ALIASES[id] || 'AI';
 const GENERIC_NOTE = { limit: 'Daily free limit reached.', cooling: 'Busy right now (per-minute limit). Resting briefly.', credits: 'Out of credits. Checking again later.', error: 'Setup problem. Retrying automatically; the app owner can see details.' };
@@ -73,10 +77,12 @@ const CATALOG = {
     api: env('CLOUDFLARE_API_BASE', 'https://api.cloudflare.com/client/v4') + '/accounts/' + env('CLOUDFLARE_ACCOUNT_ID', ''),
     base: env('CLOUDFLARE_API_BASE', 'https://api.cloudflare.com/client/v4') + '/accounts/' + env('CLOUDFLARE_ACCOUNT_ID', '') + '/ai/v1', model: env('CLOUDFLARE_MODEL', '@cf/openai/gpt-oss-120b'), maxOut: 4000 }),
   anthropic: () => ({ label: 'Anthropic', kind: 'anthropic', keyVar: 'ANTHROPIC_API_KEY', limitVar: 'ANTHROPIC_DAILY_LIMIT', defLimit: 0, free: false, tz: 'UTC',
-    base: env('ANTHROPIC_API_BASE', 'https://api.anthropic.com/v1'), model: env('ANTHROPIC_MODEL', 'claude-haiku-4-5') }),
+    base: env('ANTHROPIC_API_BASE', 'https://api.anthropic.com/v1'), model: env('ANTHROPIC_MODEL', 'claude-haiku-5-5') }),
+  openai: () => ({ label: 'OpenAI', kind: 'openai', keyVar: 'OPENAI_API_KEY', limitVar: 'OPENAI_DAILY_LIMIT', defLimit: 0, free: false, tz: 'UTC',
+    base: env('OPENAI_API_BASE', 'https://api.openai.com/v1'), model: env('OPENAI_MODEL', 'gpt-5-mini'), maxOut: 8000 }),
 };
 function providers() {
-  const order = env('AI_ORDER', 'gateway,cerebras,cloudflare,groq,mistral,anthropic').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id]);
+  const order = env('AI_ORDER', 'anthropic,openai,gateway,cerebras,cloudflare,groq,mistral').split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id]);
   // Sat out by default: free tiers that train on what we send or log it. Naming one in AI_ORDER brings it back.
   const off = new Set(String(process.env.AI_OFF == null ? 'gemini,openrouter' : process.env.AI_OFF).split(',').map((s) => s.trim().toLowerCase()).filter((id) => CATALOG[id] && !order.includes(id)));
   Object.keys(CATALOG).forEach((id) => { if (!order.includes(id) && !off.has(id)) order.push(id); });
@@ -168,6 +174,15 @@ function classify(p, r, j) {
   return { reason: 'cooling', until: now + 60000, note: `Error ${r.status}. Retrying in a minute.` + (msg ? ' (' + msg + ')' : '') };
 }
 
+/**
+ * The chat request for every OpenAI-style provider. OpenAI's own reasoning models (gpt-5…, o3…)
+ * take max_completion_tokens and no temperature; everything else takes the classic fields.
+ */
+function openaiBody(p, system, user) {
+  const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
+  if (p.id === 'openai' && /^(gpt-5|o\d)/i.test(p.model)) return { model: p.model, max_completion_tokens: p.maxOut || 8000, reasoning_effort: 'low', messages };
+  return Object.assign({ model: p.model, temperature: 0, max_tokens: p.maxOut || 8000, messages }, (p.id === 'groq' || p.id === 'cerebras') && /gpt-oss/.test(p.model) ? { reasoning_effort: 'low' } : {});
+}
 async function callOnce(p, system, user) {
   let r, j = {}, text = '';
   try {
@@ -190,7 +205,7 @@ async function callOnce(p, system, user) {
       if (p.id === 'openrouter') { if (process.env.APP_URL) headers['HTTP-Referer'] = process.env.APP_URL; headers['X-Title'] = 'Duda Site Auditor'; }
       r = await fetchWithTimeout(`${p.base}/chat/completions`, {
         method: 'POST', headers,
-        body: JSON.stringify(Object.assign({ model: p.model, temperature: 0, max_tokens: p.maxOut || 8000, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }, (p.id === 'groq' || p.id === 'cerebras') && /gpt-oss/.test(p.model) ? { reasoning_effort: 'low' } : {})),
+        body: JSON.stringify(openaiBody(p, system, user)),
       }, 40000);
       j = await r.json().catch(() => ({}));
       if (r.ok) text = (((j.choices || [])[0] || {}).message || {}).content || '';
@@ -245,6 +260,7 @@ async function listModels(p) {
     if (p.id === 'cloudflare') ids = ids.filter((x) => /^@cf\//.test(x) && !/lora|awq|int8|guard|coder|math|sql|vision/i.test(x));
     if (p.id === 'mistral') ids = ids.filter((x) => /^(mistral-(medium|large|small)|magistral-(medium|small))/i.test(x) && !/ocr|embed|moderation/i.test(x));
     if (p.id === 'openrouter') ids = ids.filter((x) => /:free$/.test(x));
+    if (p.id === 'openai') ids = ids.filter((x) => /^(gpt-|o\d)/i.test(x) && !/realtime|search|transcribe|tts|audio|image|codex|instruct|chat-latest|preview/i.test(x));
     return ids;
   } catch (e) { return []; }
 }
@@ -258,6 +274,7 @@ async function discoverModel(p, failed, errText) {
   const ranked = p.id === 'cerebras' ? rankList(all, [/llama-3\.3-70b/i, /qwen-3-32b/i, /llama-4-scout/i, /gpt-oss-120b/i, /llama3\.1-8b/i])
     : p.id === 'cloudflare' ? rankList(all, [/gpt-oss-120b/i, /llama-4-scout/i, /llama-3\.3-70b/i, /qwen.*(235b|32b|30b|27b)/i, /gpt-oss-20b/i, /mistral-small/i, /gemma.*(27b|12b)/i, /llama-3\.1-8b/i])
     : p.id === 'mistral' ? rankList(all, [/mistral-medium-latest/i, /mistral-medium/i, /mistral-large-latest/i, /mistral-large/i, /mistral-small-latest/i, /mistral-small/i, /magistral/i])
+    : p.id === 'openai' ? rankList(all, [/^gpt-5(\.\d+)?-mini$/i, /^gpt-5.*-mini/i, /^gpt-4\.1-mini$/i, /^gpt-4o-mini$/i, /^gpt-5(\.\d+)?-nano/i])
     : p.kind === 'gemini' ? rankGemini(all) : p.kind === 'anthropic' ? all.filter((n) => /haiku/.test(n)).sort().reverse() : rankGeneric(all);
   return ranked.find((m) => !tried.has(m)) || null;
 }
