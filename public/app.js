@@ -5291,8 +5291,42 @@
     ['domains', '🌐 Domain monitoring', () => can('members.manage')],
     ['integrations', '🔌 Integrations', () => can('members.manage')],
     ['security', '🛡 Security log', () => true],
+    // Only while moving the app to a new home (COPY_FROM_URL / COPY_FROM_TOKEN set), and only the owner.
+    ['move', '📦 Move data in', () => !!(state.superAdmin && state.config && state.config.copyFrom)],
   ];
   const secState = { all: false, data: null, who: '', type: '', loading: false };
+  /** Settings → Move data in: copy every record from the old database into this app's own. */
+  const mv = { running: false, st: null, err: '' };
+  async function drawMove(body) {
+    const paint = () => {
+      const s = mv.st || {};
+      const pct = s.total ? Math.min(100, Math.round(((s.copied + (s.skipped || 0)) / s.total) * 100)) : 0;
+      body.innerHTML = `<h2>📦 Move data in</h2>
+        <p class="muted">Copies <b>everything</b> from the old app's database (${esc(mv.from || 'set in Vercel')}) into this app's own: websites, audits, items, comments, customers, tickets, form submissions, settings, people. The old database is only read, never changed. It takes a few minutes; keep this page open.</p>
+        ${mv.err ? `<div class="note bad">${esc(mv.err)}</div>` : ''}
+        ${s.startedAt ? `<div class="mv-prog"><div class="ac-bar"><i class="ok" style="width:${s.done ? 100 : pct}%"></i></div>
+          <div class="small" style="margin-top:6px">${s.done ? `✅ <b>Done</b>: ${fmtN(s.copied)} records copied${s.here ? ` · this database now holds ${fmtN(s.here)} (the old one had ${fmtN(s.total)})` : ''}${s.failed ? ` · <b style="color:var(--crit)">${fmtN(s.failed)} could not be copied</b>: ${esc((s.errors || []).slice(0, 3).join('; '))}` : ''} · ${esc(fmtFull(new Date(s.finishedAt || s.at).toISOString()))}` : `${mv.running ? '<span class="spin-dot"></span> Copying… ' : 'Stopped part way: '}<b>${fmtN(s.copied)}</b> of about ${fmtN(s.total)} records`}</div></div>` : ''}
+        <div style="margin-top:12px"><button class="btn primary" id="mvRun" ${mv.running ? 'disabled' : ''}>${s.done ? '↻ Copy everything again' : s.startedAt ? 'Carry on copying' : 'Copy everything from the old app'}</button></div>
+        ${s.done ? '<p class="small muted" style="margin-top:12px">Copying again picks up anything changed in the old app since. When this app is the one everybody uses, remove <b>COPY_FROM_URL</b> and <b>COPY_FROM_TOKEN</b> from this project in Vercel.</p>' : ''}`;
+      const b = $('#mvRun', body);
+      if (b) b.onclick = async () => {
+        if (!s.startedAt && !confirm('Copy everything from the old app into this one? Records with the same name here are replaced by the old app\'s.')) return;
+        mv.running = true; mv.err = ''; let restart = !!s.done; paint();
+        try {
+          for (let i = 0; i < 200; i++) {
+            const r = await post('/api/migrate', { op: 'run', restart }); restart = false;
+            mv.st = r.state; paint();
+            if (r.state.done) break;
+          }
+          toast('All data copied');
+        } catch (e) { mv.err = e.message; }
+        mv.running = false; paint();
+      };
+    };
+    paint();
+    try { const r = await api('/api/migrate'); mv.st = r.state; mv.from = r.from; } catch (e) { mv.err = e.message; }
+    if (route().name === 'settings' && $('#setBody') === body) paint();
+  }
   function renderSettings(section) {
     const list = SET_SECTIONS.filter((x) => x[2]());
     const cur = list.find((x) => x[0] === section) ? section : 'team';
@@ -5302,6 +5336,7 @@
     const body = $('#setBody');
     if (cur === 'team') return drawTeamPage(body);
     if (cur === 'security') return drawSecurity(body);
+    if (cur === 'move') return drawMove(body);
     if (cur === 'appearance') return drawAppearance(body);
     if (cur === 'roles') { body.innerHTML = `<h2>Roles</h2><p class="muted">A role is a set of things people may do. Change a role and everyone on it changes; give one person an exception with <b>Access</b> on the Team page.</p><button class="btn primary" id="setRoles">Open roles</button>`; $('#setRoles').onclick = () => openRoles(); return; }
     if (cur === 'notifications') { body.innerHTML = `<h2>Your notifications</h2><p class="muted">What reaches your bell, pop-ups and Slack is set per person, in your account.</p><button class="btn primary" id="setNotif">Open your notification settings</button>`; $('#setNotif').onclick = () => openMe(); return; }
