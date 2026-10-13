@@ -739,7 +739,7 @@
   function copyBar() {
     if (!state.config || !state.config.copy || $('#copyBar')) return;
     const b = document.createElement('div'); b.id = 'copyBar'; b.className = 'copy-bar';
-    b.innerHTML = '<b>Backup copy</b> · same data as the main app · Slack, email and the automatic checks are off here';
+    b.innerHTML = '<b>Quiet copy</b> · this app sends no Slack or email and runs no automatic checks; the main app does';
     document.body.prepend(b); document.body.classList.add('is-copy');
     if (!/^\[Copy\]/.test(document.title)) document.title = '[Copy] ' + document.title;
   }
@@ -5305,7 +5305,11 @@
         <p class="muted">Copies <b>everything</b> from the old app's database (${esc(mv.from || 'set in Vercel')}) into this app's own: websites, audits, items, comments, customers, tickets, form submissions, settings, people. The old database is only read, never changed. It takes a few minutes; keep this page open.</p>
         ${mv.err ? `<div class="note bad">${esc(mv.err)}</div>` : ''}
         ${s.startedAt ? `<div class="mv-prog"><div class="ac-bar"><i class="ok" style="width:${s.done ? 100 : pct}%"></i></div>
-          <div class="small" style="margin-top:6px">${s.done ? `✅ <b>Done</b>: ${fmtN(s.copied)} records copied${s.here ? ` · this database now holds ${fmtN(s.here)} (the old one had ${fmtN(s.total)})` : ''}${s.failed ? ` · <b style="color:var(--crit)">${fmtN(s.failed)} could not be copied</b>: ${esc((s.errors || []).slice(0, 3).join('; '))}` : ''} · ${esc(fmtFull(new Date(s.finishedAt || s.at).toISOString()))}` : `${mv.running ? '<span class="spin-dot"></span> Copying… ' : 'Stopped part way: '}<b>${fmtN(s.copied)}</b> of about ${fmtN(s.total)} records`}</div></div>` : ''}
+          <div class="small" style="margin-top:6px">${s.done ? `✅ <b>Done</b> and checked: ${fmtN(s.copied)} records copied${s.here ? ` · this database now holds ${fmtN(s.here)} (the old one had ${fmtN(s.total)})` : ''}${s.failed ? ` · <b style="color:var(--crit)">${fmtN(s.failed)} could not be copied</b>: ${esc((s.errors || []).slice(0, 3).join('; '))}` : ''} · ${esc(fmtFull(new Date(s.finishedAt || s.at).toISOString()))}` : `${mv.running ? `<span class="spin-dot"></span> ${s.copyDone ? 'Checking every record is here…' : 'Copying… '}` : 'Stopped part way: '}<b>${fmtN(s.copied)}</b> of about ${fmtN(s.total)} records`}</div></div>` : ''}
+        ${s.done && s.groups ? `<table class="grid mv-check" style="margin-top:12px"><thead><tr><th>What</th><th>Old app</th><th>Here now</th><th></th></tr></thead><tbody>
+          ${Object.entries(s.groups).sort((x, y) => y[1].from - x[1].from).map(([g, v]) => `<tr><td>${esc(g)}</td><td>${fmtN(v.from)}</td><td>${fmtN(v.here)}</td><td>${v.here >= v.from ? '<span class="badge scan-complete">✓ all here</span>' : `<span class="badge sev-critical">${fmtN(v.from - v.here)} missing</span>`}</td></tr>`).join('')}
+          ${(s.checks || []).map(([l, x, y]) => `<tr><td>${esc(l)}</td><td>${fmtN(x)}</td><td>${fmtN(y)}</td><td>${y >= x ? '<span class="badge scan-complete">✓ all here</span>' : `<span class="badge sev-critical">${fmtN(x - y)} missing</span>`}</td></tr>`).join('')}
+          </tbody></table><p class="small faint">Counted record by record in both databases after the copy. "Here now" can be a little higher: anything this app made itself (your sign-in) is counted too.</p>` : ''}
         <div style="margin-top:12px"><button class="btn primary" id="mvRun" ${mv.running ? 'disabled' : ''}>${s.done ? '↻ Copy everything again' : s.startedAt ? 'Carry on copying' : 'Copy everything from the old app'}</button></div>
         ${s.done ? '<p class="small muted" style="margin-top:12px">Copying again picks up anything changed in the old app since. When this app is the one everybody uses, remove <b>COPY_FROM_URL</b> and <b>COPY_FROM_TOKEN</b> from this project in Vercel.</p>' : ''}`;
       const b = $('#mvRun', body);

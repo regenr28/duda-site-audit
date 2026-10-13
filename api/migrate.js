@@ -52,37 +52,76 @@ function writeCmds(key, type, val, pttl) {
   return cmds;
 }
 
+// What the records are, in the groups people think in, so the end of the move can show
+// "form submissions: 4,210 in the old app, 4,210 here" rather than one big number.
+const GROUPS = [
+  ['Form submissions and contacts', /^(lead|ctv|formhit|ih)/],
+  ['Auto audit results', /^cw/],
+  ['Audits and audit items', /^(site|fstate|fnum|seq|index|act|scan|removed|fa|fixedchecks|bihist|pages|img|cap|thumb|psi|health|ai|anprov|sugg|helpq)/],
+  ['Comments', /^(cmt|conv|watch|sitefeed)/],
+  ['Client tickets', /^tk/],
+  ['Projects', /^proj/],
+  ['DR Websites, domains and trends', /^(duda|dom|pubev|livedom|dnsc|lastrun|stat)/],
+  ['People, customers and settings', /^(user|roles|sess|seclog|notif|uact|gact|slack|edhost|hook|dropbox|dbx|usage|rl|presence|room|ver|pending|alert|alerted)/],
+];
+const groupOf = (key) => {
+  const t = String(key).replace(/^[^:]*:/, '');
+  for (const [name, re] of GROUPS) if (re.test(t)) return name;
+  return 'Everything else';
+};
+const READ_AT_ONCE = 30;
+/** Read one key in pieces (a very large collection), so no single answer is too big. */
+async function readBig(key, type) {
+  if (type === 'string') return (await from([['GET', key]]))[0];
+  if (type === 'list') { const out = []; for (let i = 0; ; i += 1000) { const [part] = await from([['LRANGE', key, String(i), String(i + 999)]]); out.push(...(part || [])); if (!part || part.length < 1000) return out; } }
+  const scanOp = type === 'hash' ? 'HSCAN' : type === 'set' ? 'SSCAN' : type === 'zset' ? 'ZSCAN' : '';
+  if (!scanOp) return null;
+  const out = []; let cur = '0';
+  do { const [[next, part]] = await from([[scanOp, key, cur, 'COUNT', '500']]); out.push(...(part || [])); cur = String(next); } while (cur !== '0');
+  if (type === 'zset') { const flat = []; for (let i = 0; i < out.length; i += 2) flat.push(out[i], out[i + 1]); return flat; }   // ZSCAN gives member, score like ZRANGE WITHSCORES
+  return out;
+}
+const readCmd = (k, type) => (type === 'string' ? ['GET', k] : type === 'hash' ? ['HGETALL', k] : type === 'list' ? ['LRANGE', k, '0', '-1'] : type === 'set' ? ['SMEMBERS', k] : type === 'zset' ? ['ZRANGE', k, '0', '-1', 'WITHSCORES'] : ['TYPE', k]);
+
 async function round(restart, budgetMs = 45000) {
   const t0 = Date.now();
   const [raw] = await redis(['GET', STATE]);
   let st = jparse(raw) || {};
-  if (restart || !st.cursor || st.done) st = { cursor: '0', copied: 0, skipped: 0, startedAt: Date.now(), round: (st.round || 0) + 1, done: false, errors: [] };
+  if (restart || !st.cursor || st.done) st = { cursor: '0', copied: 0, skipped: 0, failed: 0, startedAt: Date.now(), round: (st.round || 0) + 1, done: false, errors: [], groups: {} };
+  st.groups = st.groups || {};
   if (!st.total) { const [n] = await from([['DBSIZE']]); st.total = Number(n) || 0; }
-  while (Date.now() - t0 < budgetMs) {
+  const note = (key, field) => { const g = groupOf(key); (st.groups[g] = st.groups[g] || { from: 0, copied: 0, here: 0 })[field]++; };
+  while (!st.copyDone && Date.now() - t0 < budgetMs) {
     const [[next, keys]] = await from([['SCAN', st.cursor, 'COUNT', '150']]);
     const list = (keys || []).filter((k) => !String(k).startsWith(STATE));
     if (list.length) {
       const meta = await from(list.flatMap((k) => [['TYPE', k], ['PTTL', k]]));
-      const reads = list.map((k, i) => {
-        const type = meta[i * 2];
-        return type === 'string' ? ['GET', k] : type === 'hash' ? ['HGETALL', k] : type === 'list' ? ['LRANGE', k, '0', '-1'] : type === 'set' ? ['SMEMBERS', k] : type === 'zset' ? ['ZRANGE', k, '0', '-1', 'WITHSCORES'] : ['TYPE', k];
-      });
-      const vals = await from(reads);
+      // Read a few at a time; anything that does not come back in a group is read on its own, in pieces.
+      const vals = new Array(list.length);
+      for (let a = 0; a < list.length; a += READ_AT_ONCE) {
+        const idx = list.slice(a, a + READ_AT_ONCE).map((k, n) => a + n);
+        try { const got = await from(idx.map((i) => readCmd(list[i], meta[i * 2]))); idx.forEach((i, n) => { vals[i] = got[n]; }); }
+        catch (e) { for (const i of idx) { try { vals[i] = await readBig(list[i], meta[i * 2]); } catch (e2) { vals[i] = undefined; } } }
+      }
       let batch = []; let keysIn = []; let size = 0;
       // One request for many small records; a record that fails on its own is noted and skipped,
       // so one oversized record never stops the move.
+      const fail = (key, why) => { st.failed++; if (st.errors.length < 20) st.errors.push(`${key}: ${String(why).slice(0, 120)}`); };
       const flush = async () => {
         if (!batch.length) return;
-        try { await redis(...batch); st.copied += keysIn.length; }
+        try { await redis(...batch); keysIn.forEach((k) => { st.copied++; note(k.key, 'copied'); }); }
         catch (e) {
           for (const k of keysIn) {
-            try { await redis(...k.cmds); st.copied++; }
-            catch (e2) { st.failed = (st.failed || 0) + 1; if ((st.errors || []).length < 20) (st.errors = st.errors || []).push(`${k.key}: ${String(e2.message || e2).slice(0, 120)}`); }
+            try { for (const c of chunks(k.cmds, 4)) await redis(...c); st.copied++; note(k.key, 'copied'); }
+            catch (e2) { fail(k.key, e2.message || e2); }
           }
         }
         batch = []; keysIn = []; size = 0;
       };
       for (let i = 0; i < list.length; i++) {
+        if (meta[i * 2] === 'none') { st.skipped++; continue; }             // gone since the scan (expired)
+        note(list[i], 'from');
+        if (vals[i] === undefined) { fail(list[i], 'could not be read from the old database'); continue; }
         const cmds = writeCmds(list[i], meta[i * 2], vals[i], meta[i * 2 + 1]);
         if (!cmds.length) { st.skipped++; continue; }
         const sz = JSON.stringify(cmds).length;
@@ -92,10 +131,25 @@ async function round(restart, budgetMs = 45000) {
       await flush();
     }
     st.cursor = String(next);
-    if (st.cursor === '0') { st.done = true; st.finishedAt = Date.now(); break; }
+    if (st.cursor === '0') { st.copyDone = Date.now(); break; }
+  }
+  // The check: count what is in THIS database now, group by group, and compare with the old one.
+  if (st.copyDone && !st.done && Date.now() - t0 < budgetMs + 10000) {
+    Object.values(st.groups).forEach((g) => { g.here = 0; });
+    let cur = '0';
+    do {
+      const [[next, keys]] = await redis(['SCAN', cur, 'COUNT', '1000']);
+      (keys || []).forEach((k) => { if (!String(k).startsWith(STATE)) { const g = groupOf(k); if (st.groups[g]) st.groups[g].here++; } });
+      cur = String(next);
+    } while (cur !== '0');
+    const [hereN] = await redis(['DBSIZE']); st.here = Number(hereN) || 0;
+    // Two counts inside records that matter most: audits listed, websites auto audited.
+    const [a1, c1] = await from([['HLEN', P + 'index'], ['HLEN', P + 'cwsum']]);
+    const [a2, c2] = await redis(['HLEN', P + 'index'], ['HLEN', P + 'cwsum']);
+    st.checks = [['Audits in the Audits list', Number(a1) || 0, Number(a2) || 0], ['Websites with an auto audit result', Number(c1) || 0, Number(c2) || 0]];
+    st.done = true; st.finishedAt = Date.now();
   }
   st.at = Date.now();
-  if (st.done) { const [n] = await redis(['DBSIZE']); st.here = Number(n) || 0; }
   await redis(['SET', STATE, JSON.stringify(st)]);
   return st;
 }
