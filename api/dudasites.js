@@ -4,7 +4,7 @@
 // POST /api/dudasites { op: 'names', ids }    → fills in business names (the list endpoint doesn't include them)
 // POST /api/dudasites { op: 'domains', ids }  → checks each site's live domain (working, redirecting elsewhere, 404, DNS…)
 // Uses Duda's List Sites endpoint (100 per page), so 800 sites = 8 API calls. Stored compressed in one small key.
-import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, learnEditorHost } from './_lib.js';
+import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, learnEditorHost, isCopy } from './_lib.js';
 import { enqueue } from './_queue.js';
 import { markRun, lastRuns } from './leadq.js';
 import { checkDomain, checkAndStore, sendDigest, problemClass, isProblem, DOMS, DOMEV } from './_domains.js';
@@ -229,6 +229,7 @@ async function ranks(me, from, to) {
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method === 'GET' && req.query.op === 'sweep') {
+    if (isCopy()) return res.status(200).json({ skipped: 'this is the copy: the daily check runs in the main app' });
     try { return await sweep(req, res); } catch (e) { return res.status(500).json({ error: String(e.message || e) }); }
   }
   const me = await requireUser(req, res);
@@ -253,6 +254,8 @@ export default async function handler(req, res) {
         return res.status(200).json({ names: found });
       }
       if (b.op === 'domains') {
+        // Checking a domain can raise an alert, and the copy cannot send one: the main app does this.
+        if (isCopy()) return res.status(200).json({ domains: {}, copy: true });
         // Only domains from our own Duda list are checked (never arbitrary URLs)
         const pick = ids.slice(0, 10);
         const [names] = await redis(['HMGET', NAMES, ...(pick.length ? pick : ['-'])]);

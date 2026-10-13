@@ -1,6 +1,6 @@
 // POST /api/pulse { lastActive: ISO }  — heartbeat sent every ~90s while the app is open.
 // Returns who is online (presence) + this user's notifications in one round trip.
-import { redis, P, readBody, requireUser, jparse, now } from './_lib.js';
+import { redis, P, readBody, requireUser, jparse, now, isCopy } from './_lib.js';
 import { TIDY_VERSION } from './_leads.js';
 
 // Which website / audit item this person has open right now (shown in Team status)
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     for (let i = 0; pres && i < pres.length; i += 2) presence[pres[i]] = jparse(pres[i + 1], {});
     const items = (list || []).map((x) => jparse(x)).filter(Boolean);
     return res.status(200).json({ presence, serverTime: now(), cmtVer: String(cmtVer || 0), accessVer: String(accessVer || 0),
-      lq: { pending: Number(lqLen || 0), tidyDone: tidyV === TIDY_VERSION }, wq: Number(wDue || 0), notifs: wantNotifs ? { items, unread: items.filter((n) => !seen || n.at > seen).length } : null });
+      lq: isCopy() ? { pending: 0, tidyDone: true } : { pending: Number(lqLen || 0), tidyDone: tidyV === TIDY_VERSION }, wq: isCopy() ? 0 : Number(wDue || 0), notifs: wantNotifs ? { items, unread: items.filter((n) => !seen || n.at > seen).length } : null });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }

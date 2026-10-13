@@ -437,8 +437,17 @@ export function clientSites(user, req) {
   return [];
 }
 
+// ---------- a quiet copy of the app ----------
+/**
+ * APP_COPY=1: a second deployment of this app (a backup copy) that shares the database with the
+ * main one. It shows everything and lets people work, but it never messages anyone (Slack, email)
+ * and never runs the automatic jobs (daily checks, background catch-ups, alerts). Those stay with
+ * the main app, so nothing is done twice and no alert is "used up" by a copy that cannot send it.
+ */
+export const isCopy = () => process.env.APP_COPY === '1';
+
 // ---------- email (Resend) ----------
-export const emailEnabled = () => !!process.env.RESEND_API_KEY;
+export const emailEnabled = () => !!process.env.RESEND_API_KEY && !isCopy();
 export async function sendEmail(to, subject, html) {
   if (!emailEnabled()) return { skipped: true };
   const r = await fetchWithTimeout((process.env.RESEND_API_BASE || 'https://api.resend.com') + '/emails', {
@@ -456,7 +465,7 @@ export const emailShell = (title, body) => `<div style="font-family:-apple-syste
 export const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---------- Slack (Incoming Webhook) ----------
-export const slackEnabled = () => !!process.env.SLACK_WEBHOOK_URL;
+export const slackEnabled = () => !!process.env.SLACK_WEBHOOK_URL && !isCopy();
 export async function slack(text) {
   if (!slackEnabled()) return { skipped: true };
   try {
@@ -568,7 +577,7 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   access: 'changed what you can do',
   security: 'needs a look: repeated wrong passwords',
   test: 'sent you a test message' };
-export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '');
+export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '') && !isCopy();
 async function slackApi(method, body) {
   const r = await fetchWithTimeout(`${process.env.SLACK_API_BASE || 'https://slack.com/api'}/${method}`, {
     method: 'POST', headers: { Authorization: 'Bearer ' + process.env.SLACK_BOT_TOKEN, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body),

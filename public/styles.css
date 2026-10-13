@@ -1819,3 +1819,5 @@ table.cp-dns td.mono { word-break: break-all; }
 .ac-ev { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; }
 .ac-ev-i { display: inline-block; width: 18px; }
 .ac-ev li.x .ac-ev-i, .ac-ev li.c .ac-ev-i { color: var(--crit); } .ac-ev li.ok .ac-ev-i { color: var(--ok); } .ac-ev li.w .ac-ev-i { color: var(--warn); }
+/* The backup copy of the app says so on every page */
+.copy-bar { position: sticky; top: 0; z-index: 9999; background: var(--warn); color: #fff; font-size: 12px; text-align: center; padding: 4px 12px; }

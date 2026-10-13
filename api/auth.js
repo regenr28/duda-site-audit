@@ -2,7 +2,7 @@
 // GET  /api/auth?op=config | me
 // POST /api/auth { op: signup | verify | resend | login | google | logout | forgot | reset }
 import crypto from 'node:crypto';
-import { secLog, listUsers, notifyUser, bumpAccess } from './_lib.js';
+import { secLog, listUsers, notifyUser, bumpAccess, isCopy } from './_lib.js';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
   initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, commentsChannel, OWNER_EMAIL , savedEditorHost, nameTaken, NOTIFY_GROUPS, getRole, effectivePerms, applyPreview, accessVersion } from './_lib.js';
@@ -48,7 +48,7 @@ export default async function handler(req, res) {
   if (!hasRedis()) return res.status(500).json({ error: 'The database is not connected. Please contact the app owner.' });
   try {
     if (req.method === 'GET') {
-      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), analyticsGoogle: !!process.env.GOOGLE_SERVICE_ACCOUNT, pagespeedKey: !!process.env.PAGESPEED_API_KEY, leadsDb: !!process.env.LEADS_DB_URL, realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), slackDM: /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || ''), editorHost: await savedEditorHost(), cmtChannel: commentsChannel(), notifyGroups: NOTIFY_GROUPS });
+      if (req.query.op === 'config') return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '', emailEnabled: emailEnabled(), analyticsGoogle: !!process.env.GOOGLE_SERVICE_ACCOUNT, pagespeedKey: !!process.env.PAGESPEED_API_KEY, leadsDb: !!process.env.LEADS_DB_URL, realtime: !!(process.env.ABLY_API_KEY && process.env.ABLY_API_KEY.includes(':')), realtimePrefix: (process.env.STORE_PREFIX || 'dsa').replace(/[^\w-]/g, ''), slackDM: /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '') && !isCopy(), copy: isCopy(), editorHost: await savedEditorHost(), cmtChannel: commentsChannel(), notifyGroups: NOTIFY_GROUPS });
       const u = await currentUser(req);
       // The browser is told what this person may do, so it can leave out what they cannot reach.
       // It is only ever a convenience: every endpoint checks the same thing again for itself.

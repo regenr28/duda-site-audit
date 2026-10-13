@@ -735,6 +735,14 @@
     if ($('#btnMenu')) $('#btnMenu').classList.toggle('here', ['activity', 'suggestions', 'about', 'help', 'ai'].includes(r.name));
     paintNav();
   }
+  /** On the backup copy: a thin bar that says so, everywhere, so nobody mistakes it for the main app. */
+  function copyBar() {
+    if (!state.config || !state.config.copy || $('#copyBar')) return;
+    const b = document.createElement('div'); b.id = 'copyBar'; b.className = 'copy-bar';
+    b.innerHTML = '<b>Backup copy</b> · same data as the main app · Slack, email and the automatic checks are off here';
+    document.body.prepend(b); document.body.classList.add('is-copy');
+    if (!/^\[Copy\]/.test(document.title)) document.title = '[Copy] ' + document.title;
+  }
   function renderBell() {
     const c = $('#bellCount'); if (!c) return;
     c.hidden = !state.notifs.unread; c.textContent = state.notifs.unread > 9 ? '9+' : state.notifs.unread;
@@ -1875,6 +1883,7 @@
    * app costs nothing extra: the state rides on the heartbeat that was already running.
    */
   function onQueueState(lq) {
+    if (state.config && state.config.copy) return;   // the copy leaves catching-up to the main app
     live.q2 = Object.assign({}, live.q2 || {}, lq);
     if (route().name === 'live') renderLive();
     if (!(lq.pending > 0 || lq.tidyDone === false) || !can('leads.view')) return;
@@ -2122,6 +2131,7 @@
   // lock means only one browser reads at once. A quiet day (nothing republished) costs nothing.
   const wq = { pending: 0, running: false, again: false, stat: null };
   function onWatchState(n) {
+    if (state.config && state.config.copy) return;
     wq.pending = n;
     if (!(n > 0) || !can('live.view')) return;
     if (wq.running) wq.again = true; else watchDrain();
@@ -6967,7 +6977,7 @@
   function renderLive() {
     const d = live.data;
     if (!d && !live.loading && !live.error) { loadLive(false); }
-    else if (d && !live.bgStarted) { live.bgStarted = true; fillNames().then(() => checkDomains(false)); }
+    else if (d && !live.bgStarted) { live.bgStarted = true; fillNames().then(() => { if (!(state.config && state.config.copy)) checkDomains(false); }); }
     // Every website's enquiry count arrives in one small request, not one per row.
     if (d && live.q2 && live.q2.pending > 0) loadQueueIds();
     if (d && !live.leadsLoaded) { live.leadsLoaded = true; loadLeadSums(d.sites.map((x) => x.id)).then(() => { if (route().name === 'live') renderLive(); }); }
@@ -10748,7 +10758,7 @@
   (async () => {
     $('#view').innerHTML = '<div class="empty">Loading…</div>';
     try { state.viewRole = JSON.parse(sessionStorage.getItem('dsa-viewas') || 'null'); } catch (e) { state.viewRole = null; }
-    try { state.config = await api('/api/auth?op=config'); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; state.perms = r.perms || []; state.myRole = r.role || null; state.previewOf = r.preview || null; state.accessVer = r.accessVer || ''; }
+    try { state.config = await api('/api/auth?op=config'); copyBar(); const r = await api('/api/auth?op=me'); state.me = r.user; state.rtChannel = r.rtChannel || ''; state.superAdmin = !!r.superAdmin; state.perms = r.perms || []; state.myRole = r.role || null; state.previewOf = r.preview || null; state.accessVer = r.accessVer || ''; }
     catch (e) { $('#view').innerHTML = `<div class="empty">Could not start the app: ${esc(e.message)}</div>`; return; }
     if (!state.me) return renderAuth();
     if (state.me.mustChange) { state.auth.mode = 'mustchange'; return renderAuth(); }

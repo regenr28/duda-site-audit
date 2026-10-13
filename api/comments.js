@@ -11,7 +11,7 @@
 //
 // Replying and resolving still happen in the Duda editor — there is no API to write a comment.
 // When somebody resolves one there, Duda tells us and it turns green here.
-import { redis, P, requireUser, readBody, jparse, now, listUsers, notifyUser, fetchWithTimeout, unescapeHtml, savedEditorHost, slackMembers, slackRoster, slackBotEnabled, globalLog, denyUnless } from './_lib.js';
+import { redis, P, requireUser, readBody, jparse, now, listUsers, notifyUser, fetchWithTimeout, unescapeHtml, savedEditorHost, slackMembers, slackRoster, slackBotEnabled, globalLog, denyUnless, isCopy } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const WAIT_HOURS = Number(process.env.COMMENT_WAIT_HOURS || 24);
@@ -331,7 +331,7 @@ export default async function handler(req, res) {
           if (cmds.length) await redis(...cmds);
         }
 
-        await alertStale(rows, isClient, nameOf);
+        if (!isCopy()) await alertStale(rows, isClient, nameOf);   // the main app sends these
 
         const per = {};
         const ZERO = { total: 0, open: 0, openReal: 0, notes: 0, unread: 0, newClient: 0, newTeam: 0, waiting: 0, last: '', oldest: '' };

@@ -8,7 +8,7 @@
 // Nothing here is scheduled. An open browser asks whether there is work and, if there is and nobody
 // else has the lock, does a few websites' worth. That is what "automatic" means in this app: the
 // work happens while people are using it and stops dead when they are not.
-import { requireUser, readBody, denyUnless, can, globalLog, now, jparse, P, redis } from './_lib.js';
+import { requireUser, readBody, denyUnless, can, globalLog, now, jparse, P, redis, isCopy } from './_lib.js';
 import { queueState, claim, settle, unlock, enqueue, requeue, alertOwner, takeLock, CHUNK, MONTHS } from './_queue.js';
 import { pullMonth } from './leads.js';
 import { addLeads, tidySite, afterImport, TIDY_VERSION } from './_leads.js';
@@ -58,6 +58,8 @@ export default async function handler(req, res) {
     }
 
     if (b.op !== 'drain') return res.status(400).json({ error: 'Unknown op' });
+    // The copy of the app leaves the catching-up to the main one (one at a time, one place).
+    if (isCopy()) return res.status(200).json({ skipped: 'copy', done: [], pending: 0 });
 
     // Draining is open to anyone who may see enquiries: it is the app catching up with itself, not
     // somebody starting a job. Whether it runs at all is decided by the lock, not by who asked.
