@@ -17,8 +17,10 @@ const R_TOKEN = findEnv(['KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN']);
 // Supabase: the project URL and its SECRET key (sb_secret_… or the older service_role key). The
 // tables and the one function the app calls are created by supabase/setup.sql. When both are set,
 // Supabase is used, whatever else is connected.
-const SB_URL = String(findEnv(['SUPABASE_URL']) || '').replace(/\/+$/, '');
-const SB_KEY = findEnv(['SUPABASE_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) || '';
+// Pasted values often carry a stray space, quotes or a trailing /rest/v1; none of them belong.
+const clean = (v) => String(v || '').trim().replace(/^["']+|["']+$/g, '').trim();
+const SB_URL = clean(findEnv(['SUPABASE_URL'])).replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
+const SB_KEY = clean(findEnv(['SUPABASE_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY']));
 /** Which database this installation uses: 'supabase', 'upstash', or '' when none is connected. */
 export const dbKind = () => (SB_URL && SB_KEY ? 'supabase' : R_URL && R_TOKEN ? 'upstash' : '');
 export const hasRedis = () => !!dbKind();
@@ -84,7 +86,11 @@ async function sendSupabase(cmds) {
     if (r.status === 404 || /dsa_exec/.test(text) && /not find|does not exist/i.test(text)) {
       throw new Error('The Supabase database is not set up yet: run supabase/setup.sql in its SQL Editor.');
     }
-    if (r.status === 401 || r.status === 403) throw new Error(`Supabase refused the key (${r.status}). SUPABASE_SECRET_KEY must be the project's secret key, not the publishable one.`);
+    if (r.status === 401 || r.status === 403) {
+      // Supabase's own reason (it never contains the key) says which of the usual mistakes it is.
+      let why = text; try { const j = JSON.parse(text); why = [j.message, j.hint, j.code].filter(Boolean).join(' · ') || text; } catch (e) { /* plain text */ }
+      throw new Error(`Supabase refused the key (${r.status}: ${why.slice(0, 160)}). Check that SUPABASE_SECRET_KEY is this project's secret key (sb_secret_…, not the publishable one) and SUPABASE_URL is the same project's URL.`);
+    }
     throw new Error(`Supabase ${r.status}: ${text}`);
   }
   const out = await r.json();
