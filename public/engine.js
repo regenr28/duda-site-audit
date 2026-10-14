@@ -307,6 +307,38 @@
         'Grammar and unfinished items from earlier scans close themselves on the next rescan, as the app\u2019s mistake, unless they are confirmed again',
       ],
     },
+    {
+      v: 24,
+      date: '2026-10-14',
+      title: 'A widget\u2019s own hidden template is no longer reported as placeholder text',
+      fixes: ['PLACEHOLDER', 'TEXT_INCOMPLETE', 'TEXT_SPELLING', 'TEXT_GRAMMAR', 'REPEATED_WORD'],
+      fixedWhat: 'Duda\u2019s newer widgets are sent with a hidden blank template inside them (the accordion\u2019s "Title or Question" item, copied when somebody clicks Add Item). Duda\u2019s scripts replace it when the page loads, it is not in the editor, and no visitor or crawler that runs the page sees it, but scans read the page before its scripts run, so it was reported as placeholder text.',
+      items: [
+        'Wording checks (placeholder, spelling, grammar, unfinished text) leave out a Duda widget\u2019s own hidden template',
+        'Items raised from it close themselves on the next rescan, as the app\u2019s mistake',
+      ],
+    },
+    {
+      v: 25,
+      date: '2026-10-14',
+      title: 'Hidden content that Google and SEO tools still read',
+      items: [
+        'Web designer credits ("Website by …", "Designed by …") naming anyone other than our own agencies, and above all ones hidden from visitors, which is critical: Google and SEO tools such as Ahrefs and Semrush still read hidden text',
+        'Links to other websites hidden from visitors (display: none, visibility: hidden, the hidden attribute): search engines and SEO tools still follow them',
+        'A page whose H1 heading exists but is hidden on a device is now said plainly ("the H1 is hidden on Desktop") instead of "no H1"',
+        'Text hidden in the page\u2019s styles is still checked and labelled "Hidden on the page", so nothing hidden escapes the audit; only a widget\u2019s own blank template, which Duda\u2019s scripts replace and which is not in the editor, is left out',
+      ],
+    },
+    {
+      v: 26,
+      date: '2026-10-14',
+      title: 'Spelling, punctuation and spacing in titles, descriptions and alt text',
+      items: [
+        'Alt text is proofread too (spelling, punctuation), along with the SEO title and meta description, and each item says which one it is in',
+        'Punctuation mistakes: sentences that run together, doubled marks ("today!!"), a stray mark ("car ."), a missing closing bracket or quote',
+        'Spacing slips in the SEO title, meta description and alt text: two spaces in a row, a space before a comma, no space after one ("Schaumburg,IL")',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1320,6 +1352,14 @@
    * far better signal than anything about the picture itself.
    */
   const AGENCY_BADGE_ID = /^(footer-logo|agency-logo|credit-logo|built-by-logo|designer-logo)$/i;
+  /** Our own agencies: their credit on a client website is expected, hidden or not. */
+  const AGENCY_RE = /detailers\s*road\s*map|8\s*bit\s*creative|eight\s*bit\s*creative/i;
+  /** "Website by …", "Designed by …": a web designer's credit. */
+  const CREDIT_RE = /\b(?:web\s*site|site|web)?\s*(?:design(?:ed)?|develop(?:ed|ment)|built|created|made|managed|maintained|hosted|optimi[sz]ed|seo)\s+by\b|\bwebsite\s+by\b|\bweb\s+design\s+by\b|\bpowered\s+by\b/i;
+  /** Widgets and services that sign their own output ("Powered by Google"): not a designer's credit. */
+  const SERVICE_CREDIT = /powered\s+by\s+(google|yelp|facebook|duda|stripe|square|paypal|shopify|elfsight|trustindex|birdeye|podium|urable|weglot|userway|accessibe|mapbox|openstreetmap|tidio|wix|wordpress|calendly|squareup|housecall|jobber|tekmetric|shopmonkey)/i;
+  /** Hidden on purpose, rather than switched to another device's version of the page. */
+  const SNEAKY_HIDE = /^(display:none|visibility:hidden|hidden attribute)$/;
   function isAgencyBadge(el) {
     for (let x = el, n = 0; x && n < 3; x = x.parentElement, n++) {
       const id = (x.getAttribute && x.getAttribute('id')) || '';
@@ -1485,6 +1525,21 @@
     const expectedEmails = (truth.emails || []).join(', ') || '(no email in Business Info)';
 
     // --- Meta ---
+    // Spacing and punctuation slips in the words Google shows (SEO title, meta description) and reads
+    // (alt text), checked on the raw text: "Schaumburg,IL", "Coating  |  Detailing", "today!!", "car .".
+    const spacingSlip = (raw) => {
+      const s = String(raw || '').replace(/\u00a0/g, ' ').trim();
+      if (!s) return '';
+      if (/\S {2,}\S/.test(s)) return 'two spaces in a row';
+      if (/\w\s+[,.;:!?](\s|$)/.test(s)) return 'a space before a comma or full stop';
+      if (/[a-z][,;:!?][A-Za-z]/.test(s) || /[a-z]{2}\.[A-Z][a-z]/.test(s)) return 'no space after a comma or full stop';
+      if (/([!?,;:])\1/.test(s) || /[^.]\.\.(?!\.)/.test(s)) return 'doubled punctuation';
+      return '';
+    };
+    const slipItem = (el, raw, where, category) => {
+      const why = spacingSlip(raw); if (!why) return;
+      add(el, { code: 'TEXT_SPACING', severity: 'warning', category, message: `Spacing or punctuation slip in the ${where}: ${why}`, found: cut(String(raw).replace(/\s+$/, '').replace(/^\s+/, ''), 200) });
+    };
     const titleEl = doc.querySelector('head > title') || doc.querySelector('title');
     const title = clean(titleEl && titleEl.textContent);
     const descEl = doc.querySelector('meta[name="description"]');
@@ -1495,6 +1550,8 @@
       if (title.length < 15) add(titleEl, { code: 'META_TITLE_SHORT', severity: 'info', category: 'Meta / SEO', message: 'SEO title is very short', found: title });
       if (ctx.path === '/' && truth.businessName && !matchesBusiness(title, truth)) add(titleEl, { code: 'META_TITLE_NO_NAME', severity: 'info', category: 'Meta / SEO', message: "Home page SEO title doesn't mention the business name", found: title, expected: truth.businessName });
     }
+    if (title) slipItem(titleEl, titleEl.textContent, 'SEO title', 'Meta / SEO');
+    if (desc) slipItem(descEl, descEl.getAttribute('content'), 'meta description', 'Meta / SEO');
     if (!desc) add(descEl || titleEl, { code: 'META_DESC_MISSING', severity: 'warning', category: 'Meta / SEO', message: 'Page has no meta description' });
     else if (desc.length > 165) add(descEl, { code: 'META_DESC_LONG', severity: 'info', category: 'Meta / SEO', message: `Meta description is ${desc.length} chars (Google shows ~155)`, found: cut(desc, 200) });
     else if (desc.length < 50) add(descEl, { code: 'META_DESC_SHORT', severity: 'info', category: 'Meta / SEO', message: 'Meta description is very short', found: desc });
@@ -1684,8 +1741,24 @@
         prose.push({ el, text: t.slice(0, 3000) });
       });
     }
+    // A web designer's credit ("Website by …"), above all one hidden from visitors: Google and SEO
+    // tools (Ahrefs, Semrush) read hidden text and follow hidden links, so it is somebody's free
+    // advertising on the client's website. Our own agencies' credits are expected and left alone.
+    const credited = new Set();
+    const creditCheck = (el, t) => {
+      if (!t || t.length > 160 || !CREDIT_RE.test(t) || SERVICE_CREDIT.test(t) || AGENCY_RE.test(t)) return;
+      if (truth.businessName && matchesBusiness(t.replace(CREDIT_RE, ' '), truth)) return;
+      const box = el.closest('a, p, div, span, li, footer') || el;
+      if (credited.has(box)) return; credited.add(box);
+      const why = hiddenReason(el, device);
+      const sneaky = why && SNEAKY_HIDE.test(why);
+      add(el, sneaky
+        ? { code: 'DESIGNER_CREDIT', severity: 'critical', category: 'Business name', hiddenCredit: true, message: 'Hidden credit to a web designer: visitors don\'t see it, but Google and SEO tools (Ahrefs, Semrush) read it', found: cut(t, 160) }
+        : { code: 'DESIGNER_CREDIT', severity: 'warning', category: 'Business name', message: 'Credit to another web designer or company on the client\'s website', found: cut(t, 160) });
+    };
     perEl.forEach((text, el) => {
       const t = clean(text);
+      creditCheck(el, t);
       if (t.length >= 3) textIndex.push({ el, text: t });
       if (el.closest && el.closest('a[href^="tel:"], a[href^="mailto:"]')) {
         // handled in link checks, but still scan for foreign emails/phones inside other text
@@ -1875,6 +1948,15 @@
       const net = socialNetOf(u.href);
       if (net) { checkSocial(a, u.href, 'Link'); return; }
       if (u.protocol === 'http:') add(a, { code: 'LINK_HTTP', severity: 'info', category: 'Links', message: 'External link uses insecure http://', found: href });
+      // A link to another website that visitors can't see (hidden on purpose, not just swapped for
+      // another device's version): search engines and SEO tools still follow it.
+      {
+        const why = hiddenReason(a, device);
+        if (why && SNEAKY_HIDE.test(why) && !AGENCY_RE.test(u.hostname + ' ' + text) && !isAgencyBadge(a)) {
+          add(a, { code: 'HIDDEN_LINK', severity: 'warning', category: 'Links', message: 'Hidden link to another website: visitors don\'t see it, but Google and SEO tools follow it', found: u.href + (text ? ` ("${cut(text, 60)}")` : '') });
+        }
+        if (text) creditCheck(a, text);
+      }
       if (!external.has(u.href)) external.set(u.href, { el: a });
       if (!text && !a.getAttribute('aria-label') && !a.querySelector('img[alt]:not([alt=""])') && !isAgencyBadge(a)) add(a, { code: 'LINK_NO_TEXT', severity: 'info', category: 'Accessibility', message: 'Link has no readable text or aria-label', found: href });
     });
@@ -1960,6 +2042,7 @@
           if (meaningful.length && !descriptive) add(img, { code: 'ALT_LOGO_NAME', severity: 'critical', category: 'Business name', message: 'Logo alt text names a different business', found: a, expected: truth.businessName, foreignName: a });
           else add(img, { code: 'ALT_LOGO_GENERIC', severity: 'warning', category: 'Images / Alt', message: 'Logo alt text should include the business name', found: a, expected: truth.businessName + ' logo' });
         }
+        slipItem(img, img.getAttribute('alt'), 'alt text', 'Images / Alt');
         if (a.length > 150) add(img, { code: 'ALT_LONG', severity: 'info', category: 'Images / Alt', message: `Alt text is very long (${a.length} chars)`, found: cut(a, 80) });
         for (const [re, label] of PLACEHOLDERS) if (re.test(a)) add(img, { code: 'ALT_PLACEHOLDER', severity: 'critical', category: 'Images / Alt', message: `Alt text: ${label}`, found: a });
       }
@@ -1968,7 +2051,11 @@
     // --- Headings (only elements visible on this device) ---
     const heads = Array.from(doc.querySelectorAll('body h1, body h2, body h3, body h4, body h5, body h6')).filter((h) => !hiddenReason(h, device));
     const h1s = heads.filter((h) => h.tagName === 'H1');
-    if (!h1s.length) add(null, { code: 'H1_MISSING', severity: 'warning', category: 'Meta / SEO', message: `No visible H1 heading on ${DEVICE_LABEL[device]}` });
+    // An H1 that exists but is hidden is a different problem from no H1 at all: Google and SEO tools
+    // read it, visitors never see it.
+    const hiddenH1 = !h1s.length ? Array.from(doc.querySelectorAll('body h1')).find((h) => clean(h.textContent)) : null;
+    if (hiddenH1) add(hiddenH1, { code: 'H1_HIDDEN', severity: 'warning', category: 'Meta / SEO', message: `The page's H1 heading is hidden on ${DEVICE_LABEL[device]}: Google and SEO tools read it, visitors don't see it`, found: cut(hiddenH1.textContent, 120) });
+    else if (!h1s.length) add(null, { code: 'H1_MISSING', severity: 'warning', category: 'Meta / SEO', message: `No visible H1 heading on ${DEVICE_LABEL[device]}` });
     if (h1s.length > 1) add(h1s[1], { code: 'H1_MULTIPLE', severity: 'info', category: 'Meta / SEO', message: `${h1s.length} H1 headings on this page (${DEVICE_LABEL[device]})`, found: h1s.map((h) => cut(h.textContent, 40)).join(' | ') });
 
     // --- Maps & iframes ---
@@ -2846,6 +2933,7 @@
     const RULES = {
       spelling: ['TEXT_SPELLING', 'warning', 'Content', 'Spelling mistake'],
       grammar: ['TEXT_GRAMMAR', 'warning', 'Content', 'Grammar mistake'],
+      punctuation: ['TEXT_PUNCTUATION', 'warning', 'Content', 'Punctuation mistake'],
       incomplete: ['TEXT_INCOMPLETE', 'warning', 'Content', 'Unfinished or placeholder text'],
     };
     issues.forEach((v) => {
@@ -2855,7 +2943,11 @@
       // The words have to really be there: an answer about text the block does not contain is dropped.
       if (q && blk.text.toLowerCase().indexOf(q.toLowerCase()) < 0) return;
       if (q && v.suggestion && q.toLowerCase() === String(v.suggestion).trim().toLowerCase()) return;
-      const [code, severity, category, message] = RULES[v.type];
+      const [code, severity, category0, message0] = RULES[v.type];
+      // Alt text and the SEO title / description say where the slip is, so it is fixed in the right place.
+      const where = blk.location === 'Image alt text' ? ' in the alt text' : blk.selector === 'head > title' ? ' in the SEO title' : /meta\[name="description"\]/.test(blk.selector || '') ? ' in the meta description' : '';
+      const category = blk.location === 'Image alt text' ? 'Images / Alt' : where ? 'Meta / SEO' : category0;
+      const message = message0 + where;
       // Placeholder text the rules already caught ("Lorem ipsum") is one item, not two.
       if (v.type === 'incomplete' && findings.some((f) => f.code === 'PLACEHOLDER' && f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)))) return;
       const pages = blk.pages.slice().sort();
@@ -2919,9 +3011,18 @@
    */
   const POLISH_CODES = new Set(['FONT_OFF_SYSTEM', 'FONT_OFF_SYSTEM_MORE', 'FONT_NOT_LOADED', 'FONT_SOURCE_ODD', 'IMAGE_DUPLICATE']);
   const isPolish = (f) => !!f && POLISH_CODES.has(f.code);
+  /**
+   * Lengths: an SEO title, meta description or alt text that is longer or shorter than ideal. Worth
+   * tidying, never what is wrong with the website, so they have their own tab too. What the words SAY
+   * (spelling, a wrong name or phone, a missing title) stays with the audit items.
+   */
+  const LENGTH_CODES = new Set(['META_TITLE_LONG', 'META_TITLE_SHORT', 'META_DESC_LONG', 'META_DESC_SHORT', 'ALT_LONG']);
+  const isLength = (f) => !!f && LENGTH_CODES.has(f.code);
+  /** Which list an audit item belongs to: 'must' (audit items), 'polish' (fonts, duplicate photos) or 'length'. */
+  const groupOf = (f) => (isPolish(f) ? 'polish' : isLength(f) ? 'length' : 'must');
 
   global.DudaAudit = {
-    POLISH_CODES, isPolish,
+    POLISH_CODES, isPolish, LENGTH_CODES, isLength, groupOf,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
     matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,

@@ -2707,6 +2707,7 @@
     // Open must-fix items by severity (the same rule as the Audit items tab's default view).
     const cnt = {}; if (s) grpFindings(s, 'must').forEach((f) => { if (f.status === 'open' || f.status === 'clarification') cnt[f.severity] = (cnt[f.severity] || 0) + 1; });
     const polishOpen = s ? grpFindings(s, 'polish').filter((f) => f.status === 'open' || f.status === 'clarification').length : 0;
+    const lengthOpen = s ? grpFindings(s, 'length').filter((f) => f.status === 'open' || f.status === 'clarification').length : 0;
     const x = ((liveDR.data && liveDR.data.sites) || []).find((y) => sameId(y.id, siteId))
       || ((liveDR.un && liveDR.un.sites) || []).find((y) => sameId(y.id, siteId)) || null;
     const d = x && x.dom;
@@ -2783,7 +2784,7 @@
           <div class="pf-card pf-card-wide">
             <div class="pf-card-h">Audit ${s ? `<a href="#/site/${esc(s.id)}">open ↗</a>` : ''}</div>
             ${s ? `<div class="pf-counts">${sev('critical', 'critical')}${sev('outdated', 'outdated')}${sev('warning', 'warning')}${sev('info', 'info')}</div>
-              <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}${sc.finishedAt ? ` · last scan ${esc(fmtWhen(Date.parse(sc.finishedAt)))}` : ' · never scanned'}${polishOpen ? ` · <a href="#/site/${esc(s.id)}/polish">🎨 ${polishOpen} design polish</a>` : ''}</div>`
+              <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}${sc.finishedAt ? ` · last scan ${esc(fmtWhen(Date.parse(sc.finishedAt)))}` : ' · never scanned'}${polishOpen ? ` · <a href="#/site/${esc(s.id)}/polish">🎨 ${polishOpen} design polish</a>` : ''}${lengthOpen ? ` · <a href="#/site/${esc(s.id)}/length">📏 ${lengthOpen} length</a>` : ''}</div>`
               : `<div class="pf-big faint">—</div><div class="small faint">Not audited yet.</div>`}
           </div>
           ${s ? `<div class="pf-card">
@@ -5477,6 +5478,7 @@
     { icon: '⚠', label: 'Live websites with domain problems', words: 'domain problems broken domains', filter: true, act: () => { live.tab = 'published'; live.q = ''; live.dom = 'problem'; live.audit = ''; live.page = 0; location.hash = '#/live'; }, perm: 'live.view', help: 'live' },
     { icon: '✅', label: 'Audits with every must-fix item closed', words: 'must fix done finished complete critical fixed only fonts photos polish left boss', filter: true, act: () => { state.filters.must = 'done'; location.hash = '#/'; render(); }, help: 'polish' },
     { icon: '🔴', label: 'Audits with critical items still open', words: 'critical open still urgent not fixed meeting check', filter: true, act: () => { state.filters.must = 'crit'; location.hash = '#/'; render(); }, help: 'polish' },
+    { icon: '📏', label: 'Lengths: SEO titles, descriptions and alt text too long or short', words: 'length lengths long short title description alt text meta characters chars tidy later', filter: true, act: () => { location.hash = '#/'; }, help: 'polish' },
     { icon: '🎨', label: 'Design polish: inconsistent fonts and duplicate photos', words: 'design polish fonts typefaces duplicate photos pictures repeated images later not urgent', filter: true, act: () => { location.hash = '#/'; }, help: 'polish' },
     { icon: '🟢', label: 'Who is online now', words: 'online now active who is working', filter: true, act: () => { memFilter.view = 'online'; location.hash = '#/settings/team'; }, help: 'team' },
     { icon: '✏️', label: 'Members who need a full name', words: 'needs full name nickname one word name', filter: true, act: () => { memFilter.view = 'name'; location.hash = '#/settings/team'; }, perm: 'members.manage', help: 'admin-members' },
@@ -6174,6 +6176,9 @@
       const aiAlt = await aiAltCheck(res, id, log);
       const aiText = await aiTextCheck(res, id, log, aiAlt && aiAlt.paused);
       const aiMore = await aiDeepCheck(res, id, log, (aiText && aiText.paused) || (aiAlt && aiAlt.paused));
+      // Text that is in the page code but hidden by the page's own styles: kept, as information.
+      state.scanning[id] = Object.assign({}, state.scanning[id], { message: 'Checking which text visitors actually see…' }); renderProgress(id);
+      await markHiddenText(res, async (path, device) => sApi('/api/fetch?' + new URLSearchParams({ host, site: site.siteId, path, device })), log, host).catch((e) => log.push('Visibility check: ' + e.message));
       let aiSummary = null;
       if (aiAlt || aiText) {
         const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || [], (aiMore && aiMore.used) || []))];
@@ -6336,7 +6341,9 @@
     // Proofreading: every block of text, real pages first (the blocks come sorted that way). The
     // only limit is a very large one (a website with hundreds of blog posts), said in the scan notes.
     // Whole paragraphs (links included) when the engine gives them: a piece cut at a link reads as unfinished.
-    const proofTexts = res.prose && res.prose.length ? res.prose : (res.texts || []);
+    // …and every alt text, which Google reads as the words for the picture.
+    const proofTexts = (res.prose && res.prose.length ? res.prose : (res.texts || [])).concat((res.alts || []).filter((x) => x.alt && x.alt.length >= 12 && !x.brandLogo)
+      .map((x) => ({ text: x.alt, selector: x.selector, location: 'Image alt text', pages: x.pages || [], devices: x.devices || [], visibleOn: x.visibleOn || [], hiddenOn: x.hiddenOn || [] })));
     const proofItems = []; let chars = 0; let tooShort = 0;
     proofTexts.forEach((b, i) => {
       if (b.text.length < 12) { tooShort++; return; }
@@ -6387,6 +6394,99 @@
     }
     out.used = [...used];
     return out;
+  }
+  /**
+   * Is a piece of text really on show? A scan reads the page as the server first sends it — what
+   * Google, Ahrefs and Semrush read too — so hidden text is part of the audit on purpose. Each page
+   * with a flagged piece of text is drawn once, without its scripts, in an invisible frame at the
+   * device's width, and every flagged element is asked whether the page's own styles hide it.
+   *  - Hidden text stays an item and is labelled: visitors don't see it, search engines and SEO tools
+   *    do. A hidden web-designer credit becomes critical.
+   *  - One exception: wording checks on a hidden element inside a Duda widget's server-rendered
+   *    wrapper (ssrWrap-…). That is the widget's own blank template (the accordion's "Title or
+   *    Question"), which Duda's scripts replace when the page loads and which is not in the editor.
+   */
+  const WORDING = /^(PLACEHOLDER|REPEATED_WORD|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_INCOMPLETE)$/;
+  const TEXTISH = /^(PLACEHOLDER|REPEATED_WORD|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_INCOMPLETE|AI_TEXT_|TEXT_OTHER_BUSINESS|NAME_SPELLING|DESIGNER_CREDIT)/;
+  const inWidgetTemplate = (f) => /ssrWrap-/.test(f.selector || '');
+  function hiddenRuntime(id, sels) {
+    function why(el) {
+      for (var e = el; e && e !== document.documentElement; e = e.parentElement) {
+        var c = getComputedStyle(e);
+        if (e.hasAttribute('hidden') || c.display === 'none') return (e === el ? 'itself' : 'its container') + ': display none';
+        if (c.visibility === 'hidden') return (e === el ? 'itself' : 'its container') + ': visibility hidden';
+      }
+      return '';
+    }
+    function run() {
+      var out = sels.map(function (s) { var el = null; try { el = document.querySelector(s); } catch (x) { /* bad selector */ } return el ? why(el) : null; });
+      parent.postMessage({ dsaVis: id, out: out }, '*');
+    }
+    if (document.readyState === 'complete') run(); else { window.addEventListener('load', run); setTimeout(run, 3500); }
+  }
+  function visibilityOf(html, device, sels, host) {
+    return new Promise((done) => {
+      const id = 'v' + Math.random().toString(36).slice(2);
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      doc.querySelectorAll('script:not([type="application/ld+json"])').forEach((x) => x.remove());
+      if (host) { const base = doc.createElement('base'); base.href = `https://${host}/`; doc.head.prepend(base); }
+      const sc = doc.createElement('script'); sc.textContent = `(${hiddenRuntime.toString()})(${JSON.stringify(id)}, ${JSON.stringify(sels)});`; doc.body.appendChild(sc);
+      const frame = document.createElement('iframe');
+      frame.setAttribute('sandbox', 'allow-scripts'); frame.setAttribute('aria-hidden', 'true'); frame.tabIndex = -1;
+      frame.style.cssText = `position:fixed;left:-20000px;top:0;width:${VIEW_W[device] || 1280}px;height:900px;border:0;visibility:hidden`;
+      let over = false;
+      const end = (out) => { if (over) return; over = true; window.removeEventListener('message', on); frame.remove(); done(out); };
+      const on = (ev) => { if (ev.data && ev.data.dsaVis === id) end(ev.data.out || []); };
+      window.addEventListener('message', on);
+      setTimeout(() => end(null), 8000);
+      frame.srcdoc = '<!doctype html>' + doc.documentElement.outerHTML;
+      document.body.appendChild(frame);
+    });
+  }
+  async function markHiddenText(res, fetchPage, log, host) {
+    const items = res.findings.filter((f) => TEXTISH.test(f.code) && f.selector && f.location !== 'Head / Meta' && (f.visibleOn || []).length);
+    if (!items.length) return 0;
+    const byPage = new Map();
+    items.forEach((f) => { const pg = (f.pages && f.pages[0]) || f.path || '/'; (byPage.get(pg) || byPage.set(pg, []).get(pg)).push(f); });
+    let marked = 0, dropped = 0, loads = 0;
+    for (const [pg, list] of byPage) {
+      if (loads >= 24) break;
+      const sels = [...new Set(list.map((f) => f.selector))];
+      const verdict = new Map(sels.map((s) => [s, []]));
+      for (const device of ['desktop', 'mobile']) {
+        if (!list.some((f) => (f.visibleOn || []).includes(device))) continue;
+        loads++;
+        let html = '';
+        try { const r = await fetchPage(pg, device); html = (r && r.html) || ''; } catch (e) { html = ''; }
+        if (!html) continue;
+        const out = await visibilityOf(html, device, sels, host);
+        if (!out) continue;
+        sels.forEach((s, k) => { if (out[k] !== null && out[k] !== undefined) verdict.get(s).push({ device, why: out[k] }); });
+      }
+      list.forEach((f) => {
+        const v = verdict.get(f.selector) || [];
+        const seen = v.filter((x) => (f.visibleOn || []).includes(x.device));
+        const hid = seen.filter((x) => x.why);
+        if (!hid.length) return;
+        // Hidden on some devices: it still shows on the others, and the item says where.
+        f.hiddenOn = (f.hiddenOn || []).concat(hid.map((x) => `${A.DEVICE_LABEL[x.device]} (${x.why})`));
+        f.visibleOn = (f.visibleOn || []).filter((d) => !hid.some((x) => x.device === d));
+        if (f.visibleOn.length && !f.visibleOn.every((d) => d === 'tablet')) return;
+        // Hidden everywhere it was checked (tablet is drawn like desktop).
+        f.visibleOn = [];
+        if (WORDING.test(f.code) && inWidgetTemplate(f)) { f.dropHidden = true; dropped++; return; }
+        f.hiddenLive = hid[0].why; marked++;
+        if (f.code === 'DESIGNER_CREDIT' && f.severity !== 'critical') {
+          f.was = f.severity; f.severity = 'critical'; f.hiddenCredit = true;
+        }
+      });
+    }
+    if (dropped) {
+      res.findings = res.findings.filter((f) => !f.dropHidden);
+      log.push(`${dropped} piece${dropped === 1 ? '' : 's'} of text in a Duda widget's own hidden template (like the accordion's blank "Title or Question", which Duda's scripts replace and which is not in the editor) ${dropped === 1 ? 'was' : 'were'} left out.`);
+    }
+    if (marked) log.push(`${marked} item${marked === 1 ? ' is' : 's are'} about text hidden by the page's own styles: visitors don't see it, but Google and SEO tools read it. Labelled "Hidden on the page".`);
+    return marked;
   }
   // ---------- AI models: status, countdowns, waiting ----------
   const srvNow = () => Date.now() + (state.aiSkew || 0);
@@ -7728,7 +7828,7 @@
   function route() {
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
-    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
+    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : parts[2] === 'length' ? 'length' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
       sub: parts[2] === 'profile' ? (parts[3] || '') : parts[2] === 'leads' ? 'submissions' : '' };
     if (parts[0] === 'home') return { name: 'home' };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
@@ -8000,7 +8100,8 @@
     const done = mustState(s) === 'done';
     return `<div class="small ${done ? 'must-done' : ''}" title="Audit items that affect the business and SEO: ${c.closed || 0} of ${c.total || 0} closed">${done ? '✓ ' : ''}${c.closed || 0}/${c.total || 0}${done ? ' <b>Must-fix done</b>' : ''}</div>
       <div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div>
-      ${c.pt ? `<a class="small faint polish-line" href="#/site/${esc(s.id)}/polish" data-stop title="Design polish (fonts, duplicate photos): ${c.pc || 0} of ${c.pt} closed">🎨 Polish ${c.pc || 0}/${c.pt}</a>` : ''}`;
+      ${c.pt ? `<a class="small faint polish-line" href="#/site/${esc(s.id)}/polish" data-stop title="Design polish (fonts, duplicate photos): ${c.pc || 0} of ${c.pt} closed">🎨 Polish ${c.pc || 0}/${c.pt}</a>` : ''}
+      ${c.lt ? `<a class="small faint polish-line" href="#/site/${esc(s.id)}/length" data-stop title="Lengths (SEO titles, meta descriptions, alt text): ${c.lc || 0} of ${c.lt} closed">📏 Lengths ${c.lc || 0}/${c.lt}</a>` : ''}`;
   }
   function issueChips(c, done, siteId) {
     c = c || {};
@@ -8018,8 +8119,9 @@
     if (c.comments) chips.push(siteId
       ? `<button class="badge subtle badge-btn" data-gocmt="${esc(siteId)}" title="Open the discussion on this website — ${c.comments} comment${c.comments === 1 ? '' : 's'}, including any left on individual audit items">💬 ${c.comments}</button>`
       : `<span class="badge subtle">💬 ${c.comments}</span>`);
-    if (!chips.length && done) chips.push(c.po ? '<span class="badge scan-complete" title="Only design polish is left">✓ Must-fix done</span>' : '<span class="badge scan-complete">No open issues</span>');
+    if (!chips.length && done) chips.push(c.po || c.lo ? '<span class="badge scan-complete" title="Only design polish and lengths are left">✓ Must-fix done</span>' : '<span class="badge scan-complete">No open issues</span>');
     if (c.po) chips.push(siteId ? `<a class="badge subtle badge-btn polish-chip" href="#/site/${esc(siteId)}/polish" data-stop title="Inconsistent fonts and duplicate photos, on their own tab: fix after the audit items">🎨 ${c.po} polish</a>` : `<span class="badge subtle polish-chip">🎨 ${c.po} polish</span>`);
+    if (c.lo) chips.push(siteId ? `<a class="badge subtle badge-btn polish-chip" href="#/site/${esc(siteId)}/length" data-stop title="SEO titles, meta descriptions and alt text longer or shorter than ideal, on their own tab: tidy after the audit items">📏 ${c.lo} length</a>` : `<span class="badge subtle polish-chip">📏 ${c.lo} length</span>`);
     return `<span class="chips">${chips.join('')}</span>`;
   }
   /**
@@ -8460,19 +8562,47 @@
   const statusSelect = (f, attr) => `<select class="pill fs-${f.status}" ${attr}="${esc(f.id)}">${FSTATUS.map((s) => `<option value="${s.v}" ${s.v === f.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select>`;
 
   /** `skip` leaves one filter out, so the severity chips can count what clicking them would give. */
+  /**
+   * A Google Maps link that names only an ID (?cid=… or a place ID) can't be read: Google does not let
+   * automated tools open Maps pages. Google's official Places data can answer it: the Online presence
+   * check finds THIS business's listing by its website, phone or address, and that listing's address
+   * carries its own cid and place ID. Same ID: confirmed. Different: the link opens another listing.
+   */
+  function gbpIdNote(s, f) {
+    if (!/^GMB_ID_(ONLY|MISMATCH)$/.test(f.code)) return '';
+    const P = (prof.pres || {})[s.siteId];
+    if (!P || P.loading) return '<div class="small faint gbp-note">Checking with Google…</div>';
+    const L = P.result && (P.result.listings || []).find((l) => l.platform === 'google' && l.found && l.source === 'places');
+    const want = String(f.found || '');
+    const cid = (/[?&]cid=(\d+)/.exec(want) || [])[1] || '';
+    const pid = (/(ChIJ[\w-]{10,})/.exec(want) || [])[1] || '';
+    if (!L) return `<div class="small faint gbp-note">${!P.result ? `Not checked against Google yet: run <a href="#/site/${esc(s.id)}/profile/presence">🌐 Online presence</a> on the profile${P.maps === false ? ' (exact once the Google Maps key is added)' : ''}.`
+      : P.maps === false ? 'Confirming it automatically needs the Google Maps key (System health → Connections and keys). Until then, open it and compare the name with Business Info.'
+      : 'Google has no listing that is clearly this business, so this ID can\'t be confirmed. Open it and compare the name with Business Info.'}</div>`;
+    const lcid = (/[?&]cid=(\d+)/.exec(L.url || '') || [])[1] || '';
+    const same = (cid && lcid && cid === lcid) || (pid && L.placeId && pid === L.placeId);
+    const known = (cid && lcid) || (pid && L.placeId);
+    if (same) return `<div class="small gbp-note gbp-ok">✓ <b>Google confirms</b> this is the listing for <b>${esc(L.name)}</b>${L.address ? ` · ${esc(L.address)}` : ''}. It can be closed as Done.</div>`;
+    if (known) return `<div class="small gbp-note gbp-bad">✗ <b>Not this business's listing.</b> Google's listing for this business is <b>${esc(L.name)}</b>${L.address ? ` (${esc(L.address)})` : ''}, <a href="${esc(L.url)}" target="_blank" rel="noopener">open ↗</a>, with a different ID. Replace the link with that one.</div>`;
+    return `<div class="small faint gbp-note">Google's listing for this business: <b>${esc(L.name)}</b> <a href="${esc(L.url)}" target="_blank" rel="noopener">open ↗</a>. Compare the two by hand.</div>`;
+  }
   /** The audit items on one tab: 'must' (what affects the business and SEO) or 'polish' (fonts, duplicate photos). */
   const isPolishItem = (f) => (A.isPolish ? A.isPolish(f) : /^(FONT_|IMAGE_DUPLICATE$)/.test((f && f.code) || ''));
-  const grpFindings = (s, g) => (s.findings || []).filter((f) => (g === 'polish') === isPolishItem(f));
+  const groupOfItem = (f) => (A.groupOf ? A.groupOf(f) : isPolishItem(f) ? 'polish' : 'must');
+  const grpFindings = (s, g) => (s.findings || []).filter((f) => groupOfItem(f) === g);
+  /** The tab each list lives on, and back. */
+  const TAB_OF = { must: 'findings', polish: 'polish', length: 'length' };
+  const GRP_OF = { findings: 'must', polish: 'polish', length: 'length' };
   /** Which audit tab a route shows: an item opened by number goes to the tab it belongs to. */
   function siteFindingsTab(r, s) {
-    if (r.tab === 'polish') return 'polish';
+    if (r.tab === 'polish' || r.tab === 'length') return r.tab;
     if (r.tab !== 'findings') return r.tab;
     const f = r.item && s ? (s.findings || []).find((x) => x.num === r.item) : null;
-    return f && isPolishItem(f) ? 'polish' : 'findings';
+    return f ? TAB_OF[groupOfItem(f)] : 'findings';
   }
   function filteredFindings(s, skip) {
     const ff = skip ? Object.assign({}, state.ff, { [skip]: skip === 'st' ? 'active' : skip === 'cmt' ? false : '' }) : state.ff;
-    return grpFindings(s, ff.grp === 'polish' ? 'polish' : 'must').filter((f) => {
+    return grpFindings(s, ff.grp || 'must').filter((f) => {
       if (ff.st === 'active' && !['open', 'clarification'].includes(f.status)) return false;
       if (ff.st !== 'active' && ff.st !== 'all' && f.status !== ff.st) return false;
       if (ff.sev && f.severity !== ff.sev) return false;
@@ -8497,8 +8627,8 @@
     // Must-fix and design polish are two tabs over one list. An item opened by its number lands on
     // whichever tab it belongs to, so its Previous / Next walk the same list it came from.
     const ftab = siteFindingsTab(r, s);
-    if (ftab === 'findings' || ftab === 'polish') state.ff.grp = ftab === 'polish' ? 'polish' : 'must';
-    const findings = grpFindings(s, ftab === 'polish' ? 'polish' : 'must');
+    if (GRP_OF[ftab]) state.ff.grp = GRP_OF[ftab];
+    const findings = grpFindings(s, GRP_OF[ftab] || 'must');
     const cnt = (st) => findings.filter((f) => f.status === st).length;
     const openOf = (g) => grpFindings(s, g).filter((f) => f.status === 'open' || f.status === 'clarification').length;
     const tabN = (g) => { const all = grpFindings(s, g).length; const o = openOf(g); return !all ? '<span class="tcount">0</span>' : o ? `<span class="tcount" title="${o} open of ${all}">${o}</span>` : `<span class="tcount tc-done" title="All ${all} closed">✓</span>`; };
@@ -8528,6 +8658,7 @@
         <a href="#/site/${esc(s.id)}/profile" class="${r.tab === 'profile' || r.tab === 'leads' ? 'on' : ''}">Profile${leadCount(s.siteId) ? ` <span class="tcount" title="form submissions">✉ ${leadCount(s.siteId)}</span>` : ''}</a>
         <a href="#/site/${esc(s.id)}" class="${ftab === 'findings' ? 'on' : ''}" title="Contact details, links, spelling, SEO: what affects the business">Audit items ${tabN('must')}</a>
         <a href="#/site/${esc(s.id)}/polish" class="${ftab === 'polish' ? 'on' : ''}" title="Inconsistent fonts and duplicate photos: fix after the audit items">🎨 Design polish ${tabN('polish')}</a>
+        <a href="#/site/${esc(s.id)}/length" class="${ftab === 'length' ? 'on' : ''}" title="SEO titles, meta descriptions and alt text that are longer or shorter than ideal: tidy after the audit items">📏 Lengths ${tabN('length')}</a>
         <a href="#/site/${esc(s.id)}/comments" class="${r.tab === 'comments' ? 'on' : ''}">Comments <span class="tcount">${generalComments}</span></a>
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
       </div>
@@ -8784,11 +8915,17 @@
     const d = Math.round(h / 24); if (d < 45) return d + (d === 1 ? ' day ago' : ' days ago');
     const mo = Math.round(d / 30); return mo < 12 ? mo + ' months ago' : Math.round(d / 365) + ' year(s) ago';
   }
-  function liveBtnHtml(s) {
+  /** The published website's address (no trailing slash), or '' when it is not published. */
+  function liveDomain(s) {
     const pd = (pubInfo[s.id] || {}).d;
     const lx = liveOf(s.siteId);
     const dom = (pd && pd.domain) || (lx && lx.domain) || '';
     if (!dom || (pd && /NOT_PUBLISHED|UNPUBLISHED/i.test(pd.publishStatus || ''))) return '';
+    return dom;
+  }
+  function liveBtnHtml(s) {
+    const dom = liveDomain(s);
+    if (!dom) return '';
     return `<a class="btn" href="https://${esc(dom)}/" target="_blank" rel="noopener" title="The published website visitors see">Live site ↗</a>`;
   }
   function refreshSiteHead(s) { const a = $('#sitePub'); if (a) a.innerHTML = sitePubHtml(s); const b = $('#liveBtn'); if (b) b.innerHTML = liveBtnHtml(s); }
@@ -9246,14 +9383,19 @@
   function renderFindingsTab(body, s, { cnt, sc, live, grp }) {
     const t = s.truth || {};
     const ff = state.ff;
-    const polish = grp === 'polish';
-    const findings = grpFindings(s, polish ? 'polish' : 'must');
-    const other = grpFindings(s, polish ? 'must' : 'polish');
+    // A Google Maps link that only names an ID is confirmed against Google's own listing (Online presence).
+    if (can('live.view') && (s.findings || []).some((f) => /^GMB_ID_(ONLY|MISMATCH)$/.test(f.code)) && !((prof.pres || {})[s.siteId])) {
+      loadPresence(s.siteId, () => { if (state.current && state.current.id === s.id && GRP_OF[state.renderedTab]) renderSite(); });
+    }
+    const polish = grp === 'polish' || grp === 'length';   // a "later" list: its own header, no scan panel
+    const lengths = grp === 'length';
+    const findings = grpFindings(s, grp || 'must');
+    const other = polish ? grpFindings(s, 'must') : grpFindings(s, 'polish').concat(grpFindings(s, 'length'));
     const otherOpen = other.filter((f) => f.status === 'open' || f.status === 'clarification').length;
     const mineOpen = findings.filter((f) => f.status === 'open' || f.status === 'clarification').length;
     // On the Design polish tab the useful reference is the website's fonts, not its Business Info.
     const refWas = state.refTab;
-    if (polish && !state.refTab) state.refTab = 'fonts';
+    if (polish && !lengths && !state.refTab) state.refTab = 'fonts';
     const cats = [...new Set(findings.map((f) => f.category))].sort();
     const locs = [...new Set(findings.map((f) => f.location))].sort();
     const shown = filteredFindings(s);
@@ -9280,7 +9422,12 @@
     // sits under the list. Otherwise switching tabs looked like nothing happened.
     const polishCount = (re) => findings.filter((f) => re.test(f.code) && (f.status === 'open' || f.status === 'clarification')).length;
     const nFont = polishCount(/^FONT_/), nDup = polishCount(/^IMAGE_DUPLICATE$/);
-    const polishHead = `<div class="polish-head">
+    const nLen = (re) => findings.filter((f) => re.test(f.code) && (f.status === 'open' || f.status === 'clarification')).length;
+    const lengthHead = `<div class="polish-head length-head">
+      <div class="polish-head-t">📏 Lengths <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
+      <div class="small">${findings.length ? `<b>${nLen(/^META_TITLE_/)}</b> SEO title${nLen(/^META_TITLE_/) === 1 ? '' : 's'}, <b>${nLen(/^META_DESC_/)}</b> meta description${nLen(/^META_DESC_/) === 1 ? '' : 's'} and <b>${nLen(/^ALT_LONG$/)}</b> alt text${nLen(/^ALT_LONG$/) === 1 ? '' : 's'} longer or shorter than ideal. ` : ''}Worth tidying, but the wording itself (spelling, punctuation, a wrong name or phone) is checked on the <a href="#/site/${esc(s.id)}">Audit items</a> tab${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}, which comes first.</div>
+    </div>`;
+    const polishHead = lengths ? lengthHead : `<div class="polish-head">
       <div class="polish-head-t">🎨 Design polish <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
       <div class="small">${findings.length ? `<b>${nFont}</b> inconsistent font item${nFont === 1 ? '' : 's'} and <b>${nDup}</b> duplicate photo${nDup === 1 ? '' : 's'} open. ` : ''}These don't change the business's details, links or what Google reads, so they come after the <a href="#/site/${esc(s.id)}">Audit items</a>${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}.</div>
     </div>`;
@@ -9342,8 +9489,8 @@
         <div ${state.refTab === 'history' ? '' : 'hidden'}>${biReference(s)}</div>
       </details>
       ${polish ? `<div class="note grp-note"><b>🎨 Design polish</b> — inconsistent fonts and duplicate photos. They don't change the business's details, links or what Google reads, so they come after the <a href="#/site/${esc(s.id)}">Audit items</a>${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}.</div>`
-        : findings.length && !mineOpen && sc.state === 'complete' ? `<div class="note good grp-note"><b>✓ Every audit item that affects the business is closed.</b>${otherOpen ? ` What's left is design polish: <a href="#/site/${esc(s.id)}/polish">${otherOpen} font and photo item${otherOpen === 1 ? '' : 's'}</a>, which can follow.` : ''}</div>`
-        : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on the <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a> tab (${otherOpen} open), so this list is what affects the business and SEO.</div>` : ''}
+        : findings.length && !mineOpen && sc.state === 'complete' ? `<div class="note good grp-note"><b>✓ Every audit item that affects the business is closed.</b>${otherOpen ? ` What's left can follow: <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a> and <a href="#/site/${esc(s.id)}/length">📏 Lengths</a> (${otherOpen} open).` : ''}</div>`
+        : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a>, and title, description and alt-text lengths on <a href="#/site/${esc(s.id)}/length">📏 Lengths</a> (${otherOpen} open), so this list is what affects the business and SEO.</div>` : ''}
 `;
     body.innerHTML = `
       ${topHtml}
@@ -9371,7 +9518,7 @@
           ${can('item.add') ? '<button class="btn sm" id="ffAdd" title="Write an audit item the scan cannot see — a layout or design problem">+ Add item</button>' : ''}
         </div>
         ${shown.length && activeFilters(ff).length ? `<div class="small muted filter-line">Showing <b>${shown.length}</b> of ${findings.length} audit item${findings.length === 1 ? '' : 's'} · filtered by <b>${esc(activeFilters(ff).join(', '))}</b> <button class="linkbtn" id="ffClear2">Clear filters</button></div>` : ''}
-        ${!findings.length ? `<div class="empty">${sc.state === 'complete' ? (polish ? 'No font or duplicate photo items.' : 'No issues found.') : live ? 'Scanning… results appear here when it finishes.' : 'Not scanned yet.'}</div>` : !shown.length ? `<div class="empty">
+        ${!findings.length ? `<div class="empty">${sc.state === 'complete' ? (lengths ? 'No length items.' : polish ? 'No font or duplicate photo items.' : 'No issues found.') : live ? 'Scanning… results appear here when it finishes.' : 'Not scanned yet.'}</div>` : !shown.length ? `<div class="empty">
           <div><b>No audit items match these filters.</b></div>
           <div class="small muted" style="margin:6px 0 10px">This website has ${findings.length} audit item${findings.length === 1 ? '' : 's'}${activeFilters(ff).length ? `, hidden by: <b>${esc(activeFilters(ff).join(', '))}</b>` : ''}.</div>
           <button class="btn sm primary" id="ffClear">Clear filters</button></div>` : `
@@ -9398,7 +9545,7 @@
               <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
                 <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
-              <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>
+              <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>${gbpIdNote(s, f)}${f.hiddenLive ? `<div><span class="badge subtle" title="Hidden by the page's own styles (${esc(f.hiddenLive)}): visitors don't see it, but it is in the page's code, which Google and SEO tools read">👁 Hidden on the page</span></div>` : ''}
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
                 ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
@@ -9406,7 +9553,7 @@
             </tr>`;
           }).join('')}</tbody></table></div>`}
       </div>
-      ${polish ? `      <details class="ref-details polish-ref" style="margin-top:16px">
+      ${polish && !lengths ? `      <details class="ref-details polish-ref" style="margin-top:16px">
         <summary class="small muted">Reference: the website\'s fonts and pictures</summary>
         <div class="ref-tabs"><span class="chips">
           <button class="chipbtn ${state.refTab === 'info' || !state.refTab ? 'active' : ''}" data-ref="info">Business Info</button>
@@ -9615,7 +9762,7 @@
     const b = $('#drawerBack'); if (b) b.remove();
     drawerComposer = null;
     document.body.classList.remove('drawer-open');
-    if (!silent && route().item) location.hash = `#/site/${route().id}${state.ff.grp === 'polish' ? '/polish' : ''}`;
+    if (!silent && route().item) location.hash = `#/site/${route().id}${state.ff.grp && state.ff.grp !== 'must' ? '/' + TAB_OF[state.ff.grp] : ''}`;
   }
   /**
    * What the team already knows about this value: a client who asked about it in the Duda editor,
@@ -9786,7 +9933,8 @@
           <button class="btn sm ghost" id="drLink" title="Copy link to this item">🔗</button><button class="btn sm ghost" id="drClose" title="Close (Esc)">✕</button></div>
       </div>
       <div class="dr-body">
-        <h2 class="dr-title">${esc(f.message)}</h2>
+        <h2 class="dr-title">${esc(f.message)}</h2>${gbpIdNote(s, f)}
+        ${f.hiddenLive ? `<div class="note" style="margin:6px 0 10px"><b>👁 Hidden on the page.</b> Visitors don't see this: the page's own styles hide it (${esc(f.hiddenLive)}). It is still in the page's code, which Google and SEO tools such as Ahrefs and Semrush read, so it counts. Find it in the editor (hidden blocks, the element's settings or custom code) and fix or remove it.</div>` : ''}
         ${f.gone ? `<div class="note ${f.gone.why === 'check-corrected' ? 'known-note' : 'good'}" style="margin:8px 0"><b>${f.gone.why === 'check-corrected' ? 'Closed: the check that raised this was changed' : '\u2713 Fixed \u2014 no longer on the website'}</b>
           <div class="small">${f.gone.why === 'check-corrected' ? 'The check that raised it was changed, so this item was closed. If it still needs fixing, the changed check raises it again, possibly as one new item instead of several.' : 'It was there on the previous scan and gone on this one, so it was closed as Done.'} ${esc(f.gone.byName || nameOf(f.gone.by))} rescanned ${esc(fmtWhen(Date.parse(f.gone.at)))}.</div></div>` : ''}
         ${!f.gone && f.auto && f.auto.why === 'still-there' ? `<div class="note unk" style="margin:8px 0"><b>\u26A0 Marked Done, but still on the website</b><div class="small">${esc(nameOf(f.auto.ref, 'Someone'))} marked this Done${f.auto.at ? ' on ' + esc(fmtWhen(Date.parse(f.auto.at))) : ''}. ${esc(nameOf(f.statusBy, 'The next rescan'))} rescanned${f.statusAt ? ' on ' + esc(fmtWhen(Date.parse(f.statusAt))) : ''} and it was still there, so it was reopened. If the scan is wrong about it, mark it <b>False alarm</b> instead.</div></div>` : ''}
@@ -9916,7 +10064,7 @@
     const d = ev.data; const box = $('#inForced');
     if (!d || !d.dsaInspector || !box) return;
     const parts = [];
-    if (d.forced && d.forced.length) parts.push(`👁 <b>Shown anyway.</b> On the live page it's hidden by ${d.forced.map((x) => `<code>${esc(x)}</code>`).join(', ')}.`);
+    if (d.forced && d.forced.length) parts.push(`👁 <b>Shown anyway. Visitors don't see this</b>: on the page it's hidden by ${d.forced.map((x) => `<code>${esc(x)}</code>`).join(', ')}. It is only in the page's code, and may not be in the editor at all (widgets keep hidden templates). If it can't be found in the editor, it is nothing to fix.`);
     if (d.size && (d.size.w < 2 || d.size.h < 2)) parts.push('⚠ The element has no visible size here (it may be empty, or sized by scripts that don\'t run in this snapshot). Use <b>Open live preview</b> to check.');
     box.innerHTML = parts.map((x) => `<div style="margin-top:4px">${x}</div>`).join('');
   });
@@ -9932,7 +10080,9 @@
         <div class="insp-controls">
           ${pages.length > 1 ? `<select id="inPage" class="sm-select">${pages.slice(0, 50).map((p) => `<option ${p === page ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>` : `<span class="mono small">${esc(page)}</span>`}
           <span class="chips">${A.DEVICES.map((d) => `<button class="chipbtn ${d === device ? 'active' : ''}" data-dev="${d}" ${devs.includes(d) ? '' : 'disabled title="Not on this device"'}>${A.DEVICE_LABEL[d]}</button>`).join('')}</span>
-          <a class="btn sm" href="${esc(previewUrl(s, page, device))}" target="_blank" rel="noopener">Open live preview ↗</a>
+          <a class="btn sm" href="${esc(previewUrl(s, page, device))}" target="_blank" rel="noopener" title="The editor's current version of this page (what the scan reads), with scripts running">Draft preview ↗</a>
+          ${liveDomain(s) ? `<a class="btn sm" href="https://${esc(liveDomain(s))}${page === '/' ? '/' : esc(page)}" target="_blank" rel="noopener" title="This page on the published website, as visitors see it">Published page ↗</a>` : ''}
+          <a class="btn sm" href="${esc(editorUrl(s, page))}" target="_blank" rel="noopener" title="Open this page in the Duda editor">Editor ↗</a>
           <button class="btn sm ghost" data-close>✕</button>
         </div>
       </div>
@@ -11379,7 +11529,7 @@
     if (state.me && r.name === 'site' && state.current && state.current.id === r.id) {
       // same site: switch tab / open drawer without refetching
       const ft = siteFindingsTab(r, state.current);
-      if ((ft === 'findings' || ft === 'polish') && state.renderedTab === ft && $('#tabBody')) { if (r.item) openDrawer(r.item); else closeDrawer(true); return; }
+      if (GRP_OF[ft] && state.renderedTab === ft && $('#tabBody')) { if (r.item) openDrawer(r.item); else closeDrawer(true); return; }
       return renderSite();
     }
     render();

@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-10-14-lengths', date: '2026-10-14', audience: 'all', tag: 'Audits',
+    title: 'Lengths get their own tab; spelling, punctuation and spacing in titles, descriptions and alt text are checked',
+    what: 'SEO titles, meta descriptions and alt text that are too long or too short now sit on their own <b>📏 Lengths</b> tab, after the audit items, and Audits counts them apart (<b>📏 Lengths 0/12</b>). What those words say is checked harder: <b>alt text is proofread</b>, <b>punctuation</b> mistakes are found, and <b>spacing slips</b> ("Schaumburg,IL", two spaces, "today!!") in titles, descriptions and alt text are raised. A Google Maps link that names only an ID is now <b>confirmed against Google\'s own listing</b> for the business when the Online presence check has found it.',
+    where: ['A website → <b>📏 Lengths</b> tab.', 'A website → <b>Rescan</b> for the new checks.'],
+    link: '#/help/polish', linkText: 'Must-fix first',
+  },
+  {
+    id: '2026-10-14-hidden-text', date: '2026-10-14', audience: 'all', tag: 'Audits',
+    title: 'Hidden content: designer credits, hidden links and hidden H1s are caught; a widget\'s blank template is not',
+    what: 'Text hidden from visitors still counts, because Google and SEO tools (Ahrefs, Semrush) read it. Scans now report <b>web-designer credits</b> ("Website by …", "Designed by …") naming anyone other than our own agencies, critical when hidden; <b>links to other websites hidden from visitors</b>; and an <b>H1 that exists but is hidden</b>. Flagged text the page\'s own styles hide is labelled <b>👁 Hidden on the page</b>. The only thing left out is a Duda widget\'s own blank template (the accordion\'s "Title or Question"), which is not in the editor; items raised from it close themselves on the next rescan. <b>Show on page</b> now has <b>Draft preview</b>, <b>Published page</b> and <b>Editor</b> buttons.',
+    where: ['A website → <b>Rescan</b>.', 'Any audit item → <b>👁 Show on page</b>.'],
+    link: '#/help/find', linkText: 'Finding an element',
+  },
+  {
     id: '2026-10-14-grammar-check', date: '2026-10-14', audience: 'all', tag: 'Audits',
     title: 'Grammar flags are double-checked',
     what: 'Proofreading called some correct sentences grammar mistakes and suggested a rewrite instead of a fix ("it is easy to end up with trapped air bubbles, an improper fit…" is correct). Now only objective mistakes count, each with the smallest fix, and every grammar and unfinished-text flag is read a second time by a stricter reviewer before it becomes an audit item. The wrong ones from earlier scans <b>close themselves on the next rescan</b>, as the app\'s mistake.',

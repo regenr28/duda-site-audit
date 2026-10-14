@@ -92,7 +92,7 @@ async function gbpFromPlaces(dudaId, truth, domain) {
   }
   if (!p) return { platform: 'google', found: false, source: 'places', note: 'Google has no listing that is clearly theirs (none matched their website, phone, or street and ZIP).' };
   return { platform: 'google', found: true, source: 'places', why, url: p.googleMapsUri || '', name: (p.displayName && p.displayName.text) || '', phone: p.nationalPhoneNumber || '', address: p.formattedAddress || '',
-    website: p.websiteUri || '', status: p.businessStatus || '' };
+    website: p.websiteUri || '', status: p.businessStatus || '', placeId: p.id || '' };
 }
 
 // ---------- the AI web search, with every detail checked against what it cites ----------

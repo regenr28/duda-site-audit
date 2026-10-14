@@ -253,6 +253,7 @@ export const HELP_SECTIONS = [
 <li>The tabs show what is still open: <b>Audit items 3</b>, <b>🎨 Design polish 118</b>. A ✓ means everything on that tab is closed.</li>
 <li>An audit item opened by its number (#57) opens on the tab it belongs to, and Previous / Next stay on that tab.</li>
 <li>Everything else works the same on both tabs: filters, ticking several items and setting their status at once, comments, Recheck.</li>
+<li><b>📏 Lengths</b> is a third list: SEO titles, meta descriptions and alt text that are longer or shorter than ideal. Worth tidying after the audit items. What those words <i>say</i> (spelling, punctuation, spacing, a wrong name or phone, a missing title or description) stays on <b>Audit items</b>. The Audits list counts it like design polish: <b>📏 Lengths 0/12</b> under the Closed column and a <b>📏 length</b> count.</li>
 <li>The <b>🎨 Design polish</b> tab opens with what it is and how many font and photo items are left, then the list; the fonts and pictures used on the website are underneath it. The scan details and Business Info are on the Audit items tab.</li>
 </ul>`,
   },
@@ -304,7 +305,10 @@ export const HELP_SECTIONS = [
   {
     id: 'find', group: 'Audit items', title: 'Finding an element (Show on page, preview, editor)', audience: 'all',
     html: `<ul>
-<li><b>👁 Show on page</b>: opens a snapshot of the page inside the app with the element outlined in red. Hidden elements are revealed (side panels are opened, hidden or animated elements are shown) and a note explains where it lives.</li>
+<li><b>👁 Show on page</b>: opens a snapshot of the page inside the app with the element outlined in red. Hidden elements are revealed (side panels are opened, hidden or animated elements are shown) and a note explains where it lives. Along the top: <b>Draft preview ↗</b> (the editor's current version of the page, which is what scans read), <b>Published page ↗</b> (the same page on the live website, as visitors see it) and <b>Editor ↗</b> (the page in the Duda editor). When the element is hidden on the page, it says so: <b>visitors don't see it</b>, it is only in the page's code, and it may not be in the editor at all.</li>
+<li><b>Hidden text still counts.</b> Scans read the page as the server first sends it, which is also what Google, Ahrefs and Semrush read, so text hidden from visitors is audited like any other. Each page with a flagged piece of text is also drawn the way a browser draws it, and anything the page's own styles hide is labelled <b>👁 Hidden on the page</b>: visitors don't see it, search engines and SEO tools do. Find it in the editor (hidden blocks, the element's settings or custom code) and fix or remove it.</li>
+<li><b>Hidden web-designer credits and links.</b> A credit such as "Website by …" or "Designed by …" naming anyone other than our own agencies is reported, and one hidden from visitors is <b>critical</b>: somebody's advertising on the client's website that only search engines see. A link to another website hidden from visitors is reported too. An <b>H1 heading that exists but is hidden</b> on a device is said plainly ("the H1 is hidden on Desktop") instead of "no H1".</li>
+<li><b>The one exception</b>: Duda's newer widgets are sent with a hidden blank template inside them (the accordion's "Title or Question", which it copies when somebody clicks Add Item). Duda's scripts replace it as the page loads, it is not in the editor, and it is not content, so wording checks leave it out. Compare <b>View Page Source</b> (Ctrl+U, the page as first sent) with <b>Inspect</b> (the page after its scripts ran) to see the difference</li>
 <li><b>Copy</b>: copies the CSS selector.</li>
 <li><b>▶ Show on preview</b>: opens the Duda preview of that page on the item's device. When the item has visible text, the browser scrolls to it and highlights it.</li>
 <li><b>✎ Show in editor</b>: opens that page in the Duda editor and copies the selector for you.</li>

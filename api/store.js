@@ -13,6 +13,7 @@ import { cleanRichHtml, richToText } from './_rich.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 import '../public/engine.js';
 const isPolish = (f) => globalThis.DudaAudit.isPolish(f);
+const isLength = (f) => globalThis.DudaAudit.isLength(f);
 
 const FSTATUS = ['open', 'clarification', 'done', 'hold', 'false'];
 // One token that means "whoever can answer this", expanded to the current admins when it is used.
@@ -51,12 +52,14 @@ function summary(site, comments) {
   // Severity, closed and total count the MUST-FIX items only: fonts and duplicate photos (design
   // polish) are counted apart (pt total, pc closed, po open), so "17/17" means the work that matters
   // is done even with 120 font items still open.
-  const c = { critical: 0, outdated: 0, warning: 0, info: 0, clarification: 0, hold: 0, closed: 0, total: 0, comments: 0, aiPending: 0, aiPendingBlocks: 0, pt: 0, pc: 0, po: 0 };
+  // Lengths (titles, descriptions, alt text) likewise: lt total, lc closed, lo open.
+  const c = { critical: 0, outdated: 0, warning: 0, info: 0, clarification: 0, hold: 0, closed: 0, total: 0, comments: 0, aiPending: 0, aiPendingBlocks: 0, pt: 0, pc: 0, po: 0, lt: 0, lc: 0, lo: 0 };
   (site.findings || []).forEach((f) => {
-    if (isPolish(f)) {
-      c.pt++;
-      if (f.status === 'done' || f.status === 'false') c.pc++;
-      else if (f.status !== 'hold') c.po++;
+    const side = isPolish(f) ? 'p' : isLength(f) ? 'l' : '';
+    if (side) {
+      c[side + 't']++;
+      if (f.status === 'done' || f.status === 'false') c[side + 'c']++;
+      else if (f.status !== 'hold') c[side + 'o']++;
       if (f.status === 'clarification') c.clarification++;
       return;
     }
@@ -233,7 +236,7 @@ async function handler(req, res) {
         let sites = Object.values(pairs(idx, true));
         // Summaries written before must-fix and design polish were counted apart are brought up to
         // date a few at a time (each is one website read), so the list is right within a load or two.
-        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.pt === undefined)).slice(0, 30);
+        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined)).slice(0, 30);
         if (old.length) {
           const fresh = await Promise.all(old.map((x) => saveIndex(x.id).catch(() => null)));
           const byId = new Map(fresh.filter(Boolean).map((x) => [x.id, x]));

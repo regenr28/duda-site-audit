@@ -62,7 +62,7 @@ const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 0);
 const AGENCIES = (process.env.AGENCY_NAMES || 'Detailers Roadmap, 8bit Creative').split(',').map((s) => s.trim()).filter(Boolean);
 const ALT_VERDICTS = ['describes_image', 'this_business', 'partner_logo', 'other_business', 'wrong_location', 'placeholder', 'unclear'];
 const TEXT_TYPES = ['other_business', 'wrong_location', 'name_variant'];
-const PROOF_TYPES = ['spelling', 'grammar', 'incomplete'];
+const PROOF_TYPES = ['spelling', 'grammar', 'punctuation', 'incomplete'];
 
 const env = (k, d) => (process.env[k] !== undefined && process.env[k] !== '' ? process.env[k] : d);
 const CATALOG = {
@@ -368,11 +368,13 @@ const PROOF_SYSTEM = `You proofread the WEBSITE COPY of one small business, the 
 Report ONLY clear mistakes a visitor would notice:
 - "spelling": a misspelled ordinary word ("recieve", "proffesional", "detialing", "teh"). Never brand, product, car, place or people names, trade words (PPF, ceramic, detailing, tint, vinyl, graphene, paint correction, decon), or deliberate marketing spellings.
 - "grammar": an OBJECTIVE grammar error that any editor would fix: a wrong word (your/you're, its/it's, then/than, there/their, loose/lose), a verb that does not agree with its own subject ("the films is"), a missing or doubled word that breaks the sentence ("we we offer", "to the your car"). Sentences that are correct but could be written differently are NOT errors: "it is easy to end up with…", "there are…", long lists, passive voice, starting with "And"/"But", informal or salesy wording.
+- "punctuation": punctuation that is plainly wrong: a missing full stop between two sentences that run together ("call us today we are open"), a doubled mark ("today!!", "services,,"), a missing closing bracket or quote, a stray mark ("car ."). Never a missing Oxford comma, dashes vs hyphens, or a list without full stops.
 - "incomplete": a sentence or paragraph that stops mid-thought, a heading or button left as a template placeholder ("Add your text here", "Lorem ipsum", "Title goes here", "[City]"), or copy that clearly belongs to a template and was never filled in.
 Do NOT report: style, tone, word choice, clarity, rephrasing, capitalisation, title case, missing commas, American vs British spelling, short punchy fragments used on purpose ("Fast. Reliable. Local."), lists without full stops, emoji, or anything you are unsure about. Most blocks have no mistakes: return nothing for them.
 The "suggestion" must be the quoted words with the SMALLEST change that fixes them (usually one or two words), never a rewrite, a longer version or added content. If the fix would be a rewrite, it is a style opinion: do not report it.
 Each block is one whole paragraph, heading or list item, with the words of its links in place: judge it as written, and never call a block unfinished because it ends with a link's words.
-Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 15 words>","suggestion":"<the corrected words>"}]}. Use {"results":[]} when there is nothing to fix.`;
+Blocks marked "Image alt text" are the descriptions of pictures: proofread their spelling and punctuation, but a short phrase without a full stop is normal there.
+Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|punctuation|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 15 words>","suggestion":"<the corrected words>"}]}. Use {"results":[]} when there is nothing to fix.`;
 
 const LINK_SYSTEM = `You check that the BUTTONS and LINKS on a small business website open the page a visitor expects. ${CONTEXT}
 Each item gives the words on the button or link, the heading of the section it sits in, the text around it, the page it is on, and the page it opens (its address, title and main heading).
@@ -395,6 +397,11 @@ const verifyPrompt = (flags) => flags.map((f) => `${f.i} | ${f.type} | text: ${S
 function minimalFix(quote, suggestion, type) {
   const a = String(quote || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
   const b = String(suggestion || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+  if (type === 'punctuation') {
+    // Same words, only the marks or spaces between them changed, and only a little.
+    const q = String(quote || ''), s = String(suggestion || '');
+    return a.length > 0 && a.join(' ') === b.join(' ') && q !== s && Math.abs(q.length - s.length) <= 4;
+  }
   if (!a.length || !b.length || a.join(' ') === b.join(' ')) return false;
   // words in common, in order (longest common subsequence)
   const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
