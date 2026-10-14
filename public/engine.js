@@ -284,6 +284,17 @@
         'Buttons and links that open a different page from the one they promise: "Contact us" opening the home page, "Read more" under Ceramic Coating opening the window tint page. A lead button (contact, quote, book, call) doing this is critical',
       ],
     },
+    {
+      v: 22,
+      date: '2026-10-14',
+      title: 'Proofreading reads whole paragraphs, links included',
+      fixes: ['TEXT_INCOMPLETE', 'TEXT_GRAMMAR'],
+      fixedWhat: 'Proofreading was given text in pieces split wherever a link started, so "This includes hydrophobic paint enhancements with our" (followed by a link to ceramic coatings) looked like an unfinished sentence. It now reads each paragraph whole, links included.',
+      items: [
+        'Each paragraph, heading and list item is proofread whole, with the words of its links in place',
+        '"Unfinished" and grammar items raised from a split piece of a sentence close themselves on the next rescan, as the app\'s mistake',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1645,6 +1656,22 @@
     const tn = body ? textNodes(body) : [];
     const perEl = new Map();
     tn.forEach((n) => { const p = n.parentElement; perEl.set(p, (perEl.get(p) || '') + n.nodeValue); });
+    // Whole paragraphs, links included, for proofreading. The pieces above are split wherever a link
+    // or a styled span starts ("This includes hydrophobic paint enhancements with our" + a link), and a
+    // piece read on its own looks like an unfinished sentence when it is not.
+    const PROSE = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption, dt, dd, td, th, .dmNewParagraph, [data-element-type="paragraph"]';
+    const prose = [];
+    if (body) {
+      const seenP = new Set();
+      body.querySelectorAll(PROSE).forEach((el) => {
+        if (prose.length >= 400 || el.closest('script, style, noscript, nav, form, [id="hcontainer"], .dmHeader')) return;
+        if (el.querySelector(PROSE)) return;          // its inner paragraphs are read on their own
+        const t = clean(el.textContent);
+        if (t.length < 12 || seenP.has(t)) return;
+        seenP.add(t);
+        prose.push({ el, text: t.slice(0, 3000) });
+      });
+    }
     perEl.forEach((text, el) => {
       const t = clean(text);
       if (t.length >= 3) textIndex.push({ el, text: t });
@@ -1995,6 +2022,7 @@
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
       alts: altList,
       textIndex: textIndex.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
+      prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       fonts,
       meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon },
       schema: schemas.map((s) => s.data),
@@ -2464,6 +2492,7 @@
     const altMap = new Map();
     const textIdx = [];
     const linkMap = new Map();    // the internal links a visitor reads, once per wording + destination + section
+    const proseIdx = [];          // whole paragraphs (links included), for proofreading
     const fontRows = [];          // every piece of text on the website, with the typeface it ends up in
     const fontLoaded = new Map(); // family (lowercased) → where the website loads it from
     const fontTheme = {};         // body / p / h1…h6 → the font the website's own design sets
@@ -2527,6 +2556,7 @@
             m.isLogo = m.isLogo || x.isLogo;
           });
           r.textIndex.forEach((x) => textIdx.push(Object.assign({ path, device }, x)));
+          if (proseIdx.length < 6000) (r.prose || []).forEach((x) => proseIdx.push(Object.assign({ path, device }, x)));
           if (device === devices[0]) (r.links || []).forEach((x) => {
             const k = [x.text.toLowerCase(), x.to, x.context.toLowerCase()].join('|');
             let m = linkMap.get(k);
@@ -2627,10 +2657,10 @@
     Object.entries(byDesc).forEach(([t, ps]) => { if (ps.length > 1) ps.forEach((p) => raw.push({ code: 'META_DESC_DUP', severity: 'info', category: 'Meta / SEO', message: `Same meta description used on ${ps.length} pages`, found: cut(t, 160), path: p, device: 'desktop', selector: 'meta[name="description"]', location: 'Head / Meta', visible: true, hiddenBy: '', snippet: '' })); });
 
     // Unique text blocks (for the AI page-text check): real site pages first, blog posts after
-    function buildTextBlocks() {
+    function buildTextBlocks(rows) {
       const map = new Map();
-      textIdx.forEach((x) => {
-        if (x.text.length < 25) return;
+      (rows || textIdx).forEach((x) => {
+        if (x.text.length < (rows ? 12 : 25)) return;
         let m = map.get(x.text);
         if (!m) { if (map.size >= 2500) return; m = { text: x.text, selector: x.selector, location: x.location, pages: [], devices: [], visibleOn: [], hiddenOn: [] }; map.set(x.text, m); }
         if (!m.pages.includes(x.path)) m.pages.push(x.path);
@@ -2673,6 +2703,7 @@
       images: images.size,
       alts: Array.from(altMap.values()),
       texts: buildTextBlocks(),
+      prose: buildTextBlocks(proseIdx),
       counts,
       log,
     };

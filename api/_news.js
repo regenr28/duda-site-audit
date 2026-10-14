@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-14-proof-paragraphs', date: '2026-10-14', audience: 'all', tag: 'Audits',
+    title: 'Proofreading reads whole paragraphs, so a sentence with a link in it is no longer "unfinished"',
+    what: 'Proofreading was given text in pieces cut wherever a link started, so "This includes hydrophobic paint enhancements with our" (followed by the <i>ceramic coatings</i> link) looked unfinished. It now reads every paragraph, heading and list item whole, link words included. Unfinished and grammar items raised that way <b>close themselves on the next rescan</b> as the app\'s mistake; the Audits list marks those websites "A check was corrected — rescan".',
+    where: ['A website → <b>Rescan</b>.'],
+    link: '#/help/ai', linkText: 'How the AI checks work',
+  },
+  {
     id: '2026-10-14-proofread-all', date: '2026-10-14', audience: 'all', tag: 'Audits',
     title: 'Proofreading reads every block of text, and the Design polish tab is clearer',
     what: 'Proofreading now reads <b>all</b> of a website\'s text (it used to stop after a share per page). The scan summary also says plainly what the business name and location check looks at: only blocks that mention a name, a place or contact details, because the others have nothing for it to get wrong; they are still proofread. The <b>🎨 Design polish</b> tab now opens with how many font and photo items are left, straight above its list.',

@@ -370,6 +370,7 @@ Report ONLY clear mistakes a visitor would notice:
 - "grammar": a clear grammar error: wrong word (your/you're, its/it's, then/than, there/their), subject-verb disagreement, a missing or doubled word that breaks the sentence.
 - "incomplete": a sentence or paragraph that stops mid-thought, a heading or button left as a template placeholder ("Add your text here", "Lorem ipsum", "Title goes here", "[City]"), or copy that clearly belongs to a template and was never filled in.
 Do NOT report: style, tone, capitalisation, title case, missing commas, American vs British spelling, short punchy fragments used on purpose ("Fast. Reliable. Local."), lists without full stops, emoji, or anything you are unsure about. Most blocks have no mistakes: return nothing for them.
+Each block is one whole paragraph, heading or list item, with the words of its links in place: judge it as written, and never call a block unfinished because it ends with a link's words.
 Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 15 words>","suggestion":"<the corrected words>"}]}. Use {"results":[]} when there is nothing to fix.`;
 
 const LINK_SYSTEM = `You check that the BUTTONS and LINKS on a small business website open the page a visitor expects. ${CONTEXT}

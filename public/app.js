@@ -6335,14 +6335,16 @@
     const byPath = new Map((res.pages || []).map((p) => [p.path, p]));
     // Proofreading: every block of text, real pages first (the blocks come sorted that way). The
     // only limit is a very large one (a website with hundreds of blog posts), said in the scan notes.
+    // Whole paragraphs (links included) when the engine gives them: a piece cut at a link reads as unfinished.
+    const proofTexts = res.prose && res.prose.length ? res.prose : (res.texts || []);
     const proofItems = []; let chars = 0; let tooShort = 0;
-    (res.texts || []).forEach((b, i) => {
+    proofTexts.forEach((b, i) => {
       if (b.text.length < 12) { tooShort++; return; }
       if (chars > 400000) return;
       const text = b.text.slice(0, 2000); chars += text.length;
       proofItems.push({ i, text, location: b.location, page: (b.pages || [])[0] || '/' });
     });
-    if (proofItems.length + tooShort < (res.texts || []).length) log.push(`Proofreading read the first ${proofItems.length} of ${(res.texts || []).length} blocks of text (service pages first, then blog posts): the website is very large.`);
+    if (proofItems.length + tooShort < proofTexts.length) log.push(`Proofreading read the first ${proofItems.length} of ${proofTexts.length} blocks of text (service pages first, then blog posts): the website is very large.`);
     const linkItems = [];
     (res.links || []).forEach((l, i) => {
       const dest = byPath.get(l.to);
@@ -6350,7 +6352,7 @@
       linkItems.push({ i, text: l.text, context: l.context, near: l.near, from: (l.pages || [])[0] || '/', to: l.to, toTitle: (dest && dest.title) || '', toH1: (dest && dest.h1) || '', button: l.button });
     });
     const batches = (items, maxChars, maxItems, size) => { const out = []; let cur = [], n = 0; items.forEach((x) => { const s = size(x); if (cur.length && (n + s > maxChars || cur.length >= maxItems)) { out.push(cur); cur = []; n = 0; } cur.push(x); n += s; }); if (cur.length) out.push(cur); return out; };
-    const out = { proof: { blocks: proofItems.length, of: (res.texts || []).length - tooShort, flagged: 0 }, links: { checked: linkItems.length, of: (res.links || []).length, flagged: 0 }, used: [], paused: null };
+    const out = { proof: { blocks: proofItems.length, of: proofTexts.length - tooShort, flagged: 0 }, links: { checked: linkItems.length, of: (res.links || []).length, flagged: 0 }, used: [], paused: null };
     const used = new Set();
     const run = async (op, list, label, extra) => {
       const all = []; let waits = 0;
@@ -6374,7 +6376,7 @@
     if (proofItems.length) {
       const issues = await run('proof', batches(proofItems, 16000, 60, (x) => x.text.length), 'proofreading');
       const before = res.findings.length;
-      res.findings = A.applyProofIssues(res.findings, res.texts, issues);
+      res.findings = A.applyProofIssues(res.findings, proofTexts, issues);
       out.proof.flagged = res.findings.length - before;
     }
     if (linkItems.length && !out.paused) {
