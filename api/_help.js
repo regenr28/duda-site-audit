@@ -253,6 +253,7 @@ export const HELP_SECTIONS = [
 <li>The tabs show what is still open: <b>Audit items 3</b>, <b>🎨 Design polish 118</b>. A ✓ means everything on that tab is closed.</li>
 <li>An audit item opened by its number (#57) opens on the tab it belongs to, and Previous / Next stay on that tab.</li>
 <li>Everything else works the same on both tabs: filters, ticking several items and setting their status at once, comments, Recheck.</li>
+<li>The <b>🎨 Design polish</b> tab opens with what it is and how many font and photo items are left, then the list; the fonts and pictures used on the website are underneath it. The scan details and Business Info are on the Audit items tab.</li>
 </ul>`,
   },
   {
@@ -704,7 +705,7 @@ export const HELP_SECTIONS = [
 <li><b>Proofreading</b>: the page text, titles and meta descriptions are read for <b>spelling mistakes</b>, <b>clear grammar errors</b> (your/you're, its/it's, a missing word) and <b>unfinished copy</b> (a sentence that stops mid-thought, "Add your text here"). Only the exact wrong words become an item, with the correction. Brand, car and trade words (PPF, ceramic, XPEL…) and style choices are left alone. Service pages are read before blog posts.</li>
 <li><b>Buttons that open the wrong page</b>: each button and link is judged with the page it opens in front of the AI (its address, title and heading) and the section it sits in. "Contact us" opening the home page, or "Read more" under <i>Ceramic Coating</i> opening the window tint page, becomes an item saying where it should go. A lead button (contact, quote, book, call) doing this is <b>critical</b>. Links whose words plainly match their page, and menus, are not even asked about.</li>
 <li>Answers are saved, so rescans don't re-check text or links that haven't changed.</li>
-<li>Only text that could hide a problem is sent: a name that looks like another business, a place, contact details or filler text. Plain marketing prose is skipped, so a long blog doesn't use up the day's credits. The scan summary says how many blocks were read and how many were skipped.</li>
+<li>The <b>business name and location</b> check only looks at blocks that mention a name, a place or contact details: a block with none of those cannot name the wrong business or town, so there is nothing in it for that check to get wrong. The scan summary says how many had something to check ("the other 503 have none"). Those blocks are <b>not</b> skipped altogether: <b>proofreading reads every block of text</b> on the website.</li>
 <li>The AI has a daily allowance. The <b>AI Status</b> page (light-bulb menu) shows credits left today and when they refill. The site page shows the credits too.</li>
 <li>If the allowance runs out during a scan, the unchecked parts become <b>AI check pending</b> items ("will resume after …"). They're checked <b>automatically</b> when credits are back, or click <b>Run now</b>.</li>
 <li>If you check a pending item yourself and mark it <b>Done</b>, the AI skips it.</li>

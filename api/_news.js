@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-14-proofread-all', date: '2026-10-14', audience: 'all', tag: 'Audits',
+    title: 'Proofreading reads every block of text, and the Design polish tab is clearer',
+    what: 'Proofreading now reads <b>all</b> of a website\'s text (it used to stop after a share per page). The scan summary also says plainly what the business name and location check looks at: only blocks that mention a name, a place or contact details, because the others have nothing for it to get wrong; they are still proofread. The <b>🎨 Design polish</b> tab now opens with how many font and photo items are left, straight above its list.',
+    where: ['A website → <b>Rescan</b> to proofread all of it.', 'A website → <b>🎨 Design polish</b>.'],
+    link: '#/help/ai', linkText: 'How the AI checks work',
+  },
+  {
     id: '2026-10-14-proofread-links', date: '2026-10-14', audience: 'all', tag: 'Audits',
     title: 'New AI checks: spelling and grammar, and buttons that open the wrong page',
     what: 'Scans now <b>proofread</b> the website (spelling mistakes, clear grammar errors, unfinished or template copy, each with the correction) and check that every <b>button and link opens the page it promises</b>: "Contact us" opening the home page, or "Read more" under Ceramic Coating opening the window tint page. A lead button doing this is critical. Rescan a website to add them; answers are remembered, so later rescans cost nothing for what has not changed.',

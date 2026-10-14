@@ -6333,15 +6333,16 @@
     const business = aiBusiness(res);
     const pages = (res.pages || []).filter((p) => !p.notFound).map((p) => ({ path: p.path, title: p.title }));
     const byPath = new Map((res.pages || []).map((p) => [p.path, p]));
-    // Proofreading: real pages first (the blocks come sorted that way), a fair share per page.
-    const perPage = {}; const proofItems = []; let chars = 0;
+    // Proofreading: every block of text, real pages first (the blocks come sorted that way). The
+    // only limit is a very large one (a website with hundreds of blog posts), said in the scan notes.
+    const proofItems = []; let chars = 0; let tooShort = 0;
     (res.texts || []).forEach((b, i) => {
-      if (chars > 45000 || b.text.length < 20) return;
-      const pg = (b.pages || [])[0] || '/';
-      if ((perPage[pg] = (perPage[pg] || 0) + 1) > 40) return;
-      const text = b.text.slice(0, 1200); chars += text.length;
-      proofItems.push({ i, text, location: b.location, page: pg });
+      if (b.text.length < 12) { tooShort++; return; }
+      if (chars > 400000) return;
+      const text = b.text.slice(0, 2000); chars += text.length;
+      proofItems.push({ i, text, location: b.location, page: (b.pages || [])[0] || '/' });
     });
+    if (proofItems.length + tooShort < (res.texts || []).length) log.push(`Proofreading read the first ${proofItems.length} of ${(res.texts || []).length} blocks of text (service pages first, then blog posts): the website is very large.`);
     const linkItems = [];
     (res.links || []).forEach((l, i) => {
       const dest = byPath.get(l.to);
@@ -6349,7 +6350,7 @@
       linkItems.push({ i, text: l.text, context: l.context, near: l.near, from: (l.pages || [])[0] || '/', to: l.to, toTitle: (dest && dest.title) || '', toH1: (dest && dest.h1) || '', button: l.button });
     });
     const batches = (items, maxChars, maxItems, size) => { const out = []; let cur = [], n = 0; items.forEach((x) => { const s = size(x); if (cur.length && (n + s > maxChars || cur.length >= maxItems)) { out.push(cur); cur = []; n = 0; } cur.push(x); n += s; }); if (cur.length) out.push(cur); return out; };
-    const out = { proof: { blocks: proofItems.length, flagged: 0 }, links: { checked: linkItems.length, of: (res.links || []).length, flagged: 0 }, used: [], paused: null };
+    const out = { proof: { blocks: proofItems.length, of: (res.texts || []).length - tooShort, flagged: 0 }, links: { checked: linkItems.length, of: (res.links || []).length, flagged: 0 }, used: [], paused: null };
     const used = new Set();
     const run = async (op, list, label, extra) => {
       const all = []; let waits = 0;
@@ -6371,7 +6372,7 @@
       return all;
     };
     if (proofItems.length) {
-      const issues = await run('proof', batches(proofItems, 9000, 40, (x) => x.text.length), 'proofreading');
+      const issues = await run('proof', batches(proofItems, 16000, 60, (x) => x.text.length), 'proofreading');
       const before = res.findings.length;
       res.findings = A.applyProofIssues(res.findings, res.texts, issues);
       out.proof.flagged = res.findings.length - before;
@@ -8542,12 +8543,16 @@
       catch (err) { toast(err.message); await loadSite(s.id); renderSite(); }
     };
     const body = $('#tabBody');
+    const prevTab = state.renderedTab;
     state.renderedTab = ftab;
     if (r.tab === 'comments') renderCommentsTab(body, s);
     else if (r.tab === 'activity') renderActivityTab(body, s);
     else if (r.tab === 'profile' || r.tab === 'leads') renderProfileTab(body, s, { cnt, generalComments, sub: r.sub });
     else renderFindingsTab(body, s, { cnt, sc, live, grp: state.ff.grp });
-    window.scrollTo(0, scrollY);
+    // Changing tab while scrolled down: bring the tabs to the top, so the new tab is what is seen.
+    const tabsEl = $('.tabs'); const tbH = ($('.topbar') || {}).offsetHeight || 0;
+    if (prevTab && prevTab !== ftab && !r.item && tabsEl) { const y = tabsEl.getBoundingClientRect().top + window.scrollY - tbH - 8; window.scrollTo(0, Math.min(scrollY, Math.max(0, y))); }
+    else window.scrollTo(0, scrollY);
     if (r.item) openDrawer(r.item); else closeDrawer(true);
   }
 
@@ -9268,8 +9273,16 @@
     // still applies. A "Critical 5" that opens an empty list is worse than no number at all.
     const activeCount = filteredFindings(s, 'sev');
     const sevCount = (sev) => activeCount.filter((f) => f.severity === sev).length;
-    body.innerHTML = `
-      ${(() => {
+    // The Design polish tab leads with what it is and how much is left, then the list; the scan
+    // panel and Business Info belong to the Audit items tab, and the fonts and pictures reference
+    // sits under the list. Otherwise switching tabs looked like nothing happened.
+    const polishCount = (re) => findings.filter((f) => re.test(f.code) && (f.status === 'open' || f.status === 'clarification')).length;
+    const nFont = polishCount(/^FONT_/), nDup = polishCount(/^IMAGE_DUPLICATE$/);
+    const polishHead = `<div class="polish-head">
+      <div class="polish-head-t">🎨 Design polish <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
+      <div class="small">${findings.length ? `<b>${nFont}</b> inconsistent font item${nFont === 1 ? '' : 's'} and <b>${nDup}</b> duplicate photo${nDup === 1 ? '' : 's'} open. ` : ''}These don't change the business's details, links or what Google reads, so they come after the <a href="#/site/${esc(s.id)}">Audit items</a>${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}.</div>
+    </div>`;
+    const topHtml = polish ? polishHead : `      ${(() => {
         const st = dudaState(s.siteId);
         if (st === 'draft') return `<div class="note dom-banner"><b>Not published yet.</b> This website is in Duda as a draft, which is normal when the audit is being done before launch. Everything on this page works as usual; only <b>Verify on live site</b> needs it published first.</div>`;
         if (st === 'gone') return `<div class="note unk dom-banner"><b>Not found in Duda.</b> Duda lists this website neither as published nor as a draft, so it looks deleted or moved to another account. The audit is kept for reference.</div>`;
@@ -9283,8 +9296,8 @@
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}${state.scanning[s.id] || otherClaim(s.id) ? `<div class="small muted" style="margin-top:6px">${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to.</div>` : ''}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
-            ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> of ${sc.ai.text.of} blocks read${sc.ai.text.skipped ? ` (${sc.ai.text.skipped} plain ones skipped)` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
-            ${sc.ai.proof ? ` Proofread <b>${sc.ai.proof.blocks}</b> blocks: <b>${sc.ai.proof.flagged}</b> spelling, grammar or unfinished.` : ''}
+            ${sc.ai.text ? ` Business name and location: <b>${sc.ai.text.blocks}</b> blocks that mention a name, a place or contact details checked${sc.ai.text.skipped ? ` <span class="faint" title="These blocks contain no business name, place or contact detail, so there is nothing in them for this check to get wrong. They are still proofread.">(the other ${sc.ai.text.skipped} have none)</span>` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
+            ${sc.ai.proof ? ` Proofread <b>${sc.ai.proof.blocks}</b>${sc.ai.proof.of ? ` of ${sc.ai.proof.of}` : ''} blocks of text: <b>${sc.ai.proof.flagged}</b> spelling, grammar or unfinished.${sc.ai.proof.of && sc.ai.proof.blocks < sc.ai.proof.of ? ' <span class="faint">(the website is very large: see Scan notes)</span>' : ''}` : ''}
             ${sc.ai.links ? ` Buttons and links: <b>${sc.ai.links.checked}</b> of ${sc.ai.links.of} checked for where they go${sc.ai.links.checked < sc.ai.links.of ? ' (the rest plainly match their page)' : ''}, <b>${sc.ai.links.flagged}</b> open the wrong page.` : ''}
             ${sc.ai.aliases && state.ai && state.ai.owner ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI Status ↗</a></div>
             ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: the AI ran out of credits for today during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
@@ -9329,6 +9342,9 @@
       ${polish ? `<div class="note grp-note"><b>🎨 Design polish</b> — inconsistent fonts and duplicate photos. They don't change the business's details, links or what Google reads, so they come after the <a href="#/site/${esc(s.id)}">Audit items</a>${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}.</div>`
         : findings.length && !mineOpen && sc.state === 'complete' ? `<div class="note good grp-note"><b>✓ Every audit item that affects the business is closed.</b>${otherOpen ? ` What's left is design polish: <a href="#/site/${esc(s.id)}/polish">${otherOpen} font and photo item${otherOpen === 1 ? '' : 's'}</a>, which can follow.` : ''}</div>`
         : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on the <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a> tab (${otherOpen} open), so this list is what affects the business and SEO.</div>` : ''}
+`;
+    body.innerHTML = `
+      ${topHtml}
       <div class="panel">
         <div class="toolbar">
           <span class="chips" id="ffSev">
@@ -9388,6 +9404,39 @@
             </tr>`;
           }).join('')}</tbody></table></div>`}
       </div>
+      ${polish ? `      <details class="ref-details polish-ref" style="margin-top:16px">
+        <summary class="small muted">Reference: the website\'s fonts and pictures</summary>
+        <div class="ref-tabs"><span class="chips">
+          <button class="chipbtn ${state.refTab === 'info' || !state.refTab ? 'active' : ''}" data-ref="info">Business Info</button>
+          <button class="chipbtn ${state.refTab === 'fonts' ? 'active' : ''}" data-ref="fonts">Fonts used on the website${s.fonts && fontCount(s) ? ` <span class="tcount">${fontCount(s)}</span>` : ''}</button>
+          ${s.photos ? `<button class="chipbtn ${state.refTab === 'photos' ? 'active' : ''}" data-ref="photos">Pictures on the website${photoCount(s) ? ` <span class="tcount">${photoCount(s)}</span>` : ''}</button>` : ''}
+          ${(s.biHistory || []).length ? `<button class="chipbtn ${state.refTab === 'history' ? 'active' : ''}" data-ref="history">Business Info history${biChanges(s) ? ` <span class="tcount">${biChanges(s)}</span>` : ''}</button>` : ''}
+        </span></div>
+        <div class="grid-2" ${state.refTab === 'info' || !state.refTab ? '' : 'hidden'}>
+          <div class="panel panel-pad">
+            <h2>Reference: Business Info <span class="badge ${/^api|brief/.test(t.source || '') ? 'scan-complete' : 'sev-warning'}">${t.source === 'api' ? 'From Duda API' : /brief/.test(t.source || '') ? 'Client\u2019s brief + Duda' : t.source === 'schema' ? 'Fallback: site schema' : 'Not loaded yet'}</span></h2>
+            <div class="truth">
+              <div><div class="k">Business name</div><div class="v">${vals(s, 'name', t.names || [], (x) => x)}</div></div>
+              <div><div class="k">Phone</div><div class="v">${vals(s, 'phone', t.phones || [], A.fmtPhone)}</div></div>
+              <div><div class="k">Email</div><div class="v">${vals(s, 'email', t.emails || [], (x) => x)}</div></div>
+              <div><div class="k">Address</div><div class="v">${(t.addresses || []).length ? esc(t.addresses.map((a) => [a.street, a.city, a.region, a.zip].filter(Boolean).join(', ')).join(' | ')) + (t.addresses.every((a) => !a.street && !a.zip) ? '<div class="small faint">Town only \u2014 no street or ZIP in Business Info, so address checks that need one are skipped.</div>' : '')
+                : `\u2014<div class="small faint">${!('addressSeen' in t) ? 'Business Info may have only a town, which earlier scans didn\u2019t read. Rescan to see exactly what Duda has.' : t.addressSeen ? `Duda sent: ${esc(t.addressSeen)}` : /api/.test(t.source || '') ? 'Business Info in Duda has no address filled in (common for businesses that serve an area). Add one in Duda, or here under Our additions, to check addresses.' : 'Rescan to read the address from Duda.'}</div>`}</div></div>
+              <div><div class="k">Domain</div><div class="v">${esc(t.domain || '—')}</div></div>
+              <div><div class="k">Social (Business Info)</div><div class="v small">${socials || '—'}</div></div>
+            </div>
+            ${ourLayer(s)}
+          </div>
+          <div class="panel panel-pad">
+            <h2>Facebook / Google Business check</h2>
+            ${s.profiles ? (s.profiles.items || []).map((p) => `<div class="note ${p.result === 'match' ? 'good' : p.result === 'mismatch' ? 'bad' : 'unk'}"><b>${esc(p.net)}</b>: ${esc(p.text)} <a href="${esc(A.socialUrl(p.net === 'Google Business' ? 'google_my_business' : String(p.net).toLowerCase(), p.url))}" target="_blank" rel="noopener">open ↗</a></div>`).join('') + (s.profiles.note ? `<div class="note unk">${esc(s.profiles.note)}</div>` : '') : '<p class="muted small">Runs with each scan.</p>'}
+            <p class="small faint" style="margin:8px 0 0">General note only. Facebook and Google often block automated reads, so verify anything marked yellow by hand.</p>
+          </div>
+        </div>
+        <div ${state.refTab === 'fonts' ? '' : 'hidden'}>${fontsReference(s)}</div>
+        <div ${state.refTab === 'photos' ? '' : 'hidden'}>${photosReference(s)}</div>
+        <div ${state.refTab === 'history' ? '' : 'hidden'}>${biReference(s)}</div>
+      </details>
+` : ''}
       ${s.pages && s.pages.length ? `<details class="panel panel-pad" style="margin-top:16px"><summary>Pages scanned (${s.pages.length})</summary>
         <div class="table-wrap" style="margin-top:10px"><table class="grid"><thead><tr><th>Path</th><th>SEO title</th><th>Devices</th><th>Status</th></tr></thead><tbody>
         ${s.pages.map((p) => `<tr><td class="mono"><a href="${esc(previewUrl(s, p.path, 'desktop'))}" target="_blank" rel="noopener">${esc(p.path)}</a></td><td>${esc(p.title)}</td><td>${(p.devices || []).map((d) => `<span class="dev on">${A.DEVICE_LABEL[d]}</span>`).join('')}</td><td>${p.notFound ? '<span class="badge sev-critical">404</span>' : p.error ? `<span class="badge sev-warning">${esc(p.error)}</span>` : '<span class="badge scan-complete">OK</span>'}</td></tr>`).join('')}
