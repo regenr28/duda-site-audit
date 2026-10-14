@@ -552,6 +552,8 @@ export const NOTIFY_GROUPS = [
     desc: 'A live website\'s domain stops working, shows another site, or its registration is about to run out or has expired; it works again; plus one daily report of everything still open. (Security certificates are Duda\'s job and are not reported.)' },
   { key: 'livecontent', label: 'Critical auto audit alerts', kinds: ['watch-issue', 'watch-digest'], channels: ['bell', 'popup', 'slack'], admin: true,
     desc: 'CRITICAL ERRORS FOUND: the auto audit finds another business\'s phone, email, address, name or social account on a live website. Sent at once when a website is published with one, and as one daily summary of every website, each with a link to its audit items. On by default.' },
+  { key: 'leadsquiet', label: 'Forms gone quiet', kinds: ['leads-quiet'], channels: ['bell', 'popup', 'slack'], admin: true,
+    desc: 'Once a day, websites that usually get enquiries and have suddenly had none for weeks: often a broken form or website. Each website is reported once per silence.' },
   { key: 'admin', label: 'Accounts and admin', kinds: ['signup', 'site-removed', 'security'], channels: ['bell', 'popup', 'slack', 'email'], admin: true,
     desc: 'Someone signs up and needs approving, an audit is removed from the list, or an account gets repeated wrong passwords.' },
   { key: 'projects', label: 'Projects you are on', kinds: ['project-assign', 'project-late', 'project-note'], channels: ['bell', 'popup', 'slack', 'email'],
@@ -614,6 +616,7 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   'domain-digest': 'sent the daily domain report',
   'watch-issue': 'found critical errors on a website just published',
   'watch-digest': 'found critical errors on live websites',
+  'leads-quiet': 'found websites whose forms have gone quiet',
   'ticket-new': 'sent a ticket',
   'ticket-reply': 'replied on a change request',
   'ticket-assign': 'gave you a client change request',
@@ -705,6 +708,7 @@ function notifLink(n) {
   if (n.kind === 'comment-waiting' && n.dudaSite) return `${base}/#/comments/${encodeURIComponent(n.dudaSite)}`;
   if (/^ticket-/.test(n.kind || '')) return `${base}/#/requests${n.ticketId ? '/' + encodeURIComponent(n.ticketId) : ''}`;
   if (n.kind === 'watch-digest') return `${base}/#/live/content`;
+  if (n.kind === 'leads-quiet') return `${base}/#/analysis/quiet`;
   if (n.kind === 'watch-issue' && n.dudaSite) return `${base}/#/dr/${encodeURIComponent(n.dudaSite)}/auto-audit`;
   if (n.kind === 'domain-digest') return `${base}/#/live/trends`;
   if (/^domain-/.test(n.kind || '')) return n.dudaSite ? `${base}/#/live/site/${encodeURIComponent(n.dudaSite)}` : `${base}/#/live/problems`;

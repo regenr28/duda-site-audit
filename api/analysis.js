@@ -14,6 +14,7 @@ import { quietSites, marketingFor, benchmarks, leadsFor, setVerdict, unsureLeads
 import { readLeads } from './_leads.js';
 import { JUDGE_SYSTEM, readJudgement } from './_judge.js';
 import { askAI } from './ai.js';
+import { quietKV, acrossKV } from './_leadkv.js';
 
 const NOT_READY = { error: 'The analysis database is not connected yet. Enquiries are still being stored, and everything here will fill in once it is set up.' };
 
@@ -54,7 +55,13 @@ async function handler(req, res) {
     if (req.method === 'GET') {
       const op = req.query.op || 'overview';
       if (op === 'status') return res.status(200).json(await storeStatus());
-      if (!sqlReady()) return res.status(200).json({ ready: false, ...NOT_READY });
+      // Without the analysis database, the two questions the app's own numbers can answer are
+      // answered from them; only the cross-website message comparison needs the database.
+      if (!sqlReady()) {
+        if (op === 'quiet') return res.status(200).json({ ready: true, kv: true, sites: await quietKV() });
+        if (op === 'benchmarks') return res.status(200).json(Object.assign({ ready: true }, await acrossKV()));
+        return res.status(200).json({ ready: false, ...NOT_READY });
+      }
       const months = Math.min(Math.max(Number(req.query.months) || 12, 1), 36);
 
       if (op === 'overview') {
@@ -84,7 +91,7 @@ async function handler(req, res) {
         if (!id) return res.status(400).json({ error: 'Which website?' });
         return res.status(200).json({ ready: true, ...(await marketingFor(id, months)) });
       }
-      if (op === 'benchmarks') return res.status(200).json({ ready: true, ...(await benchmarks({ months })) });
+      if (op === 'benchmarks' || op === 'blasts') return res.status(200).json({ ready: true, ...(await benchmarks({ months })) });
       if (op === 'junk') {
         const id = String(req.query.id || '');
         if (!id) return res.status(400).json({ error: 'Which website?' });

@@ -7,8 +7,46 @@
 // Owner only. It names the services the app is built on, which nothing else in the app does.
 import { metered,
   redis, redisRaw, P, requireUser, readBody, jparse, OWNER_EMAIL, unpackJSON, now,
-  emailEnabled, slackBotEnabled, listUsers, KV_CEILING, KV_MONTHLY_COMMANDS, kvCostUpTo, dbKind, kvCapped, meterFlush,
+  emailEnabled, slackBotEnabled, listUsers, KV_CEILING, KV_MONTHLY_COMMANDS, kvCostUpTo, dbKind, kvCapped, meterFlush, isCopy,
 } from './_lib.js';
+
+/**
+ * What this installation is connected to, read from its own settings (names only, never values),
+ * so the company app and the owner's copy can each say exactly what they have and what is missing.
+ */
+function setupList() {
+  const has = (...k) => k.every((x) => !!process.env[x]);
+  const db = dbKind();
+  const aiList = (() => { try { return ai.providers(); } catch (e) { return []; } })();
+  const KNOWN_AI = [['anthropic', 'ANTHROPIC_API_KEY', 'Claude (Anthropic)'], ['openai', 'OPENAI_API_KEY', 'ChatGPT (OpenAI)'], ['gateway', 'AI_GATEWAY_API_KEY', 'Vercel AI Gateway'],
+    ['gemini', 'GEMINI_API_KEY', 'Gemini (Google)'], ['groq', 'GROQ_API_KEY', 'Groq'], ['openrouter', 'OPENROUTER_API_KEY', 'OpenRouter'], ['cerebras', 'CEREBRAS_API_KEY', 'Cerebras'],
+    ['mistral', 'MISTRAL_API_KEY', 'Mistral'], ['cloudflare', 'CLOUDFLARE_API_TOKEN', 'Cloudflare Workers AI']];
+  const ais = KNOWN_AI.map(([id, key, label]) => {
+    const on = aiList.some((p) => p.id === id);
+    return { key: 'ai:' + id, group: 'AI', label: `${ai.aliasOf(id)} · ${label}`, on, note: on ? 'answers AI checks' : has(key) ? 'key set but switched off (AI_OFF)' : 'no key' };
+  }).filter((x) => x.on || x.note !== 'no key' || ['anthropic', 'openai'].includes(x.key.slice(3)));
+  return [
+    { key: 'db', group: 'Basics', label: 'Main database', on: db !== 'none', note: db === 'supabase' ? 'Supabase (no daily request cap)' : db === 'upstash' ? 'Upstash (has a monthly request allowance)' : 'not connected' },
+    { key: 'duda', group: 'Basics', label: 'Duda API', on: has('DUDA_API_USERNAME', 'DUDA_API_PASSWORD'), note: 'websites, Business Info, analytics, form history' },
+    { key: 'hook', group: 'Basics', label: 'Duda webhook (live form submissions and comments)', on: has('DUDA_HOOK_SECRET') || has('DUDA_HOOK_KEY'), note: 'connected from Duda comments → Connect' },
+    { key: 'google-signin', group: 'Basics', label: 'Sign in with Google', on: has('GOOGLE_CLIENT_ID') },
+    ...ais,
+    { key: 'email', group: 'Messages', label: 'Email (Resend)', on: emailEnabled(), note: has('RESEND_API_KEY') && isCopy() ? 'key set, but this copy sends no email' : 'notifications, sign-in codes, client emails' },
+    { key: 'slack', group: 'Messages', label: 'Slack', on: !!process.env.SLACK_WEBHOOK_URL && !isCopy() || slackBotEnabled(), note: isCopy() ? 'this copy posts nothing to Slack' : 'alerts and direct messages' },
+    { key: 'ably', group: 'Messages', label: 'Realtime (Ably)', on: has('ABLY_API_KEY'), note: 'instant updates and who is online; without it the app checks every few seconds' },
+    { key: 'psi', group: 'Google', label: 'PageSpeed key (Site health / Lighthouse)', on: has('PAGESPEED_API_KEY'), note: 'without it Google\'s shared allowance is often used up' },
+    { key: 'maps', group: 'Google', label: 'Google Maps key (Places API)', on: has('GOOGLE_MAPS_API_KEY'), note: 'official Google Business Profile details for Online presence' },
+    { key: 'gsa', group: 'Google', label: 'Google service account (Analytics + Search Console)', on: has('GOOGLE_SERVICE_ACCOUNT'), note: 'top pages, Google vs ads, search queries and positions' },
+    { key: 'sql', group: 'Extras', label: 'Analysis database', on: sqlReady(), note: 'only Lead analysis → Junk and blasts needs it' },
+  ];
+}
+/** On the owner's copy: what it leaves to the company app on purpose. */
+const COPY_OFF = [
+  'Emails and Slack messages (in-app notifications still work)',
+  'The daily auto audit, domain check and online presence runs, and "Check now" on them',
+  'Fetching form history from Duda',
+  'Reminders about client comments waiting for an answer',
+];
 import { sqlReady, rows as sqlRows, ensureSchema } from './_sql.js';
 import { _test as ai } from './ai.js';
 import { queueState, alertOwner, recentAlerts } from './_queue.js';
@@ -237,6 +275,7 @@ async function handler(req, res) {
 
     return res.status(200).json({
       at: now(),
+      setup: setupList(), copy: isCopy() ? { off: COPY_OFF } : null,
       queue: { pending: queue.pending, running: queue.running, last: queue.last },
       runs,
       sentAlerts: sent,

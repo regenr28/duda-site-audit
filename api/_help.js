@@ -371,7 +371,12 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'analysis', group: 'Collaboration', title: 'Lead analysis', audience: 'all',
-    html: `<p><b>Lead analysis</b> in the menu is what the enquiries across every website add up to. It needs the analysis database connected; until then the pages explain that and nothing is lost \u2014 enquiries keep arriving and <b>Bring enquiries in</b> copies across everything already held.</p>
+    html: `<p><b>Lead analysis</b> in the menu reads the form enquiries of every website together, to catch what one website on its own cannot show:</p>
+<ul>
+<li><b>📭 Forms gone quiet</b>: websites that usually get enquiries and suddenly get none — usually a broken form, a broken website or a domain problem. Admins get a daily alert (Notifications → <b>Forms gone quiet</b>).</li>
+<li><b>📊 Across all websites</b>: which websites get plenty of enquiries, which get none, and the busiest ones.</li>
+<li><b>🗑 Junk and blasts</b>: the same spam sent to many clients. This one needs the analysis database; the other two work from the app's own numbers.</li>
+</ul>
 <h3>Junk and real enquiries</h3>
 <p>Every enquiry is sorted as it arrives, in three steps, and most never reach the third:</p>
 <ul>
@@ -382,6 +387,7 @@ export const HELP_SECTIONS = [
 <p>Nothing is ever deleted. A false negative wastes somebody a minute; a false positive loses a job the shop never hears about, so everything leans towards calling an enquiry real. <b>Mark as junk</b> or <b>Mark as real</b> on any enquiry overrules it, with your name against the decision, and you can teach it the phrase or the sender at the same time.</p>
 <p>One deliberate limit: the same message arriving on several websites is strong evidence of a blast \u2014 but it never convicts an enquiry that is plainly asking for work. Two customers can phrase a request identically; a blast cannot ask for a quote on its own car.</p>
 <h3>Forms gone quiet</h3>
+<p>Each website is compared with <b>its own rhythm</b>: the usual gap between enquiries is a year divided by the year's count, and a website is listed when it has gone <b>three of those gaps, and at least three weeks</b>, with none. A shop that gets ten a month and has had none for three weeks is listed; one that gets one a month is not. Only published websites with six or more enquiries in the year are judged. Each row says how long, the usual rate, roughly how many enquiries it would have had by now, and what to check: a domain problem, or <b>no contact form found on the live website</b> (from the auto audit). <b>Open</b> goes to its Form submissions.</p>
 <p>A form that quietly breaks \u2014 the recipient changed, a redesign dropped the widget \u2014 looks exactly like a slow month, and nobody notices for weeks. This page lists websites that <b>used to get enquiries and have stopped</b>, with how long and how busy they usually are.</p>
 <p>It counts <b>real</b> enquiries only. On a website where a third of submissions are junk, a raw count hides the thing worth knowing: the spam carries on while the customers stop.</p>
 <h3>Across all websites</h3>
@@ -695,7 +701,9 @@ export const HELP_SECTIONS = [
     html: `<ul>
 <li><b>Location pages.</b> A page whose own address names a town — <span class="mono">/car-polishing-in-aberdeen</span> — is a location page built on purpose, so naming that town in its title, headings, copy and alt text is correct and is never reported. A <b>different</b> town on that page still is, and so is any town on a page whose address names none. Words in the address that are only the business name or the service being sold don't count as a place.</li>
 <li>Some things need judgement, so the <b>Site Auditor AI</b> reviews image <b>alt text</b> and <b>page text</b> for another business's name, a wrong city or placeholder text. Brand and partner logos (XPEL, Ceramic Pro, wheel brands…) are treated as correct.</li>
-<li>Answers are saved, so rescans don't re-check text that hasn't changed.</li>
+<li><b>Proofreading</b>: the page text, titles and meta descriptions are read for <b>spelling mistakes</b>, <b>clear grammar errors</b> (your/you're, its/it's, a missing word) and <b>unfinished copy</b> (a sentence that stops mid-thought, "Add your text here"). Only the exact wrong words become an item, with the correction. Brand, car and trade words (PPF, ceramic, XPEL…) and style choices are left alone. Service pages are read before blog posts.</li>
+<li><b>Buttons that open the wrong page</b>: each button and link is judged with the page it opens in front of the AI (its address, title and heading) and the section it sits in. "Contact us" opening the home page, or "Read more" under <i>Ceramic Coating</i> opening the window tint page, becomes an item saying where it should go. A lead button (contact, quote, book, call) doing this is <b>critical</b>. Links whose words plainly match their page, and menus, are not even asked about.</li>
+<li>Answers are saved, so rescans don't re-check text or links that haven't changed.</li>
 <li>Only text that could hide a problem is sent: a name that looks like another business, a place, contact details or filler text. Plain marketing prose is skipped, so a long blog doesn't use up the day's credits. The scan summary says how many blocks were read and how many were skipped.</li>
 <li>The AI has a daily allowance. The <b>AI Status</b> page (light-bulb menu) shows credits left today and when they refill. The site page shows the credits too.</li>
 <li>If the allowance runs out during a scan, the unchecked parts become <b>AI check pending</b> items ("will resume after …"). They're checked <b>automatically</b> when credits are back, or click <b>Run now</b>.</li>
@@ -1092,6 +1100,8 @@ export const HELP_SECTIONS = [
 <li><b>Analysis database.</b> Where enquiries live. It measures itself exactly, every load, and estimates how many months it has at the rate enquiries are arriving.</li>
 <li><b>Enquiries written this month.</b> Against the monthly write allowance. One thing is <i>not</i> on this page and cannot be: enquiries <b>read</b> are charged too, and only the provider's own dashboard knows that figure. If anything ever runs out unexpectedly, that is where to look first.</li>
 </ul>
+<h3>Connections and keys</h3>
+<p>At the bottom: every outside service and key the app can use, grouped (basics, AI, messages, Google, extras), each <b>On</b> or <b>Not set</b> with what it is for. It is read from this app's own settings, names only. On <b>your copy</b> of the app a banner at the top also says what the copy leaves to the company app on purpose (emails, Slack, the daily runs) and which AI models it has.</p>
 <h3>Is everything arriving</h3>
 <p>One line per outside connection, each with a mark, a name and a plain note. A tick means set up and recent, a triangle means set up but nothing has come in for days, a dot means not set up at all.</p>
 <p>The one worth reading every time is the <b>Duda webhook</b>. A webhook that was never registered, or that quietly stopped, looks <i>exactly</i> like a slow week from inside the app: comments stop appearing and nothing anywhere says why. That is the whole reason this line exists.</p>

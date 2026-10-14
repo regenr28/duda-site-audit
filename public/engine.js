@@ -274,6 +274,16 @@
         'A share link that also carries "class=…" in its address (a styling setting that leaked into the link) says so',
       ],
     },
+    {
+      v: 21,
+      date: '2026-10-14',
+      title: 'Proofreading, and buttons that open the wrong page (AI)',
+      items: [
+        'Spelling mistakes and clear grammar errors in the page text, titles and meta descriptions, each with the exact words and the correction',
+        'Unfinished copy: a sentence that stops mid-thought, or template text never filled in ("Add your text here", "[City]")',
+        'Buttons and links that open a different page from the one they promise: "Contact us" opening the home page, "Read more" under Ceramic Coating opening the window tint page. A lead button (contact, quote, book, call) doing this is critical',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1419,6 +1429,7 @@
     const device = ctx.device || 'desktop';
     const findings = [];
     const internal = new Set();
+    const linkRows = new Map();  // label|to|section -> an internal link a visitor reads, for the "opens the page it promises" check
     const external = new Map(); // url -> {selector,...}
     const images = new Map();
     const altList = [];
@@ -1686,6 +1697,37 @@
     }
 
     // --- Links ---
+    // The headings of the page, in order, so a link can say which section it sits in ("Read more"
+    // under "Ceramic Coating"). Read once per page, only if there is an internal link to describe.
+    let linkHeads = null;
+    const sectionOf = (a) => {
+      if (!linkHeads) linkHeads = Array.prototype.slice.call(doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]'));
+      let best = '';
+      for (const h of linkHeads) {
+        if (h.contains(a)) continue;
+        if (h.compareDocumentPosition(a) & 4) { const tx = clean(h.textContent); if (tx) best = tx; } else break;
+      }
+      return best.slice(0, 120);
+    };
+    const nearOf = (a, label) => {
+      let e = a.parentElement;
+      for (let n = 0; e && n < 5; e = e.parentElement, n++) {
+        const tx = clean(e.textContent);
+        if (tx.length > label.length + 25) return cut(tx.replace(label, ' ').replace(/\s+/g, ' ').trim(), 220);
+      }
+      return '';
+    };
+    const noteLink = (a, to, label, isButton) => {
+      const where = locationOf(a);
+      if (where === 'Head / Meta') return;
+      // Menus are a list of page names; a header or footer only counts when it is a button.
+      if ((where === 'Header' || where === 'Footer' || where === 'Side panel') && !isButton) return;
+      if (!label || label.length > 80 || linkRows.size >= 150) return;
+      const context = sectionOf(a);
+      const k = [label.toLowerCase(), to, context.toLowerCase()].join('|');
+      if (linkRows.has(k)) return;
+      linkRows.set(k, { el: a, text: label, to, button: !!isButton, context, near: nearOf(a, label) });
+    };
     doc.querySelectorAll('a').forEach((a) => {
       const raw = a.getAttribute('href');
       const text = clean(a.textContent);
@@ -1778,6 +1820,7 @@
         }
         if (isAbs && !sameHost) add(a, { code: 'LINK_EDITOR_URL', severity: 'critical', category: 'Links', message: 'Link points to the Duda editor/preview URL instead of the live site', found: href });
         internal.add(normalizePath(siteMatch[2] || '/'));
+        noteLink(a, normalizePath(siteMatch[2] || '/'), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
         return;
       }
       if (EDITOR_HOSTS.test(u.hostname) || (isAbs && sameHost)) {
@@ -1787,6 +1830,7 @@
       const hostNoWww = u.hostname.toLowerCase().replace(/^www\./, '');
       if (truth.domain && hostNoWww === truth.domain.replace(/^www\./, '')) {
         internal.add(normalizePath(u.pathname));
+        noteLink(a, normalizePath(u.pathname), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
         return;
       }
       const net = socialNetOf(u.href);
@@ -1946,6 +1990,7 @@
       findings: collapseContact(findings),
       photos: photosUsed(doc, ctx, device),
       internal: Array.from(internal),
+      links: Array.from(linkRows.values()).map((x) => ({ text: x.text, to: x.to, button: x.button, context: x.context, near: x.near, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       external: Array.from(external.keys()).map((url) => ({ url, selector: uniqueSelector(external.get(url).el), location: locationOf(external.get(url).el), hiddenBy: hiddenReason(external.get(url).el, device) || '' })),
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
       alts: altList,
@@ -2418,6 +2463,7 @@
     const photoRows = [];
     const altMap = new Map();
     const textIdx = [];
+    const linkMap = new Map();    // the internal links a visitor reads, once per wording + destination + section
     const fontRows = [];          // every piece of text on the website, with the typeface it ends up in
     const fontLoaded = new Map(); // family (lowercased) → where the website loads it from
     const fontTheme = {};         // body / p / h1…h6 → the font the website's own design sets
@@ -2460,6 +2506,7 @@
           const r = auditDocument(doc, { device, path, pageUrl: res.url || `https://${opts.host}/site/${opts.siteId}${path === '/' ? '' : path}`, truth, siteId: opts.siteId, host: opts.host, noIndex: pagesMeta[path] && pagesMeta[path].noIndex });
           if (r.notFound) { info.notFound = true; break; }
           info.title = info.title || r.meta.title;
+          info.h1 = info.h1 || (r.meta.h1 || [])[0] || '';
           info.description = info.description || r.meta.description;
           if (r.meta.favicon) siteIcon.favicon = true;
           if (r.meta.touchIcon) siteIcon.touchIcon = true;
@@ -2480,6 +2527,12 @@
             m.isLogo = m.isLogo || x.isLogo;
           });
           r.textIndex.forEach((x) => textIdx.push(Object.assign({ path, device }, x)));
+          if (device === devices[0]) (r.links || []).forEach((x) => {
+            const k = [x.text.toLowerCase(), x.to, x.context.toLowerCase()].join('|');
+            let m = linkMap.get(k);
+            if (!m) { if (linkMap.size >= 600) return; m = Object.assign({ pages: [] }, x); linkMap.set(k, m); }
+            if (!m.pages.includes(path)) m.pages.push(path);
+          });
           if (r.fonts) {
             r.fonts.rows.forEach((x) => { if (fontRows.length < 9000) fontRows.push(Object.assign({ path, device }, x)); });
             r.fonts.loaded.forEach((l) => { if (!fontLoaded.has(l.key)) fontLoaded.set(l.key, l); });
@@ -2614,7 +2667,8 @@
       fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 14) } : null,
       photos: photoSys,
       findings: merged,
-      pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
+      pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', h1: p.h1 || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
+      links: Array.from(linkMap.values()),
       externalLinks: external.size,
       images: images.size,
       alts: Array.from(altMap.values()),
@@ -2741,6 +2795,73 @@
     return sortFindings(findings);
   }
 
+  /**
+   * Proofreading by the AI: spelling, grammar, and copy left unfinished. Only what it is sure of
+   * (75%+) becomes an audit item, and only the exact words, so the item says what to change.
+   */
+  function applyProofIssues(findings, texts, issues) {
+    const RULES = {
+      spelling: ['TEXT_SPELLING', 'warning', 'Content', 'Spelling mistake'],
+      grammar: ['TEXT_GRAMMAR', 'warning', 'Content', 'Grammar mistake'],
+      incomplete: ['TEXT_INCOMPLETE', 'warning', 'Content', 'Unfinished or placeholder text'],
+    };
+    issues.forEach((v) => {
+      const blk = texts[v.i];
+      if (!blk || !RULES[v.type] || Number(v.confidence) < 0.75) return;
+      const q = String(v.quote || '').trim();
+      // The words have to really be there: an answer about text the block does not contain is dropped.
+      if (q && blk.text.toLowerCase().indexOf(q.toLowerCase()) < 0) return;
+      if (q && v.suggestion && q.toLowerCase() === String(v.suggestion).trim().toLowerCase()) return;
+      const [code, severity, category, message] = RULES[v.type];
+      // Placeholder text the rules already caught ("Lorem ipsum") is one item, not two.
+      if (v.type === 'incomplete' && findings.some((f) => f.code === 'PLACEHOLDER' && f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)))) return;
+      const pages = blk.pages.slice().sort();
+      const t = blk.text;
+      const at = q ? t.toLowerCase().indexOf(q.toLowerCase()) : -1;
+      const context = at > 80 ? '…' + t.slice(at - 80, at + q.length + 80) + '…' : t.slice(0, 220) + (t.length > 220 ? '…' : '');
+      const f = {
+        code, severity, category, message,
+        found: q ? `"${q}"` : context,
+        expected: v.suggestion ? 'Suggested: ' + v.suggestion : '',
+        path: pages[0], pages, devices: blk.devices, visibleOn: blk.visibleOn, hiddenOn: blk.hiddenOn,
+        selector: blk.selector, location: blk.location, snippet: context,
+        ai: { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: q },
+      };
+      f.id = hash([f.code, f.selector, f.found, pages.length > 1 ? '*' : f.path].join('|'));
+      if (!findings.some((x) => x.id === f.id)) findings.push(f);
+    });
+    return sortFindings(findings);
+  }
+  /** Words that ask for a lead: a button with them opening the wrong page loses enquiries, so it is critical. */
+  const LEAD_WORDS = /\b(contact|get in touch|quote|estimate|book|schedule|appointment|call|reach us|enquir|inquir)/i;
+  /**
+   * A button or link that opens a different page from the one its words (or its section) promise,
+   * as judged by the AI with the destination page's title and heading in front of it.
+   */
+  function applyLinkVerdicts(findings, links, verdicts, pages) {
+    const byPath = new Map((pages || []).map((p) => [p.path, p]));
+    verdicts.forEach((v) => {
+      const l = links[v.i];
+      if (!l || v.verdict !== 'wrong_page' || Number(v.confidence) < 0.75) return;
+      const dest = byPath.get(l.to) || {};
+      const lead = LEAD_WORDS.test(l.text);
+      const where = (l.pages || []).slice().sort();
+      const f = {
+        code: 'LINK_WRONG_PAGE', severity: lead ? 'critical' : 'warning', category: 'Links',
+        message: `${l.button ? 'Button' : 'Link'} opens the wrong page`,
+        found: `"${l.text}" → ${l.to}${dest.title ? ` (${dest.title})` : ''}`,
+        expected: v.expected ? `Should open ${v.expected}` : (v.reason || ''),
+        path: where[0] || '/', pages: where, selector: l.selector, location: l.location,
+        visibleOn: l.hiddenBy ? [] : ['desktop'], hiddenOn: l.hiddenBy ? [`Desktop (${l.hiddenBy})`] : [],
+        snippet: [l.context ? `Section: ${l.context}` : '', l.near ? `Around it: ${l.near}` : ''].filter(Boolean).join(' · ').slice(0, 300),
+        ai: { verdict: 'wrong_page', confidence: v.confidence, reason: v.reason, suggestion: v.expected || '' },
+      };
+      f.id = hash([f.code, f.selector, l.to, l.text, where.length > 1 ? '*' : f.path].join('|'));
+      if (!findings.some((x) => x.id === f.id)) findings.push(f);
+    });
+    return sortFindings(findings);
+  }
+
   function toCSV(findings, siteLabel) {
     const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
     const rows = [['Site', 'Severity', 'Category', 'Page', 'Other pages', 'Location', 'Visible on', 'Hidden on', 'CSS selector', 'Finding', 'Found', 'Expected', 'Assignee', 'Done']];
@@ -2760,6 +2881,6 @@
     POLISH_CODES, isPolish,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

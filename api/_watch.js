@@ -120,6 +120,23 @@ const snip = (text, at, len) => String(text).slice(Math.max(0, at - 50), at + le
  * Everything on one page that does not match the website's Business Info.
  * Returns [{ type, value, sev, label, ctx }] — type is the audit's own: phone, email, name, social, address, schema.
  */
+/**
+ * The contact forms on a page, by name: Duda's form widget carries its title in a hidden
+ * form_title field (and the visible .dmform-title heading), which is the name Duda's form history
+ * uses. A form with no name still counts — it says the page has a form.
+ */
+export function formsOn(html) {
+  const out = [];
+  const names = [...String(html || '').matchAll(/<input\b[^>]*name=["'](?:form_title|dmformsubject)["'][^>]*>/gi)]
+    .map((m) => (/value=["']([^"']*)["']/i.exec(m[0]) || [])[1] || '').map((s) => s.replace(/&amp;/g, '&').replace(/&#39;|&#x27;/g, "'").trim()).filter(Boolean);
+  const titles = [...String(html || '').matchAll(/class=["'][^"']*\bdmform-title\b[^"']*["'][^>]*>([\s\S]{0,200}?)<\//gi)]
+    .map((m) => m[1].replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const forms = [...String(html || '').matchAll(/<form\b[\s\S]*?<\/form>/gi)].filter((m) => /<textarea|type=["']?email|name=["'][^"']*e-?mail/i.test(m[0])).length;
+  [...new Set(names.concat(titles))].forEach((n) => out.push(n.slice(0, 80)));
+  if (!out.length && forms) out.push('');
+  return out;
+}
+
 export function checkPage(html, truth, path) {
   const A2 = A(); const out = [];
   const add = (type, value, sev, label, ctx, extra) => out.push(Object.assign({ type, value: String(value).slice(0, 160), sev, label, ctx: String(ctx || '').slice(0, 160), path }, extra || {}));
@@ -395,6 +412,8 @@ async function readSite(s, recId, timeLeft) {
   let part = jparse(partRaw);
   if (part && part.pub !== s.pub) part = null;        // published again since: start over
   let i = part ? part.i : 0; let read = part ? part.read || 0 : 0; const found = part ? part.found : [];
+  const forms = (part && part.forms) || {};
+  const noteForms = (html, path) => { const f = formsOn(html); if (f.length && Object.keys(forms).length < 40) forms[path] = f; };
   let pages = part ? part.pages : null;
   if (!part) {
     // The home page first, on its own: if it does not open, nothing else will, and how it fails says
@@ -410,7 +429,7 @@ async function readSite(s, recId, timeLeft) {
       return skip(`The home page ${home.why}`, 'open');
     }
     await redis(['SET', WLASTOK, s.domain, 'EX', 6 * 3600]);
-    read = 1; found.push(...checkPage(home.html, truth, '/'));
+    read = 1; found.push(...checkPage(home.html, truth, '/')); noteForms(home.html, '/');
     pages = (await pagesFor(s.domain)).filter((p) => p !== '/');
     pages.unshift('/'); i = 1;
   }
@@ -419,25 +438,25 @@ async function readSite(s, recId, timeLeft) {
     if (i - lastNote >= 20) { lastNote = i; await nowReading(s, i, pages.length); }
     const batch = pages.slice(i, i + BATCH);
     const got = await Promise.all(batch.map((p) => fetchPage(s.domain, p)));
-    got.forEach((g, k) => { if (g.html) { read++; found.push(...checkPage(g.html, truth, batch[k])); } });
+    got.forEach((g, k) => { if (g.html) { read++; found.push(...checkPage(g.html, truth, batch[k])); noteForms(g.html, batch[k]); } });
     i += batch.length;
     if (found.length > 400) found.splice(400);
     // Most of a batch refused: the servers want a break. Keep what was read and carry on later.
     if (got.filter((g) => !g.html && (SLOW_DOWN.has(g.status) || g.status === 0)).length > batch.length / 2) {
-      await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
+      await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found, forms }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
       return { done: false, wait: true, why: `Websites stopped answering us (${(got.find((g) => !g.html) || {}).why || 'refused'})` };
     }
     if (i < pages.length) await new Promise((res) => setTimeout(res, BATCH_GAP_MS));
   }
   if (i < pages.length) {
-    await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
+    await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found, forms }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
     return { done: false };
   }
   const issues = merge(found, okKeys);
   const prev = jparse(prevRaw);
   const before = new Set(((prev && prev.issues) || []).map((x) => x.k));
   const fresh = issues.filter((x) => !before.has(x.k));
-  const result = { at: Date.now(), pub: s.pub, domain: s.domain, name: s.name || truth.businessName, pages: read, issues,
+  const result = { at: Date.now(), pub: s.pub, domain: s.domain, name: s.name || truth.businessName, pages: read, issues, forms,
     ref: { name: truth.businessName, phones: truth.phones, emails: truth.emails, zips: (truth.addresses || []).map((a) => a.zip).filter(Boolean) } };
   // t: the serious ones by kind (phone, email, address, name, social): what the DR Websites column lists.
   const sum = { v: SUM_V, rv: RULES_V, at: result.at, pubAt, n: issues.length, c: issues.filter((x) => x.sev === 'critical').length, t: critTypes(issues), pages: read };

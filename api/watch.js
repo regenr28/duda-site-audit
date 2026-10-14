@@ -23,6 +23,9 @@ async function cron(req, res) {
   const reported = await watchDigest().catch(() => 0);
   const { presenceAuto } = await import('./_presence.js');
   r.presence = await presenceAuto({ budgetMs: 40000, by: 'cron' }).catch((e) => ({ error: String(e.message || e) }));
+  // Websites whose forms have just gone quiet: one message a day to the admins.
+  const { quietAlerts } = await import('./_leadkv.js');
+  r.quiet = await quietAlerts().catch((e) => ({ error: String(e.message || e) }));
   return res.status(200).json(Object.assign({ reported }, r));
 }
 

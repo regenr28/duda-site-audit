@@ -769,6 +769,7 @@
     if (/^ticket-/.test(n.kind)) return '#/requests' + (n.ticketId ? '/' + encodeURIComponent(n.ticketId) : '');
     if (/^domain-/.test(n.kind)) return n.dudaSite ? '#/live/site/' + encodeURIComponent(n.dudaSite) : '#/live/problems';
     // Wrong details: the website's profile (where they are listed), or every website with some.
+    if (n.kind === 'leads-quiet') return '#/analysis/quiet';
     if (n.kind === 'watch-issue') return n.dudaSite ? '#/dr/' + encodeURIComponent(n.dudaSite) + '/auto-audit' : '#/live/content';
     if (n.kind === 'watch-digest') return '#/live/content';
     if (n.kind === 'comment-waiting') return n.dudaSite ? '#/comments/' + encodeURIComponent(n.dudaSite) : '#/comments';
@@ -1494,7 +1495,34 @@
         ${[['Websites', d.app.websites], ['Scanned in 7 days', d.app.scanned7], ['Marked complete', d.app.complete],
           ['Open critical items', d.app.openCritical], ['Team members', d.app.users], ['Client sign-ins', d.app.clients]]
           .map(([k, v]) => `<div class="hx-tile"><div class="hx-k">${esc(k)}</div><div class="hx-v">${Number(v || 0).toLocaleString()}</div></div>`).join('')}
-      </div>`;
+      </div>
+      ${setupHtml(d)}`;
+    if (d.copy) $('#hxBody').insertAdjacentHTML('afterbegin', copyHtml(d));
+  }
+  /** What this installation is connected to, grouped, with what is missing said plainly. */
+  function setupHtml(d) {
+    const list = d.setup || []; if (!list.length) return '';
+    const groups = [...new Set(list.map((x) => x.group))];
+    const missing = list.filter((x) => !x.on).length;
+    return `<div class="k" style="margin-top:18px" id="hxSetup">Connections and keys <span class="small faint" style="font-weight:400">· ${list.length - missing} of ${list.length} set up</span></div>
+      <div class="hx-setup">${groups.map((g) => `<div class="hx-setup-g"><div class="hx-setup-h">${esc(g)}</div>${list.filter((x) => x.group === g).map((x) => `<div class="hx-setup-r ${x.on ? 'on' : 'off'}">
+        <span class="hx-setup-m" aria-hidden="true">${x.on ? '✓' : '—'}</span><span><b>${esc(x.label)}</b>${x.note ? `<span class="small faint"> · ${esc(x.note)}</span>` : ''}</span><span class="hx-setup-s">${x.on ? 'On' : 'Not set'}</span></div>`).join('')}</div>`).join('')}</div>
+      <div class="small faint" style="margin-top:6px">Read from this app's own settings (names only). Keys are added in Vercel → Settings → Environment Variables, then Redeploy.</div>`;
+  }
+  /** On the owner's copy: a banner saying what is different from the company app, and why. */
+  function copyHtml(d) {
+    const ais = (d.setup || []).filter((x) => x.group === 'AI');
+    const db = (d.setup || []).find((x) => x.key === 'db');
+    return `<div class="hx-copy">
+      <div class="hx-copy-h">📋 This is your copy of the app</div>
+      <div class="small">It shares the code with the company app (every GitHub upload updates both) but has its own database${db ? ` (<b>${esc(db.note)}</b>)` : ''}, its own settings and keys, and it stays quiet so nothing reaches the team or clients twice.</div>
+      <div class="hx-copy-cols">
+        <div><b>Switched off here on purpose</b><ul>${(d.copy.off || []).map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
+        <div><b>AI models in this copy</b><ul>${ais.map((x) => `<li>${x.on ? '✓' : '—'} ${esc(x.label)} <span class="faint">${esc(x.note)}</span></li>`).join('') || '<li>None set up</li>'}</ul>
+          <div class="small faint">The company app has its own list on its System health page (Lyra and Rigel there).</div></div>
+      </div>
+      <a class="small" href="#hxSetup" onclick="document.getElementById('hxSetup').scrollIntoView({behavior:'smooth'});return false">Everything this copy has and lacks ↓</a>
+    </div>`;
   }
 
   /**
@@ -1860,18 +1888,24 @@
   async function renderAnalysis(tab) {
     const t = AN_TABS.some(([k]) => k === tab) ? tab : 'quiet';
     $('#view').innerHTML = `<div class="page-head"><div><h1>Lead analysis</h1>
-        <div class="muted">What the enquiries across every website add up to.</div></div>
-        ${can('leads.import') ? '<button class="btn" id="anMigrate" title="Copy enquiries already stored into the analysis database">⇪ Bring enquiries in</button>' : ''}</div>
+        <div class="muted">The form enquiries of every website, read together, to catch what one website on its own cannot show.</div></div>
+        ${can('leads.import') && state.anSql ? '<button class="btn" id="anMigrate" title="Copy enquiries already stored into the analysis database">⇪ Bring enquiries in</button>' : ''}</div>
+      <div class="an-what">
+        <div><b>📭 Forms gone quiet</b><span>Websites that usually get enquiries and suddenly get none. Usually a broken form, a broken website or a domain problem — the client's leads stop and nobody notices. Admins get a daily alert.</span></div>
+        <div><b>📊 Across all websites</b><span>Which websites get plenty of enquiries, which get none at all, and how they are spread — to see who needs help with leads.</span></div>
+        <div><b>🗑 Junk and blasts</b><span>The same spam sent to many of our clients at once (needs the analysis database).</span></div>
+      </div>
       <div class="tabs">${AN_TABS.map(([k, label]) => `<a href="#/analysis/${k}" class="${t === k ? 'on' : ''}">${esc(label)}</a>`).join('')}</div>
       <div id="anBody"><div class="empty">Loading…</div></div>`;
     if ($('#anMigrate')) $('#anMigrate').onclick = migrateLeads;
     const body = $('#anBody');
     let d, S;
-    try { [d, S] = await Promise.all([api(`/api/analysis?op=${t === 'junk' ? 'benchmarks' : t}`), api('/api/analysis?op=status').catch(() => null)]); }
+    try { [d, S] = await Promise.all([api(`/api/analysis?op=${t === 'junk' ? 'blasts' : t}`), api('/api/analysis?op=status').catch(() => null)]); }
     catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-    if (d.ready === false) { body.innerHTML = anStatus(S, false); return; }
-    body.innerHTML = '<div id="anStat"></div><div id="anIn"></div>';
-    $('#anStat').innerHTML = anStatus(S, true);
+    if (S && S.ready && !state.anSql) { state.anSql = true; return renderAnalysis(tab); }
+    if (d.ready === false) { body.innerHTML = anStatus(S, false, t); return; }
+    body.innerHTML = '<div id="anIn"></div><div id="anStat"></div>';
+    $('#anStat').innerHTML = anStatus(S, !!(S && S.ready), t);
     const inner = $('#anIn');
     if (t === 'quiet') return anQuiet(inner, d);
     if (t === 'benchmarks') return anBench(inner, d);
@@ -1881,8 +1915,12 @@
    * "Where are the enquiries, and how far along is everything?" in plain numbers: what the app holds,
    * how much past history has been fetched from Duda, and how much the analysis database has.
    */
-  function anStatus(S, ready) {
+  function anStatus(S, ready, tab) {
     if (!S) return ready ? '' : '<div class="note"><b>The analysis database is not connected yet.</b> Enquiries are still stored; nothing is lost.</div>';
+    if (!ready && tab !== 'junk') {
+      const K = S.kv || {}; const H = S.history || {};
+      return `<div class="small faint an-foot">Read from the app's own storage: ${fmtN(K.total || 0)} enquiries from ${fmtN(K.sites || 0)} websites${K.newest ? `, newest ${esc(dayLabel(K.newest))}` : ''}${H.pending ? ` · ${fmtN(H.pending)} websites still fetching their history from Duda` : ''}.</div>`;
+    }
     const pct = (a, b) => (b ? Math.min(100, Math.round((a / b) * 100)) : 0);
     const bar = (p, tone) => `<div class="progress an-st-bar"><i style="width:${p}%;background:var(--${tone})"></i></div>`;
     const H = S.history || {}; const known = (H.done || 0) + (H.pending || 0);
@@ -1899,27 +1937,35 @@
       <div class="an-st-h"><b>Status</b> <span class="small muted">· where your enquiries are right now</span></div>
       ${row('📥', 'Stored in the app', `${fmtN(K.total || 0)}`, `Every form submission is kept in the app's main storage, the same place as audits and comments — <b>${fmtN(K.sites || 0)}</b> websites${K.newest ? `, newest ${esc(dayLabel(K.newest))}` : ''}. New ones arrive the moment a form is sent.`, null)}
       ${row('⏳', 'Past submissions fetched from Duda', known ? `${hp}%` : '—', known ? `${fmtN(H.done || 0)} of ${fmtN(known)} websites have their last 12 months fetched${H.pending ? `, ${fmtN(H.pending)} still waiting` : ''}${H.running ? ' · <b>fetching now</b>' : H.pending ? ' · it carries on a few websites at a time while someone has the app open' : ' · finished'}.` : 'Nothing queued yet. It starts by itself while the app is open.', known ? hp : null, hp === 100 ? 'ok' : 'accent')}
-      ${row('🗄', 'Analysis database', ready ? (Q && !Q.error ? `${copied}%` : 'error') : 'Not connected', ready ? (Q && Q.error ? esc(Q.error) : `Connected. It holds ${fmtN(Q ? Q.total : 0)} enquiries from ${fmtN(Q ? Q.sites : 0)} websites${copied < 100 ? ' — press <b>⇪ Bring enquiries in</b> to copy the rest' : ''}.`) : 'Needed only for the three tabs on this page (forms gone quiet, patterns across websites, junk and blasts). Until it is connected those stay empty — <b>nothing is lost</b>, and every enquiry is still on each website\'s Form submissions and Contacts.', ready ? copied : 0, copied === 100 ? 'ok' : 'warn')}
+      ${row('🗄', 'Analysis database', ready ? (Q && !Q.error ? `${copied}%` : 'error') : 'Not connected', ready ? (Q && Q.error ? esc(Q.error) : `Connected. It holds ${fmtN(Q ? Q.total : 0)} enquiries from ${fmtN(Q ? Q.sites : 0)} websites${copied < 100 ? ' — press <b>⇪ Bring enquiries in</b> to copy the rest' : ''}.`) : 'Needed only for <b>Junk and blasts</b>, which compares every message across every website. <b>Forms gone quiet</b> and <b>Across all websites</b> work without it. Nothing is lost either way: every enquiry is on each website\'s Form submissions and Contacts.', ready ? copied : 0, copied === 100 ? 'ok' : 'warn')}
       ${steps}</div>`;
   }
 
   /** Websites that used to get enquiries and have stopped. The one worth money. */
   function anQuiet(body, d) {
     const list = d.sites || [];
-    body.innerHTML = `<p class="small muted">A form that quietly breaks looks like a slow month. These websites <b>used to get enquiries and have stopped</b> — counting real customers only, so a form still collecting junk still shows up here.</p>
-      ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Website</th><th>Quiet for</th><th>Usually</th><th>Last real enquiry</th><th></th></tr></thead><tbody>
+    const open = (r) => (r.auditId ? `#/site/${esc(r.auditId)}/profile/submissions` : `#/dr/${esc(r.site)}/submissions`);
+    const why = (r) => [
+      r.dom && r.dom.status && r.dom.status !== 'ok' ? `<span class="badge sev-critical">🌐 ${esc(r.dom.label)}</span>` : '',
+      r.form === false ? '<span class="badge sev-critical" title="The auto audit read the live website and found no contact form on any page">No contact form found on the live site</span>' : r.form ? '<span class="badge subtle" title="The auto audit found a contact form on the live website">Form is on the website: test it</span>' : '',
+    ].filter(Boolean).join(' ') || '<span class="small faint">Send a test enquiry</span>';
+    body.innerHTML = `<p class="small muted">Each website is compared with <b>its own usual rhythm</b>: one that gets ten enquiries a month and has had none for three weeks is listed; one that gets one a month is not. Listed when it has gone three of its usual gaps between enquiries (and at least 3 weeks) with none. Only published websites with 6 or more enquiries in the last year are judged.</p>
+      ${list.length ? `<div class="table-wrap"><table class="grid"><thead><tr><th>Website</th><th>No enquiry for</th><th>Usually</th><th>Would have had</th><th>Last enquiry</th><th>What to check</th><th></th></tr></thead><tbody>
         ${list.map((r) => `<tr>
-          <td><b>${esc(r.name)}</b><div class="small faint mono">${esc(r.site)}</div></td>
+          <td><b>${esc(r.name)}</b><div class="small faint">${r.domain ? esc(r.domain) : `<span class="mono">${esc(r.site)}</span>`}</div></td>
           <td><span class="badge ${r.quiet_days > 45 ? 'sev-critical' : 'sev-warning'}">${r.quiet_days} days</span></td>
-          <td>${r.per_month}/month <span class="faint small">over ${r.months} months</span></td>
-          <td class="small">${r.last_real ? esc(r.last_real) : '<span class="faint">never</span>'}</td>
-          <td>${r.auditId ? `<a class="btn sm" href="#/site/${esc(r.auditId)}/leads">Open</a>` : ''}</td></tr>`).join('')}
+          <td>${r.per_month}/month</td>
+          <td title="How many enquiries this website would normally have had in this time">${r.missed ? `~${r.missed}` : '—'}</td>
+          <td class="small">${r.last_real ? esc(dayLabel(r.last_real)) : '<span class="faint">never</span>'}</td>
+          <td>${why(r)}</td>
+          <td><a class="btn sm" href="${open(r)}">Open</a></td></tr>`).join('')}
       </tbody></table></div>`
       : '<div class="empty">Nothing has gone quiet. Every website with a history is still getting enquiries.</div>'}`;
   }
 
   /** What the busy websites do differently — counts only, nobody named. */
   function anBench(body, d) {
+    if (d.kv) return anAcross(body, d);
     const o = d.overall || {};
     const pct = o.total ? Math.round((o.junk / o.total) * 100) : 0;
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1942,6 +1988,26 @@
         <div class="cl-card"><div class="cl-card-h">Which day people get in touch</div>${barChart(dowList.map((x) => ({ m: x.k, n: x.n })))}</div>
         <div class="cl-card"><div class="cl-card-h">And what time</div>${barChart(hours)}</div>
       </div>`;
+  }
+
+  /** Across all websites, from the app's own numbers: who gets plenty, who gets none. */
+  function anAcross(body, d) {
+    const o = d.overall || {}; const b = d.bands || {};
+    const open = (r) => (r.auditId ? `#/site/${esc(r.auditId)}/profile/submissions` : `#/dr/${esc(r.site)}/submissions`);
+    body.innerHTML = `
+      <div class="cl-tiles">
+        <div class="cl-tile"><div class="cl-t-k">Published websites</div><div class="cl-t-v">${fmtN(o.sites || 0)}</div></div>
+        <div class="cl-tile"><div class="cl-t-k">Got an enquiry in the last 30 days</div><div class="cl-t-v">${fmtN(o.active30 || 0)}</div></div>
+        <div class="cl-tile"><div class="cl-t-k">None in 90 days</div><div class="cl-t-v">${fmtN(o.silent90 || 0)}</div><div class="cl-t-d faint">worth a look: is the form working, is anybody visiting?</div></div>
+        <div class="cl-tile"><div class="cl-t-k">Enquiries in the last year</div><div class="cl-t-v">${fmtN(o.total || 0)}</div></div>
+      </div>
+      <div class="cl-two">
+        <div class="cl-card"><div class="cl-card-h">Websites by enquiries in the last year</div>
+          ${hBars([{ k: 'None', n: b.none || 0 }, { k: 'Fewer than 1 a month', n: b.few || 0 }, { k: '1 to 5 a month', n: b.some || 0 }, { k: 'More than 5 a month', n: b.many || 0 }])}</div>
+        <div class="cl-card"><div class="cl-card-h">Busiest websites</div>
+          <div class="an-top">${(d.top || []).map((r, i) => `<a href="${open(r)}"><span class="faint">${i + 1}</span> ${esc(r.name)}<b>${fmtN(r.n)}</b></a>`).join('') || '<div class="small faint">No enquiries yet.</div>'}</div></div>
+      </div>
+      <p class="small faint">Pages and sources that produce enquiries, and the busiest days and hours, need the analysis database (they read every message).</p>`;
   }
 
   /** The blasts: one message, several clients. */
@@ -2253,8 +2319,21 @@
         ${(l.unconfirmed || []).length ? `<div class="small faint">Not confirmed word for word, so left out: ${esc(l.unconfirmed.join(', '))}.</div>` : ''}
         ${(l.notes || []).map((n) => `<div class="small ps-note"><span class="badge ${lvl[n.level] ? lvl[n.level][0] : 'subtle'}">${lvl[n.level] ? lvl[n.level][1] : 'Note'}</span> ${esc(n.text)}</div>`).join('')}
         ${(l.sources || []).length ? `<details class="small faint ps-src"><summary>Sources</summary>${l.sources.map((c) => `<div>“${esc(c.text)}” <a href="${esc(c.url)}" target="_blank" rel="noopener">↗</a></div>`).join('')}</details>` : ''}</li>`;
+    // The answer first: one line per profile, in words, then the details underneath.
+    const L = r.listings || [];
+    const found = L.filter((l) => l.found); const unsure = L.filter((l) => !l.found);
+    const fix = found.filter((l) => (l.notes || []).length);
+    const verdict = (l) => !l.found ? ['ps-v-unk', '?', `${PRES_NAME[l.platform] || l.platform}: couldn't confirm — check it by hand`]
+      : (l.notes || []).length ? ['ps-v-fix', '!', `${PRES_NAME[l.platform] || l.platform}: ${(l.notes || []).length} thing${(l.notes || []).length === 1 ? '' : 's'} to fix — ${esc((l.notes[0] || {}).text || '')}`]
+      : ['ps-v-ok', '✓', `${PRES_NAME[l.platform] || l.platform}: matches Business Info`];
+    const summary = `<div class="ps-sum">
+      <div class="ps-sum-h">${fix.length ? `<b>${fix.length} profile${fix.length === 1 ? '' : 's'} need${fix.length === 1 ? 's' : ''} updating</b>` : found.length ? '<b>Every profile found matches Business Info</b>' : '<b>No profile could be confirmed</b>'}${unsure.length ? ` <span class="faint">· ${unsure.length} couldn't be confirmed</span>` : ''}</div>
+      <ul>${L.map((l) => { const [cls, mark, text] = verdict(l); return `<li class="${cls}"><span class="ps-v-m">${mark}</span><span>${text}</span></li>`; }).join('')}</ul>
+      ${unsure.length >= Math.max(2, found.length) ? `<div class="small muted">Facebook and Google often refuse to show their pages to automated searches, so "couldn't confirm" usually means <b>not readable</b>, not missing. ${W.maps === false ? 'Adding a Google Maps key makes the Google Business Profile check exact. ' : ''}Open the profile and compare it with Business Info by hand.</div>` : ''}
+    </div>`;
     return `<section class="pf-an">${head}
       <div class="small faint wc-meta">Checked ${esc(fmtFull(new Date(r.at).toISOString()))}${r.by ? ' by ' + esc(r.by) : ''} · Business Info: ${esc([ref.name, (ref.phones || []).join(', '), ref.websitePhone ? `website shows ${ref.websitePhone}` : ''].filter(Boolean).join(' · '))}</div>
+      ${summary}
       <ul class="wc-list">${(r.listings || []).map(row).join('')}</ul>
       ${(r.recs || []).length ? `<div class="ps-recs"><div class="cl-card-h">Suggestions for the client <span class="small faint" style="font-weight:400">(“Increase your searchability”)</span></div><ul>${r.recs.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
         <div class="small faint">${W.cfg && W.cfg.clientDefault ? 'Customers see these in their portal (General settings → Online presence), unless switched off on their customer profile.' : 'Team only. Show them to a customer from their customer profile, or to everyone in General settings → Online presence.'}</div></div>` : ''}
@@ -3174,22 +3253,27 @@
   }
 
   /**
-   * Enquiries by page, with the unknowns said out loud.
+   * Enquiries by page.
    *
-   * Duda's history endpoint does not record which page a form was on; only enquiries that arrive
-   * live do. Those used to be filed under "/" and the chart then credited the homepage with almost
-   * everything. Now they are one honest bucket, always last, with a line saying why.
+   * Duda's history names the FORM an enquiry came from but not the page. The server fills in the
+   * page wherever it can be known (a live delivery of the same form, or the auto audit finding that
+   * form on one page only); what is left is shown by its form's name ("Contact Us form"), never as
+   * an unexplained blank. Keys: a page, "\u0001<form name>" for a known form on an unknown page, ''
+   * for neither.
    */
-  const NO_PAGE = 'Page not recorded';
   function pageBars(pages) {
-    const list = (pages || []).map((p) => ({ k: p.k && p.k !== '/' && p.k !== '\u2014' ? p.k : NO_PAGE, n: p.n }));
-    const known = list.filter((p) => p.k !== NO_PAGE);
-    const unknown = list.filter((p) => p.k === NO_PAGE).reduce((a, p) => a + p.n, 0);
-    const rows = unknown ? known.concat({ k: NO_PAGE, n: unknown }) : known;
-    return hBars(rows) + (unknown ? `<div class="small faint" style="margin-top:8px">${unknown} enquir${unknown === 1 ? 'y' : 'ies'} came in through Duda's history, which does not say which page the form was on. Enquiries arriving from now on record their page.</div>` : '');
+    let byForm = 0;
+    const rows = (pages || []).map((p) => {
+      if (p.k && p.k[0] === '\u0001') { byForm += p.n; return { k: `“${p.k.slice(1)}” form`, n: p.n, form: true }; }
+      if (!p.k || p.k === '\u2014') { byForm += p.n; return { k: 'Contact form', n: p.n, form: true }; }
+      return { k: pageName(p.k), n: p.n };
+    });
+    const sorted = rows.filter((r) => !r.form).concat(rows.filter((r) => r.form));
+    return hBars(sorted) + (byForm ? `<div class="small faint" style="margin-top:8px">${byForm} older enquir${byForm === 1 ? 'y is' : 'ies are'} listed by form: Duda's history names the form, not the page it sat on. Each new enquiry records its page.</div>` : '');
   }
-  const busiestPage = (pages) => (pages || []).find((p) => p.k && p.k !== '/' && p.k !== '\u2014') || null;
-  const pageLabel = (pg) => (pg && pg !== '/' ? esc(pg) : '<span class="faint">page not recorded</span>');
+  const busiestPage = (pages) => (pages || []).find((p) => p.k && p.k[0] !== '\u0001' && p.k !== '\u2014') || null;
+  const pageLabel = (l) => (l && l.pg ? `${esc(pageName(l.pg))}${l.pgHow ? ' <span class="faint" title="Worked out from the form it came from">·&nbsp;by form</span>' : ''}`
+    : l && l.fm ? `<span class="faint">${esc(l.fm)} form</span>` : '<span class="faint">contact form</span>');
 
   // --- the team's own view of a website's form submissions ---
   async function renderLeadsTab(body, s) {
@@ -3211,7 +3295,7 @@
         <div class="cl-card"><div class="cl-card-h">By page</div>${pageBars(g.pages || [])}</div></div>
       <div class="cl-card" style="margin-top:12px"><div class="cl-card-h">Recent</div>
         <div class="cl-leadlist">${(d.leads || []).slice(0, 100).map((l) => `<div class="cl-lead">
-          <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${pageLabel(l.pg)}</div></div>
+          <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${pageLabel(l)}</div></div>
           <div class="cl-l-who">${l.redacted ? '<span class="faint" title="Your role does not allow seeing enquirers\u2019 contact details">Contact details hidden</span>' : `<b>${esc(l.n || 'No name given')}</b><div class="small faint">${l.e ? esc(l.e) : ''}</div>`}</div>
           <div class="cl-l-what">${Object.entries(l.f || {}).slice(0, 3).map(([k, v]) => `<div><span class="faint">${esc(k)}:</span> ${esc(String(v).slice(0, 120))}</div>`).join('')}</div>
           <div class="cl-l-src">${l.src ? `<span class="pill sm">${esc(l.src)}</span>` : ''}</div></div>`).join('')}</div></div>` : ''}`;
@@ -5088,7 +5172,7 @@
             ${Object.keys(pick).length ? '<button class="linkbtn" id="clClear">Clear filters</button>' : ''}</div>
         </div>` : '')
       + (rows.length ? `<div class="cl-card cl-leadlist">${rows.map((l) => `<div class="cl-lead">
-            <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${pageLabel(l.pg)}</div></div>
+            <div class="cl-l-when">${esc(dayLabel(l.at))}<div class="faint small">${pageLabel(l)}</div></div>
             <div class="cl-l-who"><b>${esc(l.n || 'No name given')}</b>
               <div class="small">${l.e ? `<a href="mailto:${esc(l.e)}">${esc(l.e)}</a>` : ''}${l.e && l.p ? ' · ' : ''}${l.p ? `<a href="tel:${esc(l.p.replace(/[^\d+]/g, ''))}">${esc(l.p)}</a>` : ''}</div></div>
             <div class="cl-l-what">${Object.entries(l.f || {}).map(([k, v]) => `<div><span class="faint">${esc(k)}:</span> ${esc(v)}</div>`).join('') || '<span class="faint">—</span>'}</div>
@@ -6089,11 +6173,13 @@
       res.aiSkip = new Set(manual.map((f) => pendKey(f)));
       const aiAlt = await aiAltCheck(res, id, log);
       const aiText = await aiTextCheck(res, id, log, aiAlt && aiAlt.paused);
+      const aiMore = await aiDeepCheck(res, id, log, (aiText && aiText.paused) || (aiAlt && aiAlt.paused));
       let aiSummary = null;
       if (aiAlt || aiText) {
-        const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || []))];
+        const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || [], (aiMore && aiMore.used) || []))];
         const paused = (aiText && aiText.paused) || (aiAlt && aiAlt.paused) || null;
-        aiSummary = Object.assign({}, aiAlt || { checked: 0, cached: 0, flagged: 0, softened: 0 }, { text: aiText, aliases: used.join(', '), paused });
+        aiSummary = Object.assign({}, aiAlt || { checked: 0, cached: 0, flagged: 0, softened: 0 }, { text: aiText, aliases: used.join(', '), paused },
+          aiMore && !aiMore.skipped ? { proof: aiMore.proof, links: aiMore.links } : {});
         const pend = [].concat(pendingFindings('alt', (aiAlt && aiAlt.pending) || [], paused), pendingFindings('text', (aiText && aiText.pending) || [], paused));
         aiSummary.pendingItems = pend.length;
         res.findings.push(...pend);
@@ -6215,6 +6301,89 @@
     const before = res.findings.length;
     res.findings = A.applyTextIssues(res.findings, res.texts, issues, res.truth);
     return { blocks: sent, of: res.texts.length, skipped, truncated: sent + skipped < res.texts.length, cached, flagged: res.findings.length - before, errors, used: [...used], paused, pending };
+  }
+  /**
+   * The two whole-website AI reads that are not about the business's name:
+   *  - proofreading: spelling, clear grammar mistakes and unfinished copy, service pages before blog posts;
+   *  - links: does each button or link open the page its words and its section promise?
+   * Both are cached per block / per link on the server, so a rescan only asks about what changed.
+   * If the AI is paused they are skipped for this scan (said in the scan notes) and run on the next one.
+   */
+  const GENERIC_LINK = /^(read|learn|see|view|find out|discover|explore|click|tap)?\s*(more|here|details|info|information|all|now|this)?[\s!.›»→>-]*$|^(go|more|details|continue|next)$/i;
+  const STOP_LINK = new Set(['the', 'and', 'our', 'your', 'a', 'an', 'of', 'to', 'for', 'in', 'on', 'at', 'with', 'us', 'we', 'more', 'about', 'page', 'view', 'see', 'learn', 'read', 'services', 'service']);
+  const linkWords = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter((w) => w.length > 2 && !STOP_LINK.has(w));
+  function linkNeedsJudging(l, dest) {
+    if (!l.text || !l.to) return false;
+    if (dest && dest.notFound) return false; // already a broken-link item
+    const there = new Set(linkWords([l.to.replace(/[/-]/g, ' '), dest && dest.title, dest && dest.h1].join(' ')));
+    const matches = (ws) => ws.length && ws.every((w) => there.has(w) || [...there].some((x) => x.startsWith(w.slice(0, 5))));
+    // "Read more" under a "Window Tint" heading opening /window-tint: the section is the destination.
+    if (GENERIC_LINK.test(l.text.trim())) return !!(l.context || l.near) && !matches(linkWords(l.context));
+    const words = linkWords(l.text);
+    if (!words.length) return false;
+    // "Ceramic Coating" opening /ceramic-coating: the words are the destination, nothing to ask.
+    if (matches(words)) return false;
+    // A lead button opening a contact / quote / booking page is what it should do.
+    if (A.LEAD_WORDS.test(l.text) && /contact|quote|estimate|book|schedul|appoint|reach|enquir|inquir/i.test([l.to, dest && dest.title, dest && dest.h1].join(' '))) return false;
+    return true;
+  }
+  async function aiDeepCheck(res, id, log, pausedAlready) {
+    if (!state.ai || !state.ai.enabled) return null;
+    if (pausedAlready) { log.push('Proofreading and the button check were skipped because the AI is paused; they run on the next rescan.'); return { skipped: true }; }
+    const business = aiBusiness(res);
+    const pages = (res.pages || []).filter((p) => !p.notFound).map((p) => ({ path: p.path, title: p.title }));
+    const byPath = new Map((res.pages || []).map((p) => [p.path, p]));
+    // Proofreading: real pages first (the blocks come sorted that way), a fair share per page.
+    const perPage = {}; const proofItems = []; let chars = 0;
+    (res.texts || []).forEach((b, i) => {
+      if (chars > 45000 || b.text.length < 20) return;
+      const pg = (b.pages || [])[0] || '/';
+      if ((perPage[pg] = (perPage[pg] || 0) + 1) > 40) return;
+      const text = b.text.slice(0, 1200); chars += text.length;
+      proofItems.push({ i, text, location: b.location, page: pg });
+    });
+    const linkItems = [];
+    (res.links || []).forEach((l, i) => {
+      const dest = byPath.get(l.to);
+      if (linkItems.length >= 150 || !linkNeedsJudging(l, dest)) return;
+      linkItems.push({ i, text: l.text, context: l.context, near: l.near, from: (l.pages || [])[0] || '/', to: l.to, toTitle: (dest && dest.title) || '', toH1: (dest && dest.h1) || '', button: l.button });
+    });
+    const batches = (items, maxChars, maxItems, size) => { const out = []; let cur = [], n = 0; items.forEach((x) => { const s = size(x); if (cur.length && (n + s > maxChars || cur.length >= maxItems)) { out.push(cur); cur = []; n = 0; } cur.push(x); n += s; }); if (cur.length) out.push(cur); return out; };
+    const out = { proof: { blocks: proofItems.length, flagged: 0 }, links: { checked: linkItems.length, of: (res.links || []).length, flagged: 0 }, used: [], paused: null };
+    const used = new Set();
+    const run = async (op, list, label, extra) => {
+      const all = []; let waits = 0;
+      for (let k = 0; k < list.length; k++) {
+        state.scanning[id] = Object.assign({}, state.scanning[id], { message: `✨ AI ${label} ${k + 1}/${list.length}` }); renderProgress(id);
+        if (state.skipAI[id]) { log.push(`AI ${label}: skipped`); break; }
+        try {
+          const r = await aiPost(id, Object.assign({ op, business, items: list[k] }, extra || {}));
+          aiUpdate(r); if (r.alias) used.add(r.alias);
+          all.push(...(r.results || []));
+        } catch (e) {
+          if (e.status === 504 && !list[k].retried) { list[k].retried = true; k--; continue; }
+          const w = await aiWait(e, id, waits++);
+          if (w === 'retry') { k--; continue; }
+          if (w && w.paused) { out.paused = w.paused; log.push(`AI ${label}: paused (the AI is busy); the rest is read on the next rescan`); break; }
+          log.push(`AI ${label}: ${e.message}`);
+        }
+      }
+      return all;
+    };
+    if (proofItems.length) {
+      const issues = await run('proof', batches(proofItems, 9000, 40, (x) => x.text.length), 'proofreading');
+      const before = res.findings.length;
+      res.findings = A.applyProofIssues(res.findings, res.texts, issues);
+      out.proof.flagged = res.findings.length - before;
+    }
+    if (linkItems.length && !out.paused) {
+      const verdicts = await run('links', batches(linkItems, 99999, 40, () => 1), 'checking where buttons go', { pages });
+      const before = res.findings.length;
+      res.findings = A.applyLinkVerdicts(res.findings, res.links, verdicts, res.pages);
+      out.links.flagged = res.findings.length - before;
+    }
+    out.used = [...used];
+    return out;
   }
   // ---------- AI models: status, countdowns, waiting ----------
   const srvNow = () => Date.now() + (state.aiSkew || 0);
@@ -9115,6 +9284,8 @@
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Page text: <b>${sc.ai.text.blocks}</b> of ${sc.ai.text.of} blocks read${sc.ai.text.skipped ? ` (${sc.ai.text.skipped} plain ones skipped)` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
+            ${sc.ai.proof ? ` Proofread <b>${sc.ai.proof.blocks}</b> blocks: <b>${sc.ai.proof.flagged}</b> spelling, grammar or unfinished.` : ''}
+            ${sc.ai.links ? ` Buttons and links: <b>${sc.ai.links.checked}</b> of ${sc.ai.links.of} checked for where they go${sc.ai.links.checked < sc.ai.links.of ? ' (the rest plainly match their page)' : ''}, <b>${sc.ai.links.flagged}</b> open the wrong page.` : ''}
             ${sc.ai.aliases && state.ai && state.ai.owner ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI Status ↗</a></div>
             ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: the AI ran out of credits for today during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
               ${aiResumeAt(sc.ai.paused.retryAt) ? `They resume automatically after <b>${esc(fmtWhen(aiResumeAt(sc.ai.paused.retryAt)))}</b> (in ${countdown(aiResumeAt(sc.ai.paused.retryAt))}).` : 'AI credits are available again, so they resume automatically within a minute.'}

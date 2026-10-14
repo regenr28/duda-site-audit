@@ -319,7 +319,56 @@ export async function readLeads(siteId, months = 12) {
     ? (await leadsFor(siteId, { months, limit: 1000 })).leads
     : Object.values(await readMonths(siteId, monthsBack(months))).flat()
       .sort((a, b) => String(b.at).localeCompare(a.at));
-  return raw.map(hideUnreadable).map(unknownPage);
+  return resolvePages(siteId, raw.map(hideUnreadable).map(unknownPage));
+}
+
+/**
+ * Which page a form was on, for the enquiries Duda's history sent without one.
+ *
+ * Duda's history names the FORM ("Contact Us") but not the page. Three things the app already holds
+ * fill the gap, most certain first:
+ *  1. a live delivery of the same form, which did say its page (formhit:<site>, written by the hook);
+ *  2. other enquiries from the same form that have a page;
+ *  3. the auto audit, which reads every live page and notes the forms on each: a form name found on
+ *     exactly one page is that page, and a website with forms on only one page sent them all from it.
+ * Nothing is guessed beyond that: what is still unknown keeps its form name, so it can at least be
+ * shown as "Contact Us form" rather than "page not recorded". `pgHow` says how a page was worked out.
+ */
+const normForm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+export function pageFinder(leads, hits, forms) {
+  const byName = new Map();
+  const vote = new Map();
+  (leads || []).forEach((l) => { if (l.pg && l.fm) { const k = normForm(l.fm); const m = vote.get(k) || new Map(); m.set(l.pg, (m.get(l.pg) || 0) + 1); vote.set(k, m); } });
+  vote.forEach((m, k) => byName.set(k, [...m.entries()].sort((a, b) => b[1] - a[1])[0][0]));
+  Object.entries(hits || {}).forEach(([name, v]) => { const pg = (v && v.page) || ''; if (pg && realPg(pg)) byName.set(normForm(name), pathOf(pg)); });
+  const formPaths = Object.keys(forms || {}).filter((p) => (forms[p] || []).length);
+  const named = new Map();
+  formPaths.forEach((p) => (forms[p] || []).forEach((n) => { const k = normForm(n); if (!k) return; named.set(k, named.has(k) && named.get(k) !== p ? null : p); }));
+  named.forEach((p, k) => { if (p && !byName.has(k)) byName.set(k, p); });
+  // One page with a form: everything came from it. Named the way the live deliveries name it when
+  // they all agree, so the chart does not show the same page twice under two labels.
+  const livePages = [...new Set((leads || []).filter((l) => l.pg).map((l) => l.pg))];
+  const only = formPaths.length <= 1 && livePages.length === 1 ? livePages[0] : formPaths.length === 1 ? formPaths[0] : '';
+  return (l) => {
+    if (l.pg) return null;
+    const k = normForm(l.fm);
+    if (k && byName.get(k)) return { pg: byName.get(k), how: 'form' };
+    if (only) return { pg: only, how: 'only' };
+    return null;
+  };
+}
+const realPg = (p) => !!p;
+const pathOf = (p) => { try { return /^https?:/i.test(p) ? new URL(p).pathname || '/' : p; } catch (e) { return p; } };
+async function resolvePages(siteId, leads) {
+  if (!leads.some((l) => !l.pg)) return leads;
+  let hits = {}, forms = {};
+  try {
+    const [h, cw] = await redis(['HGETALL', P + 'formhit:' + siteId], ['GET', P + 'cw:' + siteId]);
+    if (Array.isArray(h)) { for (let i = 0; i < h.length; i += 2) hits[h[i]] = jparse(h[i + 1], {}); } else Object.entries(h || {}).forEach(([k, v]) => { hits[k] = typeof v === 'string' ? jparse(v, {}) : v; });
+    forms = ((jparse(cw, {}) || {}).forms) || {};
+  } catch (e) { return leads; }
+  const find = pageFinder(leads, hits, forms);
+  return leads.map((l) => { const r = find(l); return r ? Object.assign({}, l, { pg: r.pg, pgHow: r.how }) : l; });
 }
 
 /**
@@ -408,7 +457,8 @@ export function groupLeads(leads) {
     return [...m.entries()].map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n).slice(0, 40);
   };
   // Unknown pages are one bucket under one key (''), whatever older rows stored for "unknown".
-  const pages = by((l) => (l.pg && l.pg !== '/' ? l.pg : '\u0000')).map((x) => (x.k === '\u0000' ? { k: '', n: x.n } : x));
+  // Still unknown: grouped by the form's name when Duda gave one ("\u0001Contact Us"), else one '' bucket.
+  const pages = by((l) => (l.pg ? l.pg : l.fm ? '\u0001' + l.fm : '\u0000')).map((x) => (x.k === '\u0000' ? { k: '', n: x.n } : x));
   return { pages, forms: by((l) => l.fm), sources: by((l) => l.src) };
 }
 

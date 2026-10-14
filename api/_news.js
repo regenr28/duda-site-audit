@@ -4,6 +4,32 @@
 
 export const NEWS = [
   {
+    id: '2026-10-14-proofread-links', date: '2026-10-14', audience: 'all', tag: 'Audits',
+    title: 'New AI checks: spelling and grammar, and buttons that open the wrong page',
+    what: 'Scans now <b>proofread</b> the website (spelling mistakes, clear grammar errors, unfinished or template copy, each with the correction) and check that every <b>button and link opens the page it promises</b>: "Contact us" opening the home page, or "Read more" under Ceramic Coating opening the window tint page. A lead button doing this is critical. Rescan a website to add them; answers are remembered, so later rescans cost nothing for what has not changed.',
+    where: ['A website → <b>Rescan</b> → <b>Audit items</b>.'],
+    link: '#/help/ai', linkText: 'How the AI checks work',
+  },
+  {
+    id: '2026-10-14-form-pages', date: '2026-10-14', audience: 'all', tag: 'Websites',
+    title: 'Form submissions: older enquiries now show their page (or their form)',
+    what: 'Duda\'s history names the form an enquiry came from but not the page. The app now works the page out where it can be known (from live enquiries of the same form, and from the forms the auto audit finds on each page) and otherwise shows the form\'s name. "Page not recorded" is gone, for the team and for clients.',
+    where: ['A website\'s <b>Profile → ✉️ Form submissions</b>, and the client\'s Enquiries page.'],
+  },
+  {
+    id: '2026-10-14-lead-analysis', date: '2026-10-14', audience: 'all', tag: 'Websites',
+    title: 'Lead analysis works now: forms gone quiet, with a daily alert',
+    what: '<b>Forms gone quiet</b> lists websites that usually get enquiries and suddenly get none, judged against each website\'s own rhythm, with what to check (domain problem, no contact form on the live website). Admins get a daily alert. <b>Across all websites</b> shows who gets plenty of enquiries and who gets none. Neither needs the extra database any more.',
+    where: ['<b>Insights → Lead analysis</b>.', 'Admins: <b>Notifications → Forms gone quiet</b>.'],
+    link: '#/help/analysis', linkText: 'What Lead analysis is for',
+  },
+  {
+    id: '2026-10-14-presence-summary', date: '2026-10-14', audience: 'all', tag: 'Websites',
+    title: 'Online presence: the answer first',
+    what: 'The <b>🌐 Online presence</b> tab now opens with one line per profile in plain words (matches Business Info, things to fix, or couldn\'t confirm, with why) before the details.',
+    where: ['A website\'s <b>Profile → 🌐 Online presence</b>.'],
+  },
+  {
     id: '2026-10-14-polish', date: '2026-10-14', audience: 'all', tag: 'Audits',
     title: 'Must-fix first: fonts and duplicate photos have their own Design polish tab',
     what: 'Every audit now has two lists. <b>Audit items</b> are what affects the business and SEO (contact details, links, spelling, SEO, schema). <b>🎨 Design polish</b> is inconsistent fonts and duplicate photos, which can come after. On <b>Audits</b>, the <b>Closed</b> column counts the must-fix items and says <b>✓ Must-fix done</b> when they are all closed, with the polish counted underneath. <b>Open critical issues</b> and <b>Must-fix done</b> at the top filter the list.',

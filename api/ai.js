@@ -2,6 +2,9 @@
 // GET  /api/ai → { enabled, providers: [{ id, label, model, free, state, until, note, used, limit, resetsAt }], now }
 // POST /api/ai { op: 'alt',  business, items: [{ i, alt, file, location, isLogo }] }  → { results: [{ i, verdict, confidence, reason, suggestion }], provider, model, providers }
 // POST /api/ai { op: 'text', business, items: [{ i, text, location, page }] }         → { results: [{ i, type, quote, confidence, reason, suggestion }], provider, model, providers }
+// POST /api/ai { op: 'proof', business, items: [{ i, text, location, page }] }        → { results: [{ i, type: spelling|grammar|incomplete, quote, confidence, reason, suggestion }] }
+// POST /api/ai { op: 'links', business, pages: [{ path, title }], items: [{ i, text, context, near, from, to, toTitle, toH1, button }] }
+//                                                                                     → { results: [{ i, verdict: 'wrong_page', confidence, reason, expected }] }
 // When every model is busy or at its limit → 429 { allBusy: true, retryAt, providers }
 //
 // Several AI providers are chained. The first one that is available answers; when one hits a rate limit, a daily cap,
@@ -59,6 +62,7 @@ const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 0);
 const AGENCIES = (process.env.AGENCY_NAMES || 'Detailers Roadmap, 8bit Creative').split(',').map((s) => s.trim()).filter(Boolean);
 const ALT_VERDICTS = ['describes_image', 'this_business', 'partner_logo', 'other_business', 'wrong_location', 'placeholder', 'unclear'];
 const TEXT_TYPES = ['other_business', 'wrong_location', 'name_variant'];
+const PROOF_TYPES = ['spelling', 'grammar', 'incomplete'];
 
 const env = (k, d) => (process.env[k] !== undefined && process.env[k] !== '' ? process.env[k] : d);
 const CATALOG = {
@@ -360,6 +364,86 @@ Report these problem types:
 Do not report spelling, grammar, style or anything else. Most blocks have no problem: return nothing for them.
 Respond with JSON only: {"results":[{"i":<block number>,"type":"<type>","quote":"<the exact words from the block, max 15 words>","confidence":<0..1>,"reason":"<max 20 words>","suggestion":"<corrected wording>"}]}. Use {"results":[]} if there are no problems.`;
 
+const PROOF_SYSTEM = `You proofread the WEBSITE COPY of one small business, the way a careful editor would before it goes live. ${CONTEXT}
+Report ONLY clear mistakes a visitor would notice:
+- "spelling": a misspelled ordinary word ("recieve", "proffesional", "detialing", "teh"). Never brand, product, car, place or people names, trade words (PPF, ceramic, detailing, tint, vinyl, graphene, paint correction, decon), or deliberate marketing spellings.
+- "grammar": a clear grammar error: wrong word (your/you're, its/it's, then/than, there/their), subject-verb disagreement, a missing or doubled word that breaks the sentence.
+- "incomplete": a sentence or paragraph that stops mid-thought, a heading or button left as a template placeholder ("Add your text here", "Lorem ipsum", "Title goes here", "[City]"), or copy that clearly belongs to a template and was never filled in.
+Do NOT report: style, tone, capitalisation, title case, missing commas, American vs British spelling, short punchy fragments used on purpose ("Fast. Reliable. Local."), lists without full stops, emoji, or anything you are unsure about. Most blocks have no mistakes: return nothing for them.
+Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 15 words>","suggestion":"<the corrected words>"}]}. Use {"results":[]} when there is nothing to fix.`;
+
+const LINK_SYSTEM = `You check that the BUTTONS and LINKS on a small business website open the page a visitor expects. ${CONTEXT}
+Each item gives the words on the button or link, the heading of the section it sits in, the text around it, the page it is on, and the page it opens (its address, title and main heading).
+Report "wrong_page" ONLY when the page it opens clearly does not match what the button or its section promises, for example:
+- "Contact us" / "Get in touch" opening the home page or a service page instead of the contact page;
+- "Read more" / "Learn more" under a "Ceramic Coating" section opening the window tint page;
+- "View gallery" opening the about page; a service card for one service opening another service's page.
+These are FINE (never report): any call to action (book, schedule, get a quote, free estimate, get started, call) that opens a contact, quote, booking or estimate page; a generic button that opens a closely related or overview page (services, all packages); "Home" or a logo opening the home page; a page whose topic matches even if its wording differs.
+If you are not sure, do not report it. Most items are fine: return nothing for them.
+Respond with JSON only: {"results":[{"i":<number>,"verdict":"wrong_page","confidence":<0..1>,"reason":"<max 20 words, plain English>","expected":"<the address from THE SITE'S PAGES that it should open, or empty>"}]}. Use {"results":[]} when every item is fine.`;
+
+const proofPrompt = (b, items) => `${businessHeader(b)}
+TEXT BLOCKS (each starts with [i] then where it appears)
+${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n')}`;
+const linkPrompt = (b, pages, items) => `${businessHeader(b)}
+THE SITE'S PAGES (address | title)
+${[].concat(pages || []).slice(0, 80).map((p) => `${String(p.path || '/').slice(0, 90)} | ${String(p.title || '').slice(0, 90)}`).join('\n')}
+
+BUTTONS AND LINKS (i | words on it | section heading | text around it | on page | opens → title / main heading)
+${items.map((x) => `${x.i} | ${x.button ? '[button] ' : ''}${String(x.text).slice(0, 80)} | ${String(x.context || '-').slice(0, 100)} | ${String(x.near || '-').replace(/\s+/g, ' ').slice(0, 220)} | ${String(x.from || '/').slice(0, 80)} | ${String(x.to || '/').slice(0, 90)} → ${String(x.toTitle || '-').slice(0, 90)} / ${String(x.toH1 || '-').slice(0, 90)}`).join('\n')}`;
+
+/**
+ * The two whole-website reads that are not about the business's name: proofreading the copy, and
+ * whether each button opens the page it promises. Same chain, same caching as the rest: every block
+ * and every link is remembered for 45 days, so a rescan asks only about what changed.
+ */
+async function extraCheck(req, res, b, list, owner) {
+  const business = b.business || {};
+  const proof = b.op === 'proof';
+  const items = [].concat(b.items || []).slice(0, 60).filter((x) => x && Number.isFinite(Number(x.i)) && typeof x.text === 'string' && x.text.trim() && (proof || typeof x.to === 'string'));
+  if (!items.length) return res.status(200).json({ results: [] });
+  const cacheKey = P + 'aic:' + sha([business.name, business.city, business.region, (business.areaPages || []).length].join('|')).slice(0, 20);
+  const keyOf = (x) => (proof ? 'p' : 'l') + sha(proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1].join('|')).slice(0, 18);
+  const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
+  const results = []; const todo = [];
+  items.forEach((x, k) => {
+    const raw = (cachedRaw || [])[k];
+    if (raw == null) return todo.push(x);
+    if (raw === '0') return;
+    const c = jparse(raw); if (!c) return todo.push(x);
+    (c.r || []).forEach((r) => results.push(Object.assign({}, r, { i: Number(x.i), cached: true })));
+  });
+  let used = null;
+  if (todo.length) {
+    if (DAILY_LIMIT > 0) {
+      const day = new Date().toISOString().slice(0, 10);
+      const [n] = await redis(['INCRBY', P + 'ai:used:' + day, todo.length]);
+      if (n === todo.length) await redis(['EXPIRE', P + 'ai:used:' + day, 172800]);
+      if (n > DAILY_LIMIT) {
+        await redis(['DECRBY', P + 'ai:used:' + day, todo.length]);
+        const tomorrow = new Date(); tomorrow.setUTCHours(24, 0, 0, 0);
+        return res.status(429).json({ error: "Today's AI allowance for the team is used up. The rest is checked automatically tomorrow.", allBusy: true, retryAt: tomorrow.getTime(), results });
+      }
+    }
+    const { parsed, p } = await callChain(list, proof ? PROOF_SYSTEM : LINK_SYSTEM, proof ? proofPrompt(business, todo) : linkPrompt(business, b.pages, todo));
+    used = p;
+    const byI = new Map(todo.map((x) => [Number(x.i), []]));
+    (parsed.results || []).forEach((x) => {
+      const i = Number(x && x.i); if (!byI.has(i)) return;
+      const confidence = Math.max(0, Math.min(1, Number(x.confidence) || 0));
+      const r = proof
+        ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200) } : null)
+        : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 200), expected: String(x.expected || '').slice(0, 160) } : null);
+      if (!r) return;
+      byI.get(i).push(r); results.push(Object.assign({ i }, r));
+    });
+    const cmds = []; byI.forEach((rs, i) => { const x = todo.find((y) => Number(y.i) === i); cmds.push([keyOf(x), rs.length ? JSON.stringify({ r: rs }) : '0']); });
+    if (cmds.length) await redis(['HSET', cacheKey, ...[].concat(...cmds)], ['EXPIRE', cacheKey, 45 * 86400]);
+  }
+  return res.status(200).json({ results, cachedCount: items.length - todo.length,
+    alias: used && owner ? aliasOf(used.id) : '', ...(owner && used ? { realProvider: used.label, realModel: used.model } : {}), providers: publicStatus(await loadStatus(list).catch(() => []), owner), now: Date.now() });
+}
+
 function businessHeader(b) {
   b = b || {};
   return `THIS BUSINESS
@@ -503,6 +587,7 @@ async function handler(req, res) {
   try {
     let pvUsed = null;
     const b = readBody(req);
+    if (b.op === 'proof' || b.op === 'links') return await extraCheck(req, res, b, list, owner);
     if (!['alt', 'text'].includes(b.op)) return res.status(400).json({ error: 'Unknown op' });
     const business = b.business || {};
     const field = b.op === 'alt' ? 'alt' : 'text';
@@ -589,5 +674,5 @@ export async function askAI(system, user) {
   return (r && r.parsed) || {};
 }
 
-export const _test = { discoverModel, visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };
+export const _test = { aliasOf, discoverModel, visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };
 export default metered('ai', handler);
