@@ -13,7 +13,7 @@
 //
 // `site` is always the website's record id in this app; the page itself is opened on the Duda
 // preview of that website's draft, so it shows what the team is working on, not just what is live.
-import { redis, P, newId, now, globalLog, readBody } from './_lib.js';
+import { metered, redis, P, newId, now, globalLog, readBody } from './_lib.js';
 import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today, cleanPath, siteRec, previewUrl, getTickets, putTicketCmd, keepCapCmds, cleanReplay } from './_tickets.js';
 import { shoot, DEVICES } from './_shoot.js';
 
@@ -78,7 +78,7 @@ async function thumbOp(req, res, w, b) {
   }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const w = await who(req, res);
   if (!w) return;
@@ -228,3 +228,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e).slice(0, 300) });
   }
 }
+export default metered('capture', handler);

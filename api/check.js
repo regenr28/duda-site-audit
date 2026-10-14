@@ -1,6 +1,6 @@
 // POST /api/check  { urls: [...] }  → [{ url, status, finalUrl, error }]
 // Checks external links and images for 404 / server errors. Social networks are skipped (they block bots).
-import { requireUser, fetchWithTimeout, readBody, UA_DESKTOP } from './_lib.js';
+import { metered, requireUser, fetchWithTimeout, readBody, UA_DESKTOP } from './_lib.js';
 
 const SKIP = /(^|\.)(facebook\.com|instagram\.com|linkedin\.com|tiktok\.com|twitter\.com|x\.com|yelp\.com|google\.[a-z.]+|goo\.gl|g\.page|youtube\.com)$/i;
 
@@ -20,7 +20,7 @@ async function check(url) {
   }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (!(await requireUser(req, res))) return;
   const { urls } = readBody(req);
   if (!Array.isArray(urls)) return res.status(400).json({ error: 'urls[] required' });
@@ -28,3 +28,4 @@ export default async function handler(req, res) {
   const out = await Promise.all(list.map(check));
   res.status(200).json(out);
 }
+export default metered('check', handler);

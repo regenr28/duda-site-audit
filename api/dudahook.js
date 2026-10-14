@@ -12,7 +12,7 @@
 // Admins only. The address we register carries a secret only the app knows, so nothing else can
 // post pretend events at us.
 import crypto from 'node:crypto';
-import { redis, P, requireUser, readBody, jparse, fetchWithTimeout, appUrl, OWNER_EMAIL , denyUnless } from './_lib.js';
+import { metered, redis, P, requireUser, readBody, jparse, fetchWithTimeout, appUrl, OWNER_EMAIL , denyUnless } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const TAG = 'duda-site-auditor';          // so we can tell our own subscription from anyone else's
@@ -60,7 +60,7 @@ async function ourEndpoint(req, make) {
 }
 const mask = (url) => String(url || '').replace(/k=[^&]+/, 'k=••••••••');
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -138,3 +138,4 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: String(e.message || e) });
   }
 }
+export default metered('dudahook', handler);

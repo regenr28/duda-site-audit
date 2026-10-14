@@ -5,7 +5,7 @@
 // GET  /api/leads?op=summary&ids=a,b,c      → the small counts the Audits list shows
 // POST /api/leads { op: 'backfill', id, months }   (admins) → pull history from Duda
 // POST /api/leads { op: 'census' }                 (admins) → count submissions per site, store nothing
-import { redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
+import { metered, redis, P, requireUser, readBody, fetchWithTimeout, jparse, globalLog, unpackJSON, can, denyUnless } from './_lib.js';
 import { addLeads, normalise, readFields, readLeads, groupLeads, monthlySeries, whenSeries, getSummary, getSummaries, bumpSummary, afterImport, contactsFrom, contactRulings, ruleContact } from './_leads.js';
 import { takeLock, unlock, enqueue } from './_queue.js';
 
@@ -57,7 +57,7 @@ export async function pullMonth(siteId, ym) {
   return fromDuda(Array.isArray(j) ? j : (j.results || j.submissions || j.data || []));
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -195,3 +195,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e).slice(0, 300) });
   }
 }
+export default metered('leads', handler);

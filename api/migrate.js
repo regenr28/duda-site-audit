@@ -11,7 +11,7 @@
 //
 // GET  /api/migrate              → { configured, state, source, target }
 // POST /api/migrate { op:'run', restart }  → one round
-import { redis, P, requireUser, readBody, jparse, fetchWithTimeout, OWNER_EMAIL, normEmail } from './_lib.js';
+import { metered, redis, P, requireUser, readBody, jparse, fetchWithTimeout, OWNER_EMAIL, normEmail } from './_lib.js';
 
 const STATE = P + 'migrate:state';
 const FROM_URL = () => String(process.env.COPY_FROM_URL || '').replace(/\/+$/, '');
@@ -154,7 +154,7 @@ async function round(restart, budgetMs = 45000) {
   return st;
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -173,3 +173,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('migrate', handler);

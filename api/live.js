@@ -13,7 +13,7 @@
 // The page is served LOCKED DOWN: a Content-Security-Policy sandbox gives it no origin of its own,
 // so its scripts cannot read this app's storage, make signed-in requests to it, submit forms or open
 // windows. Only scripts may run, which is what menus, sliders and pop-ups need.
-import { fetchWithTimeout } from './_lib.js';
+import { metered, fetchWithTimeout } from './_lib.js';
 import { who, mayseeSite, cleanPath, siteRec, previewUrl } from './_tickets.js';
 import { DEVICES } from './_devices.js';
 import { MAP } from './_map.js';
@@ -99,7 +99,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const page = (title, text) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head>
 <body style="font:15px -apple-system,Segoe UI,Roboto,sans-serif;color:#333;display:flex;align-items:center;justify-content:center;min-height:90vh;margin:0;padding:20px;text-align:center"><div>${text}</div></body></html>`;
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Security-Policy', 'sandbox allow-scripts');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -127,3 +127,4 @@ export default async function handler(req, res) {
     return send(200, page('Not available', 'This page could not be opened right now. Please try again in a moment.'));
   }
 }
+export default metered('live', handler);

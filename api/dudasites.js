@@ -4,7 +4,7 @@
 // POST /api/dudasites { op: 'names', ids }    → fills in business names (the list endpoint doesn't include them)
 // POST /api/dudasites { op: 'domains', ids }  → checks each site's live domain (working, redirecting elsewhere, 404, DNS…)
 // Uses Duda's List Sites endpoint (100 per page), so 800 sites = 8 API calls. Stored compressed in one small key.
-import { redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, learnEditorHost, isCopy } from './_lib.js';
+import { metered, redis, P, requireUser, fetchWithTimeout, packJSON, unpackJSON, readBody, jparse, learnEditorHost, isCopy } from './_lib.js';
 import { enqueue } from './_queue.js';
 import { markRun, lastRuns } from './leadq.js';
 import { checkDomain, checkAndStore, sendDigest, problemClass, isProblem, DOMS, DOMEV } from './_domains.js';
@@ -226,7 +226,7 @@ async function ranks(me, from, to) {
   return out;
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method === 'GET' && req.query.op === 'sweep') {
     if (isCopy()) return res.status(200).json({ skipped: 'this is the copy: the daily check runs in the main app' });
@@ -297,3 +297,4 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: String(e.message || e) });
   }
 }
+export default metered('dudasites', handler);

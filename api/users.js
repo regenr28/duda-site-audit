@@ -2,13 +2,13 @@
 // GET  /api/users                       → { users, me }   (admins also see pending accounts)
 // POST /api/users { op: approve | remove | role | resetPassword | profile, email, ... }
 import crypto from 'node:crypto';
-import { redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole, effectivePerms, hasCustomAccess, bumpAccess, jparse, realName, secLog, readSecLog, slackLookup, LOOK_THEMES, START_PAGES } from './_lib.js';
+import { metered, redis, P, readBody, requireUser, normEmail, getUser, putUser, publicUser, listUsers, hashPassword, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, slackDM, slackLink, slackWho, OWNER_EMAIL, forgetUser, nameTaken, now, NOTIFY_KEYS, isEmail, COLORS, can, denyUnless, listRoles, getRole, saveRole, deleteRole, cleanPerms, PERMISSIONS, isTeamRole, effectivePerms, hasCustomAccess, bumpAccess, jparse, realName, secLog, readSecLog, slackLookup, LOOK_THEMES, START_PAGES } from './_lib.js';
 
 const TEMP_DAYS = 7;
 const tempPassword = () => crypto.randomBytes(8).toString('base64url');
 const isSuper = (me) => me.email === OWNER_EMAIL && !me.previewPerms;
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -97,7 +97,7 @@ export default async function handler(req, res) {
       if (!(await can(me, 'client.manage')) && !(await can(me, 'client.viewas'))) return res.status(403).json({ error: 'Your role does not include customers.' });
       const all = await listUsers();
       const shape = (u, tag) => ({ email: u.email, name: u.name, company: u.company || '', phone: u.phone || '', tag,
-        sites: ((tag === 'admin' ? u.testSites : u.sites) || []).map(String), dudaAccount: u.dudaAccount || '',
+        sites: ((tag === 'admin' ? u.testSites : u.sites) || []).map(String), dudaAccount: u.dudaAccount || '', showPresence: u.showPresence === undefined ? null : !!u.showPresence,
         status: u.status, createdAt: u.createdAt || '', lastSeen: u.lastSeen || '', signedIn: !!(u.passwordChangedAt || u.lastLogin),
         temp: !!u.mustChange, tempExpires: u.mustChange ? u.tempExpires || '' : '' });
       const list = all.filter((u) => u.role === 'client').map((u) => shape(u, 'customer'))
@@ -121,6 +121,8 @@ export default async function handler(req, res) {
       u.name = name; u.role = 'client'; u.status = 'active';
       if (b.company !== undefined) u.company = String(b.company || '').trim().slice(0, 80);
       if (b.phone !== undefined) u.phone = String(b.phone || '').trim().slice(0, 40);
+      // Online presence suggestions in their portal: true / false, or null to follow the setting for everyone.
+      if (b.showPresence !== undefined) { if (b.showPresence === null) delete u.showPresence; else u.showPresence = !!b.showPresence; }
       if (b.dudaAccount !== undefined) u.dudaAccount = String(b.dudaAccount || '').trim().slice(0, 120);
       u.sites = sites;
       // New customers get a temporary password to pass on, unless asked to set their own by email.
@@ -383,3 +385,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('users', handler);

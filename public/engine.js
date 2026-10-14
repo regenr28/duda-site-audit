@@ -1602,11 +1602,24 @@
     // --- Schema (JSON-LD) ---
     const schemas = extractSchema(doc);
     if (/^api|\+brief/.test(truth.source || '') || truth.source === 'brief') {
+      // What the page calls itself. Business data named after the page is the website's own data filled
+      // in wrongly ("Ceramic Pro Gold Package"), not another business.
+      const flatT = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const heads = [title].concat([...doc.querySelectorAll('h1')].map((h) => h.textContent)).map(flatT).filter((x) => x.length >= 6);
       schemas.forEach(({ node, data, biz }) => {
-        const tel = data.telephone && normPhone(data.telephone);
-        if (tel && tel.length >= 10 && !phoneOk(tel)) add(node, { code: 'SCHEMA_PHONE', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) phone differs from Business Info', found: data.telephone, expected: expectedPhones });
+        // One field can list several numbers ("+1-253-533-6776,+1-360-915-6218"): each is checked on its own.
+        const tels = String(data.telephone || '').split(/[,;/|]|\bor\b/i).map((x) => normPhone(x)).filter((d) => d.length >= 10);
+        const theirs = tels.filter((d) => phoneOk(d));
+        tels.filter((d) => !phoneOk(d)).forEach((d) => add(node, { code: 'SCHEMA_PHONE', severity: theirs.length ? 'warning' : 'critical', category: 'Schema', verify: theirs.length > 0,
+          message: theirs.length ? 'Structured data (JSON-LD) lists a second phone that is not in Business Info (add it there if it is theirs)' : 'Structured data (JSON-LD) phone differs from Business Info', found: fmtPhone(d.slice(-10)), expected: expectedPhones }));
         if (data.email && !emailOk(data.email)) add(node, { code: 'SCHEMA_EMAIL', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) email differs from Business Info', found: data.email, expected: expectedEmails });
-        if (biz && data.name && truth.businessName && !matchesBusiness(data.name, truth)) add(node, { code: 'SCHEMA_NAME', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) business name differs from Business Info', found: data.name, expected: truth.businessName });
+        if (biz && data.name && truth.businessName && !matchesBusiness(data.name, truth)) {
+          const named = flatT(data.name);
+          const ownData = theirs.length > 0 || (named.length >= 6 && heads.some((h) => h.includes(named) || named.includes(h)));
+          add(node, ownData
+            ? { code: 'SCHEMA_NAME', severity: 'warning', category: 'Schema', message: 'Structured data (JSON-LD) uses the page\'s title as the business name: their own data, named wrongly', found: data.name, expected: truth.businessName }
+            : { code: 'SCHEMA_NAME', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) business name differs from Business Info', found: data.name, expected: truth.businessName });
+        }
         const a = normAddress(data.address);
         const zips = truth.addresses.filter((x) => x.zip);
         if (a && a.zip && zips.length && !zips.some((x) => x.zip === a.zip)) add(node, { code: 'SCHEMA_ADDRESS', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) ZIP differs from Business Info', found: [a.street, a.city, a.zip].filter(Boolean).join(', '), expected: zips.map((x) => [x.street, x.city, x.zip].filter(Boolean).join(', ')).join(' | ') });

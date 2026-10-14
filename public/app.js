@@ -61,7 +61,8 @@
 
   // ---------- API ----------
   async function api(path, opts = {}) {
-    const r = await fetch(path, Object.assign({ credentials: 'same-origin' }, opts, { headers: Object.assign({ 'Content-Type': 'application/json' }, viewHeaders(), opts.headers || {}) }));
+    // opts.site: the audit this call is for, so the server counts what it costs against that audit.
+    const r = await fetch(path, Object.assign({ credentials: 'same-origin' }, opts, { headers: Object.assign({ 'Content-Type': 'application/json' }, viewHeaders(), opts.site ? { 'x-dsa-site': String(opts.site) } : {}, opts.headers || {}) }));
     // The server tells every response what version of "who may do what" it answered with.
     const av = r.headers.get('X-Access-Ver');
     if (av && state.accessVer && av !== state.accessVer && !state.viewRole) { state.accessVer = av; setTimeout(accessChanged, 0); }
@@ -76,8 +77,11 @@
     return data;
   }
   const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) });
+  /** The same two, with every call counted against one audit (a scan, a live check). */
+  const siteApi = (id) => ({ sApi: (p, o = {}) => api(p, Object.assign({ site: id }, o)), sPost: (p, body) => api(p, { method: 'POST', body: JSON.stringify(body), site: id }) });
   /** The client endpoints, called as a client — or, while previewing, as that one website's client. */
-  const clientHeaders = () => (state.viewAs ? { 'x-view-as-client': '1', 'x-view-site': state.viewCust ? state.viewCust.sites.join(',') : state.viewAs } : {});
+  const clientHeaders = () => (state.viewAs ? Object.assign({ 'x-view-as-client': '1', 'x-view-site': state.viewCust ? state.viewCust.sites.join(',') : state.viewAs },
+    state.viewCust && state.viewCust.showPresence !== null && state.viewCust.showPresence !== undefined ? { 'x-view-presence': state.viewCust.showPresence ? '1' : '0' } : {}) : {});
   /** While previewing a role or a person, every request says so, so the server answers as they would be answered. */
   const viewHeaders = () => (state.viewRole ? (state.viewRole.user ? { 'x-view-as-user': state.viewRole.user } : { 'x-view-as-role': state.viewRole.role }) : {});
   const capi = (path) => api(path, { headers: clientHeaders() });
@@ -1295,10 +1299,122 @@
     </div>`;
   }
 
+  // ---------- Usage & activity (owner): what every action costs, per website and audit, and what is resting ----------
+  const ACT_LABEL = [
+    [/^pulse\./, 'Heartbeat (each open app tab)'], [/^watch\.drain/, 'Auto audit: reading websites'], [/^watch\.cron/, 'Auto audit: daily run'],
+    [/^watch\.presence$/, 'Online presence check'], [/^watch\.presenceSettings/, 'Online presence: settings'], [/^watch\.live/, 'Auto audit: status panel'], [/^watch\.check/, 'Auto audit: Check now'], [/^watch\.get/, 'Auto audit: status'], [/^watch\./, 'Auto audit'],
+    [/^hook\.PUBLISH/, 'Duda webhook: published'], [/^hook\.CONTACT_FORM/, 'Duda webhook: form submission'], [/^hook\.COMMENT/, 'Duda webhook: comment'], [/^hook\./, 'Duda webhook'],
+    [/^fetch\./, 'Scan: reading a page'], [/^check\./, 'Scan: checking links'], [/^imghash\./, 'Scan: comparing images'], [/^site\./, 'Scan: Duda website details'],
+    [/^ai\.post/, 'AI check'], [/^ai\.test/, 'AI: test request'], [/^ai\.help/, 'Help assistant'], [/^ai\.news/, "What's new"], [/^ai\./, 'AI status'], [/^users\./, 'Team and roles'], [/^projects\./, 'Projects'], [/^suggest\./, 'Suggestions'], [/^img\./, 'Image upload'], [/^live\./, 'Client website widget'], [/^leadq\.drain/, 'Form submissions: fetching history'], [/^leadq\./, 'Form submissions'],
+    [/^dudasites\.sweep/, 'Domain check: daily run'], [/^dudasites\./, 'DR Websites'], [/^capture\./, 'Screenshots'], [/^realtime\./, 'Live updates: connecting'],
+    [/^auth\./, 'Sign-in and account'], [/^comments\./, 'Duda comments'], [/^store\./, 'Audits'], [/^tickets\./, 'Client tickets'], [/^client\./, 'Client portal'],
+    [/^health\.usage/, 'This page'], [/^health\./, 'System health'], [/^leads\./, 'Form submissions'], [/^analysis\./, 'Lead analysis'], [/^analytics\./, 'Analytics'],
+    [/^sitehealth\./, 'Website health'], [/^social\./, 'Social links'], [/^migrate\./, 'Move data in'], [/^background/, 'Background work'],
+  ];
+  const actLabel = (a) => { const hit = ACT_LABEL.find(([re]) => re.test(a)); const op = String(a).split('.').slice(1).join('.'); return hit ? hit[1] + (hit[0].source.endsWith('\\.') && op && !/^(get|post)$/.test(op) ? ` · ${op}` : '') : a; };
+  const n0 = (v) => Number(v || 0).toLocaleString();
+  const usd = (v) => (v >= 1 ? '$' + v.toFixed(2) : v >= 0.01 ? '$' + v.toFixed(3) : v > 0 ? '$' + v.toFixed(4) : '$0');
+  const tok = (v) => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v)));
+  const left = (t) => { const s = Math.max(0, Math.round((t - Date.now()) / 1000)); return s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`; };
+  /** What one row used, in plain words, skipping what it did not use. */
+  function usedLine(x) {
+    const bits = [x.db && `${n0(x.db)} database`, x.duda && `${n0(x.duda)} Duda`, x.pages && `${n0(x.pages)} page${x.pages === 1 ? '' : 's'} read`,
+      x.aiReq && `${n0(x.aiReq)} AI (${tok(x.aiIn)} in / ${tok(x.aiOut)} out)`, x.searches && `${n0(x.searches)} web search${x.searches === 1 ? '' : 'es'}`,
+      x.places && `${n0(x.places)} Google lookup${x.places === 1 ? '' : 's'}`, x.ably && `${n0(x.ably)} Ably`, x.slack && `${n0(x.slack)} Slack`, x.email && `${n0(x.email)} email`].filter(Boolean);
+    return bits.join(' · ') || '—';
+  }
+  async function renderUsage() {
+    const u = state.usage || (state.usage = { period: 'month', q: '', sq: '' });
+    $('#view').innerHTML = `<div class="page-head"><div><h1>Usage & activity</h1>
+      <div class="muted">What every action costs, per website and audit, what is left against each limit, and what is resting right now. Only you see this.</div></div>
+      <div class="ug-tools"><a class="btn" href="#/health">⚑ System health</a><button class="btn" id="ugRefresh">⟳ Refresh</button></div></div>
+      <div id="ugBody"><div class="empty">Loading…</div></div>`;
+    $('#ugRefresh').onclick = () => renderUsage();
+    let d;
+    try { d = await api('/api/health?op=usage'); } catch (e) { $('#ugBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    u.data = d;
+    paintUsage();
+    clearInterval(state.ugTick);
+    state.ugTick = setInterval(() => {
+      if (route().name !== 'usage') { clearInterval(state.ugTick); return; }
+      $$('[data-until]').forEach((el) => { const t = Number(el.dataset.until); el.textContent = t > Date.now() ? left(t) : 'now'; });
+    }, 1000);
+  }
+  function paintUsage() {
+    const u = state.usage; const d = u.data; if (!d) return;
+    const per = u.period; const pick = (x) => x[per === 'today' ? 'today' : per === 'all' ? 'all' : 'month'];
+    const T = per === 'today' ? d.totals.today : per === 'week' ? d.totals.week : d.totals.month;
+    const pLabel = { today: 'today', week: 'the last 7 days', month: 'this month', all: `the last ${d.days} days` }[per];
+    const limitTile = (l) => {
+      const pct = l.limit ? Math.min(100, Math.round((l.used / l.limit) * 1000) / 10) : 0;
+      const st = !l.limit ? 'good' : pct >= 85 ? 'critical' : pct >= 70 ? 'serious' : pct >= 50 ? 'warning' : 'good';
+      return `<div class="hx-tile"><div class="hx-k">${esc(l.label)}</div>
+        <div class="hx-v">${n0(l.used)}${l.limit ? `<span class="hx-of"> of ${n0(l.limit)} a ${l.period}</span>` : `<span class="hx-of"> ${l.period === 'day' ? 'today' : 'this ' + l.period}</span>`}</div>
+        ${l.limit ? `<div class="hx-bar" role="img" aria-label="${pct}% used"><div class="hx-fill hx-${st}" style="width:${Math.max(pct, 0.6)}%"></div></div>
+          <div class="hx-foot"><span class="hx-state hx-${st}">${STATE_WORD[st] || '•'} ${n0(Math.max(0, l.limit - l.used))} left</span>${l.resetsAt ? `<span class="faint">resets in <span data-until="${l.resetsAt}">${left(l.resetsAt)}</span></span>` : `<span class="faint">${pct}% used</span>`}</div>` : ''}
+        ${l.note ? `<div class="hx-note">${esc(l.note)}</div>` : ''}</div>`;
+    };
+    const rest = d.resting || [];
+    const acts = d.actions.map((a) => Object.assign({ label: actLabel(a.action) }, a)).filter((a) => pick(a).runs && (!u.q || (a.label + ' ' + a.action).toLowerCase().includes(u.q.toLowerCase())));
+    const sites = (d.sites || []).filter((x) => !u.sq || (x.name + ' ' + x.id).toLowerCase().includes(u.sq.toLowerCase()));
+    const chartMetric = u.chart || 'cost';
+    const series = (d.perDay || []).slice(-30).map((x) => ({ m: x.day, n: chartMetric === 'cost' ? Math.round(x.cost.usd * 100) / 100 : chartMetric === 'ai' ? x.aiReq : chartMetric === 'duda' ? x.duda : chartMetric === 'pages' ? x.pages : x.db }));
+    $('#ugBody').innerHTML = `
+      <div class="k">Right now</div>
+      ${rest.length ? `<div class="ug-rest">${rest.map((r) => `<div class="ug-rest-r"><div><b>${esc(r.what)}</b> <span class="badge ${/paused|cap|credits/.test(r.state) ? 'sev-warning' : /running|queued/.test(r.state) ? 'sev-verify' : 'subtle'}">${esc(r.state)}</span>
+          <div class="small muted">${esc(r.why || '')}${r.note ? ' ' + esc(r.note) : ''}</div></div>
+          <div class="ug-timer">${r.until ? `<span class="small faint">${/running/.test(r.state) ? 'at most' : 'ends in'}</span> <b data-until="${r.until}">${left(r.until)}</b>` : ''}</div></div>`).join('')}</div>`
+        : '<div class="hx-alerts"><div class="hx-alert hx-good"><span class="hx-mark" aria-hidden="true">✓</span><span>Nothing is paused, resting or cooling down.</span></div></div>'}
+
+      <div class="ug-head"><div class="k">Totals for ${esc(pLabel)}</div>
+        <div class="seg" role="tablist">${[['today', 'Today'], ['week', '7 days'], ['month', 'This month'], ['all', `${d.days} days`]].map(([k, l]) => `<button class="seg-b ${per === k ? 'on' : ''}" data-per="${k}">${l}</button>`).join('')}</div></div>
+      <div class="ug-stats">
+        ${[['Estimated AI cost', usd(T.cost.usd) + (T.cost.known ? '' : '*')], ['AI requests', n0(T.aiReq)], ['AI tokens', `${tok(T.aiIn)} in · ${tok(T.aiOut)} out`], ['Web searches', n0(T.searches)],
+           ['Duda API calls', n0(T.duda)], ['Pages read', n0(T.pages)], ['Database', n0(T.db)], ['Google lookups', n0(T.places)], ['Ably / Slack / email', `${n0(T.ably)} / ${n0(T.slack)} / ${n0(T.email)}`], ['Actions run', n0(T.runs)]]
+          .map(([k, v]) => `<div class="ug-stat"><div class="ug-stat-k">${k}</div><div class="ug-stat-v">${v}</div></div>`).join('')}
+      </div>
+      ${T.cost.known ? '' : '<div class="small faint">* Some AI usage is on a model without a known price; it is counted but not priced.</div>'}
+
+      <div class="cl-card" style="margin-top:14px"><div class="ug-head"><div class="cl-card-h">By day</div>
+        <div class="seg">${[['cost', 'AI cost ($)'], ['ai', 'AI requests'], ['duda', 'Duda calls'], ['pages', 'Pages read'], ['db', 'Database']].map(([k, l]) => `<button class="seg-b ${chartMetric === k ? 'on' : ''}" data-chart="${k}">${l}</button>`).join('')}</div></div>
+        ${barChart(series)}</div>
+
+      <div class="k" style="margin-top:18px">Limits: used and left</div>
+      <div class="hx-tiles">${(d.limits || []).map(limitTile).join('')}</div>
+
+      <div class="ug-head" style="margin-top:18px"><div class="k">By action (${esc(pLabel)}): the average is what one run costs</div>
+        <input type="search" class="ug-q" id="ugQ" aria-label="Filter actions" placeholder="Filter actions" value="${esc(u.q)}"></div>
+      <div class="table-wrap"><table class="grid ug-table"><thead><tr><th>Action</th><th class="num">Runs</th><th class="num">Avg time</th><th class="num">Avg database</th><th class="num">Avg Duda</th><th class="num">Avg pages</th><th class="num">Avg AI</th><th class="num">Avg tokens in / out</th><th class="num">Avg cost</th><th class="num">Total cost</th></tr></thead>
+        <tbody>${acts.length ? acts.map((a) => { const t = pick(a); const r = t.runs || 1; const avg = (k) => Math.round((t[k] / r) * 10) / 10;
+          return `<tr><td><b>${esc(a.label)}</b><div class="small faint mono">${esc(a.action)}</div></td><td class="num">${n0(t.runs)}${t.errors ? ` <span class="small" style="color:var(--crit)">${t.errors} failed</span>` : ''}</td>
+            <td class="num">${avg('ms') >= 1000 ? (avg('ms') / 1000).toFixed(1) + 's' : Math.round(avg('ms')) + 'ms'}</td><td class="num">${avg('db')}</td><td class="num">${avg('duda')}</td><td class="num">${avg('pages')}</td><td class="num">${avg('aiReq')}</td>
+            <td class="num">${tok(avg('aiIn'))} / ${tok(avg('aiOut'))}</td><td class="num">${usd(t.cost.usd / r)}</td><td class="num">${usd(t.cost.usd)}</td></tr>`; }).join('') : `<tr><td colspan="10" class="empty small">Nothing counted for ${esc(pLabel)} yet. Counting started with this update.</td></tr>`}</tbody></table></div>
+
+      <div class="ug-head" style="margin-top:18px"><div class="k">By website and audit (this month)</div>
+        <input type="search" class="ug-q" id="ugSq" aria-label="Find a website" placeholder="Find a website" value="${esc(u.sq)}"></div>
+      <div class="table-wrap"><table class="grid ug-table"><thead><tr><th>Website</th><th class="num">Database</th><th class="num">Duda</th><th class="num">Pages</th><th class="num">AI</th><th class="num">Tokens in / out</th><th class="num">Searches</th><th class="num">Cost</th></tr></thead>
+        <tbody>${sites.length ? sites.slice(0, 150).map((x) => `<tr class="ug-site" data-ugsite="${esc(x.id)}"><td><b>${esc(x.name)}</b> <span class="small faint">${x.audit ? `<a href="#/site/${esc(x.audit)}">audit ↗</a> · ` : ''}<a href="#/dr/${esc(x.id)}">profile ↗</a></span>
+            <div class="small faint">${Object.keys(x.by).map((a) => esc(actLabel(a))).filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).join(' · ')}</div>
+            ${u.open === x.id ? `<div class="ug-by">${Object.entries(x.by).map(([a, t]) => `<div class="small"><b>${esc(actLabel(a))}</b> × ${n0(t.runs)}: ${esc(usedLine(t))}${t.cost.usd ? ` · ${usd(t.cost.usd)}` : ''}</div>`).join('')}</div>` : ''}</td>
+            <td class="num">${n0(x.total.db)}</td><td class="num">${n0(x.total.duda)}</td><td class="num">${n0(x.total.pages)}</td><td class="num">${n0(x.total.aiReq)}</td><td class="num">${tok(x.total.aiIn)} / ${tok(x.total.aiOut)}</td><td class="num">${n0(x.total.searches)}</td><td class="num">${usd(x.total.cost.usd)}</td></tr>`).join('')
+          : '<tr><td colspan="8" class="empty small">Nothing counted against a website yet this month.</td></tr>'}</tbody></table></div>
+      <div class="small faint">Click a website to see what each action used on it. Scans count against their audit; the auto audit, webhooks and form submissions against the website.</div>
+
+      <div class="k" style="margin-top:18px">Recent activity</div>
+      <div class="table-wrap"><table class="grid ug-table"><thead><tr><th>When</th><th>Action</th><th>Website</th><th class="num">Took</th><th>Used</th></tr></thead>
+        <tbody>${(d.log || []).length ? d.log.slice(0, 60).map((x) => `<tr><td class="small">${esc(fmtWhen(x.at))}</td><td><b>${esc(actLabel(x.action))}</b></td><td class="small">${esc(x.sites > 1 ? `${x.sites} websites` : x.siteName || x.site || '')}</td>
+          <td class="num small">${x.ms >= 1000 ? (x.ms / 1000).toFixed(1) + 's' : x.ms + 'ms'}</td><td class="small">${esc(usedLine(x))}${x.cost.usd ? ` · ${usd(x.cost.usd)}` : ''}</td></tr>`).join('') : '<tr><td colspan="5" class="empty small">Nothing yet.</td></tr>'}</tbody></table></div>
+      <div class="small faint" style="margin-top:8px">Counted by the app as it runs (each server writes its counts at least every 20 seconds, so the newest can be a few seconds behind). AI costs are estimates from each model's list price; database figures are requests to the database. Updated ${esc(fmtWhen(d.at))}.</div>`;
+    $$('[data-per]').forEach((b) => (b.onclick = () => { u.period = b.dataset.per; paintUsage(); }));
+    $$('[data-chart]').forEach((b) => (b.onclick = () => { u.chart = b.dataset.chart; paintUsage(); }));
+    const keepFocus = (id, key) => { const el = $(id); if (!el) return; el.oninput = () => { u[key] = el.value; const pos = el.selectionStart; paintUsage(); const n = $(id); n.focus(); n.setSelectionRange(pos, pos); }; };
+    keepFocus('#ugQ', 'q'); keepFocus('#ugSq', 'sq');
+    $$('[data-ugsite]').forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('a')) return; u.open = u.open === tr.dataset.ugsite ? '' : tr.dataset.ugsite; paintUsage(); }));
+  }
   async function renderHealth() {
     $('#view').innerHTML = `<div class="page-head"><div><h1>System health</h1>
       <div class="muted">Where the app stands, and anything that needs attention.</div></div>
-      <button class="btn" id="hxMeasure" title="Walk the store and measure what it actually holds">⟳ Measure storage now</button></div>
+      <div class="ug-tools"><a class="btn" href="#/usage">📊 Usage & activity</a><button class="btn" id="hxMeasure" title="Walk the store and measure what it actually holds">⟳ Measure storage now</button></div></div>
       <div id="hxBody"><div class="empty">Loading…</div></div>`;
     $('#hxMeasure').onclick = async () => {
       const b2 = $('#hxMeasure'); b2.disabled = true; b2.textContent = 'Measuring…';
@@ -2079,10 +2195,11 @@
     const issues = r.issues || [];
     const pageLink = (p) => `<a href="https://${esc(r.domain)}${esc(p)}" target="_blank" rel="noopener" class="mono">${esc(p === '/' ? 'Home page' : decodeURIComponent(p).slice(0, 70))} ↗</a>`;
     const row = (i) => `<li class="wc-item ${i.sev === 'critical' ? 'crit' : 'warn'}">
-        <div class="wc-top"><span class="badge ${i.sev === 'critical' ? 'sev-critical' : 'sev-warning'}">${i.sev === 'critical' ? 'Super critical' : 'Check'}</span>
+        <div class="wc-top"><span class="badge ${i.sev === 'critical' ? 'sev-critical' : i.verify ? 'sev-verify' : 'sev-warning'}">${i.sev === 'critical' ? 'Super critical' : i.verify ? '🔎 Verify' : 'Check'}</span>
           <span class="wc-type">${esc(WC_TYPE[i.type] || i.type)}</span> <b class="wc-val">${esc(i.value)}</b>
           ${canAct ? `<button class="btn sm ghost wc-ok-btn" data-wcok="${esc(i.k)}" title="This is right for this website (an area they serve, a partner, their own second number). It will not be reported again.">Not a problem</button>` : ''}</div>
         <div class="small">${esc(i.label)}</div>
+        ${i.rec ? `<div class="small wc-rec"><b>What to do:</b> ${esc(i.rec)}</div>` : ''}
         ${i.ctx && i.ctx !== i.value && !/^(tel|mailto):/i.test(i.ctx) && i.type !== 'social' ? `<div class="small faint wc-ctx">“${esc(i.ctx)}”</div>` : ''}
         <div class="small wc-pages">On ${(i.pages || []).map(pageLink).join(', ')}${i.n > (i.pages || []).length ? ` <span class="faint">and ${i.n - i.pages.length} more</span>` : ''}</div></li>`;
     const oks = W.ok || [];
@@ -2095,6 +2212,56 @@
         : '<div class="note good">✅ Nothing on the live website contradicts Business Info.</div>'}
       ${oks.length ? `<details class="wc-oks small"><summary>${wcPlural(oks.length, 'value')} marked not a problem</summary><ul>${oks.map((k) => `<li><span class="mono">${esc(k.replace(/^(\w+):/, '$1 · '))}</span>${canAct ? ` <button class="linkbtn" data-wcunok="${esc(k)}">Undo</button>` : ''}</li>`).join('')}</ul></details>` : ''}
     </section>`;
+  }
+  // ---------- 🌐 Online presence: Google, Facebook, Instagram, YouTube, Yelp against Business Info ----------
+  const PRES_NAME = { google: 'Google Business Profile', facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube', yelp: 'Yelp' };
+  function loadPresence(siteId, again, force) {
+    const W = (prof.pres = prof.pres || {})[siteId];
+    if (W && !force && (W.loading || W.at > Date.now() - 60000)) return;
+    prof.pres[siteId] = Object.assign({}, W || {}, { loading: !W });
+    api('/api/watch?op=presence&id=' + encodeURIComponent(siteId))
+      .then((r) => { prof.pres[siteId] = { result: r.result, maps: r.maps, cfg: r.cfg, at: Date.now() }; again(); })
+      .catch((e) => { prof.pres[siteId] = { error: e.message, at: Date.now() }; again(); });
+  }
+  function presenceSection(siteId, x) {
+    if (!can('live.view')) return '';
+    const W = (prof.pres || {})[siteId] || {}; const r = W.result;
+    const canAct = can('live.content');
+    const head = `<div class="an-head"><h2 id="pfPresence">🌐 Online presence <span class="small faint" style="font-weight:400">· Google, Facebook and their profiles</span></h2>${canAct ? `<button class="btn sm" id="psRun" ${W.busy ? 'disabled' : ''}>${W.busy ? 'Searching… (up to a minute)' : r ? '↻ Check again' : 'Check online presence'}</button>` : ''}</div>
+      <div class="small muted wc-intro">What their Google Business Profile, Facebook and the other profiles in Business Info show, compared with Business Info, which stays the fact.
+        ${W.maps === false ? ' Google listings are found by web search until a Google Maps key is added; ' : W.maps ? ' Google listings come straight from Google; ' : ' '}everything else by AI web search, keeping only what a cited page shows word for word.</div>`;
+    if (W.loading) return `<section class="pf-an">${head}<div class="empty">Loading…</div></section>`;
+    if (W.error) return `<section class="pf-an">${head}<div class="note bad">${esc(W.error)}</div></section>`;
+    if (!r) return `<section class="pf-an">${head}<div class="small muted">Not checked yet.${canAct ? ' Press <b>Check online presence</b> (about one AI request and a few web searches).' : ''}</div></section>`;
+    if (r.error) return `<section class="pf-an">${head}<div class="note unk">${esc(r.error)}</div></section>`;
+    const ref = r.reference || {};
+    const lvl = { check: ['sev-warning', 'Check'], format: ['sev-info', 'Format'] };
+    const row = (l) => `<li class="ps-item ${l.found ? '' : 'ps-miss'}">
+        <div class="wc-top"><b>${esc(PRES_NAME[l.platform] || l.platform)}</b>
+          <span class="badge subtle">${l.source === 'places' ? 'from Google' : 'from web search'}</span>
+          ${l.found ? (l.notes || []).length ? '' : '<span class="badge sev-ok">✓ matches</span>' : '<span class="badge subtle">couldn\'t confirm</span>'}
+          ${l.url ? `<a class="small" href="${esc(l.url)}" target="_blank" rel="noopener">open ↗</a>` : ''}</div>
+        ${l.found ? `<div class="ps-facts small">${[['Name', l.name], ['Phone', l.phone], ['Address', l.address], ['Email', l.email], ['Website', l.website]].filter(([, v]) => v).map(([k, v]) => `<span><span class="faint">${k}</span> ${esc(v)}</span>`).join('')}</div>` : `<div class="small muted">${esc(l.note || 'Not found.')}</div>`}
+        ${(l.unconfirmed || []).length ? `<div class="small faint">Not confirmed word for word, so left out: ${esc(l.unconfirmed.join(', '))}.</div>` : ''}
+        ${(l.notes || []).map((n) => `<div class="small ps-note"><span class="badge ${lvl[n.level] ? lvl[n.level][0] : 'subtle'}">${lvl[n.level] ? lvl[n.level][1] : 'Note'}</span> ${esc(n.text)}</div>`).join('')}
+        ${(l.sources || []).length ? `<details class="small faint ps-src"><summary>Sources</summary>${l.sources.map((c) => `<div>“${esc(c.text)}” <a href="${esc(c.url)}" target="_blank" rel="noopener">↗</a></div>`).join('')}</details>` : ''}</li>`;
+    return `<section class="pf-an">${head}
+      <div class="small faint wc-meta">Checked ${esc(fmtFull(new Date(r.at).toISOString()))}${r.by ? ' by ' + esc(r.by) : ''} · Business Info: ${esc([ref.name, (ref.phones || []).join(', '), ref.websitePhone ? `website shows ${ref.websitePhone}` : ''].filter(Boolean).join(' · '))}</div>
+      <ul class="wc-list">${(r.listings || []).map(row).join('')}</ul>
+      ${(r.recs || []).length ? `<div class="ps-recs"><div class="cl-card-h">Suggestions for the client <span class="small faint" style="font-weight:400">(“Increase your searchability”)</span></div><ul>${r.recs.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
+        <div class="small faint">${W.cfg && W.cfg.clientDefault ? 'Customers see these in their portal (General settings → Online presence), unless switched off on their customer profile.' : 'Team only. Show them to a customer from their customer profile, or to everyone in General settings → Online presence.'}</div></div>` : ''}
+    </section>`;
+  }
+  function bindPresence(body, siteId, again) {
+    if (!can('live.view')) return;
+    loadPresence(siteId, again);
+    const run = $('#psRun', body);
+    if (run) run.onclick = async () => {
+      prof.pres[siteId] = Object.assign({}, prof.pres[siteId], { busy: true }); again();
+      try { const r = await post('/api/watch', { op: 'presence', id: siteId }); prof.pres[siteId] = Object.assign({}, prof.pres[siteId], { result: r.result, busy: false, at: Date.now() }); toast(r.result && r.result.error ? r.result.error : 'Online presence checked'); }
+      catch (e) { prof.pres[siteId] = Object.assign({}, prof.pres[siteId], { busy: false }); toast(e.message); }
+      again();
+    };
   }
   /** Keep the DR Websites row in step with what this profile now knows. */
   function wcSync(siteId, r) {
@@ -2156,7 +2323,7 @@
         wq.pending = r.pending || 0;
         pollAuto(true);
         if ((r.done || []).length && route().name === 'live' && live.tab === 'published' && !document.activeElement?.matches?.('input,select')) renderLive();
-        if (!((r.done && r.done.length) || r.partial) || !wq.pending) break;
+        if (!((r.done && r.done.length) || r.partial || r.presenceDone) || !wq.pending) break;
         await new Promise((res) => setTimeout(res, 2000));
       }
     } finally {
@@ -2492,6 +2659,7 @@
         ${analyticsSection(siteId)}
         ${healthSection(siteId, x)}
         ${watchSection(siteId, x)}
+        ${presenceSection(siteId, x)}
       </div>`;
     // Answers can arrive after the page has been drawn again (the audit page redraws itself), so redraw
     // whichever profile is on screen now, not the one that asked.
@@ -2525,6 +2693,7 @@
     bindAnalytics(body, siteId, again);
     bindHealth(body, siteId, x, again);
     bindWatch(body, siteId, x, again);
+    bindPresence(body, siteId, again);
     if (!liveDR.data && !liveDR.loading && !prof.liveAsked) { prof.liveAsked = true; loadLive(false).then(again).catch(() => {}); }
     if (canCust() && !state.clients && !prof.cuAsked) { prof.cuAsked = true; loadCustomers().then(again).catch(() => {}); }
     if (!state.leadSums[siteId] && !prof['ls' + siteId]) { prof['ls' + siteId] = 1; loadLeadSums([siteId]).then(again); }
@@ -2797,6 +2966,8 @@
           <label>Email<input value="${esc(c.email)}" disabled></label>
           ${adm ? '' : `<label>Company<input id="ocCo" maxlength="80" value="${esc(c.company || '')}"${manage ? '' : ' disabled'}></label>
           <label>Phone<input id="ocPhone" maxlength="40" value="${esc(c.phone || '')}"${manage ? '' : ' disabled'}></label>`}</div>
+        ${adm ? '' : `<div class="cu-k">Increase your searchability</div><div id="ocPres" class="small"><span class="faint">Loading suggestions…</span></div>
+          <label class="cu-check"><input type="checkbox" id="ocShowPres" ${c.showPresence === true ? 'checked' : ''}${manage ? '' : ' disabled'}> <span>Show these suggestions to ${esc(c.name)} in their portal<span class="small faint" id="ocPresDef"></span></span></label>`}
         <div class="cu-k">Websites</div>${manage ? sitePickerHtml('ocSites') : `<div>${chosen.map((k) => `<span class="cu-chip"><b>${esc(siteInfo(k).name)}</b></span>`).join('') || '<span class="faint small">None</span>'}</div>`}
         ${!adm && manage ? `<div class="cu-k">Password</div><div class="row-gap"><button class="btn sm" id="ocTemp" type="button">New temporary password</button><span class="small muted">${c.temp ? 'They have not chosen their own password yet.' : 'For a customer who forgot theirs. Their current password stops working.'}</span></div><div id="ocTempBox"></div>` : ''}
         <div class="small" id="ocOut"></div>
@@ -2804,9 +2975,23 @@
       <footer>${!adm && manage ? '<button class="btn ghost danger" id="ocRemove">Remove customer</button>' : ''}<span class="spacer"></span>
         ${can('client.viewas') ? '<button class="btn" id="ocView">👁 View as this customer</button>' : ''}${manage ? '<button class="btn primary" id="ocSave">Save</button>' : '<button class="btn" data-close>Close</button>'}</footer>`, { wide: true });
     if (manage) bindSitePicker($('#ocSites'), chosen);
+    // The suggestions from each of their websites' last online presence check.
+    let presTouched = false;
+    if ($('#ocShowPres')) $('#ocShowPres').onchange = () => { presTouched = true; };
+    if (!adm && $('#ocPres')) (async () => {
+      const ids = (c.sites || []).map((k) => siteInfo(k)).map((x) => ({ name: x.name, id: x.dudaId })).filter((x) => x.id);
+      const got = await Promise.all(ids.map((x) => api('/api/watch?op=presence&id=' + encodeURIComponent(x.id)).then((r) => Object.assign({ r }, x)).catch(() => Object.assign({ r: null }, x))));
+      const cfg = (got.find((g) => g.r) || {}).r; const def = cfg && cfg.cfg ? cfg.cfg.clientDefault : false;
+      if (c.showPresence === null || c.showPresence === undefined) { $('#ocShowPres').checked = !!def; $('#ocPresDef').textContent = ` (following the setting for everyone: ${def ? 'shown' : 'team only'})`; }
+      const el = $('#ocPres'); if (!el) return;
+      el.innerHTML = got.map((g) => { const res = g.r && g.r.result;
+        return `<div class="cu-pres"><b>${esc(g.name)}</b>${res && !res.error ? ` <span class="faint">· checked ${esc(fmtWhen(res.at))}</span>${(res.recs || []).length ? `<ul>${res.recs.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '<div class="faint">Everything we could confirm matches. Nothing to suggest.</div>'}`
+          : ` <span class="faint">· not checked yet. Open the website's profile and press <b>Check online presence</b>.</span>`}</div>`; }).join('') || '<span class="faint">No websites yet.</span>';
+    })();
     const save = async () => {
       if (adm) await post('/api/users', { op: 'testSites', email: c.email, sites: chosen });
-      else await post('/api/users', { op: 'clientSave', mustBeNew: false, email: c.email, name: $('#ocName').value.trim(), company: $('#ocCo').value.trim(), phone: $('#ocPhone').value.trim(), sites: chosen });
+      else await post('/api/users', { op: 'clientSave', mustBeNew: false, email: c.email, name: $('#ocName').value.trim(), company: $('#ocCo').value.trim(), phone: $('#ocPhone').value.trim(), sites: chosen,
+        showPresence: presTouched ? $('#ocShowPres').checked : undefined });
       await loadCustomers(true);
     };
     if ($('#ocSave')) $('#ocSave').onclick = async (e) => { e.target.disabled = true; try { await save(); closeModal(); toast('Saved'); if (after) after(); } catch (x) { e.target.disabled = false; $('#ocOut').textContent = x.message; } };
@@ -4521,6 +4706,10 @@
             ${d && d.checkedAt ? `<li>${clIc('clock', 15)} Checked ${esc(ago(new Date(d.checkedAt).toISOString()))}</li>` : ''}
           </ul></section>
       </div>
+      ${O.presence && (O.presence.recs || []).length ? `<section class="cl-card cp-pres"><div class="cl-card-h cp-ch">Increase your searchability</div>
+        <p class="small muted">We compared how your business appears on Google, Facebook and your other profiles with your website. A few small updates help customers and Google recognise you everywhere:</p>
+        <ul class="cp-pres-l">${O.presence.recs.map((r) => `<li>${clIc('check', 15)} <span>${esc(r)}</span></li>`).join('')}</ul>
+        <div class="small faint">Checked ${esc(clDate(new Date(O.presence.at).toISOString()))}. Questions? <button class="linkbtn" data-sendticket type="button">Send us a request</button></div></section>` : ''}
       ${tkCta()}`;
     tkBindSend(site);
     if (D && $('#cpOvChart')) { const S = anSeries(A.range, D.daily, [['av', 'visits'], ['au', 'visitors']], 'day'); drawLines($('#cpOvChart'), { B: S.B, g: 'day', series: S.series }); }
@@ -5091,9 +5280,11 @@
     { route: 'settings', icon: '👥', label: 'Team members', words: 'team members people staff users accounts online', href: '#/settings/team', help: 'team' },
     { route: 'settings', icon: '🧩', label: 'Roles', words: 'roles permissions access what people can do', href: '#/settings/roles', perm: 'members.manage', help: 'roles' },
     { route: 'settings', icon: '🎫', label: 'Ticket settings', words: 'ticket settings daily limit tickets per day client email', href: '#/settings/tickets', perm: 'ticket.manage', help: 'requests' },
+    { route: 'settings', icon: '📣', label: 'Online presence settings', words: 'online presence google business profile gbp facebook instagram youtube yelp nap searchability suggestions customers', href: '#/settings/presence', perm: 'members.manage', help: 'presence' },
     { route: 'settings', icon: '🔌', label: 'Integrations', words: 'integrations slack email google connected', href: '#/settings/integrations', perm: 'members.manage', help: 'admin-members' },
     { route: 'settings', icon: '🛡', label: 'My security log', words: 'security log sign in sign out login logout password history', href: '#/settings/security', help: 'account' },
     { route: 'health', icon: '⚑', label: 'System health', words: 'system health storage allowance database', href: '#/health', owner: true, help: 'health' },
+    { route: 'usage', icon: '📊', label: 'Usage & activity', words: 'usage activity tokens cost calls limits api duda ai ably cooldown resting per website per audit', href: '#/usage', owner: true, help: 'usage' },
     // actions
     { icon: '＋', label: 'Add audit', words: 'add audit website scan new site', act: () => openAdd(), perm: 'site.add', help: 'add' },
     { icon: '＋', label: 'Add project', words: 'add project new build', act: () => openNewProject(), perm: 'project.manage', help: 'projects' },
@@ -5292,12 +5483,33 @@
     ['appearance', '🎨 Appearance & start page', () => true],
     ['tickets', '🎫 Ticket settings', () => can('ticket.manage')],
     ['domains', '🌐 Domain monitoring', () => can('members.manage')],
+    ['presence', '📣 Online presence', () => can('members.manage')],
     ['integrations', '🔌 Integrations', () => can('members.manage')],
     ['security', '🛡 Security log', () => true],
     // Only while moving the app to a new home (COPY_FROM_URL / COPY_FROM_TOKEN set), and only the owner.
     ['move', '📦 Move data in', () => !!(state.superAdmin && state.config && state.config.copyFrom)],
   ];
   const secState = { all: false, data: null, who: '', type: '', loading: false };
+  /** Settings → Online presence: the automatic monthly check, and who sees the suggestions. */
+  async function drawPresenceSettings(body) {
+    body.innerHTML = '<h2>Online presence</h2><div class="empty">Loading…</div>';
+    let d; try { d = await api('/api/watch?op=presence'); } catch (e) { body.innerHTML = `<h2>Online presence</h2><div class="note bad">${esc(e.message)}</div>`; return; }
+    const c = d.cfg || {};
+    body.innerHTML = `<h2>Online presence</h2>
+      <p class="muted">Compares what each business's Google Business Profile, Facebook and the other profiles in its Business Info show with Business Info (which stays the fact): different details, and the same details written differently. Run it from any website's profile with <b>Check online presence</b>.</p>
+      <ul class="set-facts">
+        <li>Google listings: ${d.maps ? '<b>from Google directly</b> (Google Maps key connected).' : 'by AI web search for now. Add <span class="mono">GOOGLE_MAPS_API_KEY</span> in Vercel to read them straight from Google (about 1,000 lookups a month are free).'}</li>
+        <li>Everything else: AI web search. Only details that a cited page shows word for word are kept; the rest is reported as "couldn't confirm", never guessed.</li>
+        <li>What it costs per website is on <b>Usage & activity</b> (owner) as <i>Auto audit · presence</i>.</li></ul>
+      <label class="check-row"><input type="checkbox" id="psAuto" ${c.auto ? 'checked' : ''}> <span><b>Check every published website automatically</b>, about once a month each (off until you are ready: it uses AI web searches)</span></label>
+      <label class="field" style="max-width:260px">Websites a day, at most <input type="number" id="psPer" min="1" max="200" value="${esc(c.perDay || 20)}"></label>
+      <label class="check-row"><input type="checkbox" id="psClient" ${c.clientDefault ? 'checked' : ''}> <span><b>Show the suggestions to customers in their portal</b> ("Increase your searchability"). Off = team only. Each customer's profile can override this.</span></label>
+      <div class="row-gap"><button class="btn primary" id="psSave">Save</button><span class="small muted" id="psOut">${c.by ? `Last changed by ${esc(c.by)} · ${esc(fmtFull(new Date(c.at).toISOString()))}` : ''}</span></div>`;
+    $('#psSave').onclick = async () => {
+      try { await post('/api/watch', { op: 'presenceSettings', auto: $('#psAuto').checked, perDay: Number($('#psPer').value), clientDefault: $('#psClient').checked }); toast('Saved'); drawPresenceSettings(body); }
+      catch (e) { $('#psOut').textContent = e.message; }
+    };
+  }
   /** Settings → Move data in: copy every record from the old database into this app's own. */
   const mv = { running: false, st: null, err: '' };
   async function drawMove(body) {
@@ -5344,6 +5556,7 @@
     if (cur === 'team') return drawTeamPage(body);
     if (cur === 'security') return drawSecurity(body);
     if (cur === 'move') return drawMove(body);
+    if (cur === 'presence') return drawPresenceSettings(body);
     if (cur === 'appearance') return drawAppearance(body);
     if (cur === 'roles') { body.innerHTML = `<h2>Roles</h2><p class="muted">A role is a set of things people may do. Change a role and everyone on it changes; give one person an exception with <b>Access</b> on the Team page.</p><button class="btn primary" id="setRoles">Open roles</button>`; $('#setRoles').onclick = () => openRoles(); return; }
     if (cur === 'notifications') { body.innerHTML = `<h2>Your notifications</h2><p class="muted">What reaches your bell, pop-ups and Slack is set per person, in your account.</p><button class="btn primary" id="setNotif">Open your notification settings</button>`; $('#setNotif').onclick = () => openMe(); return; }
@@ -5735,6 +5948,7 @@
     try { await scanSiteRun(id); } finally { clearInterval(beat); releaseScan([id]); }
   }
   async function scanSiteRun(id) {
+    const { sApi, sPost } = siteApi(id);
     const site = await api('/api/store?op=site&id=' + encodeURIComponent(id));
     const t0 = Date.now();
     delete state.skipAI[id];
@@ -5746,7 +5960,7 @@
     const log = [];
     try {
       let meta = null;
-      try { meta = await api('/api/site?editor=' + encodeURIComponent(site.editorUrl)); } catch (e) { log.push('Duda API call failed: ' + e.message); }
+      try { meta = await sApi('/api/site?editor=' + encodeURIComponent(site.editorUrl)); } catch (e) { log.push('Duda API call failed: ' + e.message); }
       const host = (meta && meta.host) || site.host;
       // Websites added by ID before the agency's editor address was known were saved under Duda's address: tidy that up
       const fixHost = site.host === DUDA_HOST && editorHost() ? editorHost() : '';
@@ -5767,14 +5981,14 @@
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ host, site: site.siteId, path, device });
           for (let attempt = 0; attempt < 3; attempt++) {
-            try { const r = await api('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
+            try { const r = await sApi('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
             await new Promise((ok) => setTimeout(ok, 800 * (attempt + 1)));
           }
         },
-        checkUrls: (urls) => post('/api/check', { urls }),
+        checkUrls: (urls) => sPost('/api/check', { urls }),
         // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
-        imageHashes: (urls) => post('/api/imghash', { urls }).then((r) => r.hashes || {}),
-        saveImageHashes: (rows) => post('/api/imghash', { save: rows }),
+        imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}),
+        saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }),
         onProgress: (p) => { state.scanning[id] = p; renderProgress(id); },
       });
       log.push(...res.log);
@@ -5936,7 +6150,7 @@
     const ctl = new AbortController();
     state.aiAbort[id] = ctl;
     const t = setTimeout(() => ctl.abort(), 125000);
-    try { return await api('/api/ai', { method: 'POST', body: JSON.stringify(body), signal: ctl.signal }); }
+    try { return await api('/api/ai', { method: 'POST', body: JSON.stringify(body), signal: ctl.signal, site: id }); }
     catch (e) { if (e.name === 'AbortError') throw Object.assign(new Error(state.skipAI[id] ? 'Skipped' : 'The AI took too long to answer'), { status: state.skipAI[id] ? 499 : 504 }); throw e; }
     finally { clearTimeout(t); if (state.aiAbort[id] === ctl) delete state.aiAbort[id]; }
   }
@@ -7256,6 +7470,7 @@
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'health') return { name: 'health' };
+    if (parts[0] === 'usage') return { name: 'usage' };
     if (parts[0] === 'settings') return { name: 'settings', section: parts[1] || 'team' };
     if (parts[0] === 'analysis') return { name: 'analysis', tab: parts[1] || 'quiet' };
     if (parts[0] === 'activity') return { name: 'activity' };
@@ -7315,6 +7530,7 @@
     if (r.name === 'help') return renderHelp(r.section);
     if (r.name === 'settings') return renderSettings(r.section);
     if (r.name === 'health') return state.superAdmin ? renderHealth() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
+    if (r.name === 'usage') return state.superAdmin ? renderUsage() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
     if (r.name === 'analysis') return can('leads.view') ? renderAnalysis(r.tab) : ($('#view').innerHTML = '<div class="empty">Your role does not include form submissions.</div>');
     if (r.name === 'activity') return renderGlobalActivity();
     if (r.name === 'customers') return renderCustomers();
@@ -7554,6 +7770,7 @@
         : why === 'live-back' ? '<div class="small"><b>↺ Back on the live website</b> after it was gone, so it was reopened.</div>'
         : why === 'live-ok' ? '<div class="small">Marked <b>not a problem</b> for this website, so the auto audit no longer reports it.</div>'
         : why === 'app-fix' ? '<div class="small"><b>Closed by the app: the auto audit got this one wrong.</b> Nothing needed doing on the website, and it has been corrected so it is not reported again.</div>'
+        : f.verify ? '<div class="small"><b>🔎 Verify:</b> it is probably theirs but not in Business Info. Check it is in use and not a personal number or address. If it is theirs, add it to Business Info in Duda (the auto audit then stops reporting it); if not, remove it from the website.</div>'
         : '<div class="small faint">Fix it in the Duda editor and publish: the auto audit reads the website again and closes this by itself. A False alarm here also tells the auto audit it is not a problem.</div>'}</div>`;
   }
   /** Is this audited site still published in Duda? (null = unknown, list not loaded yet) */
@@ -8038,10 +8255,11 @@
   const CLOSED = (f) => f.status === 'done' || f.status === 'false';
   const lastDoneAt = (s) => (s.findings || []).filter((f) => f.status === 'done' && f.statusAt).map((f) => f.statusAt).sort().pop() || '';
   async function verifyLive(s) {
+    const { sApi, sPost } = siteApi(s.id);
     if (state.verifying) return toast('A live check is already running');
     if (!(s.findings || []).some((f) => f.status === 'done')) return toast('No items are marked Done yet. Fix items, mark them Done, publish in Duda, then verify.');
     let info;
-    try { info = await api('/api/site?light=1&editor=' + encodeURIComponent(s.editorUrl)); } catch (e) { return toast("Couldn't reach Duda: " + e.message); }
+    try { info = await sApi('/api/site?light=1&editor=' + encodeURIComponent(s.editorUrl)); } catch (e) { return toast("Couldn't reach Duda: " + e.message); }
     pubInfo[s.id] = { at: Date.now(), d: info };
     if (!info.domain || !/PUBLISHED/i.test(info.publishStatus || '') || /NOT_PUBLISHED|UNPUBLISHED/i.test(info.publishStatus || '')) return toast('This site is not published yet, so there is no live site to check.');
     const done = lastDoneAt(s);
@@ -8058,20 +8276,20 @@
     try {
       // Page SEO settings (noindex etc.) come from Duda, like a normal scan
       const pagesMeta = {};
-      try { const meta = await api('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); } catch (e) { log.push('Duda pages list unavailable: ' + e.message); }
+      try { const meta = await sApi('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); } catch (e) { log.push('Duda pages list unavailable: ' + e.message); }
       const res = await A.runScan({
         siteId: s.siteId, host: info.domain, truth: A.truthWithout(s.truth, s.allow), allow: s.allow || [], pagesMeta, seedPaths: (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: Math.max(10, (s.pages || []).length + 5),
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ live: '1', domain: info.domain, site: s.siteId, path, device });
           for (let attempt = 0; attempt < 3; attempt++) {
-            try { const r = await api('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
+            try { const r = await sApi('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
             await new Promise((ok) => setTimeout(ok, 800 * (attempt + 1)));
           }
         },
-        checkUrls: (urls) => post('/api/check', { urls }),
+        checkUrls: (urls) => sPost('/api/check', { urls }),
         // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
-        imageHashes: (urls) => post('/api/imghash', { urls }).then((r) => r.hashes || {}),
-        saveImageHashes: (rows) => post('/api/imghash', { save: rows }),
+        imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}),
+        saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }),
         onProgress: (p) => { state.scanning[s.id] = Object.assign({}, p, { message: 'Live site · ' + p.message }); renderProgress(s.id); },
       });
       res.aiSkip = new Set();

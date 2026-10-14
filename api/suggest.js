@@ -2,13 +2,13 @@
 // Everyone else only sees the suggestions they submitted themselves (so they can read the owner's replies).
 // GET  /api/suggest                      → { owner: bool, items }
 // POST /api/suggest { op: create | status | comment, ... }
-import { redis, P, readBody, requireUser, jparse, newId, now, sendEmail, emailShell, esc, appUrl, notifyUser, wantsEmail, OWNER_EMAIL, plainMentions } from './_lib.js';
+import { metered, redis, P, readBody, requireUser, jparse, newId, now, sendEmail, emailShell, esc, appUrl, notifyUser, wantsEmail, OWNER_EMAIL, plainMentions } from './_lib.js';
 
 const STATUSES = ['new', 'ongoing', 'done', 'nope'];
 const LABEL = { new: 'New', ongoing: 'On going', done: 'Done', nope: 'Nope' };
 const cleanImgs = (arr) => [].concat(arr || []).filter((u) => /^\/api\/img\?id=[\w-]+$/.test(u)).slice(0, 8);
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -77,3 +77,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('suggest', handler);

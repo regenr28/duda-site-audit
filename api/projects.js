@@ -12,7 +12,7 @@
 // POST { op:'link' }             → attach the Duda website / audit
 // POST { op:'say' }              → a line in the project's own channel
 // POST { op:'remove' }           → delete it
-import { requireUser, readBody, denyUnless, can, jparse, now, globalLog, redis, P, notifyUser } from './_lib.js';
+import { metered, requireUser, readBody, denyUnless, can, jparse, now, globalLog, redis, P, notifyUser } from './_lib.js';
 import {
   PHASES, PHASE_KEYS, FACT_FIELDS, blankProject, getProject, saveProject, listProjects,
   removeProject, onProject, handOver, checkLate, phaseAt, nextPhase, historyEntry, summary,
@@ -31,7 +31,7 @@ async function mine(res, me, id) {
   return p;
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -204,3 +204,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e).slice(0, 300) });
   }
 }
+export default metered('projects', handler);

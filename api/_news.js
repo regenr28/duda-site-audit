@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-14-presence', date: '2026-10-14', audience: 'all', tag: 'Websites',
+    title: 'Online presence: Google and Facebook compared with Business Info, and a new "Verify" label',
+    what: 'A website\'s <b>Profile</b> has a new <b>🌐 Online presence</b> section: what its <b>Google Business Profile</b>, <b>Facebook</b> and the other profiles in Business Info show, compared with Business Info (which stays the fact). Different details are a <b>Check</b>; the same details written differently (a phone as 253.533.6776 on Facebook and (253) 533-6776 on the website) are a <b>Format</b> note. Only what a page shows word for word is reported, with its sources; nothing is guessed. Each check writes <b>suggestions for the client</b> ("Increase your searchability"), team only unless switched on. In the auto audit, details that look like theirs but are not in Business Info are marked <b>🔎 Verify</b>, with what to do.',
+    where: ['A website\'s <b>Profile</b> → <b>🌐 Online presence</b> → <b>Check online presence</b>.', 'A customer\'s profile: their suggestions, and whether they see them in their portal.', 'Admins: <b>General settings → 📣 Online presence</b>.'],
+    link: '#/help/presence', linkText: 'How the online presence check works',
+  },
+  {
     id: '2026-10-13-content', date: '2026-10-13', audience: 'all', tag: 'Websites',
     title: 'Auto audit: another business\'s contact details on a live website, found automatically',
     what: 'Every published website is now <b>auto audited</b>: read page by page, <b>blog posts included</b>, and compared with its Business Info. Another business\'s <b>phone, email, address, name or social account</b> is <b>super critical</b>. DR Websites has an <b>Auto audit</b> column (done, when, republished and queued, and the super critical ones). Websites are never added to Audits automatically; when you add one, what was found arrives as <b>audit items</b>, dated, and stays in step after every publish. Audits also flags <b>↻ Republished: rescan</b>. Admins get <b>CRITICAL ERRORS FOUND!</b> on Slack.',

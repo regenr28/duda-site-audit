@@ -8,7 +8,8 @@
 // Nothing here is scheduled. An open browser asks whether there is work and, if there is and nobody
 // else has the lock, does a few websites' worth. That is what "automatic" means in this app: the
 // work happens while people are using it and stops dead when they are not.
-import { requireUser, readBody, denyUnless, can, globalLog, now, jparse, P, redis, isCopy } from './_lib.js';
+import { onSite } from './_meter.js';
+import { metered, requireUser, readBody, denyUnless, can, globalLog, now, jparse, P, redis, isCopy } from './_lib.js';
 import { queueState, claim, settle, unlock, enqueue, requeue, alertOwner, takeLock, CHUNK, MONTHS } from './_queue.js';
 import { pullMonth } from './leads.js';
 import { addLeads, tidySite, afterImport, TIDY_VERSION } from './_leads.js';
@@ -33,7 +34,7 @@ export async function busyCheck() {
   return { busy: false, retryAfter: 0, message: '' };
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -80,6 +81,7 @@ export default async function handler(req, res) {
     const done = []; const failed = [];
     try {
       for (const siteId of got.ids) {
+        onSite(siteId);
         const d = new Date(); let added = 0; let seen = 0; let err = '';
         const pulled = [];
         for (let i = 0; i < MONTHS; i++) {
@@ -98,6 +100,7 @@ export default async function handler(req, res) {
         done.push({ id: siteId, seen, added, total: s.total || 0 });
       }
     } finally {
+      onSite('');
       await unlock();
     }
 
@@ -176,3 +179,4 @@ async function tidyBatch(n = 8) {
     return { sites: Math.min(n, todo.length), merged, left };
   } finally { await unlock(); }
 }
+export default metered('leadq', handler);

@@ -23,7 +23,8 @@
 // Our own daily request cap per provider: <GEMINI|GROQ|OPENROUTER|CEREBRAS|MISTRAL|CLOUDFLARE|AI_GATEWAY|ANTHROPIC|OPENAI>_DAILY_LIMIT (0 = no cap).
 // For the paid ones that cap is the spending limit: one request checks up to about 45 text blocks or 50 image alt texts.
 // Results are cached for 60 days so rescans don't use any quota.
-import { redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL, can } from './_lib.js';
+import { aiUsage } from './_meter.js';
+import { metered, redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL, can } from './_lib.js';
 import { helpFor, helpText } from './_help.js';
 import { newsFor, latestNewsId } from './_news.js';
 
@@ -214,6 +215,13 @@ async function callOnce(p, system, user) {
     return { fail: { reason: 'cooling', until: Date.now() + 60000, note: e.name === 'AbortError' ? 'Timed out. Retrying in a minute.' : 'Network error: ' + String(e.message || e).slice(0, 120) } };
   }
   if (!r.ok) return { fail: classify(p, r, j) };
+  // What it cost: tokens in and out (and web searches), by provider and model.
+  try {
+    const u = j.usage || {}; const g = j.usageMetadata || {};
+    const inTok = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) || u.prompt_tokens || g.promptTokenCount || 0;
+    const outTok = u.output_tokens || u.completion_tokens || g.candidatesTokenCount || 0;
+    aiUsage(p.id, j.model || p.model, inTok, outTok, (u.server_tool_use && u.server_tool_use.web_search_requests) || 0);
+  } catch (e) { /* counting never gets in the way */ }
   const m = String(text).replace(/<think>[\s\S]*?<\/think>/g, '').match(/\{[\s\S]*\}/);
   const parsed = m ? jparse(m[0], null) : null;
   if (!parsed) return { fail: { reason: 'cooling', until: Date.now() + 60000, note: 'Returned an answer that could not be read. Trying another model.' } };
@@ -455,7 +463,7 @@ async function helpAnswer(req, res, me, list) {
   }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -582,3 +590,4 @@ export async function askAI(system, user) {
 }
 
 export const _test = { discoverModel, visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };
+export default metered('ai', handler);

@@ -1,6 +1,6 @@
 // GET /api/fetch?host=<editor host>&site=<siteId>&path=/about-us&device=desktop|tablet|mobile
 // Proxies Duda's per-device preview HTML (the same thing the editor's Desktop/Tablet/Mobile preview shows).
-import { requireUser, allowedHost, fetchWithTimeout, UA_DESKTOP, redis, P } from './_lib.js';
+import { metered, requireUser, allowedHost, fetchWithTimeout, UA_DESKTOP, redis, P } from './_lib.js';
 
 const UAS = {
   desktop: UA_DESKTOP,
@@ -8,7 +8,7 @@ const UAS = {
   mobile: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
 };
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (!(await requireUser(req, res))) return;
   const { host, site, device = 'desktop' } = req.query;
   let path = String(req.query.path || '/');
@@ -35,3 +35,4 @@ export default async function handler(req, res) {
     res.status(200).json({ status: 0, url, html: '', error: e.name === 'AbortError' ? 'timeout' : String(e.message || e) });
   }
 }
+export default metered('fetch', handler);

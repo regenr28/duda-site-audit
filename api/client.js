@@ -18,7 +18,7 @@
 // POST /api/client { op:'profile', … }     → change their own name, phone, emails, look
 // POST /api/client { op:'healthRun', id }  → the weekly automatic check, if a week has passed
 import dns from 'node:dns';
-import { redis, P, requireUser, readBody, unpackJSON, jparse, fetchWithTimeout, clientSites, viewingAsClient, globalLog, listUsers, slackRoster, unescapeHtml,
+import { metered, redis, P, requireUser, readBody, unpackJSON, jparse, fetchWithTimeout, clientSites, viewingAsClient, globalLog, listUsers, slackRoster, unescapeHtml,
   putUser, publicUser, readSecLog, emailEnabled, LOOK_THEMES } from './_lib.js';
 import { DOMS, DOMEV, registrable } from './_domains.js';
 import { siteAnalytics } from './analytics.js';
@@ -159,7 +159,7 @@ async function readThreads(dudaSiteId, me) {
   }).filter(Boolean).sort((x, y) => String(y.lastAt).localeCompare(String(x.lastAt)));
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res, { client: true });
   if (!me) return;
@@ -204,7 +204,16 @@ export default async function handler(req, res) {
           redis(['HGET', DOMS, sid]), readHealth(sid).catch(() => ({ runs: [] }))]);
         const site = clientSite(rec, await liveDomains().catch(() => ({})));
         const last = (H.runs || [])[0];
-        return res.status(200).json({ site, leads: sum, comments: threads.filter((t) => t.status === 'open').length,
+        // "Increase your searchability": only when this customer is set to see it (or everyone is, by default).
+        let presence = null;
+        try {
+          const { PKEY, presenceCfg } = await import('./_presence.js');
+          const cfg = await presenceCfg();
+          const pv = req.headers['x-view-presence'];
+          const visible = me.role === 'client' ? (me.showPresence === undefined ? cfg.clientDefault : !!me.showPresence) : pv !== undefined ? pv === '1' : cfg.clientDefault;
+          if (visible) { const [pr] = await redis(['GET', PKEY(sid)]); const r = jparse(pr); if (r && (r.recs || []).length) presence = { at: r.at, recs: r.recs }; }
+        } catch (e) { presence = null; }
+        return res.status(200).json({ site, presence, leads: sum, comments: threads.filter((t) => t.status === 'open').length,
           live: row, domain: domainFacts(jparse(domRaw), (row && row.domain) || site.domain),
           health: last ? { at: last.at, mobile: (last.mobile || {}).scores || null, desktop: (last.desktop || {}).scores || null } : null, keyed: !!H.keyed });
       }
@@ -320,3 +329,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e).slice(0, 200) });
   }
 }
+export default metered('client', handler);

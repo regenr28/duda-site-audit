@@ -5,7 +5,7 @@
 // Keys:  site:<id> (scan results + meta)   index (hash id → summary)   fstate:<id> (hash findingId → {status, assignee})
 //        fnum:<id> (hash findingId → #)   seq:<id>   cmt:<id> (hash commentId → comment)   act:<id> (list)
 //        notif:<email> (list)   notifseen:<email>
-import { redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, wantsEmail, plainMentions, normEmail, buildId, can, denyUnless } from './_lib.js';
+import { metered, redis, P, readBody, requireUser, jparse, packJSON, unpackJSON, newId, now, listUsers, sendEmail, emailShell, esc, appUrl, globalLog, notifyUser, wantsEmail, plainMentions, normEmail, buildId, can, denyUnless } from './_lib.js';
 import { enqueue } from './_queue.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
 import { createBackup } from './_backup.js';
@@ -203,7 +203,7 @@ async function bump(email, field, by = 1) {
   try { await redis(['HINCRBY', P + 'stat:' + email, field, by]); } catch (e) { /* counters are best-effort */ }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -1196,3 +1196,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('store', handler);

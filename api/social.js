@@ -1,7 +1,7 @@
 // POST /api/social { urls: [facebook / google maps / gbp links] }
 // Best-effort read of public profile metadata (name, phone, email) to compare with Business Info.
 // Facebook and Google often block automated reads — anything we can't read is returned as "unverified".
-import { requireUser, fetchWithTimeout, readBody } from './_lib.js';
+import { metered, requireUser, fetchWithTimeout, readBody } from './_lib.js';
 
 const PHONE = /(?:\+?1[\s.\-]?)?\(?([2-9]\d{2})\)?[\s.\-]?(\d{3})[\s.\-](\d{4})/g;
 const EMAIL = /[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/gi;
@@ -33,9 +33,10 @@ async function read(url) {
   }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (!(await requireUser(req, res))) return;
   const { urls } = readBody(req);
   if (!Array.isArray(urls)) return res.status(400).json({ error: 'urls[] required' });
   res.status(200).json(await Promise.all(urls.slice(0, 8).map(read)));
 }
+export default metered('social', handler);

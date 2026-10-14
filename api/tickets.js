@@ -13,7 +13,7 @@
 //   POST { op:'status', ids, status }   { op:'reply', id, text }   { op:'note', id, text }
 //   POST { op:'assign', ids, email }    { op:'checked', id, result, now }   { op:'opened', id }
 //   GET/POST ?op=settings        admins: daily allowance, who is told, emails to clients
-import { redis, P, newId, now, getUser, unpackJSON, listUsers, listRoles, canWith, notifyUser, globalLog, sendEmail, emailEnabled, emailShell,
+import { metered, redis, P, newId, now, getUser, unpackJSON, listUsers, listRoles, canWith, notifyUser, globalLog, sendEmail, emailEnabled, emailShell,
   esc, appUrl, readBody, normEmail } from './_lib.js';
 import { who, mayseeSite, settings, saveSettings, quota, today, limitFor, getCap, keepCapCmds, getTickets, listIds, putTicketCmd, newSetCmd,
   clientTicket, teamTicket, STATUSES, KINDS, TZ, cleanPath, cleanReplay, siteRec as tkSiteRec } from './_tickets.js';
@@ -63,7 +63,7 @@ async function emailClient(cfg, t, subject, line) {
 }
 const DEVICE_WORD = { desktop: 'desktop', tablet: 'tablet', mobile: 'phone' };
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const w = await who(req, res);
   if (!w) return;
@@ -290,3 +290,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e).slice(0, 300) });
   }
 }
+export default metered('tickets', handler);

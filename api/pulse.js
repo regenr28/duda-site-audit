@@ -1,6 +1,6 @@
 // POST /api/pulse { lastActive: ISO }  — heartbeat sent every ~90s while the app is open.
 // Returns who is online (presence) + this user's notifications in one round trip.
-import { redis, P, readBody, requireUser, jparse, now, isCopy } from './_lib.js';
+import { metered, redis, P, readBody, requireUser, jparse, now, isCopy } from './_lib.js';
 import { TIDY_VERSION } from './_leads.js';
 
 // Which website / audit item this person has open right now (shown in Team status)
@@ -9,7 +9,7 @@ function where(w) {
   return { siteKey: String(w.siteKey).slice(0, 40), name: String(w.name || '').slice(0, 120), item: Number(w.item) || null, tab: String(w.tab || '').slice(0, 20) };
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -29,15 +29,18 @@ export default async function handler(req, res) {
       // every open tab — including the ones nobody was looking at.
       ['HLEN', P + 'leadq'], ['GET', P + 'leadtidy:all'],
       // How many websites the live content check still has to read (one number, kept by the check itself).
-      ['GET', P + 'cwdue']];
+      ['GET', P + 'cwdue'],
+      // And the automatic online presence checks still to do today (when switched on): open tabs run them too.
+      ['GET', P + 'presence:due']];
     if (wantNotifs) cmds.push(['LRANGE', P + 'notif:' + me.email, 0, 49], ['GET', P + 'notifseen:' + me.email]);
-    const [, pres, cmtVer, accessVer, lqLen, tidyV, wDue, list, seen] = await redis(...cmds);
+    const [, pres, cmtVer, accessVer, lqLen, tidyV, wDue, pDue, list, seen] = await redis(...cmds);
     const presence = {};
     for (let i = 0; pres && i < pres.length; i += 2) presence[pres[i]] = jparse(pres[i + 1], {});
     const items = (list || []).map((x) => jparse(x)).filter(Boolean);
     return res.status(200).json({ presence, serverTime: now(), cmtVer: String(cmtVer || 0), accessVer: String(accessVer || 0),
-      lq: isCopy() ? { pending: 0, tidyDone: true } : { pending: Number(lqLen || 0), tidyDone: tidyV === TIDY_VERSION }, wq: isCopy() ? 0 : Number(wDue || 0), notifs: wantNotifs ? { items, unread: items.filter((n) => !seen || n.at > seen).length } : null });
+      lq: isCopy() ? { pending: 0, tidyDone: true } : { pending: Number(lqLen || 0), tidyDone: tidyV === TIDY_VERSION }, wq: isCopy() ? 0 : Number(wDue || 0) + Number(pDue || 0), notifs: wantNotifs ? { items, unread: items.filter((n) => !seen || n.at > seen).length } : null });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('pulse', handler);

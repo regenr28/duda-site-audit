@@ -7,7 +7,7 @@
 // Lighthouse runs on Google's side through the PageSpeed Insights API, so nothing heavy runs here.
 // It works without a key at a low shared limit; PAGESPEED_API_KEY (a free Google API key) lifts it.
 // Only published websites can be checked: Google has to be able to open the page like a visitor.
-import { redis, P, requireUser, readBody, jparse, can, fetchWithTimeout, unpackJSON } from './_lib.js';
+import { metered, redis, P, requireUser, readBody, jparse, can, fetchWithTimeout, unpackJSON } from './_lib.js';
 
 const KEEP = 8;
 const key = (id) => P + 'psi:' + id;
@@ -97,7 +97,7 @@ export async function runHealth(id, byName, lockBy) {
   }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -115,3 +115,4 @@ export default async function handler(req, res) {
   }
 }
 export const _test = { lighthouse };
+export default metered('sitehealth', handler);

@@ -8,7 +8,7 @@
 // POST /api/analysis { op: 'migrate' }          → copy the key-value leads into SQL
 // POST /api/analysis { op: 'verdict', id, verdict, teach… }  → a person disagreeing
 // POST /api/analysis { op: 'judge', limit }     → ask the AI about what the rules could not settle
-import { requireUser, readBody, redis, P, can, denyUnless, globalLog, jparse } from './_lib.js';
+import { metered, requireUser, readBody, redis, P, can, denyUnless, globalLog, jparse } from './_lib.js';
 import { sqlReady, ensureSchema, rows, sql } from './_sql.js';
 import { quietSites, marketingFor, benchmarks, leadsFor, setVerdict, unsureLeads, rejudge, addLeadsSql, rebuildDays } from './_leadsql.js';
 import { readLeads } from './_leads.js';
@@ -44,7 +44,7 @@ async function storeStatus() {
   return out;
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -177,3 +177,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e).slice(0, 300) });
   }
 }
+export default metered('analysis', handler);

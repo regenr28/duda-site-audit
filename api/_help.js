@@ -818,6 +818,8 @@ export const HELP_SECTIONS = [
 <ul>
 <li><b>Super critical (contact info)</b>: a 📞 phone number, ✉️ email, 📍 street address or map, 🏷 business name (copyright line, or the business data Google reads) or 🔗 social account (Facebook, Instagram, YouTube, TikTok, X, LinkedIn, Yelp, Pinterest) that is not theirs. "Share this page" buttons are ignored.</li>
 <li><b>Check</b>: a town and ZIP on their own that are not theirs — often just an area they serve.</li>
+<li><b>Check</b>: their own details that are simply missing from Business Info: an email at the website's own domain, or a second phone listed next to theirs in Google's business data. Add them to Business Info.</li>
+<li><b>Check</b>: a page's Google business data that uses the page's title as the business name ("Ceramic Pro Gold Package"): their own data, filled in wrongly, not another business.</li>
 <li><b>Check</b>: 🧩 <b>Local Business Schema not enabled</b> — the home page gives Google no business details. Turn it on in Duda, in the site's Business Info. (A page's "Service" data names the service, such as "Paint Protection Film", and is never taken for the business name.)</li>
 </ul>
 <p>Anything approved as correct on the website's audit (its <b>Business Info exceptions</b>) is respected, and anything struck out of Business Info there is treated as not theirs.</p>
@@ -1022,6 +1024,36 @@ export const HELP_SECTIONS = [
 </ul>
 <h3>Disagreeing with a call</h3>
 <p>An item marked <b>Done</b> that is still wrong, or a <b>False alarm</b> that was real, can be reopened from the item itself: <b>↺ This is not done — reopen it</b>. A reason is required, because the person who closed it is told by name and reads it. "Reopened" on its own starts an argument; "the footer still shows the old number on mobile" ends it.</p>`,
+  },
+  {
+    id: 'presence', group: 'Websites', title: 'Online presence (Google, Facebook…)', audience: 'all',
+    html: `<p>On a website's profile, <b>🌐 Online presence</b> compares what its <b>Google Business Profile</b>, <b>Facebook</b> and the other profiles in its Business Info (Instagram, YouTube, Yelp) show with <b>Business Info</b>. Business Info stays the fact; the rest are notes.</p>
+<ul>
+<li><b>Check</b>: a different name, phone or address than Business Info, or a listing that <b>links to the wrong website</b> (another business's domain, an old domain or the Duda preview address instead of their live website).</li>
+<li><b>Format</b>: the same details written differently, e.g. the phone as 253.533.6776 on Facebook and (253) 533-6776 on the website.</li>
+<li><b>Couldn't confirm</b>: nothing is assumed. Google listings come from Google directly once a Google Maps key is added (until then, web search); everything else is found by AI web search, and only details that a cited page shows <b>word for word</b> are kept. Each one lists its sources.</li>
+</ul>
+<h3>Suggestions for the client</h3>
+<p>Each check writes friendly suggestions ("Increase your searchability"): use the same phone format everywhere, update a listing that shows an old number, write the name the same way. They are <b>team only</b> by default. <b>General settings → 📣 Online presence</b> can show them to every customer in their portal, and each customer's profile can switch them on or off for that customer.</p>
+<h3>Automatic checks</h3>
+<p>Off until switched on in <b>General settings → 📣 Online presence</b>: then each published website is checked about once a month, a set number a day. What it costs is on <b>Usage & activity</b>.</p>`,
+  },
+  {
+    // Owner only, like System health.
+    id: 'usage', group: 'More', title: 'Usage & activity', audience: 'owner',
+    html: `<p><b>System health → 📊 Usage & activity</b> shows what every action in the app costs, so you can see the average for each one before switching anything on automatically.</p>
+<h3>Right now</h3>
+<p>Everything paused, resting or cooling down, each with a live timer: the auto audit resting after Duda asked it to slow down (each rest in a row is longer: 5, 10, 20, 40, then 60 minutes), the daily runs that are done for today, form submissions being fetched, AI services at their daily cap, and alerts to you that are holding back repeats.</p>
+<h3>Totals, by day, and limits</h3>
+<ul>
+<li><b>Totals</b> for today, 7 days, this month or the whole window: estimated AI cost, AI requests and tokens, web searches, Duda API calls, pages read, database requests, Google lookups, Ably, Slack and email.</li>
+<li><b>Limits</b>: each service's figure against its limit and what is left, with when it resets. Ably's figures come from Ably itself.</li>
+</ul>
+<h3>By action</h3>
+<p>Every action the app takes (a scan reading a page, an AI check, the auto audit, a Duda webhook, the heartbeat of each open tab…) with how many times it ran and what <b>one run</b> uses on average: time, database, Duda calls, pages, AI requests, tokens and cost.</p>
+<h3>By website and audit</h3>
+<p>This month's total for each website, with the actions behind it (click a row). A scan counts against its audit; the auto audit, webhooks and form submissions against the website.</p>
+<p class="faint">AI costs are estimates from each model's list price. Counting started with update 127; earlier activity is not included.</p>`,
   },
   {
     // Owner only. Nobody else is shown this page, and the Help assistant is not given it either.

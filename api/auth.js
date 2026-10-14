@@ -3,7 +3,7 @@
 // POST /api/auth { op: signup | verify | resend | login | google | logout | forgot | reset }
 import { migrateConfigured } from './migrate.js';
 import crypto from 'node:crypto';
-import { secLog, listUsers, notifyUser, bumpAccess, isCopy } from './_lib.js';
+import { metered, secLog, listUsers, notifyUser, bumpAccess, isCopy } from './_lib.js';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
   initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, commentsChannel, OWNER_EMAIL , savedEditorHost, nameTaken, NOTIFY_GROUPS, getRole, effectivePerms, applyPreview, accessVersion } from './_lib.js';
@@ -44,7 +44,7 @@ async function finishLogin(res, user, remember, req, how) {
   return res.status(200).json({ user: publicUser(user) });
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (!hasRedis()) return res.status(500).json({ error: 'The database is not connected. Please contact the app owner.' });
   try {
@@ -207,3 +207,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('auth', handler);

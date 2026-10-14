@@ -1,11 +1,11 @@
 // Screenshots / photos attached to comments.
 // POST /api/img { data: "<base64>", type: "image/jpeg" } → { id, url }
 // GET  /api/img?id=…  → the image (signed-in users only)
-import { redis, P, readBody, requireUser, newId, now } from './_lib.js';
+import { metered, redis, P, readBody, requireUser, newId, now } from './_lib.js';
 
 const MAX_BYTES = 3 * 1024 * 1024;
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const me = await requireUser(req, res);
   if (!me) return;
   try {
@@ -29,3 +29,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('img', handler);

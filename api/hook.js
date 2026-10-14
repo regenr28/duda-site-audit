@@ -21,7 +21,8 @@
 // writes what it was told and gets out. Names, page paths and who-is-who are worked out when
 // somebody actually looks at the Comments page.
 import crypto from 'node:crypto';
-import { redis, P, now, newId, jparse, ablyPublish, commentsChannel, unescapeHtml } from './_lib.js';
+import { setAction, onSite } from './_meter.js';
+import { metered, redis, P, now, newId, jparse, ablyPublish, commentsChannel, unescapeHtml } from './_lib.js';
 import { enqueue } from './_queue.js';
 import { normalise, readFields, liveLeadAdd, addLeads, usingSql } from './_leads.js';
 import { evLine, evCmds } from './_pubhist.js';
@@ -75,7 +76,7 @@ function watchPatch(prev, siteId, at, changes) {
   return Object.assign(w, changes);
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const key = await hookKey();
   // Not connected yet, or the wrong secret: behave as though the address does not exist.
@@ -108,10 +109,13 @@ export default async function handler(req, res) {
   const historyLines = []; // publish history for the Trends tab
   const certFails = [];    // security certificates Duda could not issue
 
+  // Counted as "hook.PUBLISH", "hook.CONTACT_FORM_SENT_V2"… and against each website.
+  setAction('hook.' + ([...new Set(events.map((e) => str(e.event_type).toUpperCase()).filter(Boolean))].slice(0, 2).join('+') || 'empty'));
   for (const ev of events) {
     const type = str(ev.event_type).toUpperCase();
     const siteId = str(ev.resource_data && ev.resource_data.site_name);
     if (!siteId) continue;
+    if (events.length === 1) onSite(siteId);
     const at = iso(ev.event_timestamp);
     const by = str(ev.source && ev.source.account_name).toLowerCase();
     const d = ev.data || {};
@@ -256,3 +260,4 @@ export default async function handler(req, res) {
   for (const f of certFails) await certificateFailed(f).catch(() => {});
   res.status(200).json({ ok: true, handled: touched });
 }
+export default metered('hook', handler);

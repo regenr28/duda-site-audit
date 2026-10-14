@@ -1,6 +1,6 @@
 // GET /api/site?editor=<editor link>
 // Returns the Business Info "truth" source data from the Duda API (site details, Content Library, pages list).
-import { requireUser, parseEditorLink, allowedHost, fetchWithTimeout, redis, P, learnEditorHost } from './_lib.js';
+import { metered, requireUser, parseEditorLink, allowedHost, fetchWithTimeout, redis, P, learnEditorHost } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 
@@ -16,7 +16,7 @@ async function duda(path) {
   try { return JSON.parse(text); } catch (e) { return text; }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (!(await requireUser(req, res))) return;
   const { host, siteId } = parseEditorLink(req.query.editor || req.query.site || '');
   if (!siteId) return res.status(400).json({ error: 'Could not find a site ID in that link. Paste the editor link, e.g. https://…/home/site/f981a954/home' });
@@ -61,3 +61,4 @@ export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({ host, siteId, site: siteJson, content: contentJson, pages: pageList, errors });
 }
+export default metered('site', handler);

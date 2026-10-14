@@ -10,7 +10,7 @@
 // read and no calls to Duda or Google. Google is reached with one service account for the whole app
 // (GOOGLE_SERVICE_ACCOUNT); each website only stores which property / Search Console site is its own.
 import crypto from 'node:crypto';
-import { redis, P, requireUser, readBody, jparse, can, fetchWithTimeout, globalLog } from './_lib.js';
+import { metered, redis, P, requireUser, readBody, jparse, can, fetchWithTimeout, globalLog } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 const TTL = 6 * 3600;
@@ -256,7 +256,7 @@ export async function siteAnalytics(id, days, fresh) {
 }
 export const okSiteId = okId;
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -307,3 +307,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('analytics', handler);

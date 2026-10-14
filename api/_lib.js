@@ -1,6 +1,7 @@
 // Shared helpers for the Vercel serverless functions (Node 18+, zero dependencies).
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
+import { bump, metered as meterWrap, flushNow as meterFlushNow } from './_meter.js';
 
 export const UA_DESKTOP = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
 export const P = process.env.STORE_PREFIX || 'dsa:';
@@ -122,6 +123,7 @@ async function run(cmds, count) {
       cmds = cmds.concat([['INCRBY', usageKey(), String(flushing)]]);
     }
   }
+  if (count) bump('db', cmds.length);
   let mapped;
   try { mapped = await send(cmds); }
   catch (e) { if (flushing) owed += flushing - 1; throw e; }
@@ -132,6 +134,10 @@ async function run(cmds, count) {
 }
 
 export async function redis(...cmds) { return run(cmds, true); }
+/** Wrap an API handler so what it uses is counted (see _meter.js). The meter writes without counting itself. */
+export const metered = (name, handler) => meterWrap(name, handler, (cmds) => (hasRedis() ? send(cmds) : null));
+/** Write the counts now (end of a long job, or a test). */
+export const meterFlush = () => meterFlushNow((cmds) => (hasRedis() ? send(cmds) : null));
 /** Without counting — for the health page reading its own figures. Per call, never a shared switch. */
 export async function redisRaw(...cmds) { return run(cmds, false); }
 

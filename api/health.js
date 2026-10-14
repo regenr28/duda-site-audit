@@ -5,9 +5,9 @@
 // we got. Everything here is either read cheaply on every load, or measured on demand and kept.
 //
 // Owner only. It names the services the app is built on, which nothing else in the app does.
-import {
+import { metered,
   redis, redisRaw, P, requireUser, readBody, jparse, OWNER_EMAIL, unpackJSON, now,
-  emailEnabled, slackBotEnabled, listUsers, KV_CEILING, KV_MONTHLY_COMMANDS, kvCostUpTo, dbKind, kvCapped,
+  emailEnabled, slackBotEnabled, listUsers, KV_CEILING, KV_MONTHLY_COMMANDS, kvCostUpTo, dbKind, kvCapped, meterFlush,
 } from './_lib.js';
 import { sqlReady, rows as sqlRows, ensureSchema } from './_sql.js';
 import { _test as ai } from './ai.js';
@@ -115,7 +115,7 @@ async function measureSql() {
   return { bytes, ...counts, writtenThisMonth: Number(written.n) || 0, months: months || [] };
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   const me = await requireUser(req, res);
   if (!me) return;
@@ -123,6 +123,12 @@ export default async function handler(req, res) {
   if (me.email !== OWNER_EMAIL) return res.status(403).json({ error: 'Not available on this account' });
 
   try {
+    // Usage & activity: what every action costs, per website and audit, limits, and what is resting now.
+    if (req.method === 'GET' && req.query.op === 'usage') {
+      const { usageReport } = await import('./_usage.js');
+      await meterFlush().catch(() => {});      // this server's latest counts first
+      return res.status(200).json(await usageReport({ days: Math.min(60, Math.max(1, Number(req.query.days) || 30)) }));
+    }
     if (req.method === 'POST' && readBody(req).op === 'measure') {
       const kv = await measureKv();
       return res.status(200).json({ kv });
@@ -276,3 +282,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e).slice(0, 300) });
   }
 }
+export default metered('health', handler);

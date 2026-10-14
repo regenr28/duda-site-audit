@@ -15,6 +15,7 @@
 // are matched with its matchesBusiness(), socials with its socialHandle(), and anything a team member
 // approved for an audited website (its Business Info exceptions) is respected.
 import crypto from 'node:crypto';
+import { onSite } from './_meter.js';
 import { redis, P, jparse, unpackJSON, packJSON, fetchWithTimeout, listUsers, notifyUser, appUrl, newId } from './_lib.js';
 import '../public/engine.js';
 
@@ -41,7 +42,8 @@ const SUM_V = 3;
 // What the checks themselves look for. A website whose result came from older rules, and that the newer rules
 // would judge differently, is read again soon instead of waiting a month.
 // 2: a "Service" in Google business data is not the business; home page without Local Business Schema.
-const RULES_V = 2;                                      // summaries written by this version (older failures are retried)
+// 3: their own data with a wrong name, several phones in one field, an email at their own domain.
+const RULES_V = 3;                                      // summaries written by this version (older failures are retried)
 // What the status panel shows, kept in small keys so watching it costs almost nothing.
 const WNOW = P + 'cwnow';                             // the website being read right now { id, name, domain, i, n, at, by }
 const WRECENT = P + 'cwrecent';                       // the last few websites finished (or not), newest first
@@ -93,6 +95,7 @@ function jsonLd(html) {
 // The JSON-LD that describes the business itself. A "Service" is one of the things they sell: its name is the
 // service ("Paint Protection Film"), never the business. The business behind it, when given, is its provider.
 const BIZ_TYPE = /(^|[/:])(LocalBusiness|Organization|Corporation|AutomotiveBusiness|Auto[A-Z][A-Za-z]*|MotorcycleDealer|MotorcycleRepair|GasStation|ProfessionalService|HomeAndConstructionBusiness|[A-Za-z]*Store|[A-Za-z]*Shop|[A-Za-z]*Contractor|[A-Za-z]*Business)$/;
+const flat = (x) => String(x || '').toLowerCase().replace(/&amp;/g, '&').replace(/[^a-z0-9]+/g, ' ').trim();
 const isBiz = (o) => !!o && typeof o === 'object' && [].concat(o['@type'] || []).some((t) => BIZ_TYPE.test(String(t)));
 function bizSchema(html) {
   const out = [];
@@ -119,7 +122,9 @@ const snip = (text, at, len) => String(text).slice(Math.max(0, at - 50), at + le
  */
 export function checkPage(html, truth, path) {
   const A2 = A(); const out = [];
-  const add = (type, value, sev, label, ctx) => out.push({ type, value: String(value).slice(0, 160), sev, label, ctx: String(ctx || '').slice(0, 160), path });
+  const add = (type, value, sev, label, ctx, extra) => out.push(Object.assign({ type, value: String(value).slice(0, 160), sev, label, ctx: String(ctx || '').slice(0, 160), path }, extra || {}));
+  // Probably theirs but not in Business Info: flagged all the same, for a person to confirm.
+  const VERIFY = (what) => ({ verify: true, rec: `Check that this ${what} is theirs and in use (not a personal ${what === 'phone number' ? 'number' : 'address'}). If it is, add it to Business Info; if not, remove it from the website.` });
   const text = textOf(html);
   const phones = new Set(truth.phones || []);
   const emails = new Set((truth.emails || []).map((e) => e.toLowerCase()));
@@ -140,7 +145,15 @@ export function checkPage(html, truth, path) {
   // Emails
   if (emails.size) {
     const seenE = new Set();
-    const consider = (e, ctx, how) => { e = e.toLowerCase().replace(/^mailto:/, '').split('?')[0]; if (!/@/.test(e) || IGNORE_EMAIL.test(e) || emails.has(e) || seenE.has(e)) return; seenE.add(e); add('email', e, 'critical', how, ctx); };
+    // An address at the website's own domain is theirs, even when Business Info has another one: worth adding
+    // to Business Info, never "another business".
+    const own = String(truth.siteDomain || '').toLowerCase().replace(/^www\./, '');
+    const isOwn = (e) => { const d = e.split('@')[1] || ''; return !!own && (d === own || d.endsWith('.' + own)); };
+    const consider = (e, ctx, how) => {
+      e = e.toLowerCase().replace(/^mailto:/, '').split('?')[0]; if (!/@/.test(e) || IGNORE_EMAIL.test(e) || emails.has(e) || seenE.has(e)) return; seenE.add(e);
+      if (isOwn(e)) add('email', e, 'warning', 'Email on their own domain that is not in Business Info', ctx, VERIFY('email address'));
+      else add('email', e, 'critical', how, ctx);
+    };
     hrefs.filter((h) => /^mailto:/i.test(h)).forEach((h) => consider(h, h, 'Email address that is not in Business Info (a tap writes to it)'));
     for (const m of text.matchAll(EMAIL_TXT)) consider(m[0], snip(text, m.index, m[0].length), 'Email address that is not in Business Info');
   }
@@ -178,10 +191,26 @@ export function checkPage(html, truth, path) {
       const tail = cm[1].replace(/all rights reserved.*$/i, '').replace(/[.,\s]+$/, '').trim();
       if (/[a-z]{3}/i.test(tail) && !NOT_A_NAME.test(tail) && !A2.matchesBusiness(tail, truth)) add('name', tail, 'critical', 'Copyright line names a different business', cm[0].slice(0, 120));
     }
+    // What the page calls itself: its title and headings. Business data named after the page is the
+    // website's own data filled in wrongly, not another business.
+    const heads = [...String(html).matchAll(/<(title|h1)[^>]*>([\s\S]*?)<\/\1>/gi)].map((m) => flat(textOf(m[2]))).filter((x) => x.length >= 6);
+    const siteHost = String(truth.siteDomain || '').toLowerCase().replace(/^www\./, '');
     bizSchema(html).forEach((o) => {
       const t = [].concat(o['@type'] || []).join(' ');
-      if (o.name && !A2.matchesBusiness(String(o.name), truth)) add('name', String(o.name), 'critical', 'Google business data (schema) names a different business', t);
-      if (o.telephone && phones.size) { const d = A2.normPhone(String(o.telephone)).slice(-10); if (d.length === 10 && !phones.has(d)) add('phone', A2.fmtPhone(d), 'critical', 'Google business data (schema) has a phone that is not in Business Info', String(o.telephone)); }
+      // One field can list several numbers ("+1-253-533-6776,+1-360-915-6218"): each is checked on its own.
+      const tels = String(o.telephone || '').split(/[,;/|]|\bor\b/i).map((x) => A2.normPhone(x).slice(-10)).filter((d) => d.length === 10);
+      const theirs = tels.filter((d) => phones.has(d));
+      let host = ''; try { host = new URL(String(o.url || o['@id'] || ''), 'https://x.invalid').hostname.replace(/^www\./, ''); } catch (e) { /* no url */ }
+      const named = flat(o.name || '');
+      const ownData = theirs.length > 0 || (!!siteHost && host === siteHost) || (named.length >= 6 && heads.some((h) => h.includes(named) || named.includes(h)));
+      if (o.name && !A2.matchesBusiness(String(o.name), truth)) {
+        if (ownData) add('schema', String(o.name), 'warning', `This page's Google business data calls the business "${String(o.name).slice(0, 80)}" instead of "${truth.businessName}". It is their own data with the page's title as the name, not another business.`, t);
+        else add('name', String(o.name), 'critical', 'Google business data (schema) names a different business', t);
+      }
+      if (phones.size) tels.filter((d) => !phones.has(d)).forEach((d) => {
+        if (theirs.length) add('phone', A2.fmtPhone(d), 'warning', 'A second phone in Google business data, next to one of theirs, that is not in Business Info', String(o.telephone), VERIFY('phone number'));
+        else add('phone', A2.fmtPhone(d), 'critical', 'Google business data (schema) has a phone that is not in Business Info', String(o.telephone));
+      });
     });
   }
   // The home page is where Duda puts the Local Business Schema when it is turned on. Without it, Google
@@ -194,7 +223,7 @@ export function checkPage(html, truth, path) {
 
 // ---------- one website ----------
 /** The reference for one website: Duda's Business Info, minus anything struck out on its audit. */
-async function truthFor(dudaId, allow) {
+export async function truthFor(dudaId, allow) {
   const [site, content] = await Promise.all([duda(`/sites/multiscreen/${encodeURIComponent(dudaId)}`), duda(`/sites/multiscreen/${encodeURIComponent(dudaId)}/content`).catch(() => null)]);
   const t = A().buildTruth({ site, content: content || {} });
   return A().truthWithout(t, allow);
@@ -248,7 +277,7 @@ function merge(found, okKeys) {
     if (okKeys.has(key)) return;
     const g = by.get(key) || Object.assign({ k: key, pages: [], n: 0 }, f);
     g.n++; if (g.pages.length < 5 && !g.pages.includes(f.path)) g.pages.push(f.path);
-    if (f.sev === 'critical') g.sev = 'critical';
+    if (f.sev === 'critical') { g.sev = 'critical'; delete g.verify; delete g.rec; }
     by.set(key, g);
   });
   return [...by.values()].map(({ path, ...g }) => g).sort((a, b) => (a.sev === b.sev ? b.n - a.n : a.sev === 'critical' ? -1 : 1)).slice(0, MAX_ISSUES);
@@ -330,7 +359,7 @@ export async function retryFailed() {
 }
 
 /** dudaId → its audit record (for the exceptions people approved there). */
-async function auditMap() {
+export async function auditMap() {
   const [raw] = await redis(['HGETALL', P + 'index']);
   const out = {}; for (let i = 0; raw && i < raw.length; i += 2) { const v = jparse(raw[i + 1]); if (v && v.siteId) out[String(v.siteId).toLowerCase()] = raw[i]; }
   return out;
@@ -362,6 +391,7 @@ async function readSite(s, recId, timeLeft) {
     return { done: false, wait: Math.min(Math.max(e.retry || (e.status === 429 ? 120 : 60), 30), 900), why: e.message };
   }
   if (!truth.businessName && !(truth.phones || []).length && !(truth.emails || []).length) return skip('No Business Info in Duda to compare with', 'nobi');
+  truth.siteDomain = s.domain;                       // their own domain: an email there is theirs
   let part = jparse(partRaw);
   if (part && part.pub !== s.pub) part = null;        // published again since: start over
   let i = part ? part.i : 0; let read = part ? part.read || 0 : 0; const found = part ? part.found : [];
@@ -418,8 +448,19 @@ async function readSite(s, recId, timeLeft) {
   // about now; everything else waits for the once-a-day report, so the first pass through 700
   // websites does not bury the admins.
   // A website on Audits gets what was found as audit items (and loses the ones fixed since).
-  if (recId) await syncAudit(recId, result).catch(() => {});
-  if (prev && fresh.some((x) => x.sev === 'critical')) await alertNow(s, result.name, fresh, recId).catch(() => {});
+  const [recheckRaw] = await redis(['HGET', WRECHECK, s.id]);
+  const recheck = jparse(recheckRaw);
+  if (recheck) {
+    // Read again because the rules changed: what is no longer found was the app's mistake, so it is not
+    // reported as fixed, and the waiting daily report only keeps what is still serious.
+    const nw = issues.filter((x) => x.sev === 'critical');
+    const cmds = [['HDEL', WRECHECK, s.id]];
+    const [had] = await redis(['HGET', WNEW, s.id]);
+    if (had) cmds.push(nw.length ? ['HSET', WNEW, s.id, JSON.stringify(Object.assign(jparse(had) || {}, { n: issues.length, c: nw.length, t: critTypes(issues) }))] : ['HDEL', WNEW, s.id]);
+    await redis(...cmds);
+  }
+  if (recId) await syncAudit(recId, result, recheck ? { wrong: new Set(recheck.keys || []), why: recheck.why } : {}).catch(() => {});
+  if (prev && !recheck && fresh.some((x) => x.sev === 'critical')) await alertNow(s, result.name, fresh, recId).catch(() => {});
   return { done: true, n: issues.length, c: sum.c, t: sum.t, pubAt, fresh: fresh.length, pages: read };
 }
 
@@ -448,7 +489,8 @@ export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}
       if (timeLeft() < 6000) break;
       const t0 = Date.now();
       s._by = by; await nowReading(s, 0, 0, by);
-      const r = await readSite(s, amap[s.id.toLowerCase()], timeLeft);
+      onSite(s.id);
+      const r = await readSite(s, amap[s.id.toLowerCase()], timeLeft).finally(() => onSite(''));
       if (r.wait || r.stop) {
         // Each wait in a row is longer: 5, 10, 20, 40, then 60 minutes. Duda's own "retry after" wins.
         const [n] = await redis(['INCR', WBACKOFF], ['EXPIRE', WBACKOFF, 6 * 3600]).then((x) => [Number(x[0]) || 1]);
@@ -484,6 +526,12 @@ const FIXES = [
     wrong: (x) => x.type === 'name' && /^Google business data \(schema\) names/.test(x.label || '') && !String(x.ctx || '').split(/\s+/).some((t) => BIZ_TYPE.test(t)) },
 ];
 const WFIX = (id) => P + 'cwfix:' + id;
+// Findings that a re-read under the newer rules may judge differently. These websites are read again
+// soon; whatever of these is gone after that read closes as the app's mistake rather than "fixed".
+const RECHECK = { id: 'own-data-3', why: 'their own Google business data or email, read as another business\'s',
+  pick: (x, r) => (x.sev === 'critical' && /^Google business data \(schema\)/.test(x.label || ''))
+    || (x.type === 'email' && x.sev === 'critical' && !!r.domain && String(x.value).toLowerCase().split('@')[1] === String(r.domain).toLowerCase().replace(/^www\./, '')) };
+const WRECHECK = P + 'cwrecheck';                    // hash: duda id → { keys, why } waiting for the re-read
 export async function applyFixes(budgetMs = 20000) {
   const t0 = Date.now(); const report = [];
   for (const fix of FIXES) {
@@ -525,6 +573,30 @@ export async function applyFixes(budgetMs = 20000) {
       report.push({ id: fix.id, sites, items, left });
       if (left) return { more: true, report };
     } finally { await redis(['DEL', WFIX(fix.id) + ':run']).catch(() => {}); }
+  }
+  // Line up the websites whose findings the newer rules may judge differently.
+  const [rstate] = await redis(['GET', WFIX(RECHECK.id)]);
+  if (rstate !== 'done' && Date.now() - t0 < budgetMs) {
+    const [sumRaw] = await redis(['HGETALL', WSUM]);
+    const sums = parseSum(sumRaw);
+    const ids = Object.keys(sums).filter((id) => sums[id].c && (sums[id].rv || 1) < RULES_V);
+    let lined = 0; let left = 0;
+    for (let k = 0; k < ids.length; k += 25) {
+      if (Date.now() - t0 > budgetMs) { left = ids.length - k; break; }
+      const part = ids.slice(k, k + 25);
+      const raws = await redis(...part.map((id) => ['GET', WKEY(id)]));
+      const cmds = [];
+      part.forEach((id, n) => {
+        const r = jparse(raws[n]); if (!r) return;
+        const keys = (r.issues || []).filter((x) => RECHECK.pick(x, r)).map((x) => x.k);
+        if (!keys.length) return;
+        cmds.push(['HSET', WRECHECK, id, JSON.stringify({ keys, why: RECHECK.why })], ['HSET', WSUM, id, JSON.stringify(Object.assign(sums[id], { relook: 1 }))]);
+        lined++;
+      });
+      if (cmds.length) await redis(...cmds);
+    }
+    if (!left) await redis(['SET', WFIX(RECHECK.id), 'done']);
+    report.push({ id: RECHECK.id, lined, left });
   }
   if (report.some((r) => r.sites)) await watchStatus().catch(() => {});
   return { report };
@@ -583,8 +655,9 @@ export async function syncAudit(recId, result, opts = {}) {
     const pages = (i.pages || []).slice(0, 5);
     const f = { id, code: 'AUTO_LIVE', manual: true, liveKey: i.k, liveType: i.type,
       severity: i.sev === 'critical' ? 'critical' : 'warning', category: 'Auto audit (live website)',
-      message: `${TYPE_WORD[i.type] || 'Detail'} that is not theirs: ${i.value}`, found: i.value,
-      detail: i.label + (i.ctx && i.ctx !== i.value && !/^(tel|mailto):/i.test(i.ctx) && i.type !== 'social' ? `\n“${i.ctx}”` : ''),
+      message: i.sev === 'critical' ? `${TYPE_WORD[i.type] || 'Detail'} that is not theirs: ${i.value}` : i.verify ? `Verify: ${i.value} (${i.label.charAt(0).toLowerCase() + i.label.slice(1)})` : `${String(i.label || '').split(':')[0]}: ${i.value}`, found: i.value,
+      detail: i.label + (i.ctx && i.ctx !== i.value && !/^(tel|mailto):/i.test(i.ctx) && i.type !== 'social' ? `\n“${i.ctx}”` : '') + (i.rec ? `\nWhat to do: ${i.rec}` : ''),
+      verify: !!i.verify,
       path: pages[0] || '/', pages, liveDomain: result.domain || '',
       autoLive: { at, pub: result.pub || '', first: prev && prev.autoLive ? prev.autoLive.first : at },
       by: '', byName: 'Auto audit', at: prev ? prev.at : at };

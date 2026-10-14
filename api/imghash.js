@@ -9,7 +9,7 @@
 // GET  /api/imghash?url=…            → the image bytes, same-origin, shrunk where the CDN allows it
 // POST /api/imghash { urls: [...] }  → { hashes: { url: {h, photo, …} | null } }
 // POST /api/imghash { save: [...] }  → { saved: n }
-import { redis, P, readBody, requireUser, jparse, sha } from './_lib.js';
+import { metered, redis, P, readBody, requireUser, jparse, sha } from './_lib.js';
 
 // Only the places a Duda website actually serves pictures from. This must never become a proxy for
 // anything anyone asks for.
@@ -46,7 +46,7 @@ function smallUrl(raw) {
   } catch (e) { return raw; }
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const me = await requireUser(req, res);
   if (!me) return;
   try {
@@ -87,3 +87,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(e.message || e) });
   }
 }
+export default metered('imghash', handler);
