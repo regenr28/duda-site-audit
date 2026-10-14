@@ -2041,7 +2041,7 @@
   // Every published website is read like a visitor reads it (all pages in its sitemap, blog posts
   // included) and compared with its Business Info. The server does the reading; this shows it.
   prof.watch = {};
-  const WC_TYPE = { phone: '📞 Phone', email: '✉️ Email', address: '📍 Address', name: '🏷 Business name', social: '🔗 Social account' };
+  const WC_TYPE = { phone: '📞 Phone', email: '✉️ Email', address: '📍 Address', name: '🏷 Business name', social: '🔗 Social account', schema: '🧩 Schema' };
   const wcPlural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
   function loadWatch(siteId, again, force) {
     const W = prof.watch[siteId];
@@ -2253,7 +2253,7 @@
     const busy = !L || L.running || L.now || L.wait || (!L.paused && L.stat && L.stat.pending > 0) || wq.running;
     if (!wq.liveAt || Date.now() - wq.liveAt > (busy ? 10000 : 300000)) pollAuto();
   }, 1000);
-  const AC_TYPE = { phone: ['📞', 'phone', 'phones'], email: ['✉️', 'email', 'emails'], address: ['📍', 'address', 'addresses'], name: ['🏷', 'business name', 'business names'], social: ['🔗', 'social', 'socials'] };
+  const AC_TYPE = { phone: ['📞', 'phone', 'phones'], email: ['✉️', 'email', 'emails'], address: ['📍', 'address', 'addresses'], name: ['🏷', 'business name', 'business names'], social: ['🔗', 'social', 'socials'], schema: ['🧩', 'schema', 'schemas'] };
   /** Published again since the auto audit read it: its results are from before, and it is queued again. */
   const acRepub = (x) => !!(x && x.wc && !x.wc.e && x.published && Date.parse(x.published) > (x.wc.pubAt || 0) + 1000);
   /** The DR Websites "Auto audit" column: done (when), republished and queued, and the super critical ones. */
@@ -7553,6 +7553,7 @@
       ${why === 'live-gone' ? '<div class="small"><b>✓ No longer on the live website</b>, so it was closed as Done automatically.</div>'
         : why === 'live-back' ? '<div class="small"><b>↺ Back on the live website</b> after it was gone, so it was reopened.</div>'
         : why === 'live-ok' ? '<div class="small">Marked <b>not a problem</b> for this website, so the auto audit no longer reports it.</div>'
+        : why === 'app-fix' ? '<div class="small"><b>Closed by the app: the auto audit got this one wrong.</b> Nothing needed doing on the website, and it has been corrected so it is not reported again.</div>'
         : '<div class="small faint">Fix it in the Duda editor and publish: the auto audit reads the website again and closes this by itself. A False alarm here also tells the auto audit it is not a problem.</div>'}</div>`;
   }
   /** Is this audited site still published in Duda? (null = unknown, list not loaded yet) */

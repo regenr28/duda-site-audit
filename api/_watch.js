@@ -37,7 +37,11 @@ const MAX_ISSUES = 25;
 const RECHECK_DAYS = 30;
 export const WWAIT = P + 'cwwait';                    // Duda asked us to slow down: nothing is read until this expires
 const GAP_MS = 1500;                                  // at least this long per website, so Duda is never asked in bursts
-const SUM_V = 3;                                      // summaries written by this version (older failures are retried)
+const SUM_V = 3;
+// What the checks themselves look for. A website whose result came from older rules, and that the newer rules
+// would judge differently, is read again soon instead of waiting a month.
+// 2: a "Service" in Google business data is not the business; home page without Local Business Schema.
+const RULES_V = 2;                                      // summaries written by this version (older failures are retried)
 // What the status panel shows, kept in small keys so watching it costs almost nothing.
 const WNOW = P + 'cwnow';                             // the website being read right now { id, name, domain, i, n, at, by }
 const WRECENT = P + 'cwrecent';                       // the last few websites finished (or not), newest first
@@ -86,6 +90,18 @@ function jsonLd(html) {
   }
   return out;
 }
+// The JSON-LD that describes the business itself. A "Service" is one of the things they sell: its name is the
+// service ("Paint Protection Film"), never the business. The business behind it, when given, is its provider.
+const BIZ_TYPE = /(^|[/:])(LocalBusiness|Organization|Corporation|AutomotiveBusiness|Auto[A-Z][A-Za-z]*|MotorcycleDealer|MotorcycleRepair|GasStation|ProfessionalService|HomeAndConstructionBusiness|[A-Za-z]*Store|[A-Za-z]*Shop|[A-Za-z]*Contractor|[A-Za-z]*Business)$/;
+const isBiz = (o) => !!o && typeof o === 'object' && [].concat(o['@type'] || []).some((t) => BIZ_TYPE.test(String(t)));
+function bizSchema(html) {
+  const out = [];
+  jsonLd(html).forEach((o) => {
+    if (isBiz(o)) out.push(o);
+    [].concat(o.provider || []).forEach((p) => { if (isBiz(p) && !out.includes(p)) out.push(p); });
+  });
+  return out;
+}
 const SOCIAL = [['facebook', /(^|\.)(facebook\.com|fb\.com|fb\.me)$/i], ['instagram', /(^|\.)instagram\.com$/i], ['youtube', /(^|\.)(youtube\.com|youtu\.be)$/i], ['tiktok', /(^|\.)tiktok\.com$/i],
   ['twitter', /(^|\.)(twitter\.com|x\.com)$/i], ['linkedin', /(^|\.)linkedin\.com$/i], ['yelp', /(^|\.)yelp\.com$/i], ['pinterest', /(^|\.)pinterest\.com$/i]];
 const netOf = (u) => { for (const [n, re] of SOCIAL) if (re.test(u.hostname)) return n; return ''; };
@@ -99,7 +115,7 @@ const snip = (text, at, len) => String(text).slice(Math.max(0, at - 50), at + le
 
 /**
  * Everything on one page that does not match the website's Business Info.
- * Returns [{ type, value, sev, label, ctx }] — type is the audit's own: phone, email, name, social, address.
+ * Returns [{ type, value, sev, label, ctx }] — type is the audit's own: phone, email, name, social, address, schema.
  */
 export function checkPage(html, truth, path) {
   const A2 = A(); const out = [];
@@ -162,12 +178,16 @@ export function checkPage(html, truth, path) {
       const tail = cm[1].replace(/all rights reserved.*$/i, '').replace(/[.,\s]+$/, '').trim();
       if (/[a-z]{3}/i.test(tail) && !NOT_A_NAME.test(tail) && !A2.matchesBusiness(tail, truth)) add('name', tail, 'critical', 'Copyright line names a different business', cm[0].slice(0, 120));
     }
-    jsonLd(html).forEach((o) => {
+    bizSchema(html).forEach((o) => {
       const t = [].concat(o['@type'] || []).join(' ');
-      if (!/LocalBusiness|Organization|AutoRepair|Store|Service|Business/i.test(t)) return;
       if (o.name && !A2.matchesBusiness(String(o.name), truth)) add('name', String(o.name), 'critical', 'Google business data (schema) names a different business', t);
       if (o.telephone && phones.size) { const d = A2.normPhone(String(o.telephone)).slice(-10); if (d.length === 10 && !phones.has(d)) add('phone', A2.fmtPhone(d), 'critical', 'Google business data (schema) has a phone that is not in Business Info', String(o.telephone)); }
     });
+  }
+  // The home page is where Duda puts the Local Business Schema when it is turned on. Without it, Google
+  // gets no business details from the website (and a page's only schema may be a "Service").
+  if (path === '/' && !bizSchema(html).length) {
+    add('schema', 'Local Business Schema not enabled', 'warning', 'Local Business Schema is not turned on: Google gets no business details (name, phone, address) from the website. Turn it on in Duda, in the site\u2019s Business Info.', '');
   }
   return out;
 }
@@ -251,6 +271,9 @@ export function dueOrder(sites, sums, at = Date.now()) {
     if (x.pub && Date.parse(x.pub) > (s.pubAt || 0)) return 0;
     // A failure recorded before Duda's "slow down" was understood is not a real answer: try again now.
     if (s.err && (s.v || 0) < SUM_V) return 1;
+    // Corrected for one of the app's own mistakes, or flagged a business name under the old rules: read it
+    // again with the new ones (that is also when a missing Local Business Schema gets noted).
+    if (!s.err && (s.rv || 1) < RULES_V && (s.relook || (s.t && s.t.name))) return 1;
     if (s.err && at - s.at > DAY) return 1;
     if (at - s.at > RECHECK_DAYS * DAY) return 2;
     return 9;
@@ -387,7 +410,7 @@ async function readSite(s, recId, timeLeft) {
   const result = { at: Date.now(), pub: s.pub, domain: s.domain, name: s.name || truth.businessName, pages: read, issues,
     ref: { name: truth.businessName, phones: truth.phones, emails: truth.emails, zips: (truth.addresses || []).map((a) => a.zip).filter(Boolean) } };
   // t: the serious ones by kind (phone, email, address, name, social): what the DR Websites column lists.
-  const sum = { v: SUM_V, at: result.at, pubAt, n: issues.length, c: issues.filter((x) => x.sev === 'critical').length, t: critTypes(issues), pages: read };
+  const sum = { v: SUM_V, rv: RULES_V, at: result.at, pubAt, n: issues.length, c: issues.filter((x) => x.sev === 'critical').length, t: critTypes(issues), pages: read };
   const cmds = [['SET', WKEY(s.id), JSON.stringify(result)], ['HSET', WSUM, s.id, JSON.stringify(sum)], ['DEL', WPART(s.id)], ['DEL', WBACKOFF]];
   if (fresh.length) cmds.push(['HSET', WNEW, s.id, JSON.stringify({ name: result.name, domain: s.domain, n: fresh.length, c: fresh.filter((x) => x.sev === 'critical').length, t: critTypes(fresh), recId: recId || '', first: !prev })]);
   await redis(...cmds);
@@ -412,6 +435,7 @@ export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}
   if (!only && (jparse(cfgRaw) || {}).off) return { off: true, done: [] };
   const waitTill = (jparse(waitRaw) || {}).until || 0;
   if (waitTill > Date.now()) return only ? { error: `The auto audit is taking a break (${(jparse(waitRaw) || {}).why || 'asked to slow down'}) until ${new Date(waitTill).toISOString().slice(11, 16)} UTC. Try again then.`, done: [] } : { wait: Math.ceil((waitTill - Date.now()) / 1000), problem: (jparse(waitRaw) || {}).why || '', done: [] };
+  if (!only) await applyFixes(Math.min(20000, budgetMs / 3)).catch((e) => console.warn('[auto audit] fixes', e.message));
   const lockKey = only ? WLOCK + ':' + only : WLOCK;
   const [got] = await redis(['SET', lockKey, by, 'NX', 'EX', Math.ceil(budgetMs / 1000) + 40]);
   if (got !== 'OK') return { busy: true, done: [] };
@@ -449,6 +473,63 @@ export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}
   return Object.assign({ done, partial: stopped, pending: st.pending, checked: st.checked, total: st.total, unreadable: st.unreadable }, wait ? { wait, problem } : {});
 }
 
+/**
+ * Corrections for the auto audit's own mistakes, applied once to what is already stored, so nobody has
+ * to rescan or recheck anything by hand. Each one takes the wrong findings off every website's result
+ * and the waiting daily report, closes the audit items they made as False alarm (saying it was the
+ * app's mistake), and lines the website up to be read again with the corrected rules.
+ */
+const FIXES = [
+  { id: 'svc-schema-1', why: 'a "Service" in Google business data names the service, not the business',
+    wrong: (x) => x.type === 'name' && /^Google business data \(schema\) names/.test(x.label || '') && !String(x.ctx || '').split(/\s+/).some((t) => BIZ_TYPE.test(t)) },
+];
+const WFIX = (id) => P + 'cwfix:' + id;
+export async function applyFixes(budgetMs = 20000) {
+  const t0 = Date.now(); const report = [];
+  for (const fix of FIXES) {
+    const [state] = await redis(['GET', WFIX(fix.id)]);
+    if (state === 'done') continue;
+    const [got] = await redis(['SET', WFIX(fix.id) + ':run', '1', 'NX', 'EX', Math.ceil(budgetMs / 1000) + 30]);
+    if (got !== 'OK') return { busy: true, report };
+    try {
+      const [sumRaw, newRaw] = await redis(['HGETALL', WSUM], ['HGETALL', WNEW]);
+      const sums = parseSum(sumRaw); const news = parseSum(newRaw);
+      const ids = Object.keys(sums).filter((id) => sums[id].t && sums[id].t.name && !sums[id]['fix_' + fix.id]);
+      const amap = ids.length ? await auditMap() : {};
+      let left = 0; let sites = 0; let items = 0;
+      for (const id of ids) {
+        if (Date.now() - t0 > budgetMs) { left++; continue; }
+        const [raw] = await redis(['GET', WKEY(id)]);
+        const result = jparse(raw); const sum = sums[id];
+        sum['fix_' + fix.id] = 1;
+        const bad = result ? (result.issues || []).filter(fix.wrong) : [];
+        if (!bad.length) { await redis(['HSET', WSUM, id, JSON.stringify(sum)]); continue; }
+        result.issues = result.issues.filter((x) => !fix.wrong(x));
+        Object.assign(sum, { n: result.issues.length, c: result.issues.filter((x) => x.sev === 'critical').length, t: critTypes(result.issues), rv: 1, relook: 1 });
+        const cmds = [['SET', WKEY(id), JSON.stringify(result)], ['HSET', WSUM, id, JSON.stringify(sum)]];
+        // The waiting daily report must not announce them either.
+        const nw = news[id];
+        if (nw) {
+          // Only what the report actually holds: at most its own business-name count (those are all critical).
+          const drop = Math.min((nw.t && nw.t.name) || 0, bad.filter((x) => x.sev === 'critical').length);
+          nw.n = Math.max(0, (nw.n || 0) - drop); nw.c = Math.max(0, (nw.c || 0) - drop);
+          if (nw.t && nw.t.name) { nw.t.name -= drop; if (!nw.t.name) delete nw.t.name; }
+          cmds.push(nw.n > 0 ? ['HSET', WNEW, id, JSON.stringify(nw)] : ['HDEL', WNEW, id]);
+        }
+        await redis(...cmds);
+        sites++;
+        const recId = amap[String(id).toLowerCase()];
+        if (recId) { const r = await syncAudit(recId, result, { wrong: new Set(bad.map((x) => x.k)), why: fix.why }).catch(() => null); items += (r && r.fixed) || 0; }
+      }
+      if (!left) await redis(['SET', WFIX(fix.id), 'done']);
+      report.push({ id: fix.id, sites, items, left });
+      if (left) return { more: true, report };
+    } finally { await redis(['DEL', WFIX(fix.id) + ':run']).catch(() => {}); }
+  }
+  if (report.some((r) => r.sites)) await watchStatus().catch(() => {});
+  return { report };
+}
+
 /** "This is fine for this website": remembered, and taken off its current list straight away. */
 export async function markOk(id, key) {
   const [prevRaw, sumRaw] = await redis(['SADD', WOK(id), key], ['GET', WKEY(id)], ['HGET', WSUM, id]).then((r) => r.slice(1));
@@ -471,7 +552,7 @@ export function critTypes(list) {
 }
 
 // ---------- the audit items of a website that is on Audits ----------
-const TYPE_WORD = { phone: 'Phone number', email: 'Email address', address: 'Address', name: 'Business name', social: 'Social account' };
+const TYPE_WORD = { phone: 'Phone number', email: 'Email address', address: 'Address', name: 'Business name', social: 'Social account', schema: 'Schema' };
 const liveId = (k) => 'live-' + crypto.createHash('sha1').update(String(k)).digest('hex').slice(0, 12);
 const KEEP_GONE_MS = 45 * DAY;
 const pairs = (arr, json) => { const o = {}; for (let i = 0; arr && i < arr.length; i += 2) o[arr[i]] = json ? jparse(arr[i + 1]) || {} : arr[i + 1]; return o; };
@@ -494,8 +575,9 @@ export async function syncAudit(recId, result, opts = {}) {
   const at = new Date(result.at || Date.now()).toISOString(); const nowIso = new Date().toISOString();
   const old = new Map((site.findings || []).filter((f) => f.code === 'AUTO_LIVE').map((f) => [f.liveKey, f]));
   const others = (site.findings || []).filter((f) => f.code !== 'AUTO_LIVE');
-  const numAdd = []; const stAdd = []; let added = 0, closed = 0, back = 0;
-  const live = (result.issues || []).map((i) => {
+  const numAdd = []; const stAdd = []; let added = 0, closed = 0, back = 0, fixed = 0;
+  // The Local Business Schema note is not brought across: the audit's own scan already checks it on the home page.
+  const live = (result.issues || []).filter((i) => i.type !== 'schema').map((i) => {
     const prev = old.get(i.k); old.delete(i.k);
     const id = prev ? prev.id : liveId(i.k);
     const pages = (i.pages || []).slice(0, 5);
@@ -519,23 +601,25 @@ export async function syncAudit(recId, result, opts = {}) {
     gone.push(Object.assign({}, f, { autoLive: Object.assign({}, f.autoLive, { gone: goneAt }) }));
     if (cur.status === 'done' || cur.status === 'false') return;      // somebody already decided
     const ok = opts.ok && opts.ok === f.liveKey;
-    stAdd.push(f.id, JSON.stringify(Object.assign({}, cur, { status: ok ? 'false' : 'done', updatedBy: opts.by || '', updatedAt: nowIso, auto: ok ? 'live-ok' : 'live-gone' })));
-    closed++;
+    const wrong = opts.wrong && opts.wrong.has(f.liveKey);
+    stAdd.push(f.id, JSON.stringify(Object.assign({}, cur, { status: ok || wrong ? 'false' : 'done', updatedBy: opts.by || '', updatedAt: nowIso, auto: wrong ? 'app-fix' : ok ? 'live-ok' : 'live-gone' })));
+    if (wrong) fixed++; else closed++;
   });
   site.findings = others.concat(live, gone);
   site.autoLive = { at, pub: result.pub || '', n: live.length, c: live.filter((f) => f.severity === 'critical').length };
   const cmds = [['SET', P + 'site:' + recId, packJSON(site)]];
   if (numAdd.length) cmds.push(['HSET', P + 'fnum:' + recId, ...numAdd], ['SET', P + 'seq:' + recId, String(seq)]);
   if (stAdd.length) cmds.push(['HSET', P + 'fstate:' + recId, ...stAdd]);
-  if (added || closed || back) {
-    const bits = [added && `added ${added} item${added === 1 ? '' : 's'}`, closed && `closed ${closed} no longer on the live website`, back && `reopened ${back} that came back`].filter(Boolean);
+  if (added || closed || back || fixed) {
+    const bits = [added && `added ${added} item${added === 1 ? '' : 's'}`, closed && `closed ${closed} no longer on the live website`, back && `reopened ${back} that came back`,
+      fixed && `closed ${fixed} as False alarm: the auto audit's own mistake (${opts.why || 'fixed in the app'})`].filter(Boolean);
     const e = { id: newId(6), at: nowIso, by: '', byName: 'Auto audit', type: 'auto-audit', text: `auto audit of the live website: ${bits.join(', ')}` };
     cmds.push(['LPUSH', P + 'act:' + recId, JSON.stringify(e)], ['LTRIM', P + 'act:' + recId, 0, 299]);
   }
   await redis(...cmds);
   const { saveIndex } = await import('./store.js');
   await saveIndex(recId);
-  return { added, closed, back };
+  return { added, closed, back, fixed };
 }
 
 // ---------- telling the admins ----------

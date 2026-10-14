@@ -818,6 +818,7 @@ export const HELP_SECTIONS = [
 <ul>
 <li><b>Super critical (contact info)</b>: a 📞 phone number, ✉️ email, 📍 street address or map, 🏷 business name (copyright line, or the business data Google reads) or 🔗 social account (Facebook, Instagram, YouTube, TikTok, X, LinkedIn, Yelp, Pinterest) that is not theirs. "Share this page" buttons are ignored.</li>
 <li><b>Check</b>: a town and ZIP on their own that are not theirs — often just an area they serve.</li>
+<li><b>Check</b>: 🧩 <b>Local Business Schema not enabled</b> — the home page gives Google no business details. Turn it on in Duda, in the site's Business Info. (A page's "Service" data names the service, such as "Paint Protection Film", and is never taken for the business name.)</li>
 </ul>
 <p>Anything approved as correct on the website's audit (its <b>Business Info exceptions</b>) is respected, and anything struck out of Business Info there is treated as not theirs.</p>
 <h4>DR Websites: the Auto audit column</h4>

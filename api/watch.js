@@ -9,7 +9,7 @@
 // POST /api/watch { op:'settings', on } → pause or resume the whole thing (admins)
 // GET  /api/watch?op=cron               → once a day from Vercel's scheduler: read, then send the report
 import { redis, P, requireUser, readBody, jparse, denyUnless, appUrl, isCopy } from './_lib.js';
-import { runWatch, watchStatus, watchLive, retryFailed, watchDigest, markOk, unmarkOk, okList, WKEY, WCFG } from './_watch.js';
+import { runWatch, watchStatus, watchLive, retryFailed, watchDigest, markOk, unmarkOk, okList, applyFixes, WKEY, WCFG } from './_watch.js';
 
 const okId = (id) => /^[A-Za-z0-9_-]{4,64}$/.test(String(id || ''));
 
@@ -40,7 +40,8 @@ export default async function handler(req, res) {
         return res.status(200).json({ result: jparse(raw), ok });
       }
       // The status panel: one small read, polled while the auto audit is busy.
-      if (req.query.op === 'live') return res.status(200).json(await watchLive());
+      // The status panel is open somewhere: a good moment to apply any pending correction (one read when there is none).
+      if (req.query.op === 'live') { await applyFixes(8000).catch(() => {}); return res.status(200).json(await watchLive()); }
       return res.status(200).json(await watchStatus());
     }
     const b = readBody(req);
