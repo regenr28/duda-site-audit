@@ -1887,3 +1887,15 @@ table.cp-dns td.mono { word-break: break-all; }
 .cu-form .cu-check { display: flex; flex-direction: row; gap: 8px; align-items: flex-start; text-align: left; font-weight: 400; margin: 6px 0 2px; }
 .cu-form .cu-check input { width: auto; margin-top: 2px; flex: none; }
 .cp-pres-l svg { flex: none; margin-top: 3px; color: var(--ok); width: 16px; height: 16px; }
+
+/* Must-fix vs design polish (fonts, duplicate photos) */
+.tcount.tc-done { background: var(--ok-soft); color: var(--ok); }
+.grp-note { margin: 0 0 12px; }
+.grp-line { margin: 0 0 10px; }
+.must-done { color: var(--ok); }
+.must-done b { font-weight: 650; }
+.polish-line { display: inline-block; margin-top: 4px; color: var(--faint); text-decoration: none; }
+.polish-line:hover { color: var(--text); text-decoration: underline; }
+.polish-chip { text-decoration: none; }
+/* Trends: every chart follows the date range, so the range stays in view while scrolling. */
+.tr-filters { position: sticky; top: var(--topbar-h, 60px); z-index: 12; background: var(--bg); padding: 8px 0; box-shadow: 0 6px 6px -6px rgba(0,0,0,.18); }

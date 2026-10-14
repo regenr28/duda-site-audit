@@ -2748,7 +2748,16 @@
     return rows.map((r) => r.map(esc).join(',')).join('\n');
   }
 
+  /**
+   * Design polish: real, but not what a visitor or Google judges the business by. Inconsistent
+   * typefaces and the same photo used twice sit on their own tab, so the audit items that affect
+   * the business (contact details, links, spelling, SEO) can be finished first and seen to be finished.
+   */
+  const POLISH_CODES = new Set(['FONT_OFF_SYSTEM', 'FONT_OFF_SYSTEM_MORE', 'FONT_NOT_LOADED', 'FONT_SOURCE_ODD', 'IMAGE_DUPLICATE']);
+  const isPolish = (f) => !!f && POLISH_CODES.has(f.code);
+
   global.DudaAudit = {
+    POLISH_CODES, isPolish,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
     matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues,

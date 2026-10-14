@@ -114,7 +114,7 @@ export const HELP_SECTIONS = [
 <ul>
 <li>Both site lists show a <b>Comments</b> column. Click the count and it opens that website's conversations, with the new ones highlighted for a few seconds.</li>
 <li><b>Search</b> by business name, site ID or who added it. Filter by website status, assignee, and (once Live DR Sites has loaded) <b>Live or not</b>: sites no longer live in Duda, or with domain problems.</li>
-<li>Each row shows the assignee, the website status, the scan status, open issues by severity, and progress (closed / total items).</li>
+<li>Each row shows the assignee, the website status, the scan status, open issues by severity, and progress: must-fix items closed / total (<b>✓ Must-fix done</b> when they are all closed), with design polish (fonts, duplicate photos) counted separately underneath. See <b>Must-fix first, design polish after</b>.</li>
 <li><b>Rescan</b> scans one website again. <b>Rescan all shown</b> rescans every website in the current filter.</li>
 <li><b>✕</b> takes that audit off the list, with its items, comments and activity log (admins, or the person who added it). The website itself is untouched in Duda, and the removal is listed under <b>Removed from Audits</b> with the reason. See <b>Removing an audit</b>.</li>
 </ul>
@@ -234,6 +234,26 @@ export const HELP_SECTIONS = [
 <li>Admins see everything removed; everyone else sees what they removed, added or was assigned to.</li>
 </ul>
 <p class="small muted">The audit itself isn't a backup and can't be restored — "Audit again" starts a new scan. The newest 400 removals are kept.</p>`,
+  },
+  {
+    id: 'polish', group: 'Audit items', title: 'Must-fix first, design polish after', audience: 'all',
+    html: `<p>Every audit has two lists, so the work that affects the business can be finished first and be <b>seen</b> to be finished.</p>
+<ul>
+<li><b>Audit items</b>: everything that affects the business and what Google reads: contact details, the business name, broken links and pictures, buttons that go to the wrong place, spelling, SEO titles and descriptions, schema, alt text, forms.</li>
+<li><b>🎨 Design polish</b>: <b>inconsistent fonts</b> and <b>photos used more than once</b>. Real, and worth fixing, but they don't change what a visitor or Google learns about the business, so they come after.</li>
+</ul>
+<h4>On the Audits list</h4>
+<ul>
+<li><b>Closed</b> counts the must-fix audit items only. When they are all closed it reads <b>✓ Must-fix done</b>, whatever font or photo items are left. Underneath, <b>🎨 Polish 0/122</b> is the design polish, and clicking it opens that tab.</li>
+<li>The severity counts (critical, warning, info) are must-fix too; open design polish is its own <b>🎨 polish</b> count.</li>
+<li><b>Open critical issues</b> and <b>Must-fix done</b> at the top are filters: click one to list just those websites. The <b>Must-fix</b> menu does the same, with <b>Must-fix still open</b> too.</li>
+</ul>
+<h4>On a website</h4>
+<ul>
+<li>The tabs show what is still open: <b>Audit items 3</b>, <b>🎨 Design polish 118</b>. A ✓ means everything on that tab is closed.</li>
+<li>An audit item opened by its number (#57) opens on the tab it belongs to, and Previous / Next stay on that tab.</li>
+<li>Everything else works the same on both tabs: filters, ticking several items and setting their status at once, comments, Recheck.</li>
+</ul>`,
   },
   {
     id: 'items', group: 'Audit items', title: 'Reading an audit item', audience: 'all',

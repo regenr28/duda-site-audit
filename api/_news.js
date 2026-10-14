@@ -4,6 +4,19 @@
 
 export const NEWS = [
   {
+    id: '2026-10-14-polish', date: '2026-10-14', audience: 'all', tag: 'Audits',
+    title: 'Must-fix first: fonts and duplicate photos have their own Design polish tab',
+    what: 'Every audit now has two lists. <b>Audit items</b> are what affects the business and SEO (contact details, links, spelling, SEO, schema). <b>🎨 Design polish</b> is inconsistent fonts and duplicate photos, which can come after. On <b>Audits</b>, the <b>Closed</b> column counts the must-fix items and says <b>✓ Must-fix done</b> when they are all closed, with the polish counted underneath. <b>Open critical issues</b> and <b>Must-fix done</b> at the top filter the list.',
+    where: ['<b>Audits</b> → the <b>Closed</b> column, the <b>Must-fix</b> filter and the two counts at the top.', 'A website → <b>Audit items</b> and <b>🎨 Design polish</b> tabs.'],
+    link: '#/help/polish', linkText: 'Must-fix first, design polish after',
+  },
+  {
+    id: '2026-10-14-trends-sticky', date: '2026-10-14', audience: 'all', tag: 'Websites',
+    title: 'Trends: the date range stays at the top while you scroll',
+    what: 'Every chart on <b>Trends</b> follows the date range, so the range, the weekly / monthly choice and the custom-domain switch now stay in view as you scroll down.',
+    where: ['<b>DR Websites → Trends</b>.'],
+  },
+  {
     id: '2026-10-14-profile-tabs', date: '2026-10-14', audience: 'all', tag: 'Websites',
     title: 'Website profiles are now tabs: one thing at a time, not one very long page',
     what: 'A website\'s <b>Profile</b> opens on an <b>🏠 Overview</b>: the picture, the customer and a card for each check and each kind of work. Everything else has its own tab: <b>🔎 Auto audit</b>, <b>🌐 Online presence</b>, <b>🩺 Site health</b>, <b>📊 Analytics</b>, <b>👥 Contacts</b> and <b>✉️ Form submissions</b>. A small count on a tab says there is something to look at (red when it is super critical), the tab bar stays at the top while you scroll, and a link or reload opens the same tab. Super critical alerts now open the <b>Auto audit</b> tab directly.',

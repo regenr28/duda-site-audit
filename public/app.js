@@ -138,7 +138,7 @@
     if (e.key !== 'Escape') return;
     if (modalOpts) return closeModal();
     if ($('.notif-panel')) return $('.notif-panel').remove();
-    if (route().item) location.hash = `#/site/${route().id}`;
+    if (route().item) closeDrawer();
   });
 
   function avatar(email, size) {
@@ -2625,7 +2625,9 @@
   function renderSiteProfile(body, ctx) {
     const s = ctx.s || null;
     const siteId = ctx.siteId;
-    const cnt = ctx.cnt || {};
+    // Open must-fix items by severity (the same rule as the Audit items tab's default view).
+    const cnt = {}; if (s) grpFindings(s, 'must').forEach((f) => { if (f.status === 'open' || f.status === 'clarification') cnt[f.severity] = (cnt[f.severity] || 0) + 1; });
+    const polishOpen = s ? grpFindings(s, 'polish').filter((f) => f.status === 'open' || f.status === 'clarification').length : 0;
     const x = ((liveDR.data && liveDR.data.sites) || []).find((y) => sameId(y.id, siteId))
       || ((liveDR.un && liveDR.un.sites) || []).find((y) => sameId(y.id, siteId)) || null;
     const d = x && x.dom;
@@ -2702,7 +2704,7 @@
           <div class="pf-card pf-card-wide">
             <div class="pf-card-h">Audit ${s ? `<a href="#/site/${esc(s.id)}">open ↗</a>` : ''}</div>
             ${s ? `<div class="pf-counts">${sev('critical', 'critical')}${sev('outdated', 'outdated')}${sev('warning', 'warning')}${sev('info', 'info')}</div>
-              <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}${sc.at ? ` · last scan ${esc(fmtWhen(Date.parse(sc.at)))}` : ' · never scanned'}</div>`
+              <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}${sc.finishedAt ? ` · last scan ${esc(fmtWhen(Date.parse(sc.finishedAt)))}` : ' · never scanned'}${polishOpen ? ` · <a href="#/site/${esc(s.id)}/polish">🎨 ${polishOpen} design polish</a>` : ''}</div>`
               : `<div class="pf-big faint">—</div><div class="small faint">Not audited yet.</div>`}
           </div>
           ${s ? `<div class="pf-card">
@@ -5389,6 +5391,9 @@
     { icon: 'ⓘ', label: 'Certificates ending (info only)', words: 'certificate ssl https ending expiring', filter: true, act: () => { trends.dm = 'cert'; location.hash = '#/live/trends'; }, perm: 'live.view', help: 'live' },
     { icon: '🌐', label: 'Live websites not audited yet', words: 'not audited unaudited never audited', filter: true, act: () => { live.tab = 'published'; live.q = ''; live.dom = ''; live.audit = 'no'; live.page = 0; location.hash = '#/live'; }, perm: 'live.view', help: 'live' },
     { icon: '⚠', label: 'Live websites with domain problems', words: 'domain problems broken domains', filter: true, act: () => { live.tab = 'published'; live.q = ''; live.dom = 'problem'; live.audit = ''; live.page = 0; location.hash = '#/live'; }, perm: 'live.view', help: 'live' },
+    { icon: '✅', label: 'Audits with every must-fix item closed', words: 'must fix done finished complete critical fixed only fonts photos polish left boss', filter: true, act: () => { state.filters.must = 'done'; location.hash = '#/'; render(); }, help: 'polish' },
+    { icon: '🔴', label: 'Audits with critical items still open', words: 'critical open still urgent not fixed meeting check', filter: true, act: () => { state.filters.must = 'crit'; location.hash = '#/'; render(); }, help: 'polish' },
+    { icon: '🎨', label: 'Design polish: inconsistent fonts and duplicate photos', words: 'design polish fonts typefaces duplicate photos pictures repeated images later not urgent', filter: true, act: () => { location.hash = '#/'; }, help: 'polish' },
     { icon: '🟢', label: 'Who is online now', words: 'online now active who is working', filter: true, act: () => { memFilter.view = 'online'; location.hash = '#/settings/team'; }, help: 'team' },
     { icon: '✏️', label: 'Members who need a full name', words: 'needs full name nickname one word name', filter: true, act: () => { memFilter.view = 'name'; location.hash = '#/settings/team'; }, perm: 'members.manage', help: 'admin-members' },
   ];
@@ -7551,7 +7556,7 @@
   function route() {
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
-    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
+    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
       sub: parts[2] === 'profile' ? (parts[3] || '') : parts[2] === 'leads' ? 'submissions' : '' };
     if (parts[0] === 'home') return { name: 'home' };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
@@ -7807,6 +7812,24 @@
    * clicking "24 warning" lands on exactly twenty-four rows. A count that opened a list of a
    * different size would be worse than no link at all.
    */
+  /**
+   * Is the work that matters finished? 'done' when every must-fix audit item is closed (fonts and
+   * duplicate photos do not count), 'open' when not, '' before the first scan.
+   */
+  function mustState(s) {
+    const c = s.counts || {};
+    if (!s.scan || s.scan.state !== 'complete') return '';
+    return (c.closed || 0) >= (c.total || 0) ? 'done' : 'open';
+  }
+  /** The Closed column: must-fix progress first and big, design polish underneath and small. */
+  function closedCell(s) {
+    const c = s.counts || {};
+    const pct = c.total ? Math.round(((c.closed || 0) / c.total) * 100) : 100;
+    const done = mustState(s) === 'done';
+    return `<div class="small ${done ? 'must-done' : ''}" title="Audit items that affect the business and SEO: ${c.closed || 0} of ${c.total || 0} closed">${done ? '✓ ' : ''}${c.closed || 0}/${c.total || 0}${done ? ' <b>Must-fix done</b>' : ''}</div>
+      <div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div>
+      ${c.pt ? `<a class="small faint polish-line" href="#/site/${esc(s.id)}/polish" data-stop title="Design polish (fonts, duplicate photos): ${c.pc || 0} of ${c.pt} closed">🎨 Polish ${c.pc || 0}/${c.pt}</a>` : ''}`;
+  }
   function issueChips(c, done, siteId) {
     c = c || {};
     const chips = [];
@@ -7823,7 +7846,8 @@
     if (c.comments) chips.push(siteId
       ? `<button class="badge subtle badge-btn" data-gocmt="${esc(siteId)}" title="Open the discussion on this website — ${c.comments} comment${c.comments === 1 ? '' : 's'}, including any left on individual audit items">💬 ${c.comments}</button>`
       : `<span class="badge subtle">💬 ${c.comments}</span>`);
-    if (!chips.length && done) chips.push('<span class="badge scan-complete">No open issues</span>');
+    if (!chips.length && done) chips.push(c.po ? '<span class="badge scan-complete" title="Only design polish is left">✓ Must-fix done</span>' : '<span class="badge scan-complete">No open issues</span>');
+    if (c.po) chips.push(siteId ? `<a class="badge subtle badge-btn polish-chip" href="#/site/${esc(siteId)}/polish" data-stop title="Inconsistent fonts and duplicate photos, on their own tab: fix after the audit items">🎨 ${c.po} polish</a>` : `<span class="badge subtle polish-chip">🎨 ${c.po} polish</span>`);
     return `<span class="chips">${chips.join('')}</span>`;
   }
   /**
@@ -7891,9 +7915,11 @@
       (!f.live || (f.live === 'gone' || f.live === 'draft' ? dudaState(s.siteId) === f.live : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)) &&
       (!f.oldChecks || newChecksFor(s).length) &&
       (!f.repub || repubSince(s)) &&
+      (!f.must || (f.must === 'crit' ? ((s.counts || {}).critical || 0) > 0 : mustState(s) === f.must)) &&
       (!f.clar || ((s.counts || {}).clarification || 0) > 0))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0, repub: state.sites.filter((s) => repubSince(s)).length };
+    tot.mustDone = state.sites.filter((s) => mustState(s) === 'done').length; tot.critSites = state.sites.filter((s) => ((s.counts || {}).critical || 0) > 0).length;
     state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
     $('#view').innerHTML = staleBanner() + `
       <div class="page-head"><div><h1>Audits</h1><div class="muted">${state.sitesScoped
@@ -7902,7 +7928,8 @@
       <div class="stats">
         <div class="panel stat"><div class="n">${state.sites.length}</div><div class="l">Audits</div></div>
         <div class="panel stat"><div class="n">${tot.scanned}</div><div class="l">Scan complete</div></div>
-        <div class="panel stat"><div class="n" style="color:var(--crit)">${tot.crit}</div><div class="l">Open critical issues</div></div>
+        <button class="panel stat ${f.must === 'crit' ? 'on' : ''}" id="statCrit" ${tot.crit ? '' : 'disabled'} title="Show only the websites that still have a critical item open (${tot.critSites})"><div class="n" style="color:var(--crit)">${tot.crit}</div><div class="l">Open critical issues</div></button>
+        <button class="panel stat ${f.must === 'done' ? 'on' : ''}" id="statMust" ${tot.mustDone ? '' : 'disabled'} title="Scanned websites whose audit items are all closed — only design polish (fonts, duplicate photos) can be left"><div class="n" style="color:var(--ok)">${tot.mustDone}</div><div class="l">Must-fix done</div></button>
         <button class="panel stat ${f.clar ? 'on' : ''}" id="statClar" ${tot.clar ? '' : 'disabled'} title="${tot.clar ? 'Show only the websites with a question waiting for an answer' : 'Nothing is waiting on an answer'}"><div class="n" style="color:var(--query)">${tot.clar}</div><div class="l">For clarification</div></button>
         <div class="panel stat"><div class="n" style="color:var(--ok)">${tot.complete}</div><div class="l">Marked Complete</div></div>
       </div>
@@ -7913,6 +7940,7 @@
           <select id="fwho"><option value="">Everyone</option><option value="_mine" ${f.assignee === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${f.assignee === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${u.email === f.assignee ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
           ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="draft" ${f.live === 'draft' ? 'selected' : ''}>Not published yet (${state.sites.filter((x) => dudaState(x.siteId) === 'draft').length})</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>Not found in Duda (${state.sites.filter((x) => dudaState(x.siteId) === 'gone').length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${state.sites.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
           ${tot.oldChecks ? `<button class="btn sm ${f.oldChecks ? 'primary' : ''}" id="foldck" title="These were scanned before the newest checks existed. Their items are unchanged — a rescan is what adds the new ones.">✨ Scanned before the newest checks (${tot.oldChecks})</button>` : ''}
+          <select id="fmust" title="Audit items that affect the business and SEO (not fonts or duplicate photos)"><option value="">Must-fix: any</option><option value="crit" ${f.must === 'crit' ? 'selected' : ''}>Critical still open (${tot.critSites})</option><option value="open" ${f.must === 'open' ? 'selected' : ''}>Must-fix still open (${state.sites.filter((s) => mustState(s) === 'open').length})</option><option value="done" ${f.must === 'done' ? 'selected' : ''}>Must-fix done (${tot.mustDone})</option></select>
           ${tot.repub || f.repub ? `<button class="btn sm ${f.repub ? 'primary' : ''}" id="frepub" title="Published again in Duda after their last scan: rescan to check the audit items are still there">↻ Republished since scan (${tot.repub})</button>` : ''}
           <span class="spacer"></span>
           <button class="btn sm" id="rescanAll">Rescan all shown</button>
@@ -7921,7 +7949,6 @@
           <thead><tr><th>Website</th><th>Assigned</th><th>Status</th><th>Scan</th><th>Open issues</th><th>Closed</th><th></th></tr></thead>
           <tbody>${list.map((s) => {
             const c = s.counts || {};
-            const pct = c.total ? Math.round(((c.closed || 0) / c.total) * 100) : 0;
             return `<tr class="row-link" data-open="${esc(s.id)}">
               <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
                 ${(() => {
@@ -7941,7 +7968,7 @@
                 ? `<div style="margin-top:4px"><span class="badge ck-fixed" title="A check that produced items on this website has since been corrected. Those items may not be real — open the website and rescan to replace them.">⚠ A check was corrected — rescan</span></div>`
                 : newChecksFor(s).length ? `<div style="margin-top:4px"><span class="badge ck-new" title="New audit checks were added after this scan. The items here are unchanged — rescan to add what the new checks find.">✨ New checks available</span></div>` : ''}</td>
               <td>${issueChips(c, s.scan && s.scan.state === 'complete', s.id)}</td>
-              <td style="min-width:110px"><div class="small">${c.closed || 0}/${c.total || 0}</div><div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div></td>
+              <td style="min-width:130px">${closedCell(s)}</td>
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
                 ${can('site.remove') || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Remove this audit from the list (the website itself is untouched)">✕</button>` : ''}</td>
             </tr>`;
@@ -7954,8 +7981,11 @@
     if ($('#flive')) $('#flive').onchange = (e) => { f.live = e.target.value; renderSites(); };
     if ($('#foldck')) $('#foldck').onclick = () => { f.oldChecks = !f.oldChecks; renderSites(); };
     if ($('#frepub')) $('#frepub').onclick = () => { f.repub = !f.repub; renderSites(); };
+    $('#fmust').onchange = (e) => { f.must = e.target.value; renderSites(); };
+    if ($('#statCrit')) $('#statCrit').onclick = () => { f.must = f.must === 'crit' ? '' : 'crit'; renderSites(); };
+    if ($('#statMust')) $('#statMust').onclick = () => { f.must = f.must === 'done' ? '' : 'done'; renderSites(); };
     if ($('#statClar')) $('#statClar').onclick = () => { f.clar = !f.clar; renderSites(); };
-    if ($('#sfClear')) $('#sfClear').onclick = () => { Object.assign(f, { q: '', status: '', assignee: '', live: '', oldChecks: false, clar: false, repub: false }); renderSites(); };
+    if ($('#sfClear')) $('#sfClear').onclick = () => { Object.assign(f, { q: '', status: '', assignee: '', live: '', oldChecks: false, clar: false, repub: false, must: '' }); renderSites(); };
     $('#rescanAll').onclick = () => {
       const todo = list.filter((s) => !state.scanning[s.id] && !otherClaim(s.id)), busy = list.length - todo.length;
       if (!todo.length) { toast('Every website shown is already queued or scanning.'); return; }
@@ -8258,9 +8288,19 @@
   const statusSelect = (f, attr) => `<select class="pill fs-${f.status}" ${attr}="${esc(f.id)}">${FSTATUS.map((s) => `<option value="${s.v}" ${s.v === f.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select>`;
 
   /** `skip` leaves one filter out, so the severity chips can count what clicking them would give. */
+  /** The audit items on one tab: 'must' (what affects the business and SEO) or 'polish' (fonts, duplicate photos). */
+  const isPolishItem = (f) => (A.isPolish ? A.isPolish(f) : /^(FONT_|IMAGE_DUPLICATE$)/.test((f && f.code) || ''));
+  const grpFindings = (s, g) => (s.findings || []).filter((f) => (g === 'polish') === isPolishItem(f));
+  /** Which audit tab a route shows: an item opened by number goes to the tab it belongs to. */
+  function siteFindingsTab(r, s) {
+    if (r.tab === 'polish') return 'polish';
+    if (r.tab !== 'findings') return r.tab;
+    const f = r.item && s ? (s.findings || []).find((x) => x.num === r.item) : null;
+    return f && isPolishItem(f) ? 'polish' : 'findings';
+  }
   function filteredFindings(s, skip) {
     const ff = skip ? Object.assign({}, state.ff, { [skip]: skip === 'st' ? 'active' : skip === 'cmt' ? false : '' }) : state.ff;
-    return (s.findings || []).filter((f) => {
+    return grpFindings(s, ff.grp === 'polish' ? 'polish' : 'must').filter((f) => {
       if (ff.st === 'active' && !['open', 'clarification'].includes(f.status)) return false;
       if (ff.st !== 'active' && ff.st !== 'all' && f.status !== ff.st) return false;
       if (ff.sev && f.severity !== ff.sev) return false;
@@ -8282,8 +8322,14 @@
     const r = route();
     const scrollY = window.scrollY;
     const live = state.scanning[s.id];
-    const findings = s.findings || [];
+    // Must-fix and design polish are two tabs over one list. An item opened by its number lands on
+    // whichever tab it belongs to, so its Previous / Next walk the same list it came from.
+    const ftab = siteFindingsTab(r, s);
+    if (ftab === 'findings' || ftab === 'polish') state.ff.grp = ftab === 'polish' ? 'polish' : 'must';
+    const findings = grpFindings(s, ftab === 'polish' ? 'polish' : 'must');
     const cnt = (st) => findings.filter((f) => f.status === st).length;
+    const openOf = (g) => grpFindings(s, g).filter((f) => f.status === 'open' || f.status === 'clarification').length;
+    const tabN = (g) => { const all = grpFindings(s, g).length; const o = openOf(g); return !all ? '<span class="tcount">0</span>' : o ? `<span class="tcount" title="${o} open of ${all}">${o}</span>` : `<span class="tcount tc-done" title="All ${all} closed">✓</span>`; };
     const generalComments = (s.comments || []).filter((c) => c.target === 'site' && !c.deleted).length;
     const sc = s.scan || {};
     $('#view').innerHTML = `
@@ -8308,7 +8354,8 @@
       </div>
       <div class="tabs">
         <a href="#/site/${esc(s.id)}/profile" class="${r.tab === 'profile' || r.tab === 'leads' ? 'on' : ''}">Profile${leadCount(s.siteId) ? ` <span class="tcount" title="form submissions">✉ ${leadCount(s.siteId)}</span>` : ''}</a>
-        <a href="#/site/${esc(s.id)}" class="${r.tab === 'findings' ? 'on' : ''}">Audit items <span class="tcount">${findings.length}</span></a>
+        <a href="#/site/${esc(s.id)}" class="${ftab === 'findings' ? 'on' : ''}" title="Contact details, links, spelling, SEO: what affects the business">Audit items ${tabN('must')}</a>
+        <a href="#/site/${esc(s.id)}/polish" class="${ftab === 'polish' ? 'on' : ''}" title="Inconsistent fonts and duplicate photos: fix after the audit items">🎨 Design polish ${tabN('polish')}</a>
         <a href="#/site/${esc(s.id)}/comments" class="${r.tab === 'comments' ? 'on' : ''}">Comments <span class="tcount">${generalComments}</span></a>
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
       </div>
@@ -8326,11 +8373,11 @@
       catch (err) { toast(err.message); await loadSite(s.id); renderSite(); }
     };
     const body = $('#tabBody');
-    state.renderedTab = r.tab;
+    state.renderedTab = ftab;
     if (r.tab === 'comments') renderCommentsTab(body, s);
     else if (r.tab === 'activity') renderActivityTab(body, s);
     else if (r.tab === 'profile' || r.tab === 'leads') renderProfileTab(body, s, { cnt, generalComments, sub: r.sub });
-    else renderFindingsTab(body, s, { cnt, sc, live });
+    else renderFindingsTab(body, s, { cnt, sc, live, grp: state.ff.grp });
     window.scrollTo(0, scrollY);
     if (r.item) openDrawer(r.item); else closeDrawer(true);
   }
@@ -9020,10 +9067,17 @@
     </div>`;
   }
 
-  function renderFindingsTab(body, s, { cnt, sc, live }) {
+  function renderFindingsTab(body, s, { cnt, sc, live, grp }) {
     const t = s.truth || {};
     const ff = state.ff;
-    const findings = s.findings || [];
+    const polish = grp === 'polish';
+    const findings = grpFindings(s, polish ? 'polish' : 'must');
+    const other = grpFindings(s, polish ? 'must' : 'polish');
+    const otherOpen = other.filter((f) => f.status === 'open' || f.status === 'clarification').length;
+    const mineOpen = findings.filter((f) => f.status === 'open' || f.status === 'clarification').length;
+    // On the Design polish tab the useful reference is the website's fonts, not its Business Info.
+    const refWas = state.refTab;
+    if (polish && !state.refTab) state.refTab = 'fonts';
     const cats = [...new Set(findings.map((f) => f.category))].sort();
     const locs = [...new Set(findings.map((f) => f.location))].sort();
     const shown = filteredFindings(s);
@@ -9101,6 +9155,9 @@
         <div ${state.refTab === 'photos' ? '' : 'hidden'}>${photosReference(s)}</div>
         <div ${state.refTab === 'history' ? '' : 'hidden'}>${biReference(s)}</div>
       </details>
+      ${polish ? `<div class="note grp-note"><b>🎨 Design polish</b> — inconsistent fonts and duplicate photos. They don't change the business's details, links or what Google reads, so they come after the <a href="#/site/${esc(s.id)}">Audit items</a>${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}.</div>`
+        : findings.length && !mineOpen && sc.state === 'complete' ? `<div class="note good grp-note"><b>✓ Every audit item that affects the business is closed.</b>${otherOpen ? ` What's left is design polish: <a href="#/site/${esc(s.id)}/polish">${otherOpen} font and photo item${otherOpen === 1 ? '' : 's'}</a>, which can follow.` : ''}</div>`
+        : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on the <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a> tab (${otherOpen} open), so this list is what affects the business and SEO.</div>` : ''}
       <div class="panel">
         <div class="toolbar">
           <span class="chips" id="ffSev">
@@ -9125,7 +9182,7 @@
           ${can('item.add') ? '<button class="btn sm" id="ffAdd" title="Write an audit item the scan cannot see — a layout or design problem">+ Add item</button>' : ''}
         </div>
         ${shown.length && activeFilters(ff).length ? `<div class="small muted filter-line">Showing <b>${shown.length}</b> of ${findings.length} audit item${findings.length === 1 ? '' : 's'} · filtered by <b>${esc(activeFilters(ff).join(', '))}</b> <button class="linkbtn" id="ffClear2">Clear filters</button></div>` : ''}
-        ${!findings.length ? `<div class="empty">${sc.state === 'complete' ? 'No issues found.' : live ? 'Scanning… results appear here when it finishes.' : 'Not scanned yet.'}</div>` : !shown.length ? `<div class="empty">
+        ${!findings.length ? `<div class="empty">${sc.state === 'complete' ? (polish ? 'No font or duplicate photo items.' : 'No issues found.') : live ? 'Scanning… results appear here when it finishes.' : 'Not scanned yet.'}</div>` : !shown.length ? `<div class="empty">
           <div><b>No audit items match these filters.</b></div>
           <div class="small muted" style="margin:6px 0 10px">This website has ${findings.length} audit item${findings.length === 1 ? '' : 's'}${activeFilters(ff).length ? `, hidden by: <b>${esc(activeFilters(ff).join(', '))}</b>` : ''}.</div>
           <button class="btn sm primary" id="ffClear">Clear filters</button></div>` : `
@@ -9183,6 +9240,7 @@
     bindSelLinks(body, s);
     bindVerify(body, s);
     bindNewChecks(body, s);
+    state.refTab = refWas;
     $$('[data-ref]', body).forEach((b) => (b.onclick = () => { state.refTab = b.dataset.ref; renderSite(); }));
     if ($('#fontToItems', body)) $('#fontToItems', body).onclick = () => { state.ff.cat = 'Design'; state.ff.q = ''; state.ff.sev = ''; renderSite(); };
     if ($('#photoToItems', body)) $('#photoToItems', body).onclick = () => { state.ff.cat = 'Images / Alt'; state.ff.q = ''; state.ff.sev = ''; renderSite(); };
@@ -9335,7 +9393,7 @@
     const b = $('#drawerBack'); if (b) b.remove();
     drawerComposer = null;
     document.body.classList.remove('drawer-open');
-    if (!silent && route().item) location.hash = `#/site/${route().id}`;
+    if (!silent && route().item) location.hash = `#/site/${route().id}${state.ff.grp === 'polish' ? '/polish' : ''}`;
   }
   /**
    * What the team already knows about this value: a client who asked about it in the Duda editor,
@@ -11098,7 +11156,8 @@
     const r = route();
     if (state.me && r.name === 'site' && state.current && state.current.id === r.id) {
       // same site: switch tab / open drawer without refetching
-      if (r.tab === 'findings' && state.renderedTab === 'findings' && $('#tabBody')) { if (r.item) openDrawer(r.item); else closeDrawer(true); return; }
+      const ft = siteFindingsTab(r, state.current);
+      if ((ft === 'findings' || ft === 'polish') && state.renderedTab === ft && $('#tabBody')) { if (r.item) openDrawer(r.item); else closeDrawer(true); return; }
       return renderSite();
     }
     render();
