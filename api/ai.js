@@ -367,9 +367,10 @@ Respond with JSON only: {"results":[{"i":<block number>,"type":"<type>","quote":
 const PROOF_SYSTEM = `You proofread the WEBSITE COPY of one small business, the way a careful editor would before it goes live. ${CONTEXT}
 Report ONLY clear mistakes a visitor would notice:
 - "spelling": a misspelled ordinary word ("recieve", "proffesional", "detialing", "teh"). Never brand, product, car, place or people names, trade words (PPF, ceramic, detailing, tint, vinyl, graphene, paint correction, decon), or deliberate marketing spellings.
-- "grammar": a clear grammar error: wrong word (your/you're, its/it's, then/than, there/their), subject-verb disagreement, a missing or doubled word that breaks the sentence.
+- "grammar": an OBJECTIVE grammar error that any editor would fix: a wrong word (your/you're, its/it's, then/than, there/their, loose/lose), a verb that does not agree with its own subject ("the films is"), a missing or doubled word that breaks the sentence ("we we offer", "to the your car"). Sentences that are correct but could be written differently are NOT errors: "it is easy to end up with…", "there are…", long lists, passive voice, starting with "And"/"But", informal or salesy wording.
 - "incomplete": a sentence or paragraph that stops mid-thought, a heading or button left as a template placeholder ("Add your text here", "Lorem ipsum", "Title goes here", "[City]"), or copy that clearly belongs to a template and was never filled in.
-Do NOT report: style, tone, capitalisation, title case, missing commas, American vs British spelling, short punchy fragments used on purpose ("Fast. Reliable. Local."), lists without full stops, emoji, or anything you are unsure about. Most blocks have no mistakes: return nothing for them.
+Do NOT report: style, tone, word choice, clarity, rephrasing, capitalisation, title case, missing commas, American vs British spelling, short punchy fragments used on purpose ("Fast. Reliable. Local."), lists without full stops, emoji, or anything you are unsure about. Most blocks have no mistakes: return nothing for them.
+The "suggestion" must be the quoted words with the SMALLEST change that fixes them (usually one or two words), never a rewrite, a longer version or added content. If the fix would be a rewrite, it is a style opinion: do not report it.
 Each block is one whole paragraph, heading or list item, with the words of its links in place: judge it as written, and never call a block unfinished because it ends with a link's words.
 Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 15 words>","suggestion":"<the corrected words>"}]}. Use {"results":[]} when there is nothing to fix.`;
 
@@ -383,6 +384,24 @@ These are FINE (never report): any call to action (book, schedule, get a quote, 
 If you are not sure, do not report it. Most items are fine: return nothing for them.
 Respond with JSON only: {"results":[{"i":<number>,"verdict":"wrong_page","confidence":<0..1>,"reason":"<max 20 words, plain English>","expected":"<the address from THE SITE'S PAGES that it should open, or empty>"}]}. Use {"results":[]} when every item is fine.`;
 
+// A second, stricter read of what the first one called a grammar mistake or unfinished copy. The
+// first pass is told to be careful and still sometimes "corrects" a sentence that was fine; a reader
+// asked only "is this definitely wrong?" catches those.
+const PROOF_VERIFY_SYSTEM = `You are a senior copy editor double-checking another proofreader's flags on a small business website. For each flag you get the full sentence or paragraph, the words flagged, the claimed problem and the suggested fix.
+Answer "error": true ONLY if the flagged words are definitely wrong in standard English (a real grammar mistake, or text that is clearly unfinished or a template placeholder) and the fix is needed, not just a different way of saying it. Answer false for anything correct but improvable, any style or wording preference, any sentence that is grammatical as written (for example "it is easy to end up with X, Y, and Z" is correct), and whenever you are not sure.
+Respond with JSON only: {"results":[{"i":<number>,"error":true|false,"confidence":<0..1>}]}`;
+const verifyPrompt = (flags) => flags.map((f) => `${f.i} | ${f.type} | text: ${String(f.text).replace(/\s+/g, ' ').slice(0, 900)} | flagged: "${f.quote}" | problem: ${f.reason} | suggested: "${f.suggestion}"`).join('\n');
+/** Is the suggestion a correction of the quoted words (a word or two changed), or a rewrite? */
+function minimalFix(quote, suggestion, type) {
+  const a = String(quote || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+  const b = String(suggestion || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+  if (!a.length || !b.length || a.join(' ') === b.join(' ')) return false;
+  // words in common, in order (longest common subsequence)
+  const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const changed = Math.max(a.length, b.length) - L[0][0];
+  return type === 'spelling' ? changed <= 2 && b.length <= a.length + 1 : changed <= 3 && b.length <= a.length + 2;
+}
 const proofPrompt = (b, items) => `${businessHeader(b)}
 TEXT BLOCKS (each starts with [i] then where it appears)
 ${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n')}`;
@@ -404,7 +423,8 @@ async function extraCheck(req, res, b, list, owner) {
   const items = [].concat(b.items || []).slice(0, 60).filter((x) => x && Number.isFinite(Number(x.i)) && typeof x.text === 'string' && x.text.trim() && (proof || typeof x.to === 'string'));
   if (!items.length) return res.status(200).json({ results: [] });
   const cacheKey = P + 'aic:' + sha([business.name, business.city, business.region, (business.areaPages || []).length].join('|')).slice(0, 20);
-  const keyOf = (x) => (proof ? 'p' : 'l') + sha(proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1].join('|')).slice(0, 18);
+  // 'p2': answers from before the second read of grammar flags are not reused.
+  const keyOf = (x) => (proof ? 'p2' : 'l') + sha(proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1].join('|')).slice(0, 18);
   const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
   const results = []; const todo = [];
   items.forEach((x, k) => {
@@ -429,6 +449,7 @@ async function extraCheck(req, res, b, list, owner) {
     const { parsed, p } = await callChain(list, proof ? PROOF_SYSTEM : LINK_SYSTEM, proof ? proofPrompt(business, todo) : linkPrompt(business, b.pages, todo));
     used = p;
     const byI = new Map(todo.map((x) => [Number(x.i), []]));
+    const found = [];
     (parsed.results || []).forEach((x) => {
       const i = Number(x && x.i); if (!byI.has(i)) return;
       const confidence = Math.max(0, Math.min(1, Number(x.confidence) || 0));
@@ -436,8 +457,23 @@ async function extraCheck(req, res, b, list, owner) {
         ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200) } : null)
         : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 200), expected: String(x.expected || '').slice(0, 160) } : null);
       if (!r) return;
-      byI.get(i).push(r); results.push(Object.assign({ i }, r));
+      // A "correction" that rewrites the words or adds to them is a style opinion, not a mistake.
+      if (proof && r.type !== 'incomplete' && !minimalFix(r.quote, r.suggestion, r.type)) return;
+      found.push(Object.assign({ i }, r));
     });
+    // Grammar and unfinished-copy flags get a second, stricter read before they become audit items.
+    const doubt = proof ? found.filter((r) => r.type !== 'spelling') : [];
+    if (doubt.length) {
+      const flags = doubt.map((r, k) => ({ i: k, type: r.type, text: (todo.find((x) => Number(x.i) === r.i) || {}).text || '', quote: r.quote, reason: r.reason, suggestion: r.suggestion }));
+      let ok = new Set();
+      try {
+        const v = await callChain(list, PROOF_VERIFY_SYSTEM, verifyPrompt(flags));
+        (v.parsed.results || []).forEach((x) => { if (x && x.error === true && Number(x.confidence || 0) >= 0.8) ok.add(Number(x.i)); });
+      } catch (e) { ok = new Set(); }  // not confirmed: not reported
+      const keep = new Set(doubt.filter((r, k) => ok.has(k)));
+      for (let k = found.length - 1; k >= 0; k--) if (found[k].type !== 'spelling' && proof && !keep.has(found[k])) found.splice(k, 1);
+    }
+    found.forEach((r) => { const { i, ...rest } = r; byI.get(i).push(rest); results.push(r); });
     const cmds = []; byI.forEach((rs, i) => { const x = todo.find((y) => Number(y.i) === i); cmds.push([keyOf(x), rs.length ? JSON.stringify({ r: rs }) : '0']); });
     if (cmds.length) await redis(['HSET', cacheKey, ...[].concat(...cmds)], ['EXPIRE', cacheKey, 45 * 86400]);
   }

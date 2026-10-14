@@ -295,6 +295,18 @@
         '"Unfinished" and grammar items raised from a split piece of a sentence close themselves on the next rescan, as the app\'s mistake',
       ],
     },
+    {
+      v: 23,
+      date: '2026-10-14',
+      title: 'Grammar flags are double-checked before they become audit items',
+      fixes: ['TEXT_GRAMMAR', 'TEXT_INCOMPLETE'],
+      fixedWhat: 'Proofreading called some correct sentences grammar mistakes and "suggested" a rewrite (for example "it is easy to end up with trapped air bubbles, an improper fit…" is correct English). Grammar and unfinished-text flags are now read a second time by a stricter reviewer, and a suggestion that rewrites the words instead of fixing one or two of them is dropped.',
+      items: [
+        'Only objective grammar mistakes are raised (your/you\u2019re, its/it\u2019s, a verb that does not agree with its own subject, a missing or doubled word), each with the smallest fix',
+        'Every grammar and unfinished-text flag is double-checked by a second, stricter read before it becomes an audit item',
+        'Grammar and unfinished items from earlier scans close themselves on the next rescan, as the app\u2019s mistake, unless they are confirmed again',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -2838,7 +2850,7 @@
     };
     issues.forEach((v) => {
       const blk = texts[v.i];
-      if (!blk || !RULES[v.type] || Number(v.confidence) < 0.75) return;
+      if (!blk || !RULES[v.type] || Number(v.confidence) < (v.type === 'spelling' ? 0.75 : 0.85)) return;
       const q = String(v.quote || '').trim();
       // The words have to really be there: an answer about text the block does not contain is dropped.
       if (q && blk.text.toLowerCase().indexOf(q.toLowerCase()) < 0) return;

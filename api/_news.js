@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-14-grammar-check', date: '2026-10-14', audience: 'all', tag: 'Audits',
+    title: 'Grammar flags are double-checked',
+    what: 'Proofreading called some correct sentences grammar mistakes and suggested a rewrite instead of a fix ("it is easy to end up with trapped air bubbles, an improper fit…" is correct). Now only objective mistakes count, each with the smallest fix, and every grammar and unfinished-text flag is read a second time by a stricter reviewer before it becomes an audit item. The wrong ones from earlier scans <b>close themselves on the next rescan</b>, as the app\'s mistake.',
+    where: ['A website → <b>Rescan</b>.'],
+    link: '#/help/ai', linkText: 'How the AI checks work',
+  },
+  {
     id: '2026-10-14-proof-paragraphs', date: '2026-10-14', audience: 'all', tag: 'Audits',
     title: 'Proofreading reads whole paragraphs, so a sentence with a link in it is no longer "unfinished"',
     what: 'Proofreading was given text in pieces cut wherever a link started, so "This includes hydrophobic paint enhancements with our" (followed by the <i>ceramic coatings</i> link) looked unfinished. It now reads every paragraph, heading and list item whole, link words included. Unfinished and grammar items raised that way <b>close themselves on the next rescan</b> as the app\'s mistake; the Audits list marks those websites "A check was corrected — rescan".',

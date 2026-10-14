@@ -6209,7 +6209,7 @@
     if (state.current && state.current.id === id) await loadSite(id);
   }
   // ---------- AI alt-text judgement ----------
-  const AI_LABEL = { describes_image: 'Describes the photo (OK)', this_business: 'Refers to this business (OK)', other_business: 'Names another business', wrong_location: "Location doesn't match", placeholder: 'Placeholder / stock text', unclear: 'Unclear', partner_logo: 'Brand / partner logo (OK)', name_variant: 'Business name written differently' };
+  const AI_LABEL = { describes_image: 'Describes the photo (OK)', this_business: 'Refers to this business (OK)', other_business: 'Names another business', wrong_location: "Location doesn't match", placeholder: 'Placeholder / stock text', unclear: 'Unclear', partner_logo: 'Brand / partner logo (OK)', name_variant: 'Business name written differently', spelling: 'Spelling', grammar: 'Grammar', incomplete: 'Unfinished text', wrong_page: 'Opens the wrong page' };
   async function aiAltCheck(res, id, log) {
     if (!state.ai || !state.ai.enabled || !(res.alts || []).length) return null;
     const t = res.truth || {};
@@ -7688,7 +7688,7 @@
     if (!f.ai) return '';
     const ok = ['describes_image', 'this_business', 'partner_logo'].includes(f.ai.verdict);
     return `<div class="ai-note ${ok ? 'ok' : 'bad'}"><span class="badge ai-badge">✨ AI</span> <b>${esc(AI_LABEL[f.ai.verdict] || f.ai.verdict)}</b>${f.ai.reason ? ' · ' + esc(f.ai.reason) : ''} <span class="faint">(${Math.round((f.ai.confidence || 0) * 100)}% sure)</span>
-      ${full && f.ai.suggestion ? `<div class="ai-sugg">${/^AI_TEXT/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
+      ${full && f.ai.suggestion ? `<div class="ai-sugg">${/^TEXT_(SPELLING|GRAMMAR|INCOMPLETE)$/.test(f.code) ? 'Suggested correction' : f.code === 'LINK_WRONG_PAGE' ? 'Should open' : /^AI_TEXT/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
   }
 
   async function checkProfiles(truth) {
