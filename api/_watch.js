@@ -711,7 +711,7 @@ function siteBlock(x) {
   const rows = shown.map(([k, v]) => `${v} ${(COUNT_WORD[k] || ['problem', 'problems'])[v === 1 ? 0 : 1]}`);
   if (more > 0) rows.push(`and ${more} more!`);
   const base = appUrl();
-  const href = !base ? '' : x.recId ? `${base}/#/site/${encodeURIComponent(x.recId)}/findings` : `${base}/#/dr/${encodeURIComponent(x.id)}`;
+  const href = !base ? '' : x.recId ? `${base}/#/site/${encodeURIComponent(x.recId)}/findings` : `${base}/#/dr/${encodeURIComponent(x.id)}/auto-audit`;
   const name = String(x.name || x.domain || x.id).replace(/[*_~<>]/g, '');
   return { rows, line: `${name}: ${rows.join(', ')}`,
     slack: `*${name}*\nError found:\n${rows.map((r) => (/^and \d+ more!$/.test(r) ? '_' + r + '_' : '• ' + r)).join('\n')}${href ? `\n<${href}|${x.recId ? 'Audit items' : 'Auto audit findings'}>` : ''}` };

@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-14-profile-tabs', date: '2026-10-14', audience: 'all', tag: 'Websites',
+    title: 'Website profiles are now tabs: one thing at a time, not one very long page',
+    what: 'A website\'s <b>Profile</b> opens on an <b>🏠 Overview</b>: the picture, the customer and a card for each check and each kind of work. Everything else has its own tab: <b>🔎 Auto audit</b>, <b>🌐 Online presence</b>, <b>🩺 Site health</b>, <b>📊 Analytics</b>, <b>👥 Contacts</b> and <b>✉️ Form submissions</b>. A small count on a tab says there is something to look at (red when it is super critical), the tab bar stays at the top while you scroll, and a link or reload opens the same tab. Super critical alerts now open the <b>Auto audit</b> tab directly.',
+    where: ['Any website\'s <b>Profile</b> (from Audits, DR Websites, Search or an alert).', '<b>open →</b> on an Overview card jumps to its tab.'],
+    link: '#/help/profiles', linkText: 'How profiles work',
+  },
+  {
     id: '2026-10-14-presence', date: '2026-10-14', audience: 'all', tag: 'Websites',
     title: 'Online presence: Google and Facebook compared with Business Info, and a new "Verify" label',
     what: 'A website\'s <b>Profile</b> has a new <b>🌐 Online presence</b> section: what its <b>Google Business Profile</b>, <b>Facebook</b> and the other profiles in Business Info show, compared with Business Info (which stays the fact). Different details are a <b>Check</b>; the same details written differently (a phone as 253.533.6776 on Facebook and (253) 533-6776 on the website) are a <b>Format</b> note. Only what a page shows word for word is reported, with its sources; nothing is guessed. Each check writes <b>suggestions for the client</b> ("Increase your searchability"), team only unless switched on. In the auto audit, details that look like theirs but are not in Business Info are marked <b>🔎 Verify</b>, with what to do.',

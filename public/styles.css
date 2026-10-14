@@ -715,6 +715,32 @@ span.pill { display: inline-block; padding: 5px 10px; border-radius: 999px; font
 .pf-big { font-size: 30px; font-weight: 700; line-height: 1; }
 .cl-new { display: grid; grid-template-columns: 1fr 1.4fr 1fr auto; gap: 6px; margin-top: 8px; }
 @media (max-width: 760px) { .pf-top { grid-template-columns: 1fr; } .pf-shot { width: 100%; } .cl-new { grid-template-columns: 1fr; } }
+/* The profile's own tabs: one part at a time. Pill-shaped so they read as a level below the audit's
+   underlined tabs; they stay at the top while scrolling, and scroll sideways on a phone. */
+.pf-nav { position: sticky; top: var(--topbar-h, 60px); z-index: 12; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none;
+  margin: 0 -2px 16px; padding: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+.pf-nav::-webkit-scrollbar { display: none; }
+.pf-tab { display: inline-flex; align-items: center; gap: 7px; flex: none; padding: 7px 12px; border: 0; border-radius: 8px; background: none;
+  font: inherit; font-size: 13.5px; font-weight: 600; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.pf-tab:hover { background: var(--panel-2); color: var(--text); }
+.pf-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pf-tab.on { background: var(--accent-soft); color: var(--accent); }
+.pf-tab-i { font-size: 14px; line-height: 1; }
+.pf-tab-n { min-width: 20px; padding: 1px 6px; border-radius: 999px; font-size: 11.5px; font-weight: 700; text-align: center; background: var(--panel-2); color: var(--muted); }
+.pf-tab-n.bad { background: var(--crit-soft); color: var(--crit); }
+.pf-tab-n.warn { background: var(--warn-soft); color: var(--warn); }
+.pf-tab-n.good { background: var(--ok-soft); color: var(--ok); }
+.pf-body > .pf-top { margin-top: 0; }
+.pf-body > .pf-an:first-child, .pf-pane > .an-head:first-child { margin-top: 0; }
+.pf-body > .pf-an:first-child > .an-head h2, .pf-pane > .an-head h2 { margin-top: 0; }
+.pf-pane[hidden] { display: none; }
+.pf-body .pf-cards { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 0; }
+.pf-group-h { margin: 22px 0 8px; font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.pf-cards .pf-card-h a[data-pftab] { white-space: nowrap; }
+@media (max-width: 760px) { .pf-nav { margin: 0 0 12px; border-radius: 10px; } .pf-tab { padding: 7px 10px; }
+  /* Two small cards side by side on a phone; the two with more to say take the whole row. */
+  .pf-body .pf-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .pf-body .pf-card { padding: 12px; } .pf-body .pf-card-wide { grid-column: 1 / -1; } .pf-body .pf-big { font-size: 26px; } }
 
 /* ===================== The client view ===================== */
 body.client-mode .topbar { display: none; }

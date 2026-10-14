@@ -769,7 +769,7 @@
     if (/^ticket-/.test(n.kind)) return '#/requests' + (n.ticketId ? '/' + encodeURIComponent(n.ticketId) : '');
     if (/^domain-/.test(n.kind)) return n.dudaSite ? '#/live/site/' + encodeURIComponent(n.dudaSite) : '#/live/problems';
     // Wrong details: the website's profile (where they are listed), or every website with some.
-    if (n.kind === 'watch-issue') return n.dudaSite ? '#/dr/' + encodeURIComponent(n.dudaSite) : '#/live/content';
+    if (n.kind === 'watch-issue') return n.dudaSite ? '#/dr/' + encodeURIComponent(n.dudaSite) + '/auto-audit' : '#/live/content';
     if (n.kind === 'watch-digest') return '#/live/content';
     if (n.kind === 'comment-waiting') return n.dudaSite ? '#/comments/' + encodeURIComponent(n.dudaSite) : '#/comments';
     if (['scan-done', 'rescan-done', 'site-assign', 'site-unassign', 'site-reopen'].includes(n.kind)) return `#/site/${n.siteId}`;
@@ -2058,14 +2058,22 @@
    * from Live DR Sites (Profile), audited or not. `s` is the audit record when there is one.
    */
   function renderProfileTab(body, s, extra) {
-    // The form submissions live on the profile now (they used to be their own tab), underneath it so
-    // the profile can redraw itself without throwing away a list somebody is reading.
-    body.innerHTML = '<div id="pfMain"></div>' + (can('leads.contacts') ? '<h2 id="pfContacts" class="pf-leads-h">👥 Contacts</h2><div id="pfContactsBody"></div>' : '') + '<h2 id="pfLeads" class="pf-leads-h">Form submissions</h2><div id="pfLeadsBody"><div class="empty">Loading…</div></div>';
-    renderSiteProfile($('#pfMain'), { s, siteId: s.siteId, cnt: (extra || {}).cnt, generalComments: (extra || {}).generalComments });
-    if (can('leads.contacts')) renderContacts($('#pfContactsBody'), { url: 'team:' + s.siteId, name: s.businessName || s.siteId, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(s.siteId)), rule: (key, verdict) => post('/api/leads', { op: 'contactVerdict', id: s.siteId, key, verdict }) });
-    renderLeadsTab($('#pfLeadsBody'), s);
-    if ((extra || {}).toLeads) setTimeout(() => { const h = $('#pfLeads'); if (h) h.scrollIntoView({ block: 'start' }); }, 80);
+    extra = extra || {};
+    body.innerHTML = '<div id="pfMain"></div>' + profPanes();
+    renderSiteProfile($('#pfMain'), { s, siteId: s.siteId, cnt: extra.cnt, generalComments: extra.generalComments, tab: extra.sub, base: '#/site/' + encodeURIComponent(s.id) + '/profile',
+      ext: profExt(s.siteId, s.businessName || s.siteId, s) });
   }
+  /**
+   * Contacts and Form submissions sit OUTSIDE the part of the profile that redraws itself, so a list
+   * somebody is reading (filters, an open submission) survives the redraws. They are only shown on
+   * their own tab, and only loaded the first time that tab is opened.
+   */
+  const profPanes = () => (can('leads.contacts') ? '<div id="pfPaneContacts" class="pf-pane" hidden><div class="an-head"><h2 id="pfContacts">👥 Contacts</h2></div><div id="pfContactsBody"></div></div>' : '')
+    + '<div id="pfPaneLeads" class="pf-pane" hidden><div class="an-head"><h2 id="pfLeads">✉️ Form submissions</h2></div><div id="pfLeadsBody"><div class="empty">Loading…</div></div></div>';
+  const profExt = (siteId, name, s) => ({
+    contacts: can('leads.contacts') ? { el: 'pfPaneContacts', init: () => renderContacts($('#pfContactsBody'), { url: 'team:' + siteId, name, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(siteId)), rule: (key, verdict) => post('/api/leads', { op: 'contactVerdict', id: siteId, key, verdict }) }) } : null,
+    submissions: { el: 'pfPaneLeads', init: () => renderLeadsTab($('#pfLeadsBody'), s || { siteId }) },
+  });
   const prof = { tickets: {}, thumbs: {} };
   // ---------- Website analytics (on every profile) ----------
   prof.an = {}; prof.anDays = 30; prof.anTab = 'duda';
@@ -2081,7 +2089,7 @@
   function healthCard(siteId, x) {
     if (!can('analytics.view') && !can('analytics.manage')) return '';
     const H = prof.health[siteId]; const run = H && H.runs && H.runs[0]; const m = run && run.mobile && run.mobile.scores;
-    return `<div class="pf-card"><div class="pf-card-h">Site health <a href="#pfHealth" data-jump="pfHealth">open ↓</a></div>
+    return `<div class="pf-card pf-card-wide"><div class="pf-card-h">Site health <a href="#" data-pftab="health">open →</a></div>
       ${m ? `<div class="h-mini">${H_CATS.map(([k, l]) => { const [cls] = hBand(m[k]); return `<span class="h-chip ${cls}" title="${esc(l)} (mobile)">${m[k] === null ? '–' : m[k]}<small>${esc(l.replace('Best practices', 'Best pr.'))}</small></span>`; }).join('')}</div><div class="small faint">Mobile · checked ${esc(ago(run.at))}</div>`
         : `<div class="small faint">${!x || !x.published ? 'Not published, so there is nothing live to check.' : H && (H.running || H.busy) ? '<span class="spin-dot"></span> Checking… about a minute' : 'Not checked yet.'}</div>`}</div>`;
   }
@@ -2171,7 +2179,7 @@
     if (!can('live.view')) return '';
     const W = prof.watch[siteId]; const r = W && W.result;
     const n = r ? (r.issues || []).length : 0; const c = r ? r.issues.filter((i) => i.sev === 'critical').length : 0;
-    return `<div class="pf-card"><div class="pf-card-h">Auto audit <a href="#pfWatch" data-jump="pfWatch">open ↓</a></div>
+    return `<div class="pf-card"><div class="pf-card-h">Auto audit <a href="#" data-pftab="auto-audit">open →</a></div>
       ${!x || !x.published ? '<div class="small faint">Not published, so there is nothing live to read.</div>'
         : !W || W.loading ? '<div class="small faint">Loading…</div>'
         : W.busy ? '<div class="small faint"><span class="spin-dot"></span> Reading the website…</div>'
@@ -2435,8 +2443,8 @@
         ? `<span class="badge ac-repub" title="Published again on ${esc(fmtFull(x.published))}, after the auto audit. It is queued to be read again; what is shown is from before.">↻ Republished · queued</span>`
         : '<span class="badge scan-complete">✓ Auto audit done</span>'}
       <div class="small faint">${when}</div>
-      ${w.c ? `<a class="ac-crit" href="#/dr/${esc(x.id)}" title="Open the findings on the website's profile"><b>⚠ Super critical (contact info)</b>${crit}</a>`
-        : w.n ? `<a class="small ac-warn" href="#/dr/${esc(x.id)}">${w.n} to check (town / ZIP)</a>` : '<div class="small ac-ok">No contact info problems</div>'}</div>`;
+      ${w.c ? `<a class="ac-crit" href="#/dr/${esc(x.id)}/auto-audit" title="Open the findings on the website's profile"><b>⚠ Super critical (contact info)</b>${crit}</a>`
+        : w.n ? `<a class="small ac-warn" href="#/dr/${esc(x.id)}/auto-audit">${w.n} to check (town / ZIP)</a>` : '<div class="small ac-ok">No contact info problems</div>'}</div>`;
   }
   const anKey = (id) => id + ':' + prof.anDays;
   function anDelta(cur, prev) {
@@ -2554,8 +2562,10 @@
       .catch((e) => { prof.an[k] = { failed: e.message }; again(); });
   }
   function bindAnalytics(body, siteId, again) {
-    if (!$('#pfAn', body)) return;
+    if (!can('analytics.view') && !can('analytics.manage')) return;
+    // Loaded whichever tab is open: the Overview shows the visits too.
     if (!prof.an[anKey(siteId)]) loadAnalytics(siteId, false, again);
+    if (!$('#pfAn', body)) return;
     $$('[data-andays]', body).forEach((b) => (b.onclick = () => { prof.anDays = Number(b.dataset.andays); if (!prof.an[anKey(siteId)]) loadAnalytics(siteId, false, again); again(); }));
     $$('[data-antab]', body).forEach((b) => (b.onclick = () => { prof.anTab = b.dataset.antab; again(); }));
     if ($('#anFresh', body)) $('#anFresh', body).onclick = () => { loadAnalytics(siteId, true, again); again(); };
@@ -2571,6 +2581,46 @@
       try { await post('/api/analytics', { op: 'disconnect', site: siteId, provider: b.dataset.andisc }); [30, 90, 365].forEach((d) => delete prof.an[siteId + ':' + d]); loadAnalytics(siteId, false, again); } catch (err) { toast(err.message); }
     }));
     requestAnimationFrame(() => drawAnalytics(siteId));
+  }
+  /** The profile's tabs, with a small count on the ones that need looking at. */
+  function profTabs(siteId, x, sum) {
+    const pill = (n, cls, title) => (n ? `<span class="pf-tab-n ${cls || ''}" title="${esc(title || '')}">${n}</span>` : '');
+    const W = prof.watch[siteId]; const r = W && W.result;
+    const wn = r ? (r.issues || []).length : 0; const wc = r ? r.issues.filter((i) => i.sev === 'critical').length : 0;
+    const P = (prof.pres || {})[siteId]; const pr = P && P.result;
+    const pn = pr && !pr.error ? (pr.listings || []).reduce((n, l) => n + (l.notes || []).length, 0) : 0;
+    const H = prof.health[siteId]; const hr = H && H.runs && H.runs[0]; const hp = hr && hr.mobile && hr.mobile.scores ? hr.mobile.scores.performance : null;
+    const an = can('analytics.view') || can('analytics.manage');
+    return [
+      { k: 'overview', i: '🏠', l: 'Overview' },
+      can('live.view') && { k: 'auto-audit', i: '🔎', l: 'Auto audit', b: pill(wn, wc ? 'bad' : 'warn', wc ? `${wc} super critical, ${wn} in all` : `${wn} to look at`) },
+      can('live.view') && { k: 'presence', i: '🌐', l: 'Online presence', b: pill(pn, 'warn', `${pn} note${pn === 1 ? '' : 's'}`) },
+      an && { k: 'health', i: '🩺', l: 'Site health', b: hp !== null && hp !== undefined ? pill(String(hp), hBand(hp)[0] === 'good' ? 'good' : hBand(hp)[0] === 'ok' ? 'warn' : 'bad', `Mobile performance ${hp} / 100`) : '' },
+      an && { k: 'analytics', i: '📊', l: 'Analytics' },
+      can('leads.contacts') && { k: 'contacts', i: '👥', l: 'Contacts' },
+      { k: 'submissions', i: '✉️', l: 'Form submissions', b: pill(sum.total || 0, '', 'form submissions') },
+    ].filter(Boolean);
+  }
+  function presenceCard(siteId) {
+    if (!can('live.view')) return '';
+    const W = (prof.pres || {})[siteId] || {}; const r = W.result;
+    const notes = r && !r.error ? (r.listings || []).reduce((n, l) => n + (l.notes || []).length, 0) : 0;
+    const found = r && !r.error ? (r.listings || []).filter((l) => l.found).length : 0;
+    return `<div class="pf-card"><div class="pf-card-h">Online presence <a href="#" data-pftab="presence">open →</a></div>
+      ${W.loading ? '<div class="small faint">Loading…</div>'
+        : W.busy ? '<div class="small faint"><span class="spin-dot"></span> Searching…</div>'
+        : !r ? '<div class="pf-big faint">—</div><div class="small faint">Not checked yet.</div>'
+        : r.error ? `<div class="small faint">${esc(r.error)}</div>`
+        : `<div class="pf-big ${notes ? 'wc-warn' : 'wc-ok'}">${notes || '✓'}</div><div class="small faint">${notes ? `note${notes === 1 ? '' : 's'} to look at` : 'matches Business Info'} · ${found} profile${found === 1 ? '' : 's'} found · ${esc(fmtWhen(r.at))}</div>`}</div>`;
+  }
+  function visitsCard(siteId) {
+    if (!can('analytics.view') && !can('analytics.manage')) return '';
+    const D = prof.an[anKey(siteId)]; const d = D && D.duda; const v = d && d.totals ? d.totals.visits : null;
+    const range = prof.anDays === 365 ? '12 months' : prof.anDays + ' days';
+    return `<div class="pf-card"><div class="pf-card-h">Visits <a href="#" data-pftab="analytics">open →</a></div>
+      ${!D || D.loading ? '<div class="small faint">Loading…</div>'
+        : D.failed || !d || d.error || v === null || v === undefined ? '<div class="pf-big faint">—</div><div class="small faint">Not available right now.</div>'
+        : `<div class="pf-big">${fmtN(v)}</div><div class="small faint">last ${range}${d.totals.visitors !== undefined ? ` · ${fmtN(d.totals.visitors)} unique visitors` : ''} ${anDelta(v, d.prev && d.prev.visits)}</div>`}</div>`;
   }
   function renderSiteProfile(body, ctx) {
     const s = ctx.s || null;
@@ -2592,8 +2642,12 @@
     const tk = s ? prof.tickets[s.id] : null;
     const sd = d ? sslDays(d) : null;
     const rd = d && d.reg && d.reg.expires ? daysTo(d.reg.expires) : null;
-    body.innerHTML = `
-      <div class="pf">
+    // ---- tabs: one part of the profile at a time, instead of one very long page ----
+    const tabs = profTabs(siteId, x, sum);
+    const tab = tabs.some((k) => k.k === ctx.tab) ? ctx.tab : 'overview';
+    prof.tab = tab;
+    const pane = {
+      overview: () => `
         <div class="pf-top">
           <a class="pf-shot" href="${esc(prevUrl)}" target="_blank" rel="noopener" title="Open the desktop preview">
             ${thumbSrc ? `<img src="${esc(thumbSrc)}" alt="Picture of ${esc(name)}">` : `<span class="pf-shot-wait">${th && th.error ? 'No picture yet' : '<span class="spin-dot"></span> Taking a picture…'}</span>`}
@@ -2618,8 +2672,11 @@
           </div>
         </div>
 
+        <div class="pf-group-h">Website checks</div>
         <div class="pf-cards">
-          <div class="pf-card">
+          ${watchCard(siteId, x)}
+          ${presenceCard(siteId)}
+          <div class="pf-card pf-card-wide">
             <div class="pf-card-h">Domain health ${x ? `<a href="#/live" data-tsite="${esc(siteId)}">on the list ↗</a>` : ''}</div>
             ${!x ? '<div class="small faint">Not published yet, so there is no live domain to check.</div>'
               : !x.domain ? '<div class="small faint">Only on its Duda address (no custom domain).</div>'
@@ -2633,17 +2690,20 @@
                 ${can('live.domains') ? '<button class="btn sm" id="pfCheck">Check now</button>' : ''}`}
           </div>
           ${healthCard(siteId, x)}
-          ${watchCard(siteId, x)}
+        </div>
+        <div class="pf-group-h">Work and activity</div>
+        <div class="pf-cards">
+          ${visitsCard(siteId)}
           <div class="pf-card">
+            <div class="pf-card-h">Form submissions <a href="#" data-pftab="submissions">open →</a></div>
+            <div class="pf-big">${sum.total || 0}</div>
+            <div class="small faint">${sum.last ? `last one ${esc(fmtWhen(Date.parse(sum.last)))}` : 'none recorded yet'}</div>
+          </div>
+          <div class="pf-card pf-card-wide">
             <div class="pf-card-h">Audit ${s ? `<a href="#/site/${esc(s.id)}">open ↗</a>` : ''}</div>
             ${s ? `<div class="pf-counts">${sev('critical', 'critical')}${sev('outdated', 'outdated')}${sev('warning', 'warning')}${sev('info', 'info')}</div>
               <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}${sc.at ? ` · last scan ${esc(fmtWhen(Date.parse(sc.at)))}` : ' · never scanned'}</div>`
               : `<div class="pf-big faint">—</div><div class="small faint">Not audited yet.</div>`}
-          </div>
-          <div class="pf-card">
-            <div class="pf-card-h">Form submissions <a href="#pfLeads" data-jump="pfLeads">open ↓</a></div>
-            <div class="pf-big">${sum.total || 0}</div>
-            <div class="small faint">${sum.last ? `last one ${esc(fmtWhen(Date.parse(sum.last)))}` : 'none recorded yet'}</div>
           </div>
           ${s ? `<div class="pf-card">
             <div class="pf-card-h">Comments <a href="#/site/${esc(s.id)}/comments">open ↗</a></div>
@@ -2655,12 +2715,23 @@
             <div class="pf-big">${tk ? tk.open : '…'}</div>
             <div class="small faint">${tk ? `open · ${tk.total} in all${tk.last ? ` · latest ${esc(fmtWhen(Date.parse(tk.last)))}` : ''}` : 'loading'}</div>
           </div>` : ''}
-        </div>
-        ${analyticsSection(siteId)}
-        ${healthSection(siteId, x)}
-        ${watchSection(siteId, x)}
-        ${presenceSection(siteId, x)}
+        </div>`,
+      analytics: () => analyticsSection(siteId),
+      health: () => healthSection(siteId, x),
+      'auto-audit': () => watchSection(siteId, x),
+      presence: () => presenceSection(siteId, x),
+    };
+    body.innerHTML = `
+      <div class="pf">
+        <nav class="pf-nav" role="tablist" aria-label="Website profile">${tabs.map((k) => `<button type="button" role="tab" class="pf-tab ${k.k === tab ? 'on' : ''}" aria-selected="${k.k === tab}" data-pftab="${k.k}"><span class="pf-tab-i" aria-hidden="true">${k.i}</span>${esc(k.l)}${k.b || ''}</button>`).join('')}</nav>
+        <div class="pf-body pf-body-${tab}">${pane[tab] ? pane[tab]() : ''}</div>
       </div>`;
+    // Contacts and Form submissions are drawn once, beside the profile, and shown on their own tab.
+    Object.entries(ctx.ext || {}).forEach(([k, e]) => {
+      const el = e && document.getElementById(e.el); if (!el) return;
+      el.hidden = k !== tab;
+      if (k === tab && !el.dataset.ready) { el.dataset.ready = '1'; e.init(); }
+    });
     // Answers can arrive after the page has been drawn again (the audit page redraws itself), so redraw
     // whichever profile is on screen now, not the one that asked.
     prof.last = { body, ctx };
@@ -2669,10 +2740,26 @@
     // Any website's client page can be previewed, on Audits or not: one not on Audits is opened by its
     // Duda site id and described from the Duda list.
     if ($('#pfView')) $('#pfView').onclick = () => viewWebsiteAsClient(s ? s.id : siteId, siteId);
-    bindCustLine($('#pfOwner'), s ? s.id : siteId, siteId, name, again);
+    if ($('#pfOwner', body)) bindCustLine($('#pfOwner', body), s ? s.id : siteId, siteId, name, again);
     $$('[data-gofilter]', body).forEach((b) => (b.onclick = () => { state.ff.sev = b.dataset.gofilter; location.hash = '#/site/' + encodeURIComponent(s.id); }));
     $$('[data-tsite]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = 'published'; live.q = a.dataset.tsite; live.dom = ''; live.audit = ''; live.page = 0; location.hash = '#/live'; }));
-    $$('[data-jump]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); const t2 = document.getElementById(a.dataset.jump); if (t2) t2.scrollIntoView({ behavior: 'smooth' }); }));
+    // Switching tabs redraws this part only (no page load), keeps the address in step so a reload or a
+    // shared link opens the same tab, and brings the tab bar back to the top if the page was scrolled.
+    const go = (k) => {
+      if (!ctx.base) return;
+      try { history.replaceState(null, '', ctx.base + (k === 'overview' ? '' : '/' + k)); } catch (e) { /* the tab still changes */ }
+      ctx.tab = k; again();
+      const nav = $('.pf-nav', body); if (!nav) return;
+      const tb = $('.topbar'); const y = nav.getBoundingClientRect().top + window.scrollY - (tb ? tb.offsetHeight : 0) - 4;
+      if (window.scrollY > y) window.scrollTo(0, y);
+    };
+    $$('[data-pftab]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); go(a.dataset.pftab); }));
+    const tabBtns = $$('.pf-tab', body);
+    tabBtns.forEach((b, i) => (b.onkeydown = (e) => {
+      const j = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : -1; if (j < 0 || j >= tabBtns.length) return;
+      e.preventDefault(); go(tabBtns[j].dataset.pftab); const n = $$('.pf-tab', body)[j]; if (n) n.focus();
+    }));
+    { const on = $('.pf-tab.on', body); if (on && on.scrollIntoView && on.offsetLeft + on.offsetWidth > on.parentNode.clientWidth) on.parentNode.scrollLeft = on.offsetLeft - 12; }
     if ($('#pfCheck')) $('#pfCheck').onclick = async (e) => {
       e.target.disabled = true; e.target.textContent = 'Checking…';
       try { const r = await post('/api/dudasites', { op: 'domains', ids: [x.id] }); if (r.domains && r.domains[x.id]) x.dom = r.domains[x.id]; toast('Domain checked'); } catch (err) { toast(err.message); }
@@ -6704,17 +6791,16 @@
    * alternative — writing a record for all 700 live websites — would put 700 rows into the one piece
    * of data every single page load reads, to show what can be assembled for nothing.
    */
-  async function renderDrProfile(siteId) {
+  async function renderDrProfile(siteId, sub) {
     const a = auditFor(siteId);
-    if (a) { location.hash = `#/site/${encodeURIComponent(a.id)}/profile`; return; }
+    if (a) { location.hash = `#/site/${encodeURIComponent(a.id)}/profile${sub ? '/' + sub : ''}`; return; }
     if (!live.data) { $('#view').innerHTML = '<div class="empty">Loading…</div>'; await loadLive(false); }
-    $('#view').innerHTML = `<div class="page-head"><div><div class="small muted"><a href="#/live">← DR Websites</a></div></div></div><div id="drProf"></div>
-      ${can('leads.contacts') ? '<h2 id="pfContacts" class="pf-leads-h">👥 Contacts</h2><div id="pfContactsBody"></div>' : ''}
-      <h2 id="pfLeads" style="margin-top:22px">Form submissions</h2><div id="drBody"><div class="empty">Loading…</div></div>`;
-    renderSiteProfile($('#drProf'), { siteId });
-    if (can('leads.contacts')) renderContacts($('#pfContactsBody'), { url: 'team:' + siteId, name: siteId, load: () => api('/api/leads?op=contacts&id=' + encodeURIComponent(siteId)), rule: (key, verdict) => post('/api/leads', { op: 'contactVerdict', id: siteId, key, verdict }) });
-    // The same enquiries view the audited websites get — it only ever needed a Duda site id.
-    renderLeadsTab($('#drBody'), { siteId });
+    const x = ((live.data && live.data.sites) || []).find((y) => sameId(y.id, siteId)) || ((liveDR.un && liveDR.un.sites) || []).find((y) => sameId(y.id, siteId));
+    const name = (x && (x.name || x.domain)) || siteId;
+    $('#view').innerHTML = `<div class="page-head"><div><div class="small muted"><a href="#/live">← DR Websites</a></div><h1>${esc(name)}</h1>
+      <div class="muted small"><span class="mono">${esc(siteId)}</span>${x && x.domain ? ` · ${esc(x.domain)}` : ''} · not audited</div></div></div><div id="drProf"></div>${profPanes()}`;
+    // The same profile, contacts and enquiries the audited websites get — they only ever needed a Duda site id.
+    renderSiteProfile($('#drProf'), { siteId, tab: sub, base: '#/dr/' + encodeURIComponent(siteId), ext: profExt(siteId, name, null) });
   }
 
   /**
@@ -7465,7 +7551,8 @@
   function route() {
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
-    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null };
+    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
+      sub: parts[2] === 'profile' ? (parts[3] || '') : parts[2] === 'leads' ? 'submissions' : '' };
     if (parts[0] === 'home') return { name: 'home' };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
@@ -7484,7 +7571,7 @@
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : parts[1] === 'trends' ? 'trends' : parts[1] === 'ranks' ? 'ranks' : 'published',
       site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', problems: parts[1] === 'problems', content: parts[1] === 'content' };
     // A website's profile addressed by its DUDA site id, so it works for one that has no record.
-    if (parts[0] === 'dr' && parts[1]) return { name: 'dr', siteId: decodeURIComponent(parts[1]) };
+    if (parts[0] === 'dr' && parts[1]) return { name: 'dr', siteId: decodeURIComponent(parts[1]), sub: parts[2] || '' };
     // …/false-alarms/<key> comes from a notification: open the queue ON that report, not at the top of a list of 40.
     if (parts[0] === 'suggestions') return { name: 'suggestions', tab: parts[1] === 'false-alarms' ? 'fa' : 'ideas', key: parts[1] === 'false-alarms' && parts[2] ? decodeURIComponent(parts.slice(2).join('/')) : '' };
     return { name: 'sites' };
@@ -7561,7 +7648,7 @@
       }
       return renderLive();
     }
-    if (r.name === 'dr') { if (!can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; } return renderDrProfile(r.siteId); }
+    if (r.name === 'dr') { if (!can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include Live DR Sites.</div>'; return; } return renderDrProfile(r.siteId, r.sub); }
     if (r.name === 'ai') { renderAiPage(); api('/api/ai').then((x) => { state.ai = Object.assign(state.ai || {}, x); aiUpdate(x); }).catch(() => {}); return; }
     if (r.name === 'suggestions') return renderSuggestions();
     if (r.name === 'requests') return can('ticket.view') ? renderRequests(r) : ($('#view').innerHTML = '<div class="empty">Your role does not include client change requests.</div>');
@@ -8242,7 +8329,7 @@
     state.renderedTab = r.tab;
     if (r.tab === 'comments') renderCommentsTab(body, s);
     else if (r.tab === 'activity') renderActivityTab(body, s);
-    else if (r.tab === 'profile' || r.tab === 'leads') renderProfileTab(body, s, { cnt, generalComments, toLeads: r.tab === 'leads' });
+    else if (r.tab === 'profile' || r.tab === 'leads') renderProfileTab(body, s, { cnt, generalComments, sub: r.sub });
     else renderFindingsTab(body, s, { cnt, sc, live });
     window.scrollTo(0, scrollY);
     if (r.item) openDrawer(r.item); else closeDrawer(true);

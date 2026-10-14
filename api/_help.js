@@ -377,14 +377,19 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'profiles', group: 'Collaboration', title: 'Profiles, form submissions and client access', audience: 'all',
-    html: `<p>Every website has <b>one Profile</b>, and it looks the same whichever way you arrive: the <b>Profile</b> tab of an audit, or <b>Profile</b> on Live DR Sites (an audited website opens its audit's Profile tab; one not audited yet opens the same layout with its form submissions underneath).</p>
+    html: `<p>Every website has <b>one Profile</b>, and it looks the same whichever way you arrive: the <b>Profile</b> tab of an audit, or <b>Profile</b> on Live DR Sites (an audited website opens its audit's Profile tab; one not audited yet opens the same layout).</p>
+<p>The profile is split into <b>tabs</b>, so you see one thing at a time instead of one very long page: <b>🏠 Overview</b> · <b>🔎 Auto audit</b> · <b>🌐 Online presence</b> · <b>🩺 Site health</b> · <b>📊 Analytics</b> · <b>👥 Contacts</b> · <b>✉️ Form submissions</b>. The tab bar stays at the top while you scroll (on a phone, swipe it sideways), a small count on a tab says there is something to look at (red when something is super critical), and the address follows the tab, so a reload or a shared link opens the same one. <b>open →</b> on an Overview card goes to its tab.</p>
+<h3>🏠 Overview</h3>
 <ul>
 <li><b>Picture</b>: a small picture of the website's home page, taken the first time somebody opens the profile, and again after the website is published or once a week. Click it to open the preview.</li>
 <li><b>Name, domain, site ID</b> (with <b>Copy</b>), launch date, last publish and labels; <b>Client contact</b>; <b>View as client</b>, <b>Audit this website</b> (when not audited yet) and <b>Open editor</b>.</li>
 <li><b>Domain health</b>: working or not, when the domain registration must be renewed (red within 7 days), the certificate as information only, speed, when it was last checked, and <b>Check now</b>.</li>
-<li><b>Site health</b>, <b>Audit</b>, <b>Form submissions</b>, <b>Comments</b> and <b>Client tickets</b>, each a link into what explains it.</li>
+<li><b>Website checks</b>: <b>Auto audit</b>, <b>Online presence</b>, <b>Domain health</b> and <b>Site health</b> at a glance. <b>Work and activity</b>: <b>Visits</b>, <b>Form submissions</b>, <b>Audit</b>, <b>Comments</b> and <b>Client tickets</b>, each a link into what explains it.</li>
+</ul>
+<h3>The other tabs</h3>
+<ul>
 <li><b>👥 Contacts</b>: everyone who filled in a form, one line per person, made automatically from every submission (the same person is recognised by email or phone, and junk is left out). Click a contact for their latest message; search; <b>Export CSV</b>. Needs <b>See enquirers' contact details</b>. Clients get the same list on their own page under <b>Contacts</b>.</li>
-<li><b>📊 Analytics</b> and <b>🩺 Site health</b> sections, then the website's <b>Form submissions</b> list (it used to be its own tab on the audit page; old links still land here).</li>
+<li><b>📊 Analytics</b>, <b>🩺 Site health</b>, <b>🔎 Auto audit</b> and <b>🌐 Online presence</b>, each on its own tab, and the website's <b>✉️ Form submissions</b> list (old links to the audit's Form submissions open this tab).</li>
 <li>On the client page, <b>Comments</b> shows the client's own conversations in the Duda editor and the team's replies (signed "Your team"). The team's own Comments tab and notes the team left itself are never shown to clients.</li>
 <li><b>👁 View as client</b> (on every profile and on the audit page, for anyone whose role includes <b>Profile: View as client</b>; admins always have it) shows the website's client page exactly as the client sees it, for any website, on Audits or not.</li>
 </ul>
@@ -436,7 +441,7 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'analytics', group: 'Collaboration', title: 'Website analytics', audience: 'all',
-    html: `<p>Every website's <b>Profile</b> has an <b>📊 Analytics</b> section. Pick <b>30 days</b>, <b>90 days</b> or <b>12 months</b>.</p>
+    html: `<p>Every website's <b>Profile</b> has an <b>📊 Analytics</b> tab (and a <b>Visits</b> card on its Overview). Pick <b>30 days</b>, <b>90 days</b> or <b>12 months</b>.</p>
 <h3>Duda (always on)</h3>
 <ul>
 <li><b>Visits</b>, <b>Unique visitors</b> and <b>Page views</b>, each with the change against the period before (▲ / ▼).</li>
@@ -846,7 +851,7 @@ export const HELP_SECTIONS = [
 <h4>Republished since the last scan</h4>
 <p>When Duda says a website on Audits was published after its last scan, Audits shows <b>↻ Republished: rescan</b> (and a <b>Republished since scan</b> filter), and the audit page says so with a <b>Rescan now</b> button, so the audit items are confirmed still there and anything new is caught.</p>
 <h4>On a website's profile</h4>
-<p>An <b>Auto audit</b> card and a <b>🔎 Auto audit</b> section with each finding, what it says, and links to the exact pages. <b>Not a problem</b> remembers a value that is right for that website (Undo is underneath); <b>↻ Check now</b> reads it again on the spot.</p>
+<p>An <b>Auto audit</b> card on the Overview and a <b>🔎 Auto audit</b> tab with each finding, what it says, and links to the exact pages. <b>Not a problem</b> remembers a value that is right for that website (Undo is underneath); <b>↻ Check now</b> reads it again on the spot.</p>
 <h4>When it runs</h4>
 <ul>
 <li>A website is read once, then <b>again only after it is published</b>, and once a month in case Business Info changed.</li>

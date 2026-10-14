@@ -705,7 +705,7 @@ function notifLink(n) {
   if (n.kind === 'comment-waiting' && n.dudaSite) return `${base}/#/comments/${encodeURIComponent(n.dudaSite)}`;
   if (/^ticket-/.test(n.kind || '')) return `${base}/#/requests${n.ticketId ? '/' + encodeURIComponent(n.ticketId) : ''}`;
   if (n.kind === 'watch-digest') return `${base}/#/live/content`;
-  if (n.kind === 'watch-issue' && n.dudaSite) return `${base}/#/dr/${encodeURIComponent(n.dudaSite)}`;
+  if (n.kind === 'watch-issue' && n.dudaSite) return `${base}/#/dr/${encodeURIComponent(n.dudaSite)}/auto-audit`;
   if (n.kind === 'domain-digest') return `${base}/#/live/trends`;
   if (/^domain-/.test(n.kind || '')) return n.dudaSite ? `${base}/#/live/site/${encodeURIComponent(n.dudaSite)}` : `${base}/#/live/problems`;
   if (n.siteId) return `${base}/#/site/${n.siteId}${n.findingNum ? '/item/' + n.findingNum : '/comments'}`;
