@@ -1983,17 +1983,21 @@
         <div class="jg-acts">${!firstOnly && i > 0 && !atLimit ? `<button class="btn sm" data-jtake="${esc(r.dudaId)}">Take</button>` : ''}
           ${lead ? `<button class="btn sm ghost" data-jpin="${esc(r.dudaId)}" data-on="${r.pinned ? '' : '1'}">${r.pinned ? 'Unpin' : '📌 Pin to top'}</button>` : ''}</div></div>`;
     };
+    // A teammate's website, read-only (when the admins allow it). Admins can simply open it.
+    const peekBtn = (c) => (set.peek && !lead && !mine(c) && c.auditId ? `<button class="btn sm ghost" data-jpeek="${esc(c.dudaId)}" title="Look at it read-only; it stays on your Audits list until you stop watching">👁 Peek</button>` : '');
     const pCard = (c) => `<div class="pj-card jg-card${mine(c) ? ' jg-mine' : ''}"><b>${esc(c.name)}</b>${c.domain ? `<div class="small faint">${esc(c.domain)}</div>` : ''}
         ${who(c)}${counts(c)}
-        <div class="jg-acts">${open(c)}${mine(c) || lead ? `<button class="btn sm primary" data-jdone="${esc(c.dudaId)}">Done</button><button class="btn sm ghost" data-jhand="${esc(c.dudaId)}">Hand on</button>` : ''}
-          <button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
+        <div class="jg-acts">${open(c)}${mine(c) || lead ? `<button class="btn sm primary" data-jdone="${esc(c.dudaId)}">Done</button><button class="btn sm ghost" data-jhold="${esc(c.dudaId)}" title="Waiting on an answer: it goes to Needs review and you can take the next website">⏸ On hold</button><button class="btn sm ghost" data-jhand="${esc(c.dudaId)}">Hand on</button>` : ''}
+          ${peekBtn(c)}<button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
     const rCard = (c) => `<div class="pj-card jg-card"><b>${esc(c.name)}</b>${who(c)}
-        <div class="small"><span class="badge fs-clarification">${esc((c.reasons || []).join(' · ') || 'Needs a look')}</span></div>
-        <div class="jg-acts">${open(c)}${lead ? `<button class="btn sm primary" data-jok="${esc(c.dudaId)}">Approve</button><button class="btn sm ghost" data-jback="${esc(c.dudaId)}">Send back</button>` : '<span class="small faint">Waiting for an approver</span>'}
-          <button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
+        <div class="small">${c.hold ? `<span class="badge sev-hold">⏸ On hold</span> <span class="small">${esc(c.hold.note)}</span>` : `<span class="badge fs-clarification">${esc((c.reasons || []).join(' · ') || 'Needs a look')}</span>`}</div>
+        <div class="jg-acts">${open(c)}${c.hold
+          ? `${lead || mine(c) ? `<button class="btn sm primary" data-jresume="${esc(c.dudaId)}">▶ Resume</button>` : ''}${lead || mine(c) ? `<button class="btn sm ghost" data-jhand="${esc(c.dudaId)}">Hand on</button>` : ''}${!lead && !mine(c) ? '<span class="small faint">Waiting for an answer</span>' : ''}`
+          : lead ? `<button class="btn sm primary" data-jok="${esc(c.dudaId)}">Approve</button><button class="btn sm ghost" data-jback="${esc(c.dudaId)}">Send back</button>` : '<span class="small faint">Waiting for an approver</span>'}
+          ${peekBtn(c)}<button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
     const cCard = (c) => `<div class="pj-card jg-card jg-done"><b>✅ ${esc(c.name)}</b>${who(c)}
         ${c.progress ? `<div class="small faint">${c.progress.closed} item${c.progress.closed === 1 ? '' : 's'} fixed${c.approvedBy ? ` · approved by ${esc(c.approvedBy)}` : ''}</div>` : ''}
-        <div class="jg-acts"><button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
+        <div class="jg-acts">${peekBtn(c)}<button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
     const q = d.queue || [];
     $('#view').innerHTML = `<div class="page-head"><div><h1>Tasks</h1>
         <div class="muted">The Jaguars board. Take the next website, fix <b>everything</b> on it (audit items, Design polish and Lengths), rescan, then click <b>Done</b>.</div></div></div>
@@ -2001,6 +2005,7 @@
         <label>Queue order <select id="jgOrder">${Object.entries(JG_ORDER).map(([k, v]) => `<option value="${k}" ${set.order === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label>Websites <select id="jgScope"><option value="critical" ${set.scope !== 'any' ? 'selected' : ''}>With critical errors</option><option value="any" ${set.scope === 'any' ? 'selected' : ''}>With any contact error</option></select></label>
         <label class="check-row"><input type="checkbox" id="jgLock" ${set.lock ? 'checked' : ''}> First in, first out (only the top website can be taken)</label>
+        <label class="check-row" title="They see it read-only and are listed as watching it, until they stop"><input type="checkbox" id="jgPeek" ${set.peek ? 'checked' : ''}> Jaguars can peek at each other's websites (read-only)</label>
         <label>Websites per person <input type="number" id="jgLimit" min="1" max="10" value="${set.limit || 1}"></label></div>
         <div class="small faint jg-basis">Error counts in the queue are the contact-info errors the auto audit found on the live website. The full count shows once a website is scanned.</div>` : ''}
       <div class="pj-board jg-board">
@@ -2039,12 +2044,17 @@
     $$('[data-jok]').forEach((b) => { b.onclick = async () => { const r = await go({ op: 'approve', dudaId: b.dataset.jok }, 'Approved'); if (r) again(); }; });
     $$('[data-jback]').forEach((b) => { b.onclick = () => jgNote('Send back', 'What still needs doing', 'Send back', async (note) => go({ op: 'sendback', dudaId: b.dataset.jback, note }, 'Sent back').then((r) => { if (r) again(); return r; })); });
     $$('[data-jhand]').forEach((b) => { b.onclick = () => jgHand(card(b.dataset.jhand), go, again); });
+    $$('[data-jhold]').forEach((b) => { b.onclick = () => jgNote('Put on hold', 'What needs clarifying, and from whom?', 'Put on hold', async (note) => go({ op: 'hold', dudaId: b.dataset.jhold, note }, 'On hold · you can take the next website').then((r) => { if (r) again(); return r; }),
+      '<p class="small muted">It moves to <b>Needs review</b> with your note, the admins are told, and you are free to take the next website. It comes back to you when it is taken off hold.</p>'); });
+    $$('[data-jresume]').forEach((b) => { b.onclick = async () => { const r = await go({ op: 'resume', dudaId: b.dataset.jresume }, 'Back in progress'); if (r) again(); }; });
+    $$('[data-jpeek]').forEach((b) => { b.onclick = async () => { const r = await go({ op: 'peek', dudaId: b.dataset.jpeek }); if (r && r.auditId) { await loadSites(true).catch(() => {}); location.hash = `#/site/${encodeURIComponent(r.auditId)}`; } }; });
     $$('[data-jlog]').forEach((b) => { b.onclick = () => jgLog(card(b.dataset.jlog)); });
     const saveSet = async (ch) => { const r = await go(Object.assign({ op: 'settings' }, ch), 'Saved'); if (r) again(); };
     if ($('#jgOrder')) {
       $('#jgOrder').onchange = (e) => saveSet({ order: e.target.value });
       $('#jgScope').onchange = (e) => saveSet({ scope: e.target.value });
       $('#jgLock').onchange = (e) => saveSet({ lock: e.target.checked });
+      $('#jgPeek').onchange = (e) => saveSet({ peek: e.target.checked });
       $('#jgLimit').onchange = (e) => saveSet({ limit: Number(e.target.value) });
     }
   }
@@ -8446,7 +8456,7 @@
       if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if (route().name === 'site') renderSite(); });
       return renderSite();
     }
-    lastSiteId = null; state.current = null; closeDrawer(true);
+    lastSiteId = null; state.current = null; closeDrawer(true); document.body.classList.remove('ro-site');
     const cameFrom = lastView; lastView = r.name;
     // Coming back to a list while teammates' scans were showing: check whether they finished (one tiny read)
     if ((r.name === 'sites' || r.name === 'live') && Object.keys(state.claims).length && Date.now() - (state.claimsAt || 0) > 10000) {
@@ -8751,7 +8761,7 @@
     // Websites on the Jaguars board are worked from Tasks, so others don't see them here until they
     // are complete. Whoever holds one does: it is their work, and this is where they look for it.
     const mineOnBoard = (x) => x.board && x.board.by === state.me.email && x.board.state !== 'queued';
-    const SITES = state.sites.filter((x) => !x.board || mineOnBoard(x));
+    const SITES = state.sites.filter((x) => !x.board || mineOnBoard(x) || (x.watch || []).some((w) => w.e === state.me.email));
     const onBoard = state.sites.length - SITES.length;
     if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if (route().name === 'sites') renderSites(); });
     const f = state.filters;
@@ -8795,7 +8805,7 @@
           <tbody>${list.map((s) => {
             const c = s.counts || {};
             return `<tr class="row-link" data-open="${esc(s.id)}">
-              <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}${mineOnBoard(s) ? ' <a class="badge subtle" href="#/tasks" title="You hold this website on the Jaguars board">🐆 Yours on Tasks</a>' : ''}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
+              <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}${mineOnBoard(s) ? ' <a class="badge subtle" href="#/tasks" title="You hold this website on the Jaguars board">🐆 Yours on Tasks</a>' : ''}${(s.watch || []).some((w) => w.e === state.me.email && w.h === 'peek') ? ' <span class="badge subtle" title="You peeked at it from Tasks: read-only">👁 Watching</span>' : ''}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
                 ${(() => {
                   const st = dudaState(s.siteId);
                   if (st === 'draft') return `<div><span class="badge subtle" title="This website is in Duda but hasn't been published yet — normal for an audit done before launch. Live site checks need it published first.">Not published yet</span></div>`;
@@ -8806,8 +8816,8 @@
                 ${(s.counts || {}).clarification ? `<div><span class="badge fs-clarification" title="Someone asked a question and is waiting for an answer">❓ ${s.counts.clarification} waiting on an answer</span></div>` : ''}
                 ${autoLine(s)}
                 <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtDate(s.createdAt)) : ''}</div></td>
-              <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}" data-people>${userOptions(s.assignee)}</select></span></td>
-              <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+              <td data-stop>${can('site.manage') ? `<span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}" data-people>${userOptions(s.assignee)}</select></span>` : `<span class="member-select ro-who">${s.assignee ? avatar(s.assignee, 22) + esc(nameOf(s.assignee)) : '<span class="faint">Unassigned</span>'}</span>`}</td>
+              <td data-stop>${can('site.manage') ? `<select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>` : `<span class="pill st-${slug(s.status)} ro-pill">${esc(s.status || 'Not started')}</span>`}
                 ${s.completedAt ? `<div class="small faint" title="Marked Complete ${esc(fmtFull(s.completedAt))}">by ${esc(nameOf(s.completedBy, s.completedByName))}${s.scan && s.scan.finishedAt && new Date(s.scan.finishedAt) > new Date(s.completedAt) ? ' · rescanned since' : ''}</div>` : ''}</td>
               <td>${scanBadge(s)}${repubBadge(s)}${fixedCodes(s).size
                 ? `<div style="margin-top:4px"><span class="badge ck-fixed" title="A check that produced items on this website has since been corrected. Those items may not be real — open the website and rescan to replace them.">⚠ A check was corrected — rescan</span></div>`
@@ -9205,6 +9215,7 @@
     const tabN = (g) => { const all = grpFindings(s, g).length; const o = openOf(g); return !all ? '<span class="tcount">0</span>' : o ? `<span class="tcount" title="${o} open of ${all}">${o}</span>` : `<span class="tcount tc-done" title="All ${all} closed">✓</span>`; };
     const generalComments = (s.comments || []).filter((c) => c.target === 'site' && !c.deleted).length;
     const sc = s.scan || {};
+    document.body.classList.toggle('ro-site', !!peekMine(s));
     $('#view').innerHTML = `
       <div class="site-head">
         <div class="small"><a href="#/">← All audits</a></div>
@@ -9214,12 +9225,17 @@
           <span title="${sc.finishedAt ? esc('Last scan ' + fmtFull(sc.finishedAt) + (sc.by || sc.startedBy ? ' by ' + nameOf(sc.by || sc.startedBy) : '')) : 'Not scanned yet'}">🕑 ${sc.finishedAt ? `Scanned ${esc(ago(sc.finishedAt))}${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}` : 'Not scanned yet'}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</span>
           ${backupShort(s)}
           <span title="${esc('Added by ' + (s.addedByName || nameOf(s.addedBy, '—')) + (s.createdAt ? ' · ' + fmtFull(s.createdAt) : ''))}">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}</span>
+          ${(s.watchers || []).length ? `<span title="${esc(s.watchers.map((w) => `${w.name || nameOf(w.email)}: ${w.how === 'peek' ? 'peeked (read-only)' : w.how === 'assigned' ? 'assigned an item' : 'mentioned'}`).join('\n'))}">👀 ${s.watchers.length} watching</span>` : ''}
         </div>
+        ${peekMine(s) ? `<div class="note ro-note">👁 <b>You're watching this website</b> (you peeked at it from Tasks). It is read-only for you; you can still comment. <button class="linkbtn" id="sUnpeek">Stop watching</button></div>` : ''}
         ${s.completedAt ? `<div class="small"><span class="badge scan-complete">✓ Marked Complete</span> by <button type="button" class="whobtn" data-who="${esc(s.completedBy || '')}"><b>${esc(nameOf(s.completedBy, s.completedByName))}</b></button> · ${esc(fmtFull(s.completedAt))}${sc.finishedAt && new Date(sc.finishedAt) > new Date(s.completedAt) ? ` <span class="v-still-t">· rescanned since (${esc(fmtFull(sc.finishedAt))})</span>` : ''}</div>` : ''}
         <div class="sh-bar">
           <div class="sh-who">
-            <span class="member-select" title="Who has this audit">${avatar(s.assignee)}<select id="sAssign" aria-label="Assigned to" data-people>${userOptions(s.assignee)}</select></span>
-            <select class="pill st-${slug(s.status)}" id="sStatus" aria-label="Status">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+            ${can('site.manage') ? `<span class="member-select" title="Who has this audit">${avatar(s.assignee)}<select id="sAssign" aria-label="Assigned to" data-people>${userOptions(s.assignee)}</select></span>
+            <select class="pill st-${slug(s.status)}" id="sStatus" aria-label="Status">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>`
+              : `<span class="member-select ro-who" title="Who has this audit">${s.assignee ? avatar(s.assignee, 22) + esc(nameOf(s.assignee)) : '<span class="faint">Unassigned</span>'}</span>
+            <span class="pill st-${slug(s.status)} ro-pill" title="${(state.sites.find((x) => x.id === s.id) || {}).board ? 'Set by the Jaguars board' : 'Your role does not change this'}">${esc(s.status || 'Not started')}</span>
+            ${myBoard(s) && myBoard(s).state === 'progress' ? '<button class="btn sm" id="sHold" type="button" title="Waiting on an answer: it goes to Needs review and you can take the next website">⏸ Put on hold</button>' : ''}`}
             ${(state.sites.find((x) => x.id === s.id) || {}).board ? '<a class="badge subtle sh-board" href="#/tasks" title="Being fixed on the Jaguars board">🐆 On the Jaguars board</a>' : ''}
           </div>
           <div class="sh-acts">
@@ -9239,8 +9255,15 @@
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
       </div>
       <div id="tabBody"></div>`;
-    $('#sAssign').onchange = async (e) => { await changeSite(s, { assignee: e.target.value }); await loadSite(s.id); renderSite(); };
-    $('#sStatus').onchange = async (e) => { await changeSite(s, { status: e.target.value }); await loadSite(s.id); renderSite(); };
+    if ($('#sAssign')) $('#sAssign').onchange = async (e) => { await changeSite(s, { assignee: e.target.value }); await loadSite(s.id); renderSite(); };
+    if ($('#sStatus')) $('#sStatus').onchange = async (e) => { await changeSite(s, { status: e.target.value }); await loadSite(s.id); renderSite(); };
+    if ($('#sHold')) $('#sHold').onclick = () => jgNote('Put on hold', 'What needs clarifying, and from whom?', 'Put on hold', async (note) => {
+      try { await post('/api/jags', { op: 'hold', dudaId: s.siteId, note }); toast('On hold · you can take the next website'); await loadSites(true).catch(() => {}); await loadSite(s.id); renderSite(); return true; }
+      catch (e) { toast(e.message); return null; }
+    }, '<p class="small muted">It moves to <b>Needs review</b> on Tasks with your note, the admins are told, and you are free to take the next website.</p>');
+    if ($('#sUnpeek')) $('#sUnpeek').onclick = async () => {
+      try { await post('/api/jags', { op: 'unpeek', auditId: s.id }); toast('Stopped watching'); await loadSites(true).catch(() => {}); location.hash = '#/'; } catch (e) { toast(e.message); }
+    };
     const sendToJags = () => {
       const people = (state.users || []).filter((u) => u.status === 'active' && u.role !== 'client');
       const jags = people.filter((u) => u.role === 'jaguar'), others = people.filter((u) => u.role !== 'jaguar');
@@ -9532,6 +9555,15 @@
     if (ai.text) bits.push(`<b>${ai.text.flagged || 0}</b> name or place`);
     bits.push(`<b>${ai.flagged || 0}</b> alt text`);
     return '✨ AI: ' + bits.join(' · ');
+  }
+  /** This person's card for this website on the Jaguars board, if they hold it. */
+  function myBoard(s) { const x = (state.sites.find((y) => y.id === s.id) || {}).board; return x && x.by === state.me.email ? x : null; }
+  /** Only watching (peeked from Tasks): read-only. */
+  function peekMine(s) {
+    if (!s || can('site.viewall')) return false;
+    const me = state.me.email;
+    if ([].concat(s.people || [], s.assignee || '', s.addedBy || '').includes(me)) return false;
+    return (s.watchers || []).some((w) => w.email === me && w.how === 'peek');
   }
   /** The backup, in a few words for the line under the title; the details on hover. */
   function backupShort(s) {

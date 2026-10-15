@@ -24,7 +24,7 @@ import { saveIndex } from './store.js';
 
 const CARDS = P + 'jag:cards';   // hash: Duda site id → card
 const SET = P + 'jag:set';       // the admins' settings
-const DEFAULTS = { order: 'oldest', scope: 'critical', lock: true, limit: 1, pins: [] };
+const DEFAULTS = { order: 'oldest', scope: 'critical', lock: true, limit: 1, pins: [], peek: false };
 const ORDERS = ['oldest', 'newest', 'most', 'least'];
 const DAY = 86400000;
 
@@ -197,6 +197,7 @@ async function handler(req, res) {
       if (b.scope === 'critical' || b.scope === 'any') next.scope = b.scope;
       if (typeof b.lock === 'boolean') next.lock = b.lock;
       if (b.limit !== undefined) next.limit = Math.max(1, Math.min(10, Number(b.limit) || 1));
+      if (typeof b.peek === 'boolean') next.peek = b.peek;
       await redis(['SET', SET, JSON.stringify(next)]);
       await globalLog(me, 'jaguars', 'changed the Jaguars queue settings', {});
       return res.status(200).json({ settings: next });
@@ -275,12 +276,69 @@ async function handler(req, res) {
       return res.status(200).json({ card });
     }
 
+    if (b.op === 'unpeek') {
+      const auditId = String(b.auditId || '');
+      const [raw2] = await redis(['GET', P + 'site:' + auditId]);
+      const site = unpackJSON(raw2); if (!site) return res.status(404).json({ error: 'The audit is gone.' });
+      const w = (site.watchers || []).find((x) => x.email === me.email && x.how === 'peek');
+      if (!w) return res.status(404).json({ error: 'You are not watching this website.' });
+      site.watchers = site.watchers.filter((x) => x !== w);
+      await redis(['SET', P + 'site:' + auditId, packJSON(site)]);
+      await siteLog(auditId, me, 'stopped watching this website', site.businessName || site.siteId);
+      await saveIndex(auditId);
+      return res.status(200).json({ ok: true });
+    }
+
     const id = String(b.dudaId || '');
     const [raw] = await redis(['HGET', CARDS, id]);
     const card = jparse(raw);
     if (!card) return res.status(404).json({ error: 'That website is not on the board.' });
     const holder = card.by === me.email;
 
+    if (b.op === 'hold') {
+      // Stuck on something only somebody else can answer: the website waits in Needs review with
+      // the reason, and the Jaguar is free to take the next one.
+      if (!holder && !lead) return res.status(403).json({ error: 'Only the person holding this website can put it on hold.' });
+      if (card.state !== 'progress') return res.status(409).json({ error: 'This website is not in progress.' });
+      const note = noteOf(b.note);
+      if (note.length < 3) return res.status(400).json({ error: 'Write why it is on hold (what needs clarifying).' });
+      card.state = 'review'; card.hold = { note, at: now(), by: me.email, byName: me.name }; card.reasons = ['On hold: ' + note];
+      addLog(card, me, 'put it on hold', note);
+      await saveCard(card);
+      await setStatus(card.auditId, 'On hold');
+      await siteLog(card.auditId, me, 'put the Jaguars task on hold: ' + note, card.name);
+      const who = await approvers();
+      await Promise.all(who.map((u) => tell(u.email, me, card, 'jag-review', `${me.name} put ${card.name} on hold: ${note}`)));
+      return res.status(200).json({ card });
+    }
+    if (b.op === 'resume') {
+      if (!lead && !holder) return res.status(403).json({ error: 'Only an admin or the person who held it can resume it.' });
+      if (card.state !== 'review' || !card.hold) return res.status(409).json({ error: 'This website is not on hold.' });
+      const note = noteOf(b.note);
+      card.state = 'progress'; card.reasons = []; card.hold = null;
+      addLog(card, me, 'took it off hold', note);
+      await saveCard(card);
+      await setStatus(card.auditId, 'In progress');
+      await siteLog(card.auditId, me, 'took the Jaguars task off hold' + (note ? ': ' + note : ''), card.name);
+      await tell(card.by, me, card, 'jag-back', `${me.name} took ${card.name} off hold${note ? ': ' + note : ''}`);
+      return res.status(200).json({ card });
+    }
+    if (b.op === 'peek') {
+      // Look over a teammate's shoulder: read-only, on your Audits list until you stop watching.
+      if (!lead && !set.peek) return res.status(403).json({ error: 'Peeking is switched off. An admin can turn it on in Tasks.' });
+      if (!card.auditId) return res.status(409).json({ error: 'This website has no audit yet.' });
+      if (holder) return res.status(400).json({ error: 'This one is yours already.' });
+      const [raw2] = await redis(['GET', P + 'site:' + card.auditId]);
+      const site = unpackJSON(raw2); if (!site) return res.status(404).json({ error: 'The audit is gone.' });
+      const inAlready = [].concat(site.people || [], site.assignee || '', site.addedBy || '').includes(me.email) || (site.watchers || []).some((w) => w.email === me.email);
+      if (!inAlready) {
+        site.watchers = (site.watchers || []).concat({ email: me.email, name: me.name, how: 'peek', at: now() });
+        await redis(['SET', P + 'site:' + card.auditId, packJSON(site)]);
+        await siteLog(card.auditId, me, 'started watching this website (peeked from Tasks, read-only)', card.name);
+        await saveIndex(card.auditId);
+      }
+      return res.status(200).json({ auditId: card.auditId });
+    }
     if (b.op === 'done') {
       if (!holder && !lead) return res.status(403).json({ error: 'Only the person holding this website can finish it.' });
       if (card.state !== 'progress') return res.status(409).json({ error: 'This website is not in progress.' });
@@ -322,10 +380,11 @@ async function handler(req, res) {
     if (b.op === 'approve' || b.op === 'sendback') {
       if (!lead) return res.status(403).json({ error: 'Your role does not allow approving Jaguar audits.' });
       if (card.state !== 'review') return res.status(409).json({ error: 'This website is not waiting for review.' });
+      if (b.op === 'approve' && card.hold) return res.status(409).json({ error: 'This website is on hold: take it off hold, hand it on, or put it back in the queue.' });
       const note = noteOf(b.note);
       if (b.op === 'sendback') {
         if (note.length < 3) return res.status(400).json({ error: 'Say what still needs doing.' });
-        card.state = 'progress'; card.doneAt = '';
+        card.state = 'progress'; card.doneAt = ''; card.hold = null;
         addLog(card, me, 'sent it back', note);
         await saveCard(card);
         await setStatus(card.auditId, 'In progress');
@@ -353,7 +412,7 @@ async function handler(req, res) {
       if (u.email === card.by) return res.status(400).json({ error: 'They already have it.' });
       const from = card.byName;
       card.by = u.email; card.byName = u.name;
-      if (card.state === 'review') card.state = 'progress';
+      if (card.state === 'review') { card.state = 'progress'; card.hold = null; card.reasons = []; }
       addLog(card, me, `handed it to ${u.name} (was ${from})`, note);
       await holdAudit(card, me, u.email, u.name, 'In progress');
       await saveCard(card);

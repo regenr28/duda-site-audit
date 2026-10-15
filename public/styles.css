@@ -2076,3 +2076,9 @@ td .pp-btn { height: 32px; font-size: 13px; }
 .ex-pg.cov { opacity: .7; cursor: default; }
 .ex-pg-t { display: grid; min-width: 0; flex: 1; }
 .ex-pg-t > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Read-only bits: owner and status for people who can't change them, peeking */
+.ro-who { gap: 7px; font-size: 14px; }
+.ro-pill { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 999px; font-size: 13px; cursor: default; }
+.ro-note { margin: 4px 0 0; }
+body.ro-site #tabBody td select, body.ro-site #tabBody td .pp-btn, body.ro-site #tabBody td input[type=checkbox], body.ro-site #tabBody th input[type=checkbox], body.ro-site #sRescan,
+body.ro-site .drawer .status-btns, body.ro-site .drawer .pp-btn, body.ro-site .drawer select, body.ro-site #drRecheck, body.ro-site .ex-add, body.ro-site [data-exedit], body.ro-site [data-exdel] { pointer-events: none; opacity: .55; }

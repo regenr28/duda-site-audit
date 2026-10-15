@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-16-hold-peek', date: '2026-10-16', audience: 'all', tag: 'Audits',
+    title: 'Jaguars: put a website on hold and take the next; peek at teammates\' websites; assigned or mentioned means you can see it',
+    what: '<b>⏸ On hold</b> (with a note) moves a website to <b>Needs review</b> and frees you to take the next one; <b>▶ Resume</b> brings it back. When the admins allow it, <b>👁 Peek</b> opens a teammate\'s website read-only and keeps it on your Audits as <b>Watching</b> until you <b>Stop watching</b>. Anyone assigned an audit item or @mentioned on a website can now open it from their Audits. Every one of these is in the Activity log.',
+    where: ['<b>Tasks</b>.', 'An audit → <b>⏸ Put on hold</b>, <b>👀 watching</b>.'],
+    link: '#/help/jaguars', linkText: 'How the board works',
+  },
+  {
     id: '2026-10-15-exempt-pick-pages', date: '2026-10-15', audience: 'all', tag: 'Audits',
     title: 'Exempting pages: pick them from the website\'s own list, or see what a pattern catches',
     what: 'In <b>🚫 Audit exceptions → + Specific pages</b>, the pages from the last scan are listed (with their titles and how many audit items each has) to tick, with a filter box. Typing a pattern like <span class="mono">/xpel-*</span> shows straight away which pages it matches, its chip says how many, and the pages it covers are ticked for you.',

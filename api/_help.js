@@ -1060,6 +1060,11 @@ export const HELP_SECTIONS = [
 <h3>Finishing</h3>
 <p>Fix <b>everything</b>: audit items first (criticals first), then <b>Design polish</b> and <b>Lengths</b>. Then <b>Rescan</b> and click <b>Done</b> on the card. Done is refused while anything is still open, or when items were marked fixed after the last scan — the rescan is what proves the fixes are on the website.</p>
 <p>If you marked any item <b>False alarm</b>, left one <b>For clarification</b> or put one <b>On hold</b>, the website goes to <b>Needs review</b>. Someone allowed to approve looks at it and either <b>approves</b> it or <b>sends it back</b> with what still needs doing.</p>
+<h3>On hold</h3>
+<p>Waiting on an answer (the client, an admin)? <b>⏸ On hold</b> on your card (or <b>⏸ Put on hold</b> on the audit) with a note saying what needs clarifying. The website moves to <b>Needs review</b> marked On hold, the admins are told, its status becomes On hold, and you can <b>Take next</b> straight away. An admin (or you) clicks <b>▶ Resume</b> when the answer comes, and it is back In progress with you; it can also be handed on or put back in the queue. Jaguars don't change a website's status or owner by hand: the board does it.</p>
+<h3>Peeking and watching</h3>
+<p>When the admins switch on <b>Jaguars can peek at each other's websites</b>, a teammate's card has <b>👁 Peek</b>. Peeking opens the website <b>read-only</b> (you can read everything and comment, not change anything), puts it on your Audits list tagged <b>👁 Watching</b>, and writes it in the Activity log. <b>Stop watching</b> on the audit takes it off your list, also logged.</p>
+<p>Somebody who is <b>assigned an audit item</b> on a website, or <b>@mentioned</b> in a comment on it, is brought into the website automatically: it is on their Audits list and they can work on it. The Activity log says who was brought in and why, and the audit's header shows <b>👀 N watching</b> (hover for who and why).</p>
 <h3>Not sure?</h3>
 <p>Unsure about one item: assign that item to another Jaguar or an admin from the audit, as usual. Handing on the <b>whole website</b> (<b>Hand on</b> on the card) needs a reason, and can also put it back in the queue. Every card has a <b>History</b>; the same lines are in the audit's <b>Activity</b> tab.</p>
 <h3>Joining</h3>

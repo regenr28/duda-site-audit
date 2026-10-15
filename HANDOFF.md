@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …`, `141 - …`, `142 - …`, `143 - …`). The next update is **144**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **145**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 143: styles v26, engine v10, app v29).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 144: styles v27, engine v10, app v30).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v26.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (15 Oct 2026)
 
-- **On GitHub:** up to 142 (commit `992b721`). **Delivered as a zip, maybe not uploaded yet:** 143 (pick pages to exempt from the website's list, below). Check `git log origin/main` and ask Reymark if unsure.
+- **On GitHub:** up to 143 (commit `dbe5172`). **Delivered as a zip, maybe not uploaded yet:** 144 (on hold, peeking, brought in by assignment/mention, below). Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
 - **Harmless log noise:** red `[DEP0169] url.parse()` lines in Vercel's runtime logs are a Node 24 deprecation warning from outside the app's code. Requests succeed.
 - **Waiting on keys (Reymark adds them in Vercel):** `GOOGLE_MAPS_API_KEY` (Google Maps ID check, Online presence), PageSpeed key, a Google service account (GA4 + Search Console). Rotating the Anthropic/OpenAI keys was recommended.
@@ -103,6 +103,21 @@ The Jaguars are a team of 6 being onboarded. Their job: fix all the audits. Agre
 
 - In `exemptForm` (Specific pages): `exSitePages(s)` lists the pages the last scan read (`site.pages`, minus missing ones) with title and open/exempt item counts, a filter box, tick boxes (add/remove exact-path chips); pages a wildcard chip covers show ticked and disabled. `chipField` gained `note` (chip note: "N pages" for patterns), `onType` (live "Matches N pages: …" hint) and returns `redraw`.
 
-## Next: update 144
+## Update 144 — on hold, peeking, watchers (built)
 
-- **Update 144:** the Tasks tab also gets **Projects** (projects in the Jaguars phase assigned to me) and **Special tasks** (one-off tasks an admin creates: title, notes, link, due date, assignee).
+- **On hold:** `op: 'hold'` (holder or lead, note required) → card `state: 'review'`, `card.hold = {note, at, by}`, audit status "On hold", approvers told; frees the Jaguar's slot (only `progress` counts). `op: 'resume'` → back to `progress` with the same person. `approve` is refused for held cards; `sendback`/`reassign` clear the hold. UI: ⏸ On hold on the card, ⏸ Put on hold on the audit (`#sHold`), ▶ Resume on held cards.
+- **Owner/status for people without `site.manage`** (Jaguars) are shown as text (`.ro-who`, `.ro-pill`) on the audit header and Audits rows, instead of controls that fail.
+- **Watchers:** `site.watchers = [{email, name, how: 'peek'|'assigned'|'mentioned', at}]`; summaries carry `watch: [{e, h}]`. `canSeeSite` and the Audits list include watchers. `bringIn()` in `api/store.js` adds item assignees (`patchFinding`) and @mentioned people (`comment`) to `site.people` + watchers, logged.
+- **Peek:** setting `peek` on the board (admins). `op: 'peek'` (dudaId) adds a `peek` watcher (logged); `op: 'unpeek'` (auditId) removes it (logged). Peek-only users (`peekOnly()`) are refused every store write except comments (guard at the top of the POST switch); the page gets `body.ro-site` (CSS disables editing controls) and a "You're watching" note with Stop watching. Test: `tests/tk/e2e_jags2.py`.
+
+## Next: update 145 (agreed with Reymark, NOT started — no code written yet)
+
+1. **Watching, for Jaguars:** live presence ("X is also here") already works for every role (checked with a Jaguar + admin). Add: when someone peeks (`op: 'peek'` in `api/jags.js`), notify the card holder (new kind e.g. `jag-watch`, put it in the "Work assigned to you" notify group, KIND text, `notifLink` → the audit), and show watchers' avatars on the Tasks card (from the audit summary's `watch`).
+2. **Needs review shows the flagged items:** in the board GET (`cards` map in `api/jags.js`), for review cards without `hold`, read the audit's findings + `fstate` and add `reviewItems: [{num, status ('false'|'clarification'|'hold'), message, by}]` (false alarms marked since `takenAt`, all clarification/hold). On the review card (`rCard` in `renderTasks`, `public/app.js`) list them with links `#/site/<auditId>/item/<num>`; for admins add **✓ OK** (keep) and **↺ Reopen** (store `patchFinding` → status `open`). Reopened item numbers pre-fill the **Send back** note. Answering Reymark's questions: legit false alarm → **Approve** (→ Complete); not a false alarm → **Send back** with a note (→ same Jaguar, In progress); the auditor is the card's person (photo + name) and **History**.
+3. Then: Help (`jaguars` section) + What's New + tests (`tests/tk/e2e_jags2.py` is the place) + bump `?v=`.
+
+## After that: update 146
+
+- The Tasks tab also gets
+
+- **Update 145:** the Tasks tab also gets **Projects** (projects in the Jaguars phase assigned to me) and **Special tasks** (one-off tasks an admin creates: title, notes, link, due date, assignee).

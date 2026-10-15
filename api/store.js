@@ -88,6 +88,7 @@ function summary(site, comments) {
     // Everyone this website has passed through, so the list can be narrowed to a person's own work
     // without reading every full record.
     people: site.people || [site.addedBy, site.assignee].filter(Boolean),
+    watch: (site.watchers || []).map((w) => ({ e: w.email, h: w.how })),
     ...(site.completedAt ? { completedBy: site.completedBy, completedByName: site.completedByName, completedAt: site.completedAt } : {}),
     ...(site.verify ? { verify: { at: site.verify.at, ok: site.verify.ok, still: site.verify.still } } : {}),
     // When the auto audit last read the live website for this audit, and what it found then.
@@ -108,7 +109,31 @@ function slimScan(sc) {
 async function canSeeSite(me, site) {
   if (await can(me, 'site.viewall')) return true;
   const mine = normEmail(me.email);
-  return [].concat(site.people || [], site.assignee || '', site.addedBy || '').some((e) => e && normEmail(e) === mine);
+  return [].concat(site.people || [], site.assignee || '', site.addedBy || '', (site.watchers || []).map((w) => w.email)).some((e) => e && normEmail(e) === mine);
+}
+/** Somebody who only peeked at a website: they may read it (and comment), not change it. */
+export function peekOnly(email, x) {
+  const mine = normEmail(email);
+  if ([].concat(x.people || [], x.assignee || '', x.addedBy || '').some((e) => e && normEmail(e) === mine)) return false;
+  return (x.watch || x.watchers || []).some((w) => normEmail(w.e || w.email) === mine && (w.h || w.how) === 'peek');
+}
+/**
+ * Bring people into a website because they were given part of it: an audit item assigned to them,
+ * or a mention in a comment. They can then open it and it is on their Audits list. Logged.
+ */
+async function bringIn(siteKey, me, emails, why) {
+  const want = [...new Set(emails.filter(Boolean).map(normEmail))].filter((e) => e !== normEmail(me.email) || why === 'assigned');
+  if (!want.length) return;
+  const [raw] = await redis(['GET', P + 'site:' + siteKey]);
+  const site = unpackJSON(raw); if (!site) return;
+  const users = await listUsers();
+  const has = (e) => [].concat(site.people || [], site.assignee || '', site.addedBy || '').some((x) => x && normEmail(x) === e);
+  const fresh = want.map((e) => users.find((u) => normEmail(u.email) === e && u.role !== 'client' && u.status === 'active')).filter((u) => u && !has(normEmail(u.email)));
+  if (!fresh.length) return;
+  site.people = [...new Set([...(site.people || []), ...fresh.map((u) => u.email)])];
+  site.watchers = (site.watchers || []).filter((w) => !fresh.some((u) => u.email === w.email)).concat(fresh.map((u) => ({ email: u.email, name: u.name, how: why, at: now(), by: me.email, byName: me.name })));
+  await redis(['SET', P + 'site:' + siteKey, packJSON(site)]);
+  for (const u of fresh) await log(siteKey, me, 'watch', `brought ${u.name} into this website (${why === 'assigned' ? 'an audit item was assigned to them' : 'mentioned in a comment'})`);
 }
 
 export async function saveIndex(id) {
@@ -263,7 +288,7 @@ async function handler(req, res) {
         const seeAll = await can(me, 'site.viewall');
         if (!seeAll) {
           const mine = normEmail(me.email);
-          sites = sites.filter((x) => [].concat(x.people || [], x.assignee || [], x.addedBy || []).some((e) => normEmail(e) === mine));
+          sites = sites.filter((x) => [].concat(x.people || [], x.assignee || [], x.addedBy || [], (x.watch || []).map((w) => w.e)).some((e) => normEmail(e) === mine));
         }
         return res.status(200).json({ mode: 'kv', sites, scoped: !seeAll, ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true), build: buildId() });
       }
@@ -395,6 +420,15 @@ async function handler(req, res) {
     }
 
     const b = readBody(req);
+    // Somebody only watching a website (they peeked at it from the Jaguars board) can read it and
+    // talk on it, but not change it.
+    if (!['create', 'comment', 'readNotifs'].includes(b.op) && !(await can(me, 'site.viewall'))) {
+      const keys = [b.id, b.siteId].filter((k) => typeof k === 'string' && k);
+      if (keys.length) {
+        const [got] = await redis(['HMGET', P + 'index', ...keys]);
+        if ((got || []).some((raw) => { const x = jparse(raw); return x && peekOnly(me.email, x); })) return res.status(403).json({ error: 'You are only watching this website (read-only).' });
+      }
+    }
     switch (b.op) {
       case 'create': {
         if (await denyUnless(res, me, 'site.add', 'Your role does not allow adding websites.')) return;
@@ -1088,6 +1122,7 @@ async function handler(req, res) {
             if (t.to && t.to !== me.email) await notify(t.to, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: t.f.num, kind: 'assign', text: t.f.message });
           }
         }
+        { const to = touched.filter((t) => t.kind === 'assign' && t.to).map((t) => t.to); if (to.length) await bringIn(b.siteId, me, to, 'assigned'); }
         return res.status(200).json(await saveIndex(b.siteId));
       }
       case 'recheck': {
@@ -1168,6 +1203,7 @@ async function handler(req, res) {
         await redis(['HSET', P + 'cmt:' + b.siteId, c.id, JSON.stringify(c)]);
         const where = finding ? ` on #${finding.num}` : '';
         await log(b.siteId, me, replyTo ? 'reply' : (finding ? 'item-comment' : 'comment'), replyTo ? `replied to ${replyTo.byName}${where}` : (finding ? `commented on #${finding.num}` : 'added a comment'), { commentId: c.id, findingId: finding ? finding.id : null, findingNum: finding ? finding.num : null });
+        if (mentions.length) await bringIn(b.siteId, me, mentions, 'mentioned');
         // Notifications: people mentioned + the person being replied to
         const siteName = l.site.businessName || l.site.siteId;
         const link = `${appUrl(req)}/#/site/${b.siteId}${finding ? '/item/' + finding.num : '/comments'}`;
