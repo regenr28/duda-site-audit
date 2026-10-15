@@ -388,7 +388,9 @@ async function nowReading(s, i, n, by) {
 }
 /** Read one website (or carry on reading it). Returns { done:false } when the time ran out first. */
 async function readSite(s, recId, timeLeft) {
-  const [recRaw, okRaw, prevRaw, partRaw] = await redis(recId ? ['GET', P + 'site:' + recId] : ['GET', P + 'none'], ['SMEMBERS', WOK(s.id)], ['GET', WKEY(s.id)], ['GET', WPART(s.id)]);
+  const [recRaw, okRaw, prevRaw, partRaw, exG, exS] = await redis(recId ? ['GET', P + 'site:' + recId] : ['GET', P + 'none'], ['SMEMBERS', WOK(s.id)], ['GET', WKEY(s.id)], ['GET', WPART(s.id)], ['GET', P + 'exsets'], ['GET', P + 'exsite:' + s.id]);
+  // Manufacturer pages and values the team said not to check (exception sets and this website's own).
+  const exRules = [].concat(jparse(exS) || [], (jparse(exG) || {}).sets || []);
   const rec = unpackJSON(recRaw) || {};
   const allow = rec.allow || [];
   // Exceptions approved on the website's audit, plus "not a problem" said here.
@@ -452,7 +454,7 @@ async function readSite(s, recId, timeLeft) {
     await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found, forms }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
     return { done: false };
   }
-  const issues = merge(found, okKeys);
+  const issues = merge(exRules.length ? found.filter((x) => !A().exemptIssueRule(x, exRules)) : found, okKeys);
   const prev = jparse(prevRaw);
   const before = new Set(((prev && prev.issues) || []).map((x) => x.k));
   const fresh = issues.filter((x) => !before.has(x.k));

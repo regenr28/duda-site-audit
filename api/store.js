@@ -26,11 +26,21 @@ async function loadSite(id) {
   const site = unpackJSON(raw);
   if (!site) return null;
   const st = pairs(fstate, true); const nums = pairs(fnum); const comments = Object.values(pairs(cmts, true));
+  // Exceptions (manufacturer pages and values): open items they cover read as Exempt. Worked out
+  // fresh on every load, so adding or removing an exception changes the items at once.
+  const [gx, sx] = await redis(['GET', P + 'exsets'], ['GET', P + 'exsite:' + site.siteId]);
+  const gex = jparse(gx) || {};
+  const rules = [].concat(jparse(sx) || [], gex.sets || []);
+  site._exv = gex.v || 0;
   const cCount = {};
   comments.forEach((c) => { if (c.target && c.target !== 'site' && !c.deleted) cCount[c.target] = (cCount[c.target] || 0) + 1; });
   (site.findings || []).forEach((f) => {
     const s = st[f.id] || {};
     f.status = s.status || (f.done ? 'done' : 'open');
+    if (f.status === 'open' && rules.length) {
+      const r = globalThis.DudaAudit.exemptRuleFor(f, rules);
+      if (r) { f.status = 'exempt'; f.exempt = { id: r.id, kind: r.kind || 'site', name: r.name || (r.pages || []).join(', '), by: r.byName || '' }; }
+    }
     f.assignee = s.assignee !== undefined ? s.assignee : (f.assignee || '');
     f.statusBy = s.updatedBy || ''; f.statusAt = s.updatedAt || '';
     if (s.auto) f.auto = { why: s.auto, at: s.autoAt || '', ref: s.autoRef || '', note: s.autoNote || '' };
@@ -53,19 +63,20 @@ function summary(site, comments) {
   // polish) are counted apart (pt total, pc closed, po open), so "17/17" means the work that matters
   // is done even with 120 font items still open.
   // Lengths (titles, descriptions, alt text) likewise: lt total, lc closed, lo open.
-  const c = { critical: 0, outdated: 0, warning: 0, info: 0, clarification: 0, hold: 0, closed: 0, total: 0, comments: 0, aiPending: 0, aiPendingBlocks: 0, pt: 0, pc: 0, po: 0, lt: 0, lc: 0, lo: 0 };
+  const c = { critical: 0, outdated: 0, warning: 0, info: 0, clarification: 0, hold: 0, closed: 0, total: 0, comments: 0, aiPending: 0, aiPendingBlocks: 0, pt: 0, pc: 0, po: 0, lt: 0, lc: 0, lo: 0, exempt: 0 };
   (site.findings || []).forEach((f) => {
     const side = isPolish(f) ? 'p' : isLength(f) ? 'l' : '';
     if (side) {
       c[side + 't']++;
-      if (f.status === 'done' || f.status === 'false') c[side + 'c']++;
+      if (f.status === 'done' || f.status === 'false' || f.status === 'exempt') c[side + 'c']++;
       else if (f.status !== 'hold') c[side + 'o']++;
       if (f.status === 'clarification') c.clarification++;
       return;
     }
     c.total++;
     if (/^AI_PENDING/.test(f.code) && f.status !== 'done' && f.status !== 'false') { c.aiPending++; c.aiPendingBlocks += ((f.aiPending && f.aiPending.items) || []).length; }
-    if (f.status === 'done' || f.status === 'false') c.closed++;
+    if (f.status === 'exempt') c.exempt++;
+    if (f.status === 'done' || f.status === 'false' || f.status === 'exempt') c.closed++;
     else if (f.status === 'hold') c.hold++;
     else { c[f.severity]++; if (f.status === 'clarification') c.clarification++; }
   });
@@ -73,7 +84,7 @@ function summary(site, comments) {
   return {
     id: site.id, siteId: site.siteId, host: site.host, editorUrl: site.editorUrl, businessName: site.businessName || '',
     assignee: site.assignee || '', status: site.status || 'Not started', scan: slimScan(site.scan), addedBy: site.addedBy || '', addedByName: site.addedByName || '',
-    createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c,
+    createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c, exv: site._exv || 0,
     // Everyone this website has passed through, so the list can be narrowed to a person's own work
     // without reading every full record.
     people: site.people || [site.addedBy, site.assignee].filter(Boolean),
@@ -228,7 +239,8 @@ async function handler(req, res) {
       if (op === 'list') {
         // Scan claims (who has a website queued or scanning) ride along with every poll; the list is tiny
         if (req.query.since) { const [v, cl] = await redis(['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims']); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claims: await freshClaims(cl), build: buildId() }); }
-        const [idx, v, cl, fx, jc] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims'], ['HGETALL', P + 'fixedchecks'], ['HGETALL', P + 'jag:cards']);
+        const [idx, v, cl, fx, jc, exr] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims'], ['HGETALL', P + 'fixedchecks'], ['HGETALL', P + 'jag:cards'], ['GET', P + 'exsets']);
+        const exv = (jparse(exr) || {}).v || 0;
         // Checks that were corrected after somebody reported them: a website scanned before one of
         // these is carrying items the corrected check would no longer raise, and says so on its page.
         // Narrowed here, not in the page: somebody who may only see their own websites is never
@@ -236,7 +248,8 @@ async function handler(req, res) {
         let sites = Object.values(pairs(idx, true));
         // Summaries written before must-fix and design polish were counted apart are brought up to
         // date a few at a time (each is one website read), so the list is right within a load or two.
-        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined)).slice(0, 30);
+        // …and so are those counted before the exception sets last changed.
+        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined || (x.exv || 0) !== exv)).slice(0, 30);
         if (old.length) {
           const fresh = await Promise.all(old.map((x) => saveIndex(x.id).catch(() => null)));
           const byId = new Map(fresh.filter(Boolean).map((x) => [x.id, x]));

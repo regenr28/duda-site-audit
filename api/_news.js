@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-15-exceptions', date: '2026-10-15', audience: 'all', tag: 'Audits',
+    title: 'Exceptions: manufacturer landing pages and values are no longer raised',
+    what: 'A manufacturer\'s landing page (XPEL, 3M…) is meant to show the manufacturer\'s phone, email and socials. Now anyone can <b>exempt a page</b> on one website and tick what not to check there (contact info, meta, headings, content, links), and admins can make <b>exception sets</b> for every website, like <b>XPEL Landing Page</b>: page patterns such as <span class="mono">/xpel-*</span> plus the manufacturer\'s phones, emails and social links, fine anywhere. Before saving or removing, you see exactly what changes (the items on this website, or every audit a set touches) and confirm. Covered items show as <b>Exempt</b> (closed) and come back as Open if the exception is removed. Every change is in the Activity log.',
+    where: ['An audit → <b>🚫 Exceptions</b>, or an item → <b>🚫 Exempt this page…</b>', '<b>Settings → 🚫 Exceptions</b> (admins).'],
+    link: '#/help/exceptions', linkText: 'How exceptions work',
+  },
+  {
     id: '2026-10-15-send-to-jaguars', date: '2026-10-15', audience: 'all', tag: 'Audits',
     title: 'Send an audit to the Jaguars; the Audits list leaves out what is on the board',
     what: 'On any audit, <b>🐆 Send to Jaguars</b> hands it over: into the Tasks queue, or straight to one Jaguar (In progress with their name), with a note. What was already fixed stays fixed. While a website is on the Jaguars board it is not listed on Audits (the page says how many are there), so nobody works on it twice; it returns to Audits once complete.',

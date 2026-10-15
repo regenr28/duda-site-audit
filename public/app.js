@@ -8,6 +8,7 @@
     { v: 'hold', label: 'On hold' }, { v: 'false', label: 'False alarm' },
   ];
   const FLABEL = Object.fromEntries(FSTATUS.map((s) => [s.v, s.label]));
+  FLABEL.exempt = 'Exempt'; // set by an exception, never picked by hand
   // One token that means "whoever can answer this". The server turns it into today's admins.
   const GROUP_ADMINS = '*admins';
   const GROUP_ADMINS_LABEL = 'Admins';
@@ -1979,6 +1980,190 @@
     modal(`<header><h2>${esc(c.name)} · history</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body">${rows.length ? `<ul class="jg-log">${rows.map((l) => `<li><b>${esc(l.byName)}</b> ${esc(l.what)}${l.note ? `<div class="small">“${esc(l.note)}”</div>` : ''}<div class="small faint">${esc(fmtFull(l.at))}</div></li>`).join('')}</ul>` : '<div class="empty">Nothing yet.</div>'}
         ${c.auditId ? `<div class="small faint">Everything done on the audit itself is in its <a href="#/site/${esc(c.auditId)}/activity" data-close>Activity</a> tab.</div>` : ''}</div>`);
+  }
+
+  // =====================================================================
+  // EXCEPTIONS — manufacturer pages and values that are not checked. Page exceptions for one
+  // website live on its audit (anyone); exception sets for every website live in Settings (admins).
+  // Nothing is saved or removed before the person has seen exactly what it changes.
+  // =====================================================================
+  const ex = { groups: null };
+  const exGroups = () => ex.groups || A.EXEMPT_GROUPS;
+  const exSkipWords = (skip) => (skip || []).map((k) => (exGroups().find((g) => g.k === k) || {}).label || k).join(', ');
+  const exWho = (r) => `added by ${esc(r.byName || nameOf(r.by))} · ${esc(fmtFull(r.at))}${r.updatedAt ? ` · changed by ${esc(r.updatedByName || nameOf(r.updatedBy))} · ${esc(fmtFull(r.updatedAt))}` : ''}`;
+  const exHistory = (r) => ((r.history || []).length ? `<details class="small ex-hist"><summary class="muted">History (${r.history.length})</summary><ul>${r.history.slice().reverse().map((h) => `<li><b>${esc(h.byName)}</b> ${esc(h.what)} <span class="faint">· ${esc(fmtFull(h.at))}</span></li>`).join('')}</ul></details>` : '');
+  const exTicks = (skip) => `<div class="ex-ticks">${exGroups().map((g) => `<label class="check-row"><input type="checkbox" data-exk="${g.k}" ${(skip ? skip.includes(g.k) : g.def) ? 'checked' : ''}><span><b>${esc(g.label)}</b> <span class="faint">${esc(g.desc)}</span></span></label>`).join('')}</div>`;
+  const exPicked = () => $$('[data-exk]').filter((i) => i.checked).map((i) => i.dataset.exk);
+  const exPagesOf = (v) => String(v || '').split(/[\n,]+/).map((x) => A.exemptPath(x)).filter(Boolean);
+  /** Which open items of one audit a change of rules would close (gain) or bring back (back). */
+  function exImpact(s, before, after) {
+    const gain = [], back = [];
+    (s.findings || []).forEach((f) => {
+      if (f.gone || (f.status !== 'open' && f.status !== 'exempt')) return; // closed by hand: untouched
+      const was = !!A.exemptRuleFor(f, before), will = !!A.exemptRuleFor(f, after);
+      if (!was && will) gain.push(f); else if (was && !will) back.push(f);
+    });
+    return { gain, back };
+  }
+  /** The items, in a box that scrolls rather than pushing the buttons off the screen. */
+  const exItemTable = (s, list) => `<div class="ex-scroll"><table class="ex-tbl"><thead><tr><th>#</th><th>Audit item</th><th>Page</th><th></th></tr></thead><tbody>
+    ${list.map((f) => `<tr><td class="mono">#${esc(f.num || '')}</td><td>${esc(f.message || f.code)}${f.found ? `<div class="small faint">${esc(String(f.found).slice(0, 90))}</div>` : ''}</td><td class="mono small">${esc(f.path || '')}</td>
+      <td>${f.num ? `<a href="#/site/${esc(s.id)}/item/${esc(f.num)}" target="_blank" rel="noopener">Check ↗</a>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+  /** The same per website, for a set (counted by the server across every audit). */
+  const exSiteTable = (rows) => `<div class="ex-scroll"><table class="ex-tbl"><thead><tr><th>Website</th><th>Status</th><th>Assigned</th><th>Become Exempt</th><th>Come back</th><th></th></tr></thead><tbody>
+    ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b><div class="small faint mono">${esc(r.siteId)}</div></td><td class="small">${esc(r.status)}</td><td class="small">${r.assignee ? esc(nameOf(r.assignee)) : '<span class="faint">—</span>'}</td>
+      <td>${r.gain ? `<b>${r.gain}</b>` : '<span class="faint">0</span>'}</td><td>${r.back ? `<b>${r.back}</b>` : '<span class="faint">0</span>'}</td><td><a href="#/site/${esc(r.id)}" target="_blank" rel="noopener">Open ↗</a></td></tr>`).join('')}</tbody></table></div>`;
+  async function exRules(s) { const d = await api('/api/exempt?op=list&site=' + encodeURIComponent(s.siteId)); ex.groups = d.groups; return d; }
+  const exDone = async (s, msg) => { closeModal(); await loadSite(s.id); renderSite(); toast(msg); };
+
+  async function openExceptions(s) {
+    let d;
+    try { d = await exRules(s); } catch (e) { toast(e.message); return; }
+    const exemptNow = (s.findings || []).filter((f) => f.status === 'exempt');
+    const setsHere = (d.global || []).filter((g) => exemptNow.some((f) => f.exempt && f.exempt.id === g.id));
+    modal(`<header><h2>Exceptions for ${esc(s.businessName || s.siteId)}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">
+        <p class="small muted">Pages where some checks don't apply, like a manufacturer's landing page that is meant to show the manufacturer's phone and socials. Items they cover are <b>Exempt</b> (closed); removing the exception brings them back.</p>
+        <h3>This website's page exceptions</h3>
+        ${(d.site || []).length ? (d.site || []).map((r) => `<div class="ex-card">
+            <div class="ex-top"><div><b class="mono">${esc(r.pages.join(', '))}</b><div class="small">Not checking: ${esc(exSkipWords(r.skip))}</div>${r.note ? `<div class="small">“${esc(r.note)}”</div>` : ''}<div class="small faint">${exWho(r)}</div></div>
+              <div class="ex-acts"><button class="btn sm" data-exedit="${esc(r.id)}">Edit</button><button class="btn sm danger" data-exdel="${esc(r.id)}">Remove</button></div></div>
+            ${exHistory(r)}</div>`).join('') : '<div class="small faint">None yet.</div>'}
+        <button class="btn primary" id="exAdd" style="margin-top:8px">+ Exempt a page</button>
+        <h3 style="margin-top:18px">Exception sets (every website)</h3>
+        ${(d.global || []).length ? `<div class="small muted">${setsHere.length ? `Covering items here: ${setsHere.map((g) => `<b>${esc(g.name)}</b>`).join(', ')}. ` : ''}${(d.global || []).length} set${d.global.length === 1 ? '' : 's'} in use: ${d.global.map((g) => esc(g.name)).join(', ')}.</div>` : '<div class="small faint">None yet.</div>'}
+        ${d.canGlobal ? '<a class="btn sm" href="#/settings/exceptions" data-close style="margin-top:6px">Manage exception sets</a>' : '<div class="small faint">Exception sets are managed by the admins.</div>'}
+        ${exemptNow.length ? `<div class="small" style="margin-top:12px">🚫 <b>${exemptNow.length}</b> item${exemptNow.length === 1 ? ' is' : 's are'} Exempt on this audit.</div>` : ''}
+      </div>`, { wide: true });
+    $('#exAdd').onclick = () => exemptForm(s, null, {}, d);
+    $$('[data-exedit]').forEach((b) => { b.onclick = () => exemptForm(s, (d.site || []).find((r) => r.id === b.dataset.exedit), {}, d); });
+    $$('[data-exdel]').forEach((b) => { b.onclick = () => exRemoveSite(s, (d.site || []).find((x) => x.id === b.dataset.exdel), d); });
+  }
+  /** Removing one website's page exception: what comes back first, then "are you sure". */
+  function exRemoveSite(s, r, d) {
+    const all = (d.site || []).concat(d.global || []);
+    const { back } = exImpact(s, all, all.filter((x) => x.id !== r.id));
+    modal(`<header><h2>Remove this page exception?</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body"><p><span class="mono">${esc(r.pages.join(', '))}</span> will be checked normally again (${esc(exSkipWords(r.skip))}).</p>
+        ${back.length ? `<p><b>${back.length}</b> item${back.length === 1 ? '' : 's'} will come back to this audit as <b>Open</b>:</p>${exItemTable(s, back)}` : '<p class="muted">No items on this audit come back (none are covered by it only). Future scans will check those pages again.</p>'}
+        <p class="small faint">Items somebody closed by hand (Done, False alarm…) stay as they are.</p></div>
+      <footer><button class="btn" id="exBack">Back</button><span class="spacer"></span><button class="btn danger" id="exGo">Yes, remove${back.length ? ` and bring back ${back.length}` : ''}</button></footer>`, { wide: true });
+    $('#exBack').onclick = () => openExceptions(s);
+    $('#exGo').onclick = async () => {
+      $('#exGo').disabled = true;
+      try { await post('/api/exempt', { op: 'siteRemove', site: s.siteId, id: r.id }); await exDone(s, back.length ? `Removed · ${back.length} item${back.length === 1 ? '' : 's'} back` : 'Removed'); }
+      catch (e) { toast(e.message); $('#exGo').disabled = false; }
+    };
+  }
+  /** Add or change one website's page exception: fill in, see exactly what it changes, confirm. */
+  async function exemptForm(s, rule, init, d) {
+    if (!d) { try { d = await exRules(s); } catch (e) { toast(e.message); return; } }
+    const r = rule || { pages: init.pages || [], skip: init.skip };
+    modal(`<header><h2>${rule ? 'Change the page exception' : 'Exempt a page'}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body"><div id="exStep1">
+        <label class="field">Page address <span class="small muted">one per line · the full link or just the path · * for "anything": /xpel-*, *ppf*</span>
+          <textarea id="exPages" rows="3" class="mono" placeholder="/xpel-paint-protection-film">${esc((r.pages || []).join('\n'))}</textarea></label>
+        <div class="field"><span>Don't check on these pages</span>${exTicks(r.skip)}</div>
+        <label class="field">Why <span class="small muted">(optional)</span><input type="text" id="exNote" value="${esc(r.note || '')}" placeholder="XPEL's own landing page: its phone and socials are right"></label>
+      </div><div id="exStep2" hidden></div></div>
+      <footer><button class="btn" id="exBack" hidden>Back</button><span class="spacer"></span><button class="btn primary" id="exNext">Check what it affects</button><button class="btn primary" id="exSave" hidden></button></footer>`, { wide: true });
+    let draft;
+    $('#exNext').onclick = () => {
+      draft = { id: rule ? rule.id : '_draft', kind: 'site', pages: exPagesOf($('#exPages').value), skip: exPicked(), note: $('#exNote').value };
+      if (!draft.pages.length) { toast('Add the page address (or a pattern like /xpel-*).'); return; }
+      if (!draft.skip.length) { toast('Tick at least one thing not to check.'); return; }
+      const others = (d.site || []).filter((x) => !rule || x.id !== rule.id);
+      const { gain, back } = exImpact(s, (d.site || []).concat(d.global || []), others.concat(draft, d.global || []));
+      $('#exStep2').innerHTML = `<p>On <span class="mono">${esc(draft.pages.join(', '))}</span>, not checking <b>${esc(exSkipWords(draft.skip))}</b>.</p>
+        ${gain.length ? `<p>🚫 <b>${gain.length}</b> item${gain.length === 1 ? '' : 's'} will become <b>Exempt</b>:</p>${exItemTable(s, gain)}` : ''}
+        ${back.length ? `<p style="margin-top:10px">↺ <b>${back.length}</b> item${back.length === 1 ? '' : 's'} will come back as <b>Open</b>:</p>${exItemTable(s, back)}` : ''}
+        ${!gain.length && !back.length ? '<p class="muted">No current items change. Future scans will skip whatever matches.</p>' : ''}
+        <p style="margin-top:12px"><b>Are you sure you want to ${rule ? 'save this change' : 'exempt this'}?</b></p>`;
+      $('#exStep1').hidden = true; $('#exStep2').hidden = false; $('#exNext').hidden = true; $('#exBack').hidden = false; $('#exSave').hidden = false;
+      $('#exSave').textContent = gain.length ? `Yes, exempt ${gain.length} item${gain.length === 1 ? '' : 's'}` : 'Yes, save';
+    };
+    $('#exBack').onclick = () => { $('#exStep1').hidden = false; $('#exStep2').hidden = true; $('#exNext').hidden = false; $('#exBack').hidden = true; $('#exSave').hidden = true; };
+    $('#exSave').onclick = async () => {
+      $('#exSave').disabled = true;
+      try {
+        await post('/api/exempt', { op: 'siteSave', site: s.siteId, rule: { id: rule ? rule.id : undefined, pages: draft.pages, skip: draft.skip, note: draft.note } });
+        await loadSite(s.id); renderSite(); closeModal();
+        const n = (state.current.findings || []).filter((f) => f.status === 'exempt').length;
+        toast(n ? `Saved · ${n} item${n === 1 ? ' is' : 's are'} Exempt on this audit` : 'Saved');
+      } catch (e) { toast(e.message); $('#exSave').disabled = false; }
+    };
+  }
+  /** Settings → Exceptions: exception sets that apply to every website. */
+  async function drawExceptionSets(body) {
+    body.innerHTML = '<div class="empty">Loading…</div>';
+    let d;
+    try { d = await api('/api/exempt?op=list'); ex.groups = d.groups; } catch (e) { body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    const VT = [['name', 'Business names'], ['phone', 'Phones'], ['email', 'Emails'], ['address', 'Addresses'], ['social', 'Social links']];
+    body.innerHTML = `<h2>Exceptions</h2>
+      <p class="muted">Exception sets apply to <b>every website</b> and to the daily auto audit. A set (for example <b>XPEL Landing Page</b>) names the manufacturer's pages, what not to check on them, and values — the manufacturer's phone, email, socials — that are fine anywhere on any website. Items they cover show as <b>Exempt</b>. Before anything is saved or removed you see which audits it changes. Exceptions for one website only are added from its audit (<b>🚫 Exceptions</b>).</p>
+      <button class="btn primary" id="exsNew">+ New exception set</button>
+      <div id="exsList" style="margin-top:12px">${(d.global || []).length ? d.global.map((g) => `<div class="ex-card">
+        <div class="ex-top"><div><b>${esc(g.name)}</b>
+          ${g.pages.length ? `<div class="small">Pages: <span class="mono">${esc(g.pages.join(', '))}</span> · not checking ${esc(exSkipWords(g.skip))}</div>` : ''}
+          ${g.values.length ? `<div class="small">Allowed anywhere: ${g.values.map((v) => `<span class="badge subtle">${esc(v.value)}</span>`).join(' ')}</div>` : ''}
+          ${g.note ? `<div class="small">“${esc(g.note)}”</div>` : ''}<div class="small faint">${exWho(g)}</div></div>
+          <div class="ex-acts"><button class="btn sm" data-exsedit="${esc(g.id)}">Edit</button><button class="btn sm danger" data-exsdel="${esc(g.id)}">Remove</button></div></div>
+        ${exHistory(g)}</div>`).join('') : '<div class="empty">No exception sets yet.</div>'}</div>`;
+    const summary = (p, removing) => `${p.gain ? `<p>🚫 <b>${p.gain}</b> item${p.gain === 1 ? '' : 's'} will become <b>Exempt</b>` : '<p>'}${p.gain && p.back ? ', and ' : ''}${p.back ? `↺ <b>${p.back}</b>${p.gain ? '' : ` item${p.back === 1 ? '' : 's'}`} will come back as <b>Open</b>` : ''}${p.gain || p.back ? `, on <b>${p.rows.length}</b> of ${p.audits} audit${p.audits === 1 ? '' : 's'} (in progress first):</p>${exSiteTable(p.rows)}` : `No current audit items change${removing ? '' : '; future scans and the auto audit will skip whatever matches'}.</p>`}
+      <p class="small faint">Items somebody closed by hand (Done, False alarm…) are never changed. The daily auto audit follows the change from each website's next read.</p>`;
+    const form = (g) => {
+      const v = g || { pages: [], values: [] };
+      modal(`<header><h2>${g ? 'Change the exception set' : 'New exception set'}</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body"><div id="exsStep1">
+          <label class="field">Name<input type="text" id="exsName" value="${esc(v.name || '')}" placeholder="XPEL Landing Page"></label>
+          <label class="field">Pages on any website <span class="small muted">one per line · * for "anything": /xpel-*, *ppf*, /about-us-*</span>
+            <textarea id="exsPages" rows="3" class="mono">${esc((v.pages || []).join('\n'))}</textarea></label>
+          <div class="field"><span>Don't check on those pages</span>${exTicks(g ? v.skip : undefined)}</div>
+          <div class="field"><span>Values that are fine anywhere <span class="small muted">(one per line)</span></span>
+            <div class="ex-vals">${VT.map(([t, l]) => `<label class="field">${l}<textarea rows="2" data-exv="${t}">${esc((v.values || []).filter((x) => x.type === t).map((x) => x.value).join('\n'))}</textarea></label>`).join('')}</div></div>
+          <label class="field">Note <span class="small muted">(optional)</span><input type="text" id="exsNote" value="${esc(v.note || '')}"></label>
+        </div><div id="exsStep2" hidden></div></div>
+        <footer><button class="btn" id="exsBack" hidden>Back</button><span class="spacer"></span><button class="btn primary" id="exsNext">Check what it affects</button><button class="btn primary" id="exsSave" hidden>Yes, save</button></footer>`, { wide: true });
+      let set;
+      $('#exsNext').onclick = async () => {
+        set = { id: g ? g.id : undefined, name: $('#exsName').value, pages: $('#exsPages').value, skip: exPicked(), note: $('#exsNote').value,
+          values: $$('[data-exv]').flatMap((t) => t.value.split('\n').map((x) => x.trim()).filter(Boolean).map((value) => ({ type: t.dataset.exv, value }))) };
+        if (!set.name.trim()) { toast('Give the set a name, e.g. "XPEL Landing Page".'); return; }
+        $('#exsNext').disabled = true; $('#exsNext').textContent = 'Checking every audit…';
+        try {
+          const p = await post('/api/exempt', { op: 'preview', set });
+          $('#exsStep2').innerHTML = `<p><b>${esc(set.name)}</b></p>${summary(p)}<p style="margin-top:12px"><b>Are you sure you want to ${g ? 'save this change' : 'add this set'}?</b></p>`;
+          $('#exsStep1').hidden = true; $('#exsStep2').hidden = false; $('#exsNext').hidden = true; $('#exsBack').hidden = false; $('#exsSave').hidden = false;
+          $('#exsSave').textContent = p.gain ? `Yes, exempt ${p.gain} item${p.gain === 1 ? '' : 's'}` : 'Yes, save';
+        } catch (e) { toast(e.message); }
+        $('#exsNext').disabled = false; $('#exsNext').textContent = 'Check what it affects';
+      };
+      $('#exsBack').onclick = () => { $('#exsStep1').hidden = false; $('#exsStep2').hidden = true; $('#exsNext').hidden = false; $('#exsBack').hidden = true; $('#exsSave').hidden = true; };
+      $('#exsSave').onclick = async () => {
+        $('#exsSave').disabled = true;
+        try { await post('/api/exempt', { op: 'globalSave', set }); closeModal(); toast('Saved'); loadSites(true).catch(() => {}); drawExceptionSets(body); }
+        catch (e) { toast(e.message); $('#exsSave').disabled = false; }
+      };
+    };
+    const remove = async (g) => {
+      modal(`<header><h2>Remove "${esc(g.name)}"?</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body" id="exsRm"><div class="empty">Checking every audit…</div></div>
+        <footer><button class="btn" data-close>Cancel</button><span class="spacer"></span><button class="btn danger" id="exsRmGo" disabled>Yes, remove</button></footer>`, { wide: true });
+      try {
+        const p = await post('/api/exempt', { op: 'preview', remove: true, id: g.id });
+        $('#exsRm').innerHTML = `<p>Its pages and values will be checked normally again on every website.</p>${summary(p, true)}`;
+        $('#exsRmGo').disabled = false;
+        if (p.back) $('#exsRmGo').textContent = `Yes, remove and bring back ${p.back}`;
+      } catch (e) { $('#exsRm').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      $('#exsRmGo').onclick = async () => {
+        $('#exsRmGo').disabled = true;
+        try { await post('/api/exempt', { op: 'globalRemove', id: g.id }); closeModal(); toast('Removed'); loadSites(true).catch(() => {}); drawExceptionSets(body); }
+        catch (e) { toast(e.message); $('#exsRmGo').disabled = false; }
+      };
+    };
+    $('#exsNew').onclick = () => form(null);
+    $$('[data-exsedit]').forEach((b) => { b.onclick = () => form(d.global.find((g) => g.id === b.dataset.exsedit)); });
+    $$('[data-exsdel]').forEach((b) => { b.onclick = () => remove(d.global.find((x) => x.id === b.dataset.exsdel)); });
   }
 
   /** The handover. One screen, because it is one decision: who, which phase, by when, and why. */
@@ -5588,6 +5773,7 @@
     { route: 'home', icon: '🏠', label: 'Home', words: 'home dashboard overview start today needs attention my work what to do first', href: '#/home', help: 'home' },
     { route: 'settings', icon: '🎨', label: 'Appearance: dark mode, light mode and colours', words: 'appearance dark mode light mode theme colour color night start page tips look', href: '#/settings/appearance', help: 'home' },
     { route: 'sites', icon: '📋', label: 'Audits', words: 'audits websites list scan home', href: '#/', help: 'audits' },
+    { route: 'settings', icon: '🚫', label: 'Exceptions: manufacturer pages and values', words: 'exceptions exempt exemption white label manufacturer landing page xpel skip not checked', href: '#/settings/exceptions', perm: 'exempt.global', help: 'exceptions' },
     { route: 'tasks', icon: '🐆', label: 'Tasks: the Jaguars board', words: 'tasks jaguars jags queue board take next first in first out kanban review approve', href: '#/tasks', perm: 'jags.take', help: 'jaguars' },
     { route: 'projects', icon: '🏗', label: 'Projects', words: 'projects build phases dev qa cleanup client handover', href: '#/projects', perm: 'project.view', help: 'projects' },
     { route: 'live', icon: '🌐', label: 'DR Websites', words: 'dr websites live dr sites published websites duda list domains', href: '#/live', perm: 'live.view', help: 'live' },
@@ -5821,6 +6007,7 @@
     ['domains', '🌐 Domain monitoring', () => can('members.manage')],
     ['presence', '📣 Online presence', () => can('members.manage')],
     ['integrations', '🔌 Integrations', () => can('members.manage')],
+    ['exceptions', '🚫 Exceptions', () => can('exempt.global')],
     ['security', '🛡 Security log', () => true],
     // Only while moving the app to a new home (COPY_FROM_URL / COPY_FROM_TOKEN set), and only the owner.
     ['move', '📦 Move data in', () => !!(state.superAdmin && state.config && state.config.copyFrom)],
@@ -5891,6 +6078,7 @@
     const body = $('#setBody');
     if (cur === 'team') return drawTeamPage(body);
     if (cur === 'security') return drawSecurity(body);
+    if (cur === 'exceptions') return drawExceptionSets(body);
     if (cur === 'move') return drawMove(body);
     if (cur === 'presence') return drawPresenceSettings(body);
     if (cur === 'appearance') return drawAppearance(body);
@@ -8732,7 +8920,7 @@
     $$('[data-editat]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const f = find(b.dataset.editat); if (f) openItemEditor(site, f); }));
     $$('[data-hlhelp]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openHighlighterHelp(); }));
   }
-  const statusSelect = (f, attr) => `<select class="pill fs-${f.status}" ${attr}="${esc(f.id)}">${FSTATUS.map((s) => `<option value="${s.v}" ${s.v === f.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select>`;
+  const statusSelect = (f, attr) => `<select class="pill fs-${f.status}" ${attr}="${esc(f.id)}"${f.status === 'exempt' && f.exempt ? ` title="Exempt: ${esc(f.exempt.name)}"` : ''}>${f.status === 'exempt' ? '<option value="exempt" selected disabled>Exempt</option>' : ''}${FSTATUS.map((s) => `<option value="${s.v}" ${s.v === f.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select>`;
 
   /** `skip` leaves one filter out, so the severity chips can count what clicking them would give. */
   /**
@@ -8818,6 +9006,7 @@
         <div class="head-actions">
           <span class="member-select">${avatar(s.assignee)}<select id="sAssign">${userOptions(s.assignee)}</select></span>
           <select class="pill st-${slug(s.status)}" id="sStatus">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+          <button class="btn" id="sExempt" type="button" title="Pages where some checks don't apply, like a manufacturer's landing page">🚫 Exceptions${(s.findings || []).some((f) => f.status === 'exempt') ? ` <span class="badge subtle">${(s.findings || []).filter((f) => f.status === 'exempt').length}</span>` : ''}</button>
           ${can('jags.lead') ? ((state.sites.find((x) => x.id === s.id) || {}).board ? '<a class="btn" href="#/tasks" title="Being fixed on the Jaguars board">🐆 On the Jaguars board</a>' : '<button class="btn" id="sJag" type="button" title="Hand this audit to the Jaguars: into their queue, or straight to one of them">🐆 Send to Jaguars</button>') : ''}
           ${can('client.viewas') ? '<button class="btn" id="sViewAs" type="button" title="See this website\'s client page exactly as the client does">👁 View as client</button>' : ''}
           <a class="btn" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
@@ -8839,6 +9028,7 @@
       <div id="tabBody"></div>`;
     $('#sAssign').onchange = async (e) => { await changeSite(s, { assignee: e.target.value }); await loadSite(s.id); renderSite(); };
     $('#sStatus').onchange = async (e) => { await changeSite(s, { status: e.target.value }); await loadSite(s.id); renderSite(); };
+    $('#sExempt').onclick = () => openExceptions(s);
     if ($('#sJag')) $('#sJag').onclick = () => {
       const people = (state.users || []).filter((u) => u.status === 'active' && u.role !== 'client');
       const jags = people.filter((u) => u.role === 'jaguar'), others = people.filter((u) => u.role !== 'jaguar');
@@ -8888,7 +9078,7 @@
   // VERIFY ON LIVE SITE: are the items marked Done really fixed on the PUBLISHED website?
   // =====================================================================
   const vKey = (f) => [f.code, f.path, f.selector].join('|'); // looser than the item ID: live links differ slightly from preview links
-  const CLOSED = (f) => f.status === 'done' || f.status === 'false';
+  const CLOSED = (f) => f.status === 'done' || f.status === 'false' || f.status === 'exempt';
   const lastDoneAt = (s) => (s.findings || []).filter((f) => f.status === 'done' && f.statusAt).map((f) => f.statusAt).sort().pop() || '';
   async function verifyLive(s) {
     const { sApi, sPost } = siteApi(s.id);
@@ -9702,7 +9892,7 @@
           </span>
           <select id="ffst">
             <option value="active" ${ff.st === 'active' ? 'selected' : ''}>Open + for clarification (${cnt('open') + cnt('clarification')})</option>
-            ${FSTATUS.map((x) => `<option value="${x.v}" ${ff.st === x.v ? 'selected' : ''}>${x.label} (${cnt(x.v)})</option>`).join('')}
+            ${FSTATUS.map((x) => `<option value="${x.v}" ${ff.st === x.v ? 'selected' : ''}>${x.label} (${cnt(x.v)})</option>`).join('')}${cnt('exempt') ? `<option value="exempt" ${ff.st === 'exempt' ? 'selected' : ''}>Exempt (${cnt('exempt')})</option>` : ''}
             <option value="all" ${ff.st === 'all' ? 'selected' : ''}>All (${findings.length})</option>
           </select>
           <input type="search" id="ffq" placeholder="Search, or #12 to jump to an ID…" value="${esc(ff.q)}">
@@ -9728,7 +9918,7 @@
           <thead><tr><th class="pick-col"><input type="checkbox" id="pickAll" ${allPicked ? 'checked' : ''} title="Select every item shown"></th><th>ID</th><th>Status</th><th>Severity</th><th>Page / path</th><th>Where</th><th>Unique CSS selector</th><th>Finding</th><th title="Comments">💬</th><th>Assignee</th></tr></thead>
           <tbody>${shown.map((f) => {
             const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
-            const closed = f.status === 'done' || f.status === 'false';
+            const closed = f.status === 'done' || f.status === 'false' || f.status === 'exempt';
             return `<tr class="row-link ${closed ? 'done' : ''} ${pick.ids.has(f.id) ? 'picked' : ''}" data-item="${f.num}">
               <td class="pick-col" data-stop><input type="checkbox" data-pick="${esc(f.id)}" ${pick.ids.has(f.id) ? 'checked' : ''} aria-label="Select #${f.num}"></td>
               <td><a class="item-id" href="#/site/${esc(s.id)}/item/${f.num}">#${f.num}</a></td>
@@ -10156,8 +10346,10 @@
         </div>
         ${aiPendingList(f)}
         <div class="k" style="margin-top:14px">Status</div>
+        ${f.status === 'exempt' && f.exempt ? `<div class="note ex-note">🚫 <b>Exempt</b>: ${f.exempt.kind === 'global' ? `exception set <b>${esc(f.exempt.name)}</b>` : `page exception for <span class="mono">${esc(f.exempt.name)}</span>`}${f.exempt.by ? `, added by ${esc(f.exempt.by)}` : ''}. Not checked here; remove the exception to check it again. <button class="linkbtn" id="drExList">See exceptions</button></div>` : ''}
         <div class="status-btns">${FSTATUS.map((x) => `<button class="sbtn fs-${x.v} ${f.status === x.v ? 'on' : ''}" data-set="${x.v}">${x.label}</button>`).join('')}</div>
         ${f.statusBy ? `<div class="small faint" style="margin-top:4px">Last changed by ${esc(nameOf(f.statusBy))} · ${esc(fmtFull(f.statusAt))}</div>` : ''}
+        ${f.status !== 'exempt' && A.exemptGroupOf(f) && f.path ? `<div style="margin-top:6px"><button class="linkbtn small" id="drExempt" title="A manufacturer's landing page or similar, where this is meant to be different">🚫 Exempt this page…</button></div>` : ''}
         ${recheckBadge(f) ? `<div style="margin-top:6px">${recheckBadge(f)}</div>` : ''}
         ${can('item.status') ? (canRecheck(f)
           ? `<div style="margin-top:8px"><button class="btn sm" id="drRecheck" title="Rescan only ${recheckPages(f).length === 1 ? 'this page' : 'these ' + recheckPages(f).length + ' pages'} (Desktop, Tablet and Mobile) and check whether this item is still there">⟳ Recheck this item</button>
@@ -10193,6 +10385,8 @@
       copy(snip, `Snippet copied. Paste it in the ${A.DEVICE_LABEL[dev]} preview's console.`);
     };
     $$('[data-set]', d).forEach((b) => (b.onclick = () => { if (b.dataset.set !== f.status) setFinding(s, [f.id], { status: b.dataset.set }); }));
+    if ($('#drExempt', d)) $('#drExempt', d).onclick = () => exemptForm(s, null, { pages: [f.path], skip: [A.exemptGroupOf(f)] }, null);
+    if ($('#drExList', d)) $('#drExList', d).onclick = () => openExceptions(s);
     if ($('#drChallenge', d)) $('#drChallenge', d).onclick = () => openChallenge(s, f);
     if ($('#drRecheck', d)) $('#drRecheck', d).onclick = () => recheckItems(s, [f.id]);
     if ($('#drRmItem', d)) $('#drRmItem', d).onclick = async () => {

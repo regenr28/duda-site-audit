@@ -839,6 +839,7 @@ export const PERMISSIONS = [
   { group: 'Audit items', items: [
     { key: 'item.status', label: 'Change audit item statuses', desc: 'Done, On hold, For clarification, False alarm.' },
     { key: 'item.assign', label: 'Assign audit items to people', desc: '' },
+    { key: 'exempt.global', label: 'Manage exception sets', desc: 'Settings → Exceptions: manufacturer pages and values that are not checked on any website. Anyone can add page exceptions for one website.' },
     { key: 'item.add', label: 'Add audit items by hand', desc: 'Write a finding the scanner cannot see — a layout or design problem — with a screenshot and an explanation. Usually QA.' },
     { key: 'fa.manage', label: 'Answer false alarm reports', desc: 'Set a report to Checking, Audit adjusted, True false alarm or Won’t change, and write back to the reporter.' },
     { key: 'fa.seeall', label: 'See everybody’s false alarm reports', desc: 'Without this, a person sees only the ones they reported themselves.' },

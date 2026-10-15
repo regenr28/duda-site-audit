@@ -1033,6 +1033,20 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'exceptions', group: 'Audits', title: 'Exceptions — pages and values that are not checked', audience: 'all',
+    html: `<p>Some pages are meant to be different. A dealer's website carries the manufacturer's landing pages (XPEL, 3M…), which show the <b>manufacturer's</b> phone, email and social accounts. Exceptions stop the audit raising those as mistakes.</p>
+<h3>One website: page exceptions (anyone)</h3>
+<p>On an audit, <b>🚫 Exceptions → + Exempt a page</b>, or from an item, <b>🚫 Exempt this page…</b> (filled in with that page and the kind of item). Give the page address (the full link or just the path; one per line; <b>*</b> means "anything": <span class="mono">/xpel-*</span>, <span class="mono">*ppf*</span>) and tick what not to check there: <b>Contact info</b> (ticked by default), <b>Meta</b>, <b>Heading tags</b>, <b>Content</b> (spelling, grammar, placeholder text) or <b>Links and buttons</b>. The form says how many current items it will cover.</p>
+<h3>Every website: exception sets (admins)</h3>
+<p><b>Settings → 🚫 Exceptions</b>. A set has a name (<b>XPEL Landing Page</b>), pages on any website with what not to check there, and <b>values that are fine anywhere</b>: the manufacturer's business names, phones, emails, addresses and social links. Those values are not raised on any page of any website, footers and blog posts included. Sets apply to the daily auto audit of the live websites too.</p>
+<h3>Check first, then confirm</h3>
+<p>Nothing is saved or removed straight away. <b>Check what it affects</b> shows, for one website, a table of the audit items that will become Exempt (or come back), each with a <b>Check ↗</b> link; for an exception set, every audit it changes, with its status, who has it and how many items, in-progress audits first. Then <b>Are you sure?</b> Removing an exception does the same: it lists what will come back as <b>Open</b> before you confirm.</p>
+<h3>What happens to the items</h3>
+<p>Items an exception covers become <b>Exempt</b>: closed, greyed out, and saying which exception covers them and who added it. They are not deleted; remove or change the exception and they come back at once. A status somebody set by hand (Done, False alarm, On hold…) always wins. A web-designer credit or a hidden link is never exempted.</p>
+<h3>Who did what</h3>
+<p>Every page exception keeps its history (added, changed, by whom, when) and the same lines are in the audit's <b>Activity</b> tab, removals included. Changes to sets are in the app's activity log and in each set's history.</p>`,
+  },
+  {
     id: 'jaguars', group: 'Collaboration', title: 'Tasks — the Jaguars board', audience: 'all',
     html: `<p><b>Tasks</b> is where the Jaguars fix audits, one website at a time, <b>first in, first out</b>.</p>
 <h3>The board</h3>

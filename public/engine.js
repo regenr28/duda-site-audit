@@ -3021,8 +3021,86 @@
   /** Which list an audit item belongs to: 'must' (audit items), 'polish' (fonts, duplicate photos) or 'length'. */
   const groupOf = (f) => (isPolish(f) ? 'polish' : isLength(f) ? 'length' : 'must');
 
+  // ---------------------------------------------------------------------------
+  // EXCEPTIONS — pages (and values) where some checks don't apply.
+  //
+  // A dealer's website carries the manufacturer's landing pages (XPEL, 3M…), which are supposed to
+  // show the manufacturer's phone, email and socials. An exception names those pages (an exact path
+  // or a wildcard: /xpel-*, *ppf*) and what not to check there; an exception set can also list
+  // values (the manufacturer's phone, its Facebook page) that are fine anywhere on any website.
+  // Items they cover are not deleted: they are shown as Exempt, so removing the exception brings
+  // them straight back.
+  // ---------------------------------------------------------------------------
+  const EXEMPT_GROUPS = [
+    { k: 'contact', label: 'Contact info', desc: 'Business name, phone, email, address and social accounts', def: true },
+    { k: 'meta', label: 'Meta', desc: 'SEO title and meta description' },
+    { k: 'headings', label: 'Heading tags', desc: 'H1 missing, hidden or repeated' },
+    { k: 'content', label: 'Content', desc: 'Spelling, grammar, punctuation and placeholder text' },
+    { k: 'links', label: 'Links and buttons', desc: 'Links to other websites, broken links, buttons opening the wrong page' },
+  ];
+  /** Which tick-box an audit item falls under, or '' for items no exception can silence. */
+  function exemptGroupOf(f) {
+    const c = String((f && f.code) || ''), cat = (f && f.category) || '';
+    // Somebody else's credit or a hidden link is never "the manufacturer's page being itself".
+    if (!c || c === 'DESIGNER_CREDIT' || c === 'HIDDEN_LINK' || /^AI_PENDING/.test(c)) return '';
+    if (/^META_/.test(c)) return 'meta';
+    if (/^H\d_|^HEADING/.test(c)) return 'headings';
+    if (cat === 'Contact info' || cat === 'Social' || cat === 'Business name' || f.foreignName
+      || /^(PHONE|TEL|SMS|EMAIL|MAILTO|ADDRESS|SOCIAL|GMB|MAP_|NAME_|SCHEMA_(NAME|PHONE|EMAIL|ADDRESS))/.test(c)) return 'contact';
+    if (/^(TEXT_|PLACEHOLDER|REPEATED_WORD)/.test(c)) return 'content';
+    if (cat === 'Links' || /^(LINK_|BUTTON_)/.test(c)) return 'links';
+    return '';
+  }
+  /** A page address as an exception compares it: path only, lower case, no trailing slash. */
+  function exemptPath(p) {
+    let x = String(p || '').trim();
+    if (!x) return '';
+    if (/^https?:\/\//i.test(x)) { try { x = new URL(x).pathname; } catch (e) { /* keep as typed */ } }
+    x = x.split(/[?#]/)[0].toLowerCase().replace(/\s+/g, '');
+    if (!x.startsWith('/') && !x.startsWith('*')) x = '/' + x;
+    if (x.length > 1) x = x.replace(/\/+$/, '');
+    return x || '/';
+  }
+  /** Does a page match a pattern? Exact path, or * for "anything here": /about-us-*, *xpel*. */
+  function exemptMatch(pattern, path) {
+    const pat = exemptPath(pattern), x = exemptPath(path) || '/';
+    if (!pat) return false;
+    if (!pat.includes('*')) return pat === x;
+    return new RegExp('^' + pat.split('*').map((t) => t.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(x);
+  }
+  const exemptPages = (f) => ((f && f.pages && f.pages.length ? f.pages : [f && f.path]).filter(Boolean));
+  /** The exception (if any) that covers an audit item: { id, name, kind, … } or null. */
+  function exemptRuleFor(f, rules) {
+    if (!f || !rules || !rules.length) return null;
+    const g = exemptGroupOf(f);
+    if (!g) return null;
+    const paths = exemptPages(f);
+    let av;
+    for (const r of rules) {
+      // A page exception covers an item only when every page it was found on is exempt.
+      if ((r.skip || []).includes(g) && (r.pages || []).length && paths.length && paths.every((p) => r.pages.some((pat) => exemptMatch(pat, p)))) return r;
+      if (g === 'contact' && (r.values || []).length) {
+        if (av === undefined) av = allowValueOf(f);
+        if (av && r.values.some((v) => allowKey(v.type, v.value) === av.key)) return r;
+        if (/ADDRESS/.test(f.code || '') && f.found && r.values.some((v) => v.type === 'address' && compact(v.value).length >= 6 && compact(f.found).includes(compact(v.value)))) return r;
+      }
+    }
+    return null;
+  }
+  /** The same for one thing the auto audit found on a live page: { type, value, path }. */
+  function exemptIssueRule(x, rules) {
+    if (!x || !rules || !rules.length) return null;
+    const key = x.type === 'address' ? '' : allowKey(x.type, x.value);
+    for (const r of rules) {
+      if ((r.skip || []).includes('contact') && x.path && (r.pages || []).some((pat) => exemptMatch(pat, x.path))) return r;
+      if ((r.values || []).some((v) => (v.type === x.type && (key ? allowKey(v.type, v.value) === key : compact(x.value).includes(compact(v.value)) && compact(v.value).length >= 6)))) return r;
+    }
+    return null;
+  }
+
   global.DudaAudit = {
     POLISH_CODES, isPolish, LENGTH_CODES, isLength, groupOf,
+    EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
     matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,
