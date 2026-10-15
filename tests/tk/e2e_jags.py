@@ -111,6 +111,29 @@ call(ADMIN, '/api/jags', {'op': 'pin', 'dudaId': 'w1', 'on': True})
 s, b = call(ADMIN, '/api/jags?op=board')
 check(b['queue'][0]['dudaId'] == 'w1', 'pinned goes to the top')
 
+# --- an admin sends audits from Audits to the board
+s, b = call(ADMIN, '/api/store', {'op': 'create', 'siteId': 'adm1abcd', 'host': 'ed.multiscreensite.com', 'editorUrl': 'https://ed.multiscreensite.com/home/site/adm1abcd/home', 'assignee': 'reymark@8bitcreative.com'})
+check(s == 200, 'admin audit made', b); AUD1 = b['id']
+s, b = call(ADMIN, '/api/store', {'op': 'create', 'siteId': 'adm2abcd', 'host': 'ed.multiscreensite.com', 'editorUrl': 'https://ed.multiscreensite.com/home/site/adm2abcd/home', 'assignee': 'reymark@8bitcreative.com'})
+AUD2 = b['id']
+s, b = call(J1, '/api/jags', {'op': 'send', 'auditId': AUD1})
+check(s == 403, 'a Jaguar cannot send audits to the board')
+s, b = call(ADMIN, '/api/jags', {'op': 'send', 'auditId': AUD1, 'to': 'jag2@8bitcreative.com', 'note': 'Half done, contact info is fixed'})
+check(s == 200 and b['card']['state'] == 'progress' and b['card']['by'] == 'jag2@8bitcreative.com', 'sent straight to a Jaguar: In progress with their name', b)
+check(unpack(redis(['GET', 'dsa:site:' + AUD1])[0])['assignee'] == 'jag2@8bitcreative.com', 'the audit is now theirs')
+s, b = call(ADMIN, '/api/jags', {'op': 'send', 'auditId': AUD2, 'note': 'Next in line'})
+check(s == 200 and b['card']['state'] == 'queued', 'sent to the queue', b)
+s, b = call(ADMIN, '/api/jags', {'op': 'send', 'auditId': AUD1})
+check(s == 409, 'cannot send a website that is already being fixed')
+s, b = call(ADMIN, '/api/store?op=list')
+fl = {x['id']: x.get('board') for x in b['sites']}
+check(fl.get(AUD1) and fl[AUD1]['state'] == 'progress' and fl.get(AUD2) and fl[AUD2]['state'] == 'queued' and not fl.get(A), 'the Audits list knows which websites are on the board (finished ones are not)', fl)
+s, b = call(ADMIN, '/api/jags?op=board')
+check(any(r['dudaId'] == 'adm2abcd' and r.get('sent') for r in b['queue']), 'the queued audit is in the queue, marked as sent from Audits')
+check(any(c['dudaId'] == 'adm1abcd' and c['state'] == 'progress' for c in b['cards']), 'the other is In progress on the board')
+n = [json.loads(x) for x in redis(['LRANGE', 'dsa:notif:jag2@8bitcreative.com', 0, 9])[0]]
+check(any(x['kind'] == 'jag-assign' and 'Half done' in x['text'] for x in n), 'the Jaguar is told, with the note')
+
 # --- the screen
 errs = []
 with sync_playwright() as p:
@@ -127,6 +150,16 @@ with sync_playwright() as p:
             else:
                 check(pg.locator('.sidenav a[href="#/tasks"], #sideNav a[href="#/tasks"]').count() >= 1, f'{tag}: Tasks is in the menu')
                 if tag == 'admin':
+                    pg.goto(f'http://localhost:{APORT}/#/'); pg.wait_for_selector('.page-head h1', timeout=20000); pg.wait_for_timeout(600)
+                    txt = pg.inner_text('#view')
+                    check('Jaguars board' in txt and 'adm1abcd' not in txt and 'adm2abcd' not in txt, 'Audits leaves out the websites on the board and says so')
+                    pg.screenshot(path=os.path.join(OUT, 'jags-audits.png'))
+                    pg.goto(f'http://localhost:{APORT}/#/site/' + A); pg.wait_for_selector('#sJag', timeout=20000)
+                    pg.click('#sJag'); pg.wait_for_selector('#sjTo')
+                    check(pg.locator('#sjTo optgroup[label="Straight to a Jaguar"] option').count() == 2, 'Send to Jaguars lists the Jaguars first')
+                    pg.screenshot(path=os.path.join(OUT, 'jags-send.png'))
+                    pg.click('[data-close]')
+                    pg.goto(f'http://localhost:{APORT}/#/tasks'); pg.wait_for_selector('.jg-board'); pg.wait_for_timeout(400)
                     check(pg.locator('#jgOrder').count() == 1 and 'contact-info errors' in pg.inner_text('.jg-basis'), 'admin: settings and the note on what the counts are')
                     pg.click('[data-jhand]'); pg.wait_for_selector('#jgWho')
                     check(pg.locator('#jgWho option[value="__queue"]').count() == 1, 'hand on can put it back in the queue')

@@ -3,7 +3,7 @@
 // POST /api/auth { op: signup | verify | resend | login | google | logout | forgot | reset }
 import { migrateConfigured } from './migrate.js';
 import crypto from 'node:crypto';
-import { metered, secLog, listUsers, notifyUser, bumpAccess, isCopy } from './_lib.js';
+import { metered, secLog, listUsers, notifyUser, bumpAccess, isCopy, slackLookup } from './_lib.js';
 import {
   redis, hasRedis, P, readBody, normEmail, isEmail, sha, now, hashPassword, checkPassword, getUser, putUser, publicUser,
   initialAccess, createSession, destroySession, currentUser, emailEnabled, sendEmail, emailShell, esc, COLORS, fetchWithTimeout, announceSignup, userChannel, commentsChannel, OWNER_EMAIL , savedEditorHost, nameTaken, NOTIFY_GROUPS, getRole, effectivePerms, applyPreview, accessVersion } from './_lib.js';
@@ -90,6 +90,16 @@ async function handler(req, res) {
         await redis(['SET', P + 'pending:' + email, JSON.stringify({ name, salt, hash }), 'EX', CODE_TTL]);
         await sendCode('verify', email, name);
         return res.status(200).json({ needCode: true, message: `We sent a 6-digit code to ${email}.` });
+      }
+      case 'slackcheck': {
+        // The sign-up form asks whether this is the email the person uses on our Slack. Nobody is
+        // signed in yet, so the answer is only yes or no (never a name), and it is rationed per
+        // network address so the form can't be used to go through a list of addresses.
+        if (!isEmail(email)) return res.status(200).json({ configured: false });
+        const ip = String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || '').split(',')[0].trim().slice(0, 64) || 'unknown';
+        if (await limited('slackcheck:' + ip, 20, 3600)) return res.status(200).json({ configured: false });
+        const r = await slackLookup(email).catch(() => ({ configured: false }));
+        return res.status(200).json({ configured: !!r.configured && !r.error, found: !!r.found });
       }
       case 'resend': {
         if (await limited('resend:' + email, 5, 3600)) return res.status(429).json({ error: 'Too many codes requested. Try again later.' });

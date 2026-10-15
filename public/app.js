@@ -175,6 +175,7 @@
       <form id="auForm" class="auth-form">
         <label class="field">Full name<input type="text" id="auName" autocomplete="name" required autofocus></label>
         <label class="field">Email<input type="email" id="auEmail" autocomplete="email" required value="${esc(a.email)}"></label>
+        <div id="auSlack" class="au-slack" aria-live="polite" hidden></div>
         <label class="field">Password <span class="faint small">(8+ characters)</span><input type="password" id="auPass" autocomplete="new-password" minlength="8" required></label>
         ${remember}
         <button class="btn primary block" type="submit">Create account</button>
@@ -206,6 +207,27 @@
       ${body}<div id="auMsg" class="au-msg" role="alert"></div></div></div>`;
     $$('[data-mode]').forEach((l) => (l.onclick = (e) => { e.preventDefault(); a.email = ($('#auEmail') || {}).value || a.email; a.mode = l.dataset.mode; renderAuth(); }));
     const msg = (t, ok) => { const m = $('#auMsg'); m.textContent = t || ''; m.className = 'au-msg ' + (ok ? 'ok' : 'bad'); };
+    // Signing up: is this the email they use on our Slack? Asked once they stop typing a full address.
+    if (a.mode === 'signup' && $('#auSlack')) {
+      let t = 0, asked = '';
+      const box = $('#auSlack');
+      const check = async () => {
+        const v = $('#auEmail').value.trim().toLowerCase();
+        if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v)) { box.hidden = true; asked = ''; return; }
+        if (v === asked) return; asked = v;
+        box.hidden = false; box.className = 'au-slack'; box.textContent = 'Checking Slack…';
+        try {
+          const r = await post('/api/auth', { op: 'slackcheck', email: v });
+          if ($('#auEmail').value.trim().toLowerCase() !== v) return;
+          if (!r.configured) { box.hidden = true; return; }
+          box.className = 'au-slack ' + (r.found ? 'ok' : 'warn');
+          box.textContent = r.found ? '✓ Found on our Slack.' : 'Your email is not on our Slack. We suggest signing up with the email you use on Slack. If you use this one, the admins will be alerted.';
+        } catch (e) { box.hidden = true; asked = ''; }
+      };
+      $('#auEmail').addEventListener('input', () => { clearTimeout(t); t = setTimeout(check, 700); });
+      $('#auEmail').addEventListener('blur', () => { clearTimeout(t); check(); });
+      if ($('#auEmail').value) check();
+    }
     const rem = () => ($('#auRemember') ? $('#auRemember').checked : a.remember);
     if ($('#auOut')) $('#auOut').onclick = (e) => { e.preventDefault(); logout(); };
     const done = async (r) => {
@@ -1856,7 +1878,7 @@
       return `<div class="pj-card jg-card${i === 0 ? ' jg-next' : ''}${locked ? ' jg-locked' : ''}">
         <b>${locked ? '🔒 ' : ''}${esc(r.name)}</b>${r.domain ? `<div class="small faint">${esc(r.domain)}</div>` : ''}
         ${r.back ? '<span class="badge sev-warning">Back again: the live website still has errors</span>' : ''}
-        ${r.pinned ? '<span class="badge subtle">📌 Pinned</span>' : ''}
+        ${r.pinned ? '<span class="badge subtle">📌 Pinned</span>' : ''}${r.sent ? `<span class="badge subtle" title="Sent by ${esc(r.sent)}">From Audits</span>` : ''}
         ${lead ? `<div class="small muted">${r.n} contact error${r.n === 1 ? '' : 's'} · ${r.c} critical</div>` : ''}
         <div class="jg-acts">${!firstOnly && i > 0 && !atLimit ? `<button class="btn sm" data-jtake="${esc(r.dudaId)}">Take</button>` : ''}
           ${lead ? `<button class="btn sm ghost" data-jpin="${esc(r.dudaId)}" data-on="${r.pinned ? '' : '1'}">${r.pinned ? 'Unpin' : '📌 Pin to top'}</button>` : ''}</div></div>`;
@@ -5930,7 +5952,8 @@
         <div class="toolbar" style="margin:8px 0 10px"><input type="search" id="memQ" placeholder="Search name or email…" value="${esc(memFilter.q)}" style="flex:1;min-width:180px">
           <span class="chips">${Object.entries(VIEWS).filter(([k, [, fn]]) => (k !== 'off' || isAdmin || all.some((u) => u.status === 'disabled')) && (k !== 'name' || all.some(fn))).map(([k, [label, fn]]) => `<button class="chipbtn ${memFilter.view === k ? 'active' : ''}" data-memv="${k}">${esc(label)} <span class="faint">${all.filter(fn).length}</span></button>`).join('')}</span></div>
         ${isAdmin && pending.length ? `<h3>Admin for Approval (${pending.length})</h3>` + pending.map((u) => `
-          <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span>${u.needsName ? ' <span class="badge sev-warning">Needs full name</span>' : ''}<div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
+          <div class="member-row">${avatar(u.email, 30)}<div class="grow"><b>${esc(u.name)}</b> <span class="badge fs-clarification">Admin for Approval</span>${u.needsName ? ' <span class="badge sev-warning">Needs full name</span>' : ''}${u.slackMissing ? ' <span class="badge sev-warning" title="Make sure you know who this is before approving">⚠️ Not on our Slack</span>' : ''}<div class="small muted">${esc(u.email)} · signed up ${esc(fmtFull(u.createdAt))}${u.google ? ' · Google' : ''}</div></div>
+          <select class="ap-role" data-aprole="${esc(u.email)}" aria-label="Role for ${esc(u.name)}"><option value="">Role…</option>${(state.roles || []).filter((r) => r.id !== 'client').map((r) => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select>
           <button class="btn sm primary" data-approve="${esc(u.email)}">Approve</button><button class="btn sm danger" data-remove="${esc(u.email)}">Reject</button></div>`).join('') + '<h3 style="margin-top:14px">Members</h3>' : ''}
         ${list.length ? list.map((u) => `<div class="member-row ${u.status === 'disabled' ? 'off' : ''}"><span class="pav">${avatar(u.email, 30)}${u.status === 'disabled' ? '' : pdot(u.email)}</span>
           <div class="grow"><button type="button" class="whobtn" data-who="${esc(u.email)}"><b>${esc(u.name)}</b></button>${u.email === state.me.email ? ' <span class="badge subtle">You</span>' : ''}${u.status === 'disabled' ? ' <span class="badge sev-warning">Switched off</span>' : ''}${isAdmin && u.status !== 'disabled' ? ` <span class="badge ${u.role === 'admin' ? 'st-in-progress' : 'subtle'}">${u.superAdmin ? 'Super Admin' : esc(roleName(u.role))}</span>${u.custom ? ' <span class="badge sev-info" title="This person has access that is not simply their role">Custom access</span>' : ''}` : ''}
@@ -5947,7 +5970,15 @@
       const mq = $('#memQ'); mq.oninput = () => { memFilter.q = mq.value; const p = mq.selectionStart; draw(); const i2 = $('#memQ'); if (i2) { i2.focus(); i2.setSelectionRange(p, p); } };
       $$('[data-memv]', $('#memList')).forEach((b) => (b.onclick = () => { memFilter.view = b.dataset.memv; draw(); }));
       const act = (sel, fn) => $$(sel, $('#memList')).forEach((b) => (b.onclick = b.onchange = null, b.tagName === 'SELECT' ? (b.onchange = () => fn(b)) : (b.onclick = () => fn(b))));
-      act('[data-approve]', async (b) => { await post('/api/users', { op: 'approve', email: b.dataset.approve }); await loadUsers(); draw(); renderTop(); toast('Approved'); });
+      act('[data-approve]', async (b) => {
+        const sel = $$('[data-aprole]').find((x) => x.dataset.aprole === b.dataset.approve);
+        if (sel && !sel.value) { toast('Pick their role first.'); sel.focus(); return; }
+        try {
+          const r = await post('/api/users', { op: 'approve', email: b.dataset.approve, role: sel ? sel.value : undefined });
+          await loadUsers(); draw(); renderTop();
+          toast(`Approved as ${roleName(r.role)}${r.slack ? ' · told on Slack' : r.slackWhy === 'not_in_slack' ? ' · not on Slack, so no Slack message' : ''}`);
+        } catch (e) { toast(e.message); }
+      });
       act('[data-remove]', async (b) => { if (!confirm('Delete this account for good? Their name will disappear from old audit items and comments. "Switch off" keeps the history.')) return; try { await post('/api/users', { op: 'remove', email: b.dataset.remove }); } catch (e) { toast(e.message); } await loadUsers(); draw(); renderTop(); });
       act('[data-disable]', async (b) => { if (!confirm('Switch this account off? They can no longer sign in, but everything they did stays on record and their name keeps showing.')) return; try { await post('/api/users', { op: 'disable', email: b.dataset.disable }); toast('Account switched off'); } catch (e) { toast(e.message); } await loadUsers(); draw(); });
       act('[data-enable]', async (b) => { try { await post('/api/users', { op: 'enable', email: b.dataset.enable }); toast('Account switched back on'); } catch (e) { toast(e.message); } await loadUsers(); draw(); });
@@ -6000,7 +6031,7 @@
         <div class="small" id="amNameMsg"></div>
         <label class="field">Work email <span class="small muted">they sign in with this; use the one they use in Slack</span><input id="amEmail" type="email" autocomplete="off" placeholder="name@company.com"></label>
         <div class="am-slack"><button class="btn" id="amSlack" type="button">Check if Slack available</button><span id="amSlackMsg" class="small"></span></div>
-        <label class="field">Role<select id="amRole">${(state.roles || []).filter((r) => r.id !== 'client').map((r) => `<option value="${esc(r.id)}" ${r.id === 'member' ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
+        <label class="field">Role<select id="amRole"><option value="">Pick a role…</option>${(state.roles || []).filter((r) => r.id !== 'client').map((r) => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('')}</select></label>
         <div class="small muted" id="amRoleDesc"></div>
         <label class="check-row"><input type="checkbox" id="amAccess"> Adjust what they can do after creating (exceptions to the role)</label>
       </div>
@@ -6028,6 +6059,7 @@
       btn.disabled = false; btn.textContent = 'Check again'; sync();
     };
     $('#amGo').onclick = async () => {
+      if (!$('#amRole').value) { toast('Pick their role first.'); $('#amRole').focus(); return; }
       if (st.slack === false && !confirm('This email is not in Slack, so Slack messages won\'t reach them. Create the account anyway?')) return;
       const btn = $('#amGo'); btn.disabled = true; btn.textContent = 'Creating…';
       try {
@@ -8320,9 +8352,12 @@
     return liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(siteId).toLowerCase()) || false;
   }
   function renderSites() {
+    // Websites on the Jaguars board are worked from Tasks; they come back here once complete.
+    const SITES = state.sites.filter((x) => !x.board);
+    const onBoard = state.sites.length - SITES.length;
     if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if (route().name === 'sites') renderSites(); });
     const f = state.filters;
-    const list = state.sites.filter((s) => (!f.status || s.status === f.status) && (!f.assignee || (f.assignee === '_none' ? !s.assignee : f.assignee === '_mine' ? s.assignee === state.me.email : s.assignee === f.assignee)) &&
+    const list = SITES.filter((s) => (!f.status || s.status === f.status) && (!f.assignee || (f.assignee === '_none' ? !s.assignee : f.assignee === '_mine' ? s.assignee === state.me.email : s.assignee === f.assignee)) &&
       (!f.q || (s.businessName + ' ' + s.siteId + ' ' + s.editorUrl + ' ' + (s.addedByName || '')).toLowerCase().includes(f.q.toLowerCase())) &&
       (!f.live || (f.live === 'gone' || f.live === 'draft' ? dudaState(s.siteId) === f.live : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)) &&
       (!f.oldChecks || newChecksFor(s).length) &&
@@ -8330,15 +8365,15 @@
       (!f.must || (f.must === 'crit' ? ((s.counts || {}).critical || 0) > 0 : mustState(s) === f.must)) &&
       (!f.clar || ((s.counts || {}).clarification || 0) > 0))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-    const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0, repub: state.sites.filter((s) => repubSince(s)).length };
-    tot.mustDone = state.sites.filter((s) => mustState(s) === 'done').length; tot.critSites = state.sites.filter((s) => ((s.counts || {}).critical || 0) > 0).length;
-    state.sites.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
+    const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0, repub: SITES.filter((s) => repubSince(s)).length };
+    tot.mustDone = SITES.filter((s) => mustState(s) === 'done').length; tot.critSites = SITES.filter((s) => ((s.counts || {}).critical || 0) > 0).length;
+    SITES.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
     $('#view').innerHTML = staleBanner() + `
       <div class="page-head"><div><h1>Audits</h1><div class="muted">${state.sitesScoped
         ? 'The websites you have worked on. One stays here after it moves on to somebody else, so you can always find what you did.'
-        : `Audit Duda sites against their Business Info on every device. ${can('live.view') ? '<a href="#/live">Browse Live DR Sites</a> to add more, or see' : 'See'} what was <a href="#/removed">removed from Audits</a>.`}</div></div></div>
+        : `Audit Duda sites against their Business Info on every device. ${can('live.view') ? '<a href="#/live">Browse Live DR Sites</a> to add more, or see' : 'See'} what was <a href="#/removed">removed from Audits</a>.`}${onBoard ? `<div class="small" style="margin-top:4px">🐆 ${onBoard} website${onBoard === 1 ? ' is' : 's are'} on the <a href="#/tasks">Jaguars board</a> and not listed here until complete.</div>` : ''}</div></div></div>
       <div class="stats">
-        <div class="panel stat"><div class="n">${state.sites.length}</div><div class="l">Audits</div></div>
+        <div class="panel stat"><div class="n">${SITES.length}</div><div class="l">Audits</div></div>
         <div class="panel stat"><div class="n">${tot.scanned}</div><div class="l">Scan complete</div></div>
         <button class="panel stat ${f.must === 'crit' ? 'on' : ''}" id="statCrit" ${tot.crit ? '' : 'disabled'} title="Show only the websites that still have a critical item open (${tot.critSites})"><div class="n" style="color:var(--crit)">${tot.crit}</div><div class="l">Open critical issues</div></button>
         <button class="panel stat ${f.must === 'done' ? 'on' : ''}" id="statMust" ${tot.mustDone ? '' : 'disabled'} title="Scanned websites whose audit items are all closed — only design polish (fonts, duplicate photos) can be left"><div class="n" style="color:var(--ok)">${tot.mustDone}</div><div class="l">Must-fix done</div></button>
@@ -8350,9 +8385,9 @@
           <input type="search" id="fq" placeholder="Search business name, site ID or who added it…" value="${esc(f.q)}">
           <select id="fstatus"><option value="">All statuses</option>${SITE_STATUSES.map((s) => `<option ${s === f.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
           <select id="fwho"><option value="">Everyone</option><option value="_mine" ${f.assignee === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${f.assignee === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${u.email === f.assignee ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
-          ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="draft" ${f.live === 'draft' ? 'selected' : ''}>Not published yet (${state.sites.filter((x) => dudaState(x.siteId) === 'draft').length})</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>Not found in Duda (${state.sites.filter((x) => dudaState(x.siteId) === 'gone').length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${state.sites.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
+          ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="draft" ${f.live === 'draft' ? 'selected' : ''}>Not published yet (${SITES.filter((x) => dudaState(x.siteId) === 'draft').length})</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>Not found in Duda (${SITES.filter((x) => dudaState(x.siteId) === 'gone').length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${SITES.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
           ${tot.oldChecks ? `<button class="btn sm ${f.oldChecks ? 'primary' : ''}" id="foldck" title="These were scanned before the newest checks existed. Their items are unchanged — a rescan is what adds the new ones.">✨ Scanned before the newest checks (${tot.oldChecks})</button>` : ''}
-          <select id="fmust" title="Audit items that affect the business and SEO (not fonts or duplicate photos)"><option value="">Must-fix: any</option><option value="crit" ${f.must === 'crit' ? 'selected' : ''}>Critical still open (${tot.critSites})</option><option value="open" ${f.must === 'open' ? 'selected' : ''}>Must-fix still open (${state.sites.filter((s) => mustState(s) === 'open').length})</option><option value="done" ${f.must === 'done' ? 'selected' : ''}>Must-fix done (${tot.mustDone})</option></select>
+          <select id="fmust" title="Audit items that affect the business and SEO (not fonts or duplicate photos)"><option value="">Must-fix: any</option><option value="crit" ${f.must === 'crit' ? 'selected' : ''}>Critical still open (${tot.critSites})</option><option value="open" ${f.must === 'open' ? 'selected' : ''}>Must-fix still open (${SITES.filter((s) => mustState(s) === 'open').length})</option><option value="done" ${f.must === 'done' ? 'selected' : ''}>Must-fix done (${tot.mustDone})</option></select>
           ${tot.repub || f.repub ? `<button class="btn sm ${f.repub ? 'primary' : ''}" id="frepub" title="Published again in Duda after their last scan: rescan to check the audit items are still there">↻ Republished since scan (${tot.repub})</button>` : ''}
           <span class="spacer"></span>
           <button class="btn sm" id="rescanAll">Rescan all shown</button>
@@ -8384,7 +8419,7 @@
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
                 ${can('site.remove') || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Remove this audit from the list (the website itself is untouched)">✕</button>` : ''}</td>
             </tr>`;
-          }).join('')}</tbody></table></div>` : `<div class="empty">${state.sites.length ? `<div><b>No websites match these filters.</b></div><div class="small muted" style="margin:6px 0 10px">${state.sites.length} website${state.sites.length === 1 ? '' : 's'} on the list.</div><button class="btn sm primary" id="sfClear">Clear filters</button>` : 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.'}</div>`}
+          }).join('')}</tbody></table></div>` : `<div class="empty">${SITES.length ? `<div><b>No websites match these filters.</b></div><div class="small muted" style="margin:6px 0 10px">${SITES.length} website${SITES.length === 1 ? '' : 's'} on the list.</div><button class="btn sm primary" id="sfClear">Clear filters</button>` : 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.'}</div>`}
       </div>`;
     const v = $('#view');
     $('#fq').oninput = (e) => { f.q = e.target.value; const p = e.target.selectionStart; renderSites(); const i = $('#fq'); i.focus(); i.setSelectionRange(p, p); };
@@ -8421,10 +8456,10 @@
       location.hash = '#/site/' + btn.dataset.gofilter;
     }));
     $$('[data-open]', v).forEach((tr) => tr.addEventListener('click', (e) => { if (!e.target.closest('[data-stop]') && !e.target.closest('[data-gocmt]') && !e.target.closest('[data-gofilter]')) location.hash = '#/site/' + tr.dataset.open; }));
-    $$('[data-assign]', v).forEach((sel) => (sel.onchange = async () => { const site = state.sites.find((x) => x.id === sel.dataset.assign); await changeSite(site, { assignee: sel.value }, () => renderSites()); }));
-    $$('[data-status]', v).forEach((sel) => (sel.onchange = async () => { const site = state.sites.find((x) => x.id === sel.dataset.status); await changeSite(site, { status: sel.value }, () => renderSites()); }));
+    $$('[data-assign]', v).forEach((sel) => (sel.onchange = async () => { const site = SITES.find((x) => x.id === sel.dataset.assign); await changeSite(site, { assignee: sel.value }, () => renderSites()); }));
+    $$('[data-status]', v).forEach((sel) => (sel.onchange = async () => { const site = SITES.find((x) => x.id === sel.dataset.status); await changeSite(site, { status: sel.value }, () => renderSites()); }));
     $$('[data-rescan]', v).forEach((b) => (b.onclick = () => requestScan([b.dataset.rescan])));
-    $$('[data-delete]', v).forEach((b) => (b.onclick = () => removeAudit(state.sites.find((s) => s.id === b.dataset.delete), () => renderSites())));
+    $$('[data-delete]', v).forEach((b) => (b.onclick = () => removeAudit(SITES.find((s) => s.id === b.dataset.delete), () => renderSites())));
   }
 
   // =====================================================================
@@ -8783,6 +8818,7 @@
         <div class="head-actions">
           <span class="member-select">${avatar(s.assignee)}<select id="sAssign">${userOptions(s.assignee)}</select></span>
           <select class="pill st-${slug(s.status)}" id="sStatus">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+          ${can('jags.lead') ? ((state.sites.find((x) => x.id === s.id) || {}).board ? '<a class="btn" href="#/tasks" title="Being fixed on the Jaguars board">🐆 On the Jaguars board</a>' : '<button class="btn" id="sJag" type="button" title="Hand this audit to the Jaguars: into their queue, or straight to one of them">🐆 Send to Jaguars</button>') : ''}
           ${can('client.viewas') ? '<button class="btn" id="sViewAs" type="button" title="See this website\'s client page exactly as the client does">👁 View as client</button>' : ''}
           <a class="btn" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
           <span id="liveBtn">${liveBtnHtml(s)}</span>
@@ -8803,6 +8839,27 @@
       <div id="tabBody"></div>`;
     $('#sAssign').onchange = async (e) => { await changeSite(s, { assignee: e.target.value }); await loadSite(s.id); renderSite(); };
     $('#sStatus').onchange = async (e) => { await changeSite(s, { status: e.target.value }); await loadSite(s.id); renderSite(); };
+    if ($('#sJag')) $('#sJag').onclick = () => {
+      const people = (state.users || []).filter((u) => u.status === 'active' && u.role !== 'client');
+      const jags = people.filter((u) => u.role === 'jaguar'), others = people.filter((u) => u.role !== 'jaguar');
+      modal(`<header><h2>Send to Jaguars</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body"><p class="small muted">Whatever is already fixed stays fixed; they carry on from here. The website leaves the Audits list while it is on the board, and comes back once it is complete.</p>
+          <label class="field">Where to
+            <select id="sjTo"><option value="">The queue (the next Jaguar takes it)</option>
+              ${jags.length ? `<optgroup label="Straight to a Jaguar">${jags.map((u) => `<option value="${esc(u.email)}">${esc(u.name)}</option>`).join('')}</optgroup>` : ''}
+              ${others.length ? `<optgroup label="Someone else">${others.map((u) => `<option value="${esc(u.email)}">${esc(u.name)}</option>`).join('')}</optgroup>` : ''}</select></label>
+          <label class="field">Note for them <span class="small muted">(optional)</span><textarea id="sjNote" rows="3" placeholder="What is done, what is left, anything odd…"></textarea></label></div>
+        <footer><span class="spacer"></span><button class="btn primary" id="sjGo">Send</button></footer>`);
+      $('#sjGo').onclick = async () => {
+        $('#sjGo').disabled = true;
+        try {
+          const r = await post('/api/jags', { op: 'send', auditId: s.id, to: $('#sjTo').value, note: $('#sjNote').value });
+          closeModal(); await loadSites(true).catch(() => {});
+          toast(r.card.state === 'queued' ? `${r.card.name} is in the Jaguars queue` : `${r.card.name} is with ${r.card.byName} now`);
+          location.hash = '#/tasks';
+        } catch (e) { toast(e.message); $('#sjGo').disabled = false; }
+      };
+    };
     $('#sRescan').onclick = () => requestScan([s.id]);
     if ($('#sViewAs')) $('#sViewAs').onclick = () => viewWebsiteAsClient(s.id, s.siteId);
     loadPubInfo(s);

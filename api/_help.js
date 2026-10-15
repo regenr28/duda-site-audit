@@ -1045,9 +1045,12 @@ export const HELP_SECTIONS = [
 <p>If you marked any item <b>False alarm</b>, left one <b>For clarification</b> or put one <b>On hold</b>, the website goes to <b>Needs review</b>. Someone allowed to approve looks at it and either <b>approves</b> it or <b>sends it back</b> with what still needs doing.</p>
 <h3>Not sure?</h3>
 <p>Unsure about one item: assign that item to another Jaguar or an admin from the audit, as usual. Handing on the <b>whole website</b> (<b>Hand on</b> on the card) needs a reason, and can also put it back in the queue. Every card has a <b>History</b>; the same lines are in the audit's <b>Activity</b> tab.</p>
+<h3>Joining</h3>
+<p>Jaguars sign up on the app's sign-in page with <b>the email they use on Slack</b>. The form checks Slack as they type the email; one that isn't there gets a warning, and the admins are alerted (<b>⚠️ Not on our Slack</b> next to the name in Members). An admin picks the <b>Jaguar</b> role in the same row and clicks <b>Approve</b>; the new Jaguar gets a Slack message with a <b>Sign in</b> button that opens <b>Tasks</b>. They sign in with the password they chose when signing up.</p>
 <h3>For admins</h3>
 <p>Above the board: the <b>queue order</b> (oldest or newest website first, most or fewest errors first), <b>which websites</b> go in (critical errors only, or any contact error), the <b>first in, first out</b> lock and <b>websites per person</b>. The error counts in the queue are the contact-info errors the auto audit found; the full count shows once a website is scanned. <b>Pin to top</b> puts an urgent website first.</p>
 <p>The <b>Jaguar</b> role takes websites from the queue, scans and fixes them, and sees only the websites it holds or held. <b>Approve Jaguar audits and run the queue</b> is the permission for approving and for these settings; admins have it.</p>
+<p><b>Sending an audit from Audits:</b> on any audit, <b>🐆 Send to Jaguars</b> puts it in the queue (marked <b>From Audits</b>) or gives it straight to a chosen Jaguar, In progress with their name, with an optional note. What was already fixed stays fixed. While a website is on the board (queued, in progress or under review) it is left out of the Audits list, which says how many are on the board; it comes back to Audits once complete.</p>
 <p>A finished website comes back to the queue (<b>Back again</b>) if the auto audit later still finds critical errors on the live website.</p>`,
   },
   {

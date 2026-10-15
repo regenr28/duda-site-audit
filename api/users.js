@@ -188,7 +188,8 @@ async function handler(req, res) {
       if (await getUser(email)) return res.status(409).json({ error: 'There is already an account with this email.' });
       if (await nameTaken(name)) return res.status(409).json({ error: `Someone on the team is already called "${name}". Add a middle initial so mentions point to the right person.` });
       const roles = await listRoles();
-      const role = roles.find((r) => r.id === String(b.role || '') && isTeamRole(r.id)) || roles.find((r) => r.id === 'member');
+      const role = roles.find((r) => r.id === String(b.role || '') && isTeamRole(r.id));
+      if (!role) return res.status(400).json({ error: 'Pick their role first.' });
       if (role.id === 'admin' && !(await can(me, 'roles.manage')) && fresh.role !== 'admin') return res.status(403).json({ error: 'Only an admin can create another admin.' });
       const temp = tempPassword();
       const u = { email, name, role: role.id, status: 'active', ...hashPassword(temp), verified: true, mustChange: true,
@@ -330,12 +331,30 @@ async function handler(req, res) {
       if (b.op === 'role' && b.role !== 'admin') return res.status(400).json({ error: 'The Super Admin always stays an admin.' });
     }
     switch (b.op) {
-      case 'approve':
+      case 'approve': {
+        // The role is chosen in the same click: a new teammate arrives able to do their job.
+        let picked = null;
+        if (!b.role && target.status === 'pending') return res.status(400).json({ error: 'Pick their role first.' });
+        if (b.role) {
+          const roles = await listRoles();
+          picked = roles.find((r) => r.id === String(b.role) && isTeamRole(r.id));
+          if (!picked) return res.status(400).json({ error: 'Pick a role.' });
+          if (picked.id === 'admin' && me.email !== OWNER_EMAIL && !(await can(me, 'members.manage'))) return res.status(403).json({ error: 'Your role does not allow making someone an Admin.' });
+          target.role = picked.id;
+        }
         target.status = 'active'; target.approvedBy = me.email; target.approvedAt = new Date().toISOString(); await putUser(target);
-        await secLog(email, 'approved', req, { by: me.email, byName: me.name });
-        await globalLog(me, 'approve', `approved ${target.name} (${email})`);
-        await sendEmail(email, 'Your Duda Site Auditor account is approved', emailShell('You\'re in!', `<p>${esc(me.name)} approved your account.</p><p><a href="${appUrl(req)}">Open Duda Site Auditor</a></p>`)).catch(() => {});
-        break;
+        if (picked) await bumpAccess();
+        await secLog(email, 'approved', req, { by: me.email, byName: me.name, role: picked ? picked.name : '' });
+        await globalLog(me, 'approve', `approved ${target.name} (${email})${picked ? ' as ' + picked.name : ''}`);
+        const roleName = picked ? picked.name : ((await getRole(target.role)) || {}).name || '';
+        const start = target.role === 'jaguar' ? '/#/tasks' : '/#/';
+        await sendEmail(email, 'Your Duda Site Auditor account is approved', emailShell('You\'re in!', `<p>${esc(me.name)} approved your account${roleName ? ` as <b>${esc(roleName)}</b>` : ''}.</p><p><a href="${appUrl(req)}${start}">Sign in to Duda Site Auditor</a> with the email and password you signed up with.</p>`)).catch(() => {});
+        // …and on Slack, where the team actually is. They chose their own password when signing up,
+        // so the button just signs them in, on the page their role starts on.
+        const dm = await slackDM(email, { kind: 'approved', by: me.email, byName: me.name, linkText: 'Sign in', start,
+          text: `Your access is approved${roleName ? ` as ${roleName}` : ''}! Click below to sign in with the email and password you signed up with.` }, target).catch(() => ({ sent: false }));
+        return res.status(200).json({ ok: true, role: target.role, slack: !!dm.sent, slackWhy: dm.reason || '' });
+      }
       case 'remove':
         if (email === me.email) return res.status(400).json({ error: "You can't remove yourself" });
         await redis(['DEL', P + 'user:' + email], ['SREM', P + 'users', email]);

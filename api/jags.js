@@ -68,6 +68,7 @@ function buildQueue({ sums, sites, cards, audits, set }) {
     if (!sum || sum.err || !(set.scope === 'any' ? sum.n > 0 : sum.c > 0)) return;
     const card = cards[s.id];
     let back = false;
+    if (card && card.state === 'queued') return; // sent by an admin: added below
     if (card) {
       // A finished website comes back when the auto audit, reading it again since, still finds errors.
       if (card.state !== 'complete' || !(sum.at > Date.parse(card.doneAt || 0) + DAY)) return;
@@ -78,6 +79,14 @@ function buildQueue({ sums, sites, cards, audits, set }) {
     if (!card && a && a.assignee && /^(In progress|Complete with query)$/.test(a.status || '')) return;
     rows.push({ dudaId: s.id, name: s.name || s.domain || s.id, domain: s.domain || '', launched: Date.parse(s.first || s.created || '') || 0,
       n: sum.n || 0, c: sum.c || 0, readAt: sum.at || 0, back, pinned: (set.pins || []).includes(s.id), auditId: a ? a.id : '' });
+  });
+  // Websites an admin sent to the queue from Audits, whatever the auto audit says about them.
+  const listed = new Map(sites.map((x) => [String(x.id), x]));
+  Object.values(cards).filter((c) => c.state === 'queued').forEach((c) => {
+    const x = listed.get(String(c.dudaId)) || {};
+    const sum = jparse(sums[c.dudaId]) || {};
+    rows.push({ dudaId: c.dudaId, name: c.name || x.name || c.dudaId, domain: c.domain || x.domain || '', launched: Date.parse(x.first || x.created || '') || 0,
+      n: sum.n || 0, c: sum.c || 0, readAt: sum.at || 0, back: false, sent: c.sentByName || 'an admin', pinned: (set.pins || []).includes(c.dudaId), auditId: c.auditId || '' });
   });
   const by = {
     oldest: (a, b) => (a.launched || 9e15) - (b.launched || 9e15),
@@ -168,7 +177,7 @@ async function handler(req, res) {
       const queue = buildQueue(all);
       // A Jaguar sees which websites are waiting, not what is wrong with them: the issues show once
       // they have taken one and scanned it.
-      const q = queue.slice(0, 60).map((r) => (lead ? r : { dudaId: r.dudaId, name: r.name, domain: r.domain, launched: r.launched, back: r.back, pinned: r.pinned }));
+      const q = queue.slice(0, 60).map((r) => (lead ? r : { dudaId: r.dudaId, name: r.name, domain: r.domain, launched: r.launched, back: r.back, pinned: r.pinned, sent: r.sent }));
       const cutoff = Date.now() - 30 * DAY;
       const cards = Object.values(all.cards).filter((c) => c.state !== 'complete' || Date.parse(c.doneAt || 0) > cutoff).map((c) => {
         const a = c.auditId ? Object.values(all.audits).find((x) => x.id === c.auditId) : null;
@@ -201,6 +210,43 @@ async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    if (b.op === 'send') {
+      // From Audits: an admin hands an audit (often half done) to the Jaguars — into the queue, or
+      // straight to one of them. Whatever was already fixed stays fixed.
+      if (!lead) return res.status(403).json({ error: 'Only someone who runs the Jaguars board can send audits to it.' });
+      const [ix] = await redis(['HGET', P + 'index', String(b.auditId || '')]);
+      const a = jparse(ix);
+      if (!a || !a.siteId) return res.status(404).json({ error: 'That audit is not here.' });
+      const [raw0] = await redis(['HGET', CARDS, a.siteId]);
+      const old = jparse(raw0);
+      if (old && ['progress', 'review'].includes(old.state)) return res.status(409).json({ error: `Already on the board: ${old.state === 'review' ? 'waiting for review' : 'with ' + old.byName}.` });
+      const note = noteOf(b.note);
+      const to = String(b.to || '').toLowerCase();
+      const card = { dudaId: a.siteId, name: a.businessName || (old && old.name) || a.siteId, domain: (old && old.domain) || '', auditId: a.id,
+        round: ((old && old.round) || 0) + (to ? 1 : 0), log: (old && old.log) || [], sentBy: me.email, sentByName: me.name };
+      if (to) {
+        const u = (await listUsers()).find((x) => x.email === to && x.status === 'active' && x.role !== 'client');
+        if (!u) return res.status(400).json({ error: 'Pick someone on the team.' });
+        Object.assign(card, { state: 'progress', by: u.email, byName: u.name, takenAt: now() });
+        addLog(card, me, `sent it from Audits to ${u.name}`, note);
+        await holdAudit(card, me, u.email, u.name, 'In progress');
+        await saveCard(card);
+        await siteLog(card.auditId, me, `sent this website to the Jaguars board, to ${u.name}${note ? ': ' + note : ''}`, card.name);
+        await tell(u.email, me, card, 'jag-assign', `${me.name} gave you ${card.name} on the Jaguars board${note ? ': ' + note : ''}`);
+        return res.status(200).json({ card });
+      }
+      Object.assign(card, { state: 'queued', by: '', byName: '', takenAt: '' });
+      addLog(card, me, 'sent it from Audits to the queue', note);
+      await saveCard(card);
+      { // in the queue it is nobody's until a Jaguar takes it
+        const [r0] = await redis(['GET', P + 'site:' + card.auditId]);
+        const st = unpackJSON(r0);
+        if (st) { st.assignee = ''; st.status = 'Not started'; st.updatedAt = now(); await redis(['SET', P + 'site:' + card.auditId, packJSON(st)]); await saveIndex(card.auditId); }
+      }
+      await siteLog(card.auditId, me, 'sent this website to the Jaguars queue' + (note ? ': ' + note : ''), card.name);
+      return res.status(200).json({ card });
+    }
+
     if (b.op === 'take') {
       const all = await readAll();
       const mineNow = Object.values(all.cards).filter((c) => c.state === 'progress' && c.by === me.email).length;
@@ -221,7 +267,7 @@ async function handler(req, res) {
       if (got !== 'OK') return res.status(409).json({ error: 'Someone took that website a moment ago. Try again.' });
       const [fresh] = await redis(['HGET', CARDS, pick.dudaId]);
       const f = jparse(fresh);
-      if (f && f.state !== 'complete') return res.status(409).json({ error: 'Someone took that website a moment ago. Try again.' });
+      if (f && !['complete', 'queued'].includes(f.state)) return res.status(409).json({ error: 'Someone took that website a moment ago. Try again.' });
       await holdAudit(card, me, me.email, me.name, 'In progress');
       addLog(card, me, pick.back ? 'took it from the queue again (the live website still has errors)' : 'took it from the queue');
       await saveCard(card);

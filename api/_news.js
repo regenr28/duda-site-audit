@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-10-15-send-to-jaguars', date: '2026-10-15', audience: 'all', tag: 'Audits',
+    title: 'Send an audit to the Jaguars; the Audits list leaves out what is on the board',
+    what: 'On any audit, <b>🐆 Send to Jaguars</b> hands it over: into the Tasks queue, or straight to one Jaguar (In progress with their name), with a note. What was already fixed stays fixed. While a website is on the Jaguars board it is not listed on Audits (the page says how many are there), so nobody works on it twice; it returns to Audits once complete.',
+    where: ['An audit → <b>🐆 Send to Jaguars</b>.'],
+    link: '#/help/jaguars', linkText: 'How the board works',
+  },
+  {
+    id: '2026-10-15-signup-slack', date: '2026-10-15', audience: 'all', tag: 'Team',
+    title: 'Signing up checks Slack; approving picks the role and tells them on Slack',
+    what: 'Typing an email on the sign-up page now checks whether it is on our Slack. If it isn\'t, the form suggests using the Slack email, and the admins are alerted: the request shows <b>⚠️ Not on our Slack</b>. When approving, pick the person\'s <b>role</b> in the same row; they get a Slack message saying they are in, with a <b>Sign in</b> button (Jaguars land on <b>Tasks</b>).',
+    where: ['<b>Settings → Team members → Admin for Approval</b>.'],
+    link: '#/help/jaguars', linkText: 'Joining the Jaguars',
+  },
+  {
     id: '2026-10-15-jaguars', date: '2026-10-15', audience: 'all', tag: 'Audits',
     title: 'Tasks: the Jaguars board — take the next website, fix everything, done',
     what: 'A new <b>Tasks</b> page runs the audit fixing <b>first in, first out</b>. The queue is the live websites with critical errors, in the order the admins choose. <b>Take next</b> gives you the top website; scan it and the card shows how many criticals and items are left, for the whole team to see. <b>Done</b> needs everything fixed (Design polish and Lengths included) and a rescan; false alarms and questions go to <b>Needs review</b> for an admin first. Handing a website on needs a reason, and every card has its history. New <b>Jaguar</b> role.',

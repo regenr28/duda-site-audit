@@ -311,7 +311,7 @@ export const plainMentions = (text) => String(text == null ? '' : text)
 
 export const LOOK_THEMES = ['blue', 'violet', 'teal', 'green', 'rose', 'amber', 'slate'];
 export const START_PAGES = ['home', 'audits', 'projects', 'live', 'tickets'];
-export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white', look: { mode: ['light','dark'].includes(u.lookMode) ? u.lookMode : 'auto', theme: LOOK_THEMES.includes(u.lookTheme) ? u.lookTheme : 'blue', start: START_PAGES.includes(u.startPage) ? u.startPage : 'home' },
+export const publicUser = (u) => u && ({ id: u.email, email: u.email, name: u.name, color: u.color, role: u.role, status: u.status, google: !!u.google, slackMissing: !!u.slackMissing, createdAt: u.createdAt, notifySecs: u.notifySecs === undefined ? 8 : u.notifySecs, slackDM: u.slackDM !== false, newsSeen: u.newsSeen || '', nameHistory: (u.nameHistory || []).slice(-10), editorEnv: u.editorEnv === 'duda' ? 'duda' : 'white', look: { mode: ['light','dark'].includes(u.lookMode) ? u.lookMode : 'auto', theme: LOOK_THEMES.includes(u.lookTheme) ? u.lookTheme : 'blue', start: START_PAGES.includes(u.startPage) ? u.startPage : 'home' },
   notifyOff: Array.isArray(u.notifyOff) ? u.notifyOff : [],
   // Client accounts: which websites they were granted, and the company they belong to.
   sites: u.role === 'client' ? (u.sites || []).map(String) : undefined, clientId: u.clientId || undefined, company: u.company || undefined,
@@ -626,6 +626,7 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   'jag-review': 'finished a website that needs your review',
   access: 'changed what you can do',
   security: 'needs a look: repeated wrong passwords',
+  approved: 'approved your Duda Site Auditor access',
   test: 'sent you a test message' };
 export const slackBotEnabled = () => /^xox[bp]-/.test(process.env.SLACK_BOT_TOKEN || '') && !isCopy();
 async function slackApi(method, body) {
@@ -706,6 +707,7 @@ function notifLink(n) {
   const base = appUrl();
   if (!base) return '';
   if (n.kind === 'signup') return base + '/#/?members=1';
+  if (n.kind === 'approved') return base + (n.start || '/#/');
   if (n.kind === 'false-alarm') return base + '/#/suggestions/false-alarms' + (n.faKey ? '/' + encodeURIComponent(n.faKey) : '');
   if (/^fa-/.test(n.kind)) return n.siteId && n.findingNum ? `${base}/#/site/${encodeURIComponent(n.siteId)}/item/${n.findingNum}` : base + '/#/suggestions/false-alarms';
   if (/^suggestion/.test(n.kind || '')) return base + '/#/suggestions';
@@ -744,7 +746,7 @@ export async function slackDM(email, n, known) {
         secs.length > 40 ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `…and ${secs.length - 40} more websites` }] }] : [])
       : [{ type: 'section', text: { type: 'mrkdwn', text: head + body } }];
     const buttons = [];
-    if (link) buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open in Site Auditor' }, url: link });
+    if (link) buttons.push({ type: 'button', text: { type: 'plain_text', text: n.linkText || 'Open in Site Auditor' }, url: link });
     if (n.editorUrl) buttons.push({ type: 'button', text: { type: 'plain_text', text: 'Open in Duda editor' }, url: n.editorUrl });
     if (buttons.length) blocks.push({ type: 'actions', elements: buttons });
     const r = await slackApi('chat.postMessage', { channel: id, text: head.replace(/\*/g, '') + (n.text ? ': ' + String(n.text).replace(/\n+/g, ' ').slice(0, 200) : ''), blocks, unfurl_links: false });
@@ -779,15 +781,22 @@ export async function announceSignup(user, req) {
   await globalLog(user, 'signup', user.status === 'active' ? 'created an account (auto-approved)' : 'created an account and is waiting for approval');
   if (user.status === 'active') return;
   const link = appUrl(req) + '/#/?members=1';
+  // The team signs up with the email they use on Slack. One that isn't there is said loudly, so a
+  // stranger (or a typo) is not approved by habit.
+  const sl = await slackLookup(user.email).catch(() => ({ configured: false }));
+  const off = sl.configured && !sl.error && !sl.found;
+  const warn = off ? ' ⚠️ This email is not on our Slack.' : '';
+  if (off) await putUser(Object.assign({}, user, { slackMissing: true })).catch(() => {});
   const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
   for (const a of admins) {
-    await notifyUser(a.email, { by: user.email, byName: user.name, kind: 'signup', text: `${user.name} (${user.email}) is waiting for approval` }).catch(() => {});
+    await notifyUser(a.email, { by: user.email, byName: user.name, kind: 'signup', text: `${user.name} (${user.email}) is waiting for approval.${warn}` }).catch(() => {});
     if (!wants(a, 'signup', 'email')) continue;
     await sendEmail(a.email, `New account waiting for approval: ${user.name}`, emailShell('Someone wants to join Duda Site Auditor', `
       <p><b>${esc(user.name)}</b> (${esc(user.email)}) just created an account${user.google ? ' with Google' : ''}.</p>
+      ${off ? '<p style="background:#fff7e6;border:1px solid #f0b429;border-radius:8px;padding:10px">⚠️ <b>This email is not on our Slack.</b> Make sure you know who this is before approving.</p>' : ''}
       <p><a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;padding:9px 14px;border-radius:8px;text-decoration:none">Review in Members</a></p>`)).catch(() => {});
   }
-  await slack(`:wave: *${user.name}* (${user.email}) created a Duda Site Auditor account and is waiting for admin approval. <${link}|Review in Members>`);
+  await slack(`:wave: *${user.name}* (${user.email}) created a Duda Site Auditor account and is waiting for admin approval.${off ? ' :warning: *This email is not on our Slack.*' : ''} <${link}|Review in Members>`);
 }
 
 

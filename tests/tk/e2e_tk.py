@@ -162,6 +162,8 @@ try:
         pg.tap('.cp-fab'); pg.wait_for_selector('[data-tkt="question"]'); pg.tap('[data-tkt="question"]')
         pg.wait_for_selector('#tqText')
         pg.fill('#tqText', 'When does my domain renew?')
+        if not os.path.exists(os.path.join(OUT, 'prev-d0.png')):  # normally left by an earlier test; any picture will do
+            pg.screenshot(path=os.path.join(OUT, 'prev-d0.png'))
         pg.set_input_files('#tqFile', os.path.join(OUT, 'prev-d0.png'))
         pg.wait_for_selector('#tqPrev img')
         pg.screenshot(path=os.path.join(OUT, 'shot-phone-question.png'))

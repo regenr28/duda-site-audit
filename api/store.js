@@ -228,7 +228,7 @@ async function handler(req, res) {
       if (op === 'list') {
         // Scan claims (who has a website queued or scanning) ride along with every poll; the list is tiny
         if (req.query.since) { const [v, cl] = await redis(['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims']); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claims: await freshClaims(cl), build: buildId() }); }
-        const [idx, v, cl, fx] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims'], ['HGETALL', P + 'fixedchecks']);
+        const [idx, v, cl, fx, jc] = await redis(['HGETALL', P + 'index'], ['GET', P + 'ver:index'], ['HGETALL', P + 'scanclaims'], ['HGETALL', P + 'fixedchecks'], ['HGETALL', P + 'jag:cards']);
         // Checks that were corrected after somebody reported them: a website scanned before one of
         // these is carrying items the corrected check would no longer raise, and says so on its page.
         // Narrowed here, not in the page: somebody who may only see their own websites is never
@@ -242,6 +242,11 @@ async function handler(req, res) {
           const byId = new Map(fresh.filter(Boolean).map((x) => [x.id, x]));
           sites = sites.map((x) => byId.get(x.id) || x);
         }
+        // A website on the Jaguars board (waiting, being fixed or under review) is worked from Tasks, so
+        // the Audits list leaves it out; it comes back here once it is complete.
+        const board = {};
+        Object.values(pairs(jc, true)).forEach((c) => { if (c && c.auditId && ['queued', 'progress', 'review'].includes(c.state)) board[c.auditId] = { state: c.state, byName: c.byName || '' }; });
+        sites = sites.map((x) => (x && board[x.id] ? Object.assign({}, x, { board: board[x.id] }) : x));
         const seeAll = await can(me, 'site.viewall');
         if (!seeAll) {
           const mine = normEmail(me.email);
