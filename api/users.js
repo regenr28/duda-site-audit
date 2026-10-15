@@ -22,6 +22,16 @@ async function handler(req, res) {
       return res.status(200).json({ me: publicUser(me), users: visible.map(shape).sort((a, b) => a.name.localeCompare(b.name)) });
     }
     const b = readBody(req);
+    if (b.op === 'photo') {
+      // Their own profile photo, already shrunk to a small square in the browser (a few KB), so it
+      // travels with the team list and shows wherever their initials did.
+      const ph = String(b.photo || '');
+      if (ph && !/^data:image\/(jpeg|webp|png);base64,[A-Za-z0-9+/=]+$/.test(ph)) return res.status(400).json({ error: 'That picture could not be used. Try a JPG or PNG.' });
+      if (ph.length > 60000) return res.status(400).json({ error: 'That picture is too big.' });
+      if (ph) me.photo = ph; else delete me.photo;
+      await putUser(me);
+      return res.status(200).json({ user: publicUser(me) });
+    }
     if (b.op === 'profile') {
       const name = String(b.name || '').trim().slice(0, 60);
       if (!name) return res.status(400).json({ error: 'Name required' });

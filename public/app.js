@@ -146,6 +146,7 @@
     const u = user(email);
     if (!u && !email) return '';
     const name = u ? u.name : email;
+    if (u && u.photo) return `<img class="av av-img" src="${esc(u.photo)}" alt="" title="${esc(name)}" style="${size ? `width:${size}px;height:${size}px` : ''}">`;
     return `<span class="av" style="background:${esc((u && u.color) || '#6b7280')};${size ? `width:${size}px;height:${size}px;font-size:${Math.round(size / 2.3)}px` : ''}" title="${esc(name)}">${esc(initials(name))}</span>`;
   }
   function userOptions(selected, emptyLabel) {
@@ -155,6 +156,75 @@
       + (cur ? `<option value="${esc(cur.email)}" selected>${esc(cur.name)} (switched off)</option>` : '')
       + list.map((u) => `<option value="${esc(u.email)}" ${u.email === selected ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
   }
+
+  // =====================================================================
+  // PEOPLE PICKER — every "assign to" dropdown becomes a list with photos, grouped by role, with a
+  // search box. The real <select> stays (hidden) and still fires its own change event, so whatever
+  // code listens to it keeps working unchanged.
+  // =====================================================================
+  const PP_ORDER = ['admin', 'jaguar', 'member'];
+  const ppGroupName = (role) => (role === 'admin' ? 'Admins' : role === 'jaguar' ? 'Jaguars' : role === 'member' ? 'Members' : roleName(role) || 'Others');
+  function ppLabel(sel) {
+    const o = sel.options[sel.selectedIndex];
+    const v = o ? o.value : '';
+    const u = /@/.test(v) ? user(v) : null;
+    return `${u ? avatar(v, 22) : '<span class="pp-none">—</span>'}<span class="pp-name">${esc(o ? o.textContent : '')}</span><span class="caret">▾</span>`;
+  }
+  function ppEnhance(sel) {
+    if (sel.dataset.pp) return;
+    sel.dataset.pp = '1'; sel.classList.add('pp-hidden');
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'pp-btn'; btn.title = sel.title || sel.getAttribute('aria-label') || 'Assign';
+    btn.innerHTML = ppLabel(sel);
+    sel.after(btn);
+    // The avatar beside some dropdowns is now inside the button: hide the duplicate.
+    const prev = sel.previousElementSibling; if (prev && prev.classList.contains('av') && sel.parentElement.classList.contains('member-select')) prev.classList.add('pp-hidden');
+    sel.addEventListener('change', () => { btn.innerHTML = ppLabel(sel); });
+    btn.onclick = (e) => { e.stopPropagation(); ppOpen(sel, btn); };
+  }
+  function ppOpen(sel, btn) {
+    const was = $('#popMenu'); closePop(); if (was && was._for === btn) return;
+    const opts = [...sel.options];
+    const special = opts.filter((o) => !/@/.test(o.value));
+    const people = opts.filter((o) => /@/.test(o.value)).map((o) => ({ o, u: user(o.value) || { email: o.value, name: o.textContent, role: '' } })).filter((x) => x.u.role !== 'client');
+    const groups = {};
+    people.forEach((x) => { const off = /switched off/.test(x.o.textContent); const k = off ? '~off' : (x.u.role || '~'); (groups[k] = groups[k] || []).push(x); });
+    const keys = Object.keys(groups).sort((a, b) => { const ia = PP_ORDER.indexOf(a), ib = PP_ORDER.indexOf(b); return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib) || (a.startsWith('~') - b.startsWith('~')) || ppGroupName(a).localeCompare(ppGroupName(b)); });
+    const row = (o, inner) => `<button type="button" class="pp-item${o.value === sel.value ? ' on' : ''}" data-v="${esc(o.value)}" data-q="${esc((o.textContent + ' ' + o.value).toLowerCase())}">${inner}${o.value === sel.value ? '<span class="pp-tick">✓</span>' : ''}</button>`;
+    const m = document.createElement('div');
+    m.id = 'popMenu'; m.className = 'app-menu panel pp-pop'; m.setAttribute('role', 'listbox'); m._for = btn;
+    m.innerHTML = `${people.length >= 6 ? '<input type="search" class="pp-q" placeholder="Search people…" aria-label="Search people">' : ''}<div class="pp-list">
+      ${special.map((o) => row(o, `<span class="pp-none">${o.value === '__' ? '…' : '—'}</span><span class="pp-t"><b>${esc(o.textContent)}</b></span>`)).join('')}
+      ${keys.map((k) => `<div class="pp-group" data-g><div class="pp-gh">${k === '~off' ? 'Switched off' : esc(ppGroupName(k))}</div>
+        ${groups[k].sort((a, b) => a.u.name.localeCompare(b.u.name)).map(({ o, u }) => row(o, `${avatar(u.email, 30)}<span class="pp-t"><b>${esc(u.name)}</b><small>${esc(u.email)}</small></span>`)).join('')}</div>`).join('')}
+      </div>`;
+    document.body.appendChild(m);
+    btn.classList.add('on');
+    const r = btn.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+    const below = innerHeight - r.bottom > Math.min(h, 360) + 12 || r.top < h;
+    m.style.top = (below ? r.bottom + 6 : Math.max(8, r.top - h - 6)) + 'px';
+    m.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px';
+    const pick = (v) => { closePop(); if (v === sel.value) return; sel.value = v; sel.dispatchEvent(new Event('change', { bubbles: true })); btn.focus(); };
+    $$('.pp-item', m).forEach((b) => { b.onclick = () => pick(b.dataset.v); });
+    const q = $('.pp-q', m);
+    if (q) {
+      q.oninput = () => { const t = q.value.trim().toLowerCase(); $$('.pp-item', m).forEach((b) => { b.hidden = !!t && !b.dataset.q.includes(t); }); $$('[data-g]', m).forEach((g) => { g.hidden = !$$('.pp-item', g).some((b) => !b.hidden); }); };
+      q.onkeydown = (e) => { if (e.key === 'Enter') { const f = $$('.pp-item', m).find((b) => !b.hidden); if (f) { e.preventDefault(); pick(f.dataset.v); } } };
+      setTimeout(() => q.focus(), 0);
+    } else { const on = $('.pp-item.on', m) || $('.pp-item', m); if (on) on.focus(); }
+    const cur = $('.pp-item.on', m); if (cur) cur.scrollIntoView({ block: 'nearest' });
+    setTimeout(() => {
+      const away = (e) => { if (!m.contains(e.target) && !btn.contains(e.target)) closePop(); };
+      const key = (e) => {
+        if (e.key === 'Escape') { closePop(); btn.focus(); }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const l = $$('.pp-item', m).filter((b) => !b.hidden); const k = l.indexOf(document.activeElement); const n = l[k < 0 ? 0 : (k + (e.key === 'ArrowDown' ? 1 : -1) + l.length) % l.length]; if (n) n.focus(); }
+      };
+      document.addEventListener('mousedown', away); document.addEventListener('keydown', key);
+      m._off = () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); btn.classList.remove('on'); };
+    }, 0);
+  }
+  // Every people dropdown on the page, now and whenever a screen is drawn.
+  new MutationObserver(() => { $$('select[data-people]:not([data-pp])').forEach(ppEnhance); }).observe(document.body, { childList: true, subtree: true });
 
   // =====================================================================
   // AUTH
@@ -1255,11 +1325,30 @@
   /** What the Save button sends: every unticked switch, which is what gets stored. */
   const readNotifyGrid = () => $$('[data-ng]').filter((i) => !i.checked).map((i) => i.dataset.ng);
 
+  /** A picture, cropped to the middle square and shrunk, as a small JPEG data address (a few KB). */
+  function squarePhoto(file, px) {
+    return new Promise((ok, bad) => {
+      const url = URL.createObjectURL(file); const img = new Image();
+      img.onload = () => {
+        const n = Math.min(img.naturalWidth, img.naturalHeight); if (!n) { URL.revokeObjectURL(url); bad(new Error('empty')); return; }
+        const c = document.createElement('canvas'); c.width = c.height = px;
+        const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, px, px);
+        g.drawImage(img, (img.naturalWidth - n) / 2, (img.naturalHeight - n) / 2, n, n, 0, 0, px, px);
+        URL.revokeObjectURL(url);
+        let q = 0.85, out = c.toDataURL('image/jpeg', q);
+        while (out.length > 45000 && q > 0.4) { q -= 0.15; out = c.toDataURL('image/jpeg', q); }
+        ok(out);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); bad(new Error('unreadable')); };
+      img.src = url;
+    });
+  }
   function openMe() {
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
-      <div class="body"><div class="member-row" style="border:0">${avatar(state.me.email, 36)}<div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.myRole ? ' · ' + esc(state.myRole.name.toLowerCase()) : ''}</div></div></div>
+      <div class="body"><div class="member-row" style="border:0"><span id="meAv">${avatar(state.me.email, 48)}</span><div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.myRole ? ' · ' + esc(state.myRole.name.toLowerCase()) : ''}</div></div></div>
       ${state.superAdmin ? `<button class="btn sm" id="meHealth" type="button" style="justify-self:start">⚑ System health</button>
         <div class="small muted" style="margin-top:-4px">Storage, allowances and whether everything is still arriving. Only you can open it.</div>` : ''}
+      <div class="me-sec"><button class="btn sm" id="mePhoto" type="button">📷 ${state.me.photo ? 'Change photo' : 'Add a profile photo'}</button>${state.me.photo ? '<button class="btn sm ghost" id="mePhotoOff" type="button">Remove photo</button>' : ''}<input type="file" id="mePhotoIn" accept="image/*" hidden></div>
       <div class="me-sec"><button class="btn sm" id="mePw" type="button">Change password</button><button class="btn sm" id="meLog" type="button">🛡 My security log</button></div>
       <label class="field">Display name <span class="small muted">your real full name</span><input type="text" id="meName" value="${esc(state.me.name)}"></label>
       <label class="field">Pop-up notifications stay on screen for
@@ -1276,6 +1365,16 @@
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
     $('#mePw').onclick = () => openChangePassword();
+    const savePhoto = async (photo) => {
+      try { const r = await post('/api/users', { op: 'photo', photo }); state.me = Object.assign(state.me, { photo: r.user.photo }); await loadUsers(); renderTop(); render(); toast(photo ? 'Photo saved' : 'Photo removed'); openMe(); }
+      catch (e) { toast(e.message); }
+    };
+    $('#mePhoto').onclick = () => $('#mePhotoIn').click();
+    $('#mePhotoIn').onchange = async (e) => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      try { savePhoto(await squarePhoto(f, 160)); } catch (x) { toast('That picture could not be read. Try a JPG or PNG.'); }
+    };
+    if ($('#mePhotoOff')) $('#mePhotoOff').onclick = () => savePhoto('');
     $('#meLog').onclick = () => { closeModal(); location.hash = '#/settings/security'; };
     if ($('#meHealth')) $('#meHealth').onclick = () => { closeModal(); location.hash = '#/health'; };
     // The test shows the pop-up and, when Slack messages are switched on here, also sends a Slack test message
@@ -6424,7 +6523,7 @@
       <div class="body">
         <label class="field">Site IDs or Duda editor links, one per line
           <textarea id="addLinks" rows="5" autofocus placeholder="cb89784b&#10;2a458f73&#10;https://8bitcreative.responsivesiteeditor.com/home/site/f981a954/home">${esc(prefill || '')}</textarea></label>
-        <label class="field">Assign to<select id="addWho">${userOptions(state.me.email, 'Unassigned')}</select></label>
+        <label class="field">Assign to<select id="addWho" data-people>${userOptions(state.me.email, 'Unassigned')}</select></label>
         <p class="small muted" style="margin:0">Each site is scanned on Desktop, Tablet and Mobile and compared to its Duda Business Info. Keep this tab open while scans run (${SCAN_CONCURRENCY_SITES} at a time).<br><b>${doneNote()}</b> The person you assign it to is told as well.</p>
       </div>
       <footer><button class="btn" data-close>Cancel</button><button class="btn primary" id="addGo">Add &amp; start audit</button></footer>`);
@@ -8669,7 +8768,7 @@
                 ${(s.counts || {}).clarification ? `<div><span class="badge fs-clarification" title="Someone asked a question and is waiting for an answer">❓ ${s.counts.clarification} waiting on an answer</span></div>` : ''}
                 ${autoLine(s)}
                 <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtDate(s.createdAt)) : ''}</div></td>
-              <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}">${userOptions(s.assignee)}</select></span></td>
+              <td data-stop><span class="member-select">${avatar(s.assignee)}<select data-assign="${esc(s.id)}" data-people>${userOptions(s.assignee)}</select></span></td>
               <td data-stop><select class="pill st-${slug(s.status)}" data-status="${esc(s.id)}">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
                 ${s.completedAt ? `<div class="small faint" title="Marked Complete ${esc(fmtFull(s.completedAt))}">by ${esc(nameOf(s.completedBy, s.completedByName))}${s.scan && s.scan.finishedAt && new Date(s.scan.finishedAt) > new Date(s.completedAt) ? ' · rescanned since' : ''}</div>` : ''}</td>
               <td>${scanBadge(s)}${repubBadge(s)}${fixedCodes(s).size
@@ -9081,7 +9180,7 @@
         ${s.completedAt ? `<div class="small"><span class="badge scan-complete">✓ Marked Complete</span> by <button type="button" class="whobtn" data-who="${esc(s.completedBy || '')}"><b>${esc(nameOf(s.completedBy, s.completedByName))}</b></button> · ${esc(fmtFull(s.completedAt))}${sc.finishedAt && new Date(sc.finishedAt) > new Date(s.completedAt) ? ` <span class="v-still-t">· rescanned since (${esc(fmtFull(sc.finishedAt))})</span>` : ''}</div>` : ''}
         <div class="sh-bar">
           <div class="sh-who">
-            <span class="member-select" title="Who has this audit">${avatar(s.assignee)}<select id="sAssign" aria-label="Assigned to">${userOptions(s.assignee)}</select></span>
+            <span class="member-select" title="Who has this audit">${avatar(s.assignee)}<select id="sAssign" aria-label="Assigned to" data-people>${userOptions(s.assignee)}</select></span>
             <select class="pill st-${slug(s.status)}" id="sStatus" aria-label="Status">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
             ${(state.sites.find((x) => x.id === s.id) || {}).board ? '<a class="badge subtle sh-board" href="#/tasks" title="Being fixed on the Jaguars board">🐆 On the Jaguars board</a>' : ''}
           </div>
@@ -10058,7 +10157,7 @@
         ${picked.length ? `<div class="bulkbar" id="bulkBar">
           <b>${picked.length} selected</b>
           ${can('item.status') ? `<select id="bulkSt" title="Set the status of every selected item"><option value="">Set status…</option>${FSTATUS.map((x) => `<option value="${x.v}">${x.label}</option>`).join('')}</select>` : ''}
-          ${can('item.assign') ? `<select id="bulkWho" title="Assign every selected item"><option value="__">Assign to…</option>${userOptions('__none', 'Unassigned')}</select>` : ''}
+          ${can('item.assign') ? `<select id="bulkWho" title="Assign every selected item" data-people><option value="__">Assign to…</option>${userOptions('__none', 'Unassigned')}</select>` : ''}
           ${can('item.status') ? `<button class="btn sm" id="bulkRe" ${pickedRe.length ? '' : 'disabled'} title="${pickedRe.length ? 'Rescan only the pages these items are on, and check whether they are still there' : 'None of the selected items can be rechecked on their own'}">⟳ Recheck ${pickedRe.length}${pickedRe.length < picked.length ? ` of ${picked.length}` : ''}</button>` : ''}
           <span class="spacer"></span><button class="linkbtn" id="bulkClear">Clear selection</button>
         </div>` : ''}
@@ -10082,7 +10181,7 @@
                 ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
                 ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
-              <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
+              <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
             </tr>`;
           }).join('')}</tbody></table></div>`}
       </div>
@@ -10507,7 +10606,7 @@
           title="Reopen it and tell whoever closed it why">↺ This is not ${f.status === 'done' ? 'done' : 'a false alarm'} — reopen it</button>` : ''}
         ${f.manual && f.code !== 'AUTO_LIVE' && (f.by === state.me.email || can('item.add')) ? `<button class="linkbtn danger" id="drRmItem" style="margin-top:6px;margin-left:10px">Remove this item</button>` : ''}
         <div class="k" style="margin-top:14px">Assignee</div>
-        <span class="member-select">${avatar(effWho(f, s))}<select id="drWho">${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span>
+        <span class="member-select">${avatar(effWho(f, s))}<select id="drWho" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span>
         <h3 style="margin-top:22px">Discussion <span class="faint">(${comments.filter((c) => !c.deleted).length})</span></h3>
         <div class="c-list">${comments.length ? comments.map((c) => renderComment(c, s)).join('') : '<div class="small faint" style="padding:6px 0 10px">No comments yet. Ask a question or attach a screenshot, then set the status to <b>For clarification</b> if you need an answer.</div>'}</div>
         <div id="drComposer"></div>

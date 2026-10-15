@@ -30,7 +30,7 @@ with sync_playwright() as p:
             tag = f'{dev}-{scheme}'
             if dev != 'phone':
                 top = lambda sel: pg.locator(sel).bounding_box()['y']
-                check(abs(top('#sRescan') - top('#sOpen')) < 4 and abs(top('#sRescan') - top('#sAssign')) < 6, f'{tag}: owner, status, Open, ⋯ and Rescan sit on one row')
+                check(abs(top('#sRescan') - top('#sOpen')) < 4 and abs(top('#sRescan') - top('.sh-who .pp-btn')) < 6, f'{tag}: owner, status, Open, ⋯ and Rescan sit on one row')
             check(pg.locator('.site-head .btn').count() <= 3, f'{tag}: three buttons in the header (Open, ⋯, Rescan)', pg.locator('.site-head .btn').count())
             meta = pg.inner_text('.sh-meta')
             check('abc123' in meta and 'Scanned' in meta and 'Backed up' in meta and 'Added by Reymark R' in meta, f'{tag}: one quiet line of facts under the title', meta)

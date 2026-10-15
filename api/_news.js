@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-10-15-people-picker', date: '2026-10-15', audience: 'all', tag: 'Team',
+    title: 'Profile photos, and picking who to assign by name, photo and role',
+    what: 'Every "assign to" list now opens a picker with each person\'s photo, grouped by role (<b>Admins</b>, <b>Jaguars</b>, <b>Members</b>…) with <b>Unassigned</b> first, their email underneath (so two people with the same name are told apart) and a search box. Add your own photo from <b>Your account → 📷 Add a profile photo</b>: it shows wherever your initials did.',
+    where: ['Any audit → who has it, an item\'s assignee, the item panel.', 'Your account (your picture, top right).'],
+  },
+  {
     id: '2026-10-15-cleaner-audit-header', date: '2026-10-15', audience: 'all', tag: 'Audits',
     title: 'A cleaner audit page: Open ▾, ⋯ and Rescan',
     what: 'The row of buttons at the top of an audit is now three: <b>Open ▾</b> (Editor, Live site, Draft preview, View as client), <b>⋯</b> (Summary, Export CSV, Back up now, Audit exceptions, Send to Jaguars) and <b>⟳ Rescan</b>, with who has it and its status on the left. The facts under the name (site ID, published, last scan, backup, added by) are one short line; hover for the full dates. The AI part of the scan summary is one line with <b>details</b> to open it, and <b>Reference data</b> starts closed and remembers if you open it. Jaguars now see the website they hold on <b>Audits</b> too (tagged 🐆 Yours on Tasks).',
