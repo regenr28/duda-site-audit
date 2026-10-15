@@ -258,7 +258,7 @@ async function handler(req, res) {
         // A website on the Jaguars board (waiting, being fixed or under review) is worked from Tasks, so
         // the Audits list leaves it out; it comes back here once it is complete.
         const board = {};
-        Object.values(pairs(jc, true)).forEach((c) => { if (c && c.auditId && ['queued', 'progress', 'review'].includes(c.state)) board[c.auditId] = { state: c.state, byName: c.byName || '' }; });
+        Object.values(pairs(jc, true)).forEach((c) => { if (c && c.auditId && ['queued', 'progress', 'review'].includes(c.state)) board[c.auditId] = { state: c.state, by: c.by || '', byName: c.byName || '' }; });
         sites = sites.map((x) => (x && board[x.id] ? Object.assign({}, x, { board: board[x.id] }) : x));
         const seeAll = await can(me, 'site.viewall');
         if (!seeAll) {

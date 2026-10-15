@@ -72,13 +72,14 @@ try:
         r = subprocess.run(['curl', '-s', f'http://localhost:{APORT}/api/client?op=me', '-H', 'Cookie: dsa_sess=tokmember1234567890abcde', '-H', 'x-view-as-client: 1', '-H', 'x-view-site: new777'], capture_output=True, text=True).stdout
         check('View as client' in r, 'the server refuses a member without "Profile: View as client"')
         # the audit page header has View as client too
-        pg2 = ctx.new_page(); pg2.goto(f'http://localhost:{APORT}/#/site/s1'); pg2.wait_for_selector('#sViewAs', timeout=15000)
+        pg2 = ctx.new_page(); pg2.goto(f'http://localhost:{APORT}/#/site/s1'); pg2.wait_for_selector('#sOpen', timeout=15000); pg2.click('#sOpen'); pg2.wait_for_selector('#sViewAs', timeout=15000)
         check(True, 'the audit page header has 👁 View as client')
         # a member, by default, does not
         mctx = br.new_context(viewport={'width': 1280, 'height': 900}); mctx.add_cookies([{'name': 'dsa_sess', 'value': 'tokmember1234567890abcde', 'domain': 'localhost', 'path': '/'}])
         redis(['HSET', 'dsa:index', 's1', json.dumps({'id': 's1', 'siteId': 'abc123', 'businessName': 'Buff & Beyond', 'assignee': 'dev@8bitcreative.com'})], ['SET', 'dsa:site:s1', json.dumps({'id': 's1', 'siteId': 'abc123', 'host': 'ed.multiscreensite.com', 'businessName': 'Buff & Beyond', 'assignee': 'dev@8bitcreative.com', 'findings': []})])
         mp = mctx.new_page(); mp.on('pageerror', lambda e: errors.append(str(e)))
         mp.goto(f'http://localhost:{APORT}/#/site/s1/profile'); mp.wait_for_selector('#pfMain .pf-top', timeout=20000); time.sleep(1)
+        mp.click('#sOpen'); time.sleep(0.3)
         check(mp.locator('#pfView').count() == 0 and mp.locator('#sViewAs').count() == 0, 'a member does not get View as client unless their role or access includes it')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()

@@ -8611,8 +8611,10 @@
     return liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(siteId).toLowerCase()) || false;
   }
   function renderSites() {
-    // Websites on the Jaguars board are worked from Tasks; they come back here once complete.
-    const SITES = state.sites.filter((x) => !x.board);
+    // Websites on the Jaguars board are worked from Tasks, so others don't see them here until they
+    // are complete. Whoever holds one does: it is their work, and this is where they look for it.
+    const mineOnBoard = (x) => x.board && x.board.by === state.me.email && x.board.state !== 'queued';
+    const SITES = state.sites.filter((x) => !x.board || mineOnBoard(x));
     const onBoard = state.sites.length - SITES.length;
     if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if (route().name === 'sites') renderSites(); });
     const f = state.filters;
@@ -8656,7 +8658,7 @@
           <tbody>${list.map((s) => {
             const c = s.counts || {};
             return `<tr class="row-link" data-open="${esc(s.id)}">
-              <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
+              <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}${mineOnBoard(s) ? ' <a class="badge subtle" href="#/tasks" title="You hold this website on the Jaguars board">🐆 Yours on Tasks</a>' : ''}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
                 ${(() => {
                   const st = dudaState(s.siteId);
                   if (st === 'draft') return `<div><span class="badge subtle" title="This website is in Duda but hasn't been published yet — normal for an audit done before launch. Live site checks need it published first.">Not published yet</span></div>`;
@@ -8678,7 +8680,7 @@
               <td data-stop style="white-space:nowrap"><button class="btn sm" data-rescan="${esc(s.id)}" ${state.scanning[s.id] || otherClaim(s.id) ? `disabled title="${otherClaim(s.id) ? esc(claimText(otherClaim(s.id))) : 'Scanning in this tab'}"` : ''}>Rescan</button>
                 ${can('site.remove') || s.addedBy === state.me.email ? `<button class="btn sm ghost danger" data-delete="${esc(s.id)}" title="Remove this audit from the list (the website itself is untouched)">✕</button>` : ''}</td>
             </tr>`;
-          }).join('')}</tbody></table></div>` : `<div class="empty">${SITES.length ? `<div><b>No websites match these filters.</b></div><div class="small muted" style="margin:6px 0 10px">${SITES.length} website${SITES.length === 1 ? '' : 's'} on the list.</div><button class="btn sm primary" id="sfClear">Clear filters</button>` : 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.'}</div>`}
+          }).join('')}</tbody></table></div>` : `<div class="empty">${SITES.length ? `<div><b>No websites match these filters.</b></div><div class="small muted" style="margin:6px 0 10px">${SITES.length} website${SITES.length === 1 ? '' : 's'} on the list.</div><button class="btn sm primary" id="sfClear">Clear filters</button>` : (can('site.add') ? 'No websites yet. Click <b>+ Add website</b> and paste a Duda editor link.' : `No websites yet.${can('jags.take') ? ' Take one from <a href="#/tasks">Tasks</a>: it shows here while it is yours.' : ''}`)}</div>`}
       </div>`;
     const v = $('#view');
     $('#fq').oninput = (e) => { f.q = e.target.value; const p = e.target.selectionStart; renderSites(); const i = $('#fq'); i.focus(); i.setSelectionRange(p, p); };
@@ -9067,25 +9069,27 @@
     const generalComments = (s.comments || []).filter((c) => c.target === 'site' && !c.deleted).length;
     const sc = s.scan || {};
     $('#view').innerHTML = `
-      <div class="page-head">
-        <div><div class="small"><a href="#/">← All audits</a></div>
-          <h1>${esc(s.businessName || s.siteId)}</h1>
-          <div class="muted small"><span class="mono">${esc(s.siteId)}</span> · <span id="sitePub">${sitePubHtml(s)}</span></div>
-          <div class="small faint">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}${s.createdAt ? ' · ' + esc(fmtFull(s.createdAt)) : ''}</div>
-          ${s.completedAt ? `<div class="small"><span class="badge scan-complete">✓ Marked Complete</span> by <button type="button" class="whobtn" data-who="${esc(s.completedBy || '')}"><b>${esc(nameOf(s.completedBy, s.completedByName))}</b></button> · ${esc(fmtFull(s.completedAt))}${sc.finishedAt && new Date(sc.finishedAt) > new Date(s.completedAt) ? ` <span class="v-still-t">· rescanned since (${esc(fmtFull(sc.finishedAt))})</span>` : ''}</div>` : ''}
-          <div class="last-scan">${sc.finishedAt ? `🕑 Last scan: <b>${esc(fmtFull(sc.finishedAt))}</b>${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}` : '🕑 Not scanned yet'}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</div>${backupLine(s)}<div id="roomBar">${roomBarHtml()}</div></div>
-        <div class="head-actions">
-          <span class="member-select">${avatar(s.assignee)}<select id="sAssign">${userOptions(s.assignee)}</select></span>
-          <select class="pill st-${slug(s.status)}" id="sStatus">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
-          <button class="btn" id="sExempt" type="button" title="What is not checked on this website, and why">🚫 Audit exceptions${(s.findings || []).some((f) => f.status === 'exempt') ? ` <span class="badge subtle">${(s.findings || []).filter((f) => f.status === 'exempt').length}</span>` : ''}</button>
-          ${can('jags.lead') ? ((state.sites.find((x) => x.id === s.id) || {}).board ? '<a class="btn" href="#/tasks" title="Being fixed on the Jaguars board">🐆 On the Jaguars board</a>' : '<button class="btn" id="sJag" type="button" title="Hand this audit to the Jaguars: into their queue, or straight to one of them">🐆 Send to Jaguars</button>') : ''}
-          ${can('client.viewas') ? '<button class="btn" id="sViewAs" type="button" title="See this website\'s client page exactly as the client does">👁 View as client</button>' : ''}
-          <a class="btn" href="${esc(editorUrl(s, '/'))}" target="_blank" rel="noopener">Open editor ↗</a>
-          <span id="liveBtn">${liveBtnHtml(s)}</span>
-          <a class="btn" href="https://${esc(linkHost(s))}/preview/${esc(s.siteId)}" target="_blank" rel="noopener" title="The editor's current version, including changes that aren't published yet">Draft preview ↗</a>
-          <button class="btn" id="sSum" ${findings.length ? '' : 'disabled'} title="What was checked, fixed and left — ready to paste in the group chat">📋 Summary</button>
-          <button class="btn" id="sCsv" ${findings.length ? '' : 'disabled'}>Export CSV</button>
-          ${otherClaim(s.id) && !live ? `<button class="btn primary" id="sRescan" disabled title="Only one scan of a website runs at a time">${esc(claimText(otherClaim(s.id)))}</button>` : `<button class="btn primary" id="sRescan" ${live ? 'disabled' : ''}>${live ? (live.queued ? 'Queued…' : 'Scanning…') : 'Rescan'}</button>`}
+      <div class="site-head">
+        <div class="small"><a href="#/">← All audits</a></div>
+        <div class="sh-title"><h1>${esc(s.businessName || s.siteId)}</h1><div id="roomBar">${roomBarHtml()}</div></div>
+        <div class="sh-meta small muted">
+          <span class="mono" title="Duda site ID">${esc(s.siteId)}</span><span id="sitePub">${sitePubHtml(s)}</span>
+          <span title="${sc.finishedAt ? esc('Last scan ' + fmtFull(sc.finishedAt) + (sc.by || sc.startedBy ? ' by ' + nameOf(sc.by || sc.startedBy) : '')) : 'Not scanned yet'}">🕑 ${sc.finishedAt ? `Scanned ${esc(ago(sc.finishedAt))}${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}` : 'Not scanned yet'}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</span>
+          ${backupShort(s)}
+          <span title="${esc('Added by ' + (s.addedByName || nameOf(s.addedBy, '—')) + (s.createdAt ? ' · ' + fmtFull(s.createdAt) : ''))}">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}</span>
+        </div>
+        ${s.completedAt ? `<div class="small"><span class="badge scan-complete">✓ Marked Complete</span> by <button type="button" class="whobtn" data-who="${esc(s.completedBy || '')}"><b>${esc(nameOf(s.completedBy, s.completedByName))}</b></button> · ${esc(fmtFull(s.completedAt))}${sc.finishedAt && new Date(sc.finishedAt) > new Date(s.completedAt) ? ` <span class="v-still-t">· rescanned since (${esc(fmtFull(sc.finishedAt))})</span>` : ''}</div>` : ''}
+        <div class="sh-bar">
+          <div class="sh-who">
+            <span class="member-select" title="Who has this audit">${avatar(s.assignee)}<select id="sAssign" aria-label="Assigned to">${userOptions(s.assignee)}</select></span>
+            <select class="pill st-${slug(s.status)}" id="sStatus" aria-label="Status">${SITE_STATUSES.map((x) => `<option ${x === s.status ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+            ${(state.sites.find((x) => x.id === s.id) || {}).board ? '<a class="badge subtle sh-board" href="#/tasks" title="Being fixed on the Jaguars board">🐆 On the Jaguars board</a>' : ''}
+          </div>
+          <div class="sh-acts">
+            <button class="btn" id="sOpen" type="button" aria-haspopup="menu" aria-expanded="false">Open <span class="caret">▾</span></button>
+            <button class="btn sh-more" id="sMore" type="button" aria-haspopup="menu" aria-expanded="false" title="More: summary, export, backup, exceptions${can('jags.lead') ? ', Jaguars' : ''}">⋯<span class="sr-only"> More</span></button>
+            ${otherClaim(s.id) && !live ? `<button class="btn primary" id="sRescan" disabled title="Only one scan of a website runs at a time">${esc(claimText(otherClaim(s.id)))}</button>` : `<button class="btn primary" id="sRescan" ${live ? 'disabled' : ''}>${live ? (live.queued ? 'Queued…' : 'Scanning…') : '⟳ Rescan'}</button>`}
+          </div>
         </div>
       </div>
       <div class="tabs">
@@ -9100,8 +9104,7 @@
       <div id="tabBody"></div>`;
     $('#sAssign').onchange = async (e) => { await changeSite(s, { assignee: e.target.value }); await loadSite(s.id); renderSite(); };
     $('#sStatus').onchange = async (e) => { await changeSite(s, { status: e.target.value }); await loadSite(s.id); renderSite(); };
-    $('#sExempt').onclick = () => openExceptions(s);
-    if ($('#sJag')) $('#sJag').onclick = () => {
+    const sendToJags = () => {
       const people = (state.users || []).filter((u) => u.status === 'active' && u.role !== 'client');
       const jags = people.filter((u) => u.role === 'jaguar'), others = people.filter((u) => u.role !== 'jaguar');
       modal(`<header><h2>Send to Jaguars</h2><button class="btn ghost" data-close>✕</button></header>
@@ -9123,14 +9126,37 @@
       };
     };
     $('#sRescan').onclick = () => requestScan([s.id]);
-    if ($('#sViewAs')) $('#sViewAs').onclick = () => viewWebsiteAsClient(s.id, s.siteId);
     loadPubInfo(s);
-    $('#sCsv').onclick = () => exportCsv(s);
-    $('#sSum').onclick = () => openSummary(s);
-    if ($('#sBackup')) $('#sBackup').onclick = async (e) => {
-      const btn = e.target; btn.disabled = true; btn.textContent = 'Backing up…';
+    const backupNow = async () => {
+      toast('Backing up in Duda…');
       try { const r = await store({ op: 'backup', id: s.id, stamp: backupStamp() }); toast('Backed up in Duda: ' + r.name); await loadSite(s.id); renderSite(); }
       catch (err) { toast(err.message); await loadSite(s.id); renderSite(); }
+    };
+    // The header's two menus: where to go (Open) and what else to do (⋯). Rebuilt on every click, so
+    // they always reflect the website as it is now (live domain, findings, board).
+    const mi = (o) => `${o.href ? `<a class="am-item" href="${esc(o.href)}"${o.ext ? ' target="_blank" rel="noopener"' : ''} role="menuitem"${o.id ? ` id="${o.id}"` : ''}>` : `<button class="am-item" type="button" role="menuitem"${o.id ? ` id="${o.id}"` : ''}${o.off ? ' disabled' : ''}>`}<span class="mi-ic">${o.ic}</span><span class="mi-t"><b>${esc(o.label)}${o.ext ? ' ↗' : ''}</b>${o.desc ? `<small>${esc(o.desc)}</small>` : ''}</span>${o.href ? '</a>' : '</button>'}`;
+    $('#sOpen').onclick = (e) => {
+      const dom = liveDomain(s);
+      popMenu(e.currentTarget, [
+        mi({ ic: '✏️', label: 'Editor', desc: 'Make changes in Duda', href: editorUrl(s, '/'), ext: true }),
+        dom && mi({ ic: '🌐', label: 'Live site', desc: dom, href: `https://${dom}/`, ext: true }),
+        mi({ ic: '📝', label: 'Draft preview', desc: 'Includes changes not published yet', href: `https://${linkHost(s)}/preview/${s.siteId}`, ext: true }),
+        can('client.viewas') && mi({ ic: '👁', label: 'View as client', desc: "This website's client page, as the client sees it", id: 'sViewAs' }),
+      ], (m) => { if ($('#sViewAs', m)) $('#sViewAs', m).onclick = () => { closePop(); viewWebsiteAsClient(s.id, s.siteId); }; });
+    };
+    $('#sMore').onclick = (e) => {
+      const nEx = (s.findings || []).filter((f) => f.status === 'exempt').length;
+      const onBoard = (state.sites.find((x) => x.id === s.id) || {}).board;
+      popMenu(e.currentTarget, [
+        mi({ ic: '📋', label: 'Summary', desc: 'Checked, fixed and left: ready to paste in the group chat', id: 'sSum', off: !findings.length }),
+        mi({ ic: '⬇️', label: 'Export CSV', desc: 'Every audit item as a spreadsheet', id: 'sCsv', off: !findings.length }),
+        can('site.scan') && s.siteId && mi({ ic: '💾', label: 'Back up now', desc: 'A restore point in Duda (Site History)', id: 'sBackup' }),
+        mi({ ic: '🚫', label: 'Audit exceptions', desc: nEx ? `${nEx} item${nEx === 1 ? '' : 's'} Exempt on this audit` : 'What is not checked here, and why', href: `#/site/${s.id}/exceptions`, id: 'sExempt' }),
+        can('jags.lead') && (onBoard ? mi({ ic: '🐆', label: 'On the Jaguars board', desc: 'Open Tasks', href: '#/tasks' }) : mi({ ic: '🐆', label: 'Send to Jaguars', desc: 'Into their queue, or straight to one of them', id: 'sJag' })),
+      ], (m) => {
+        const on = (id, fn) => { const b = $('#' + id, m); if (b && b.tagName === 'BUTTON') b.onclick = () => { closePop(); fn(); }; };
+        on('sSum', () => openSummary(s)); on('sCsv', () => exportCsv(s)); on('sBackup', backupNow); on('sJag', sendToJags);
+      });
     };
     const body = $('#tabBody');
     const prevTab = state.renderedTab;
@@ -9358,13 +9384,62 @@
     if (!last) return `<div class="small faint">💾 No backup made from here yet — one is made automatically before the first scan.${btn}</div>`;
     return `<div class="small ${last.ok ? 'faint' : 'v-still-t'}">💾 ${last.ok ? `Backup in Duda: <span class="mono">${esc(last.name)}</span>` : `Backup failed (${esc(last.error || 'unknown')})`} · ${esc(last.byName || nameOf(last.by))} · ${esc(fmtFull(last.at))}${btn}</div>`;
   }
+  /** Sections someone opened or closed stay that way for them (Reference data closed by default). */
+  function uiOpen(k) { try { return localStorage.getItem('dsa-open-' + k) === '1'; } catch (e) { return false; } }
+  document.addEventListener('toggle', (e) => { const d = e.target; if (d && d.dataset && d.dataset.ui) { try { localStorage.setItem('dsa-open-' + d.dataset.ui, d.open ? '1' : ''); } catch (x) { /* fine */ } } }, true);
+  /** What the AI found on this scan, in one line. */
+  function aiShort(ai) {
+    const bits = [];
+    if (ai.proof) bits.push(`Proofread ${ai.proof.blocks} blocks: <b>${ai.proof.flagged}</b> spelling or grammar`);
+    if (ai.links) bits.push(`<b>${ai.links.flagged}</b> button${ai.links.flagged === 1 ? '' : 's'} open the wrong page`);
+    if (ai.text) bits.push(`<b>${ai.text.flagged || 0}</b> name or place`);
+    bits.push(`<b>${ai.flagged || 0}</b> alt text`);
+    return '✨ AI: ' + bits.join(' · ');
+  }
+  /** The backup, in a few words for the line under the title; the details on hover. */
+  function backupShort(s) {
+    const last = (s.backups || [])[0];
+    if (!last) return '<span title="One is made automatically before the first scan">💾 No backup yet</span>';
+    return last.ok ? `<span title="${esc(`Backup in Duda: ${last.name} · ${last.byName || nameOf(last.by)} · ${fmtFull(last.at)}`)}">💾 Backed up ${esc(ago(last.at))}</span>`
+      : `<span class="v-still-t" title="${esc(last.error || '')}">💾 Backup failed</span>`;
+  }
+  /** A small menu under a button. Items are HTML strings (false ones skipped); `bind` wires them up. */
+  function popMenu(anchor, items, bind) {
+    const was = $('#popMenu'); closePop(); if (was && was._for === anchor) return;
+    const m = document.createElement('div');
+    m.id = 'popMenu'; m.className = 'app-menu panel pop-menu'; m.setAttribute('role', 'menu'); m._for = anchor;
+    m.innerHTML = items.filter(Boolean).join('');
+    document.body.appendChild(m);
+    anchor.classList.add('on'); anchor.setAttribute('aria-expanded', 'true');
+    const r = anchor.getBoundingClientRect(), w = m.offsetWidth;
+    m.style.top = (r.bottom + 6) + 'px'; m.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w)) + 'px';
+    $$('a', m).forEach((a) => a.addEventListener('click', () => closePop()));
+    if (bind) bind(m);
+    const f = $('.am-item:not([disabled])', m); if (f) f.focus();
+    setTimeout(() => {
+      const away = (e) => { if (!m.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) closePop(); };
+      const key = (e) => {
+        if (e.key === 'Escape') { closePop(); anchor.focus(); }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const l = $$('.am-item:not([disabled])', m); const k = l.indexOf(document.activeElement); const n = l[(k + (e.key === 'ArrowDown' ? 1 : -1) + l.length) % l.length]; if (n) n.focus(); }
+      };
+      document.addEventListener('mousedown', away); document.addEventListener('keydown', key);
+      m._off = () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); };
+    }, 0);
+  }
+  function closePop() {
+    const m = $('#popMenu'); if (!m) return;
+    if (m._off) m._off();
+    if (m._for) { m._for.classList.remove('on'); m._for.setAttribute('aria-expanded', 'false'); }
+    m.remove();
+  }
+  window.addEventListener('hashchange', closePop);
   function sitePubHtml(s) {
     const pd = (pubInfo[s.id] || {}).d;
     const lx = liveOf(s.siteId);
     const at = (pd && pd.publishedAt) || (lx && lx.published) || '';
     if (pd && (!pd.domain || /NOT_PUBLISHED|UNPUBLISHED/i.test(pd.publishStatus || ''))) return '<span class="faint">Not published yet</span>';
     if (lx === false && !pd) return '<span class="faint">Not in the published list</span>';
-    return at ? `Last published <b>${esc(fmtFull(at))}</b> <span class="faint">(${esc(relTime(at))})</span>` : '<span class="faint">Checking publish date…</span>';
+    return at ? `<span title="Last published ${esc(fmtFull(at))}">Published ${esc(relTime(at))}</span>` : '<span class="faint">Checking publish date…</span>';
   }
   function relTime(at) {
     const m = Math.round((Date.now() - new Date(at).getTime()) / 60000);
@@ -9902,11 +9977,11 @@
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}${state.scanning[s.id] || otherClaim(s.id) ? `<div class="small muted" style="margin-top:6px">${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to.</div>` : ''}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
-        ${sc.ai ? `<div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
+        ${sc.ai ? `<details class="scan-more"${uiOpen('scanai') ? ' open' : ''} data-ui="scanai"><summary class="small">${aiShort(sc.ai)} <span class="faint">· details</span></summary><div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Business name and location: <b>${sc.ai.text.blocks}</b> blocks that mention a name, a place or contact details checked${sc.ai.text.skipped ? ` <span class="faint" title="These blocks contain no business name, place or contact detail, so there is nothing in them for this check to get wrong. They are still proofread.">(the other ${sc.ai.text.skipped} have none)</span>` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
             ${sc.ai.proof ? ` Proofread <b>${sc.ai.proof.blocks}</b>${sc.ai.proof.of ? ` of ${sc.ai.proof.of}` : ''} blocks of text: <b>${sc.ai.proof.flagged}</b> spelling, grammar or unfinished.${sc.ai.proof.of && sc.ai.proof.blocks < sc.ai.proof.of ? ' <span class="faint">(the website is very large: see Scan notes)</span>' : ''}` : ''}
             ${sc.ai.links ? ` Buttons and links: <b>${sc.ai.links.checked}</b> of ${sc.ai.links.of} checked for where they go${sc.ai.links.checked < sc.ai.links.of ? ' (the rest plainly match their page)' : ''}, <b>${sc.ai.links.flagged}</b> open the wrong page.` : ''}
-            ${sc.ai.aliases && state.ai && state.ai.owner ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI Status ↗</a></div>
+            ${sc.ai.aliases && state.ai && state.ai.owner ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI Status ↗</a></div></details>
             ${sc.ai.paused && (s.findings || []).some((x) => /^AI_PENDING/.test(x.code) && x.status !== 'done' && x.status !== 'false') ? `<div class="note unk" style="margin-top:6px"><b>AI check paused</b>: the AI ran out of credits for today during this scan. The unchecked pages are listed as <b>AI check pending</b> audit items.
               ${aiResumeAt(sc.ai.paused.retryAt) ? `They resume automatically after <b>${esc(fmtWhen(aiResumeAt(sc.ai.paused.retryAt)))}</b> (in ${countdown(aiResumeAt(sc.ai.paused.retryAt))}).` : 'AI credits are available again, so they resume automatically within a minute.'}
               Check them by hand and mark them <b>Done</b> if you can't wait. <a href="#/ai">AI Status ↗</a></div>` : ''}`
@@ -9914,7 +9989,7 @@
         ${sc.error ? `<div class="note bad">${esc(sc.error)}</div>` : ''}
         ${(sc.log || []).length ? `<details style="margin-top:8px"><summary class="small">Scan notes (${sc.log.length})</summary>${sc.log.map((l) => `<div class="note unk">${esc(l)}</div>`).join('')}</details>` : ''}
       </div>
-      <details class="ref-details" open>
+      <details class="ref-details" data-ui="ref"${uiOpen('ref') ? ' open' : ''}>
         <summary class="small muted">Reference data</summary>
         <div class="ref-tabs"><span class="chips">
           <button class="chipbtn ${state.refTab === 'info' || !state.refTab ? 'active' : ''}" data-ref="info">Business Info</button>

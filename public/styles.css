@@ -2018,3 +2018,26 @@ table.cp-dns td.mono { word-break: break-all; }
 .ex-quick { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
 @media (max-width: 600px) { .ex-scope { grid-template-columns: 1fr; } .chip-add { flex-wrap: wrap; } }
 .ex-tab { padding: 14px 16px; }
+
+/* The audit header: who/status on the left, Open ▾ · ⋯ · Rescan on the right */
+.site-head { margin-bottom: 14px; display: grid; gap: 6px; }
+.sh-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sh-title h1 { margin: 0; }
+.sh-title #roomBar .room-bar { margin-top: 0; }
+.sh-meta { display: flex; flex-wrap: wrap; align-items: center; row-gap: 2px; }
+.sh-meta > span:not(:empty) + span:not(:empty)::before { content: '·'; margin: 0 7px; color: var(--faint); }
+.sh-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.sh-who, .sh-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sh-acts .btn.on { background: var(--panel-2); border-color: var(--border-strong); }
+.sh-more { min-width: 40px; font-weight: 700; letter-spacing: 1px; }
+.caret { font-size: 10px; opacity: .7; margin-left: 2px; }
+.pop-menu { width: auto; min-width: 260px; max-width: min(360px, calc(100vw - 16px)); }
+.pop-menu .am-item { align-items: flex-start; font-size: 14px; padding: 9px 12px; }
+.pop-menu .am-item[disabled] { opacity: .45; cursor: default; }
+.mi-ic { width: 22px; text-align: center; flex: none; }
+.mi-t { display: grid; gap: 1px; }
+.mi-t small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.scan-more summary { cursor: pointer; margin-top: 6px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (max-width: 600px) { .sh-bar { align-items: stretch; } .sh-acts { width: 100%; } .sh-acts #sRescan { flex: 1; } }
+@media (max-width: 600px) { .sh-meta { gap: 2px 12px; } .sh-meta > span::before { display: none; } }

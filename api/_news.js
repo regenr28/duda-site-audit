@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-10-15-cleaner-audit-header', date: '2026-10-15', audience: 'all', tag: 'Audits',
+    title: 'A cleaner audit page: Open ▾, ⋯ and Rescan',
+    what: 'The row of buttons at the top of an audit is now three: <b>Open ▾</b> (Editor, Live site, Draft preview, View as client), <b>⋯</b> (Summary, Export CSV, Back up now, Audit exceptions, Send to Jaguars) and <b>⟳ Rescan</b>, with who has it and its status on the left. The facts under the name (site ID, published, last scan, backup, added by) are one short line; hover for the full dates. The AI part of the scan summary is one line with <b>details</b> to open it, and <b>Reference data</b> starts closed and remembers if you open it. Jaguars now see the website they hold on <b>Audits</b> too (tagged 🐆 Yours on Tasks).',
+    where: ['Any audit.'],
+  },
+  {
     id: '2026-10-15-audit-exceptions', date: '2026-10-15', audience: 'all', tag: 'Audits',
     title: 'Audit exceptions: their own tab, whole-website or page exceptions, chips, and a preview before exempting',
     what: 'Every audit now has a <b>🚫 Audit exceptions</b> tab. An exception covers either the <b>whole website</b> (a phone, email, address, city, state, business name or social link that is right anywhere on it) or <b>specific pages</b> (and what not to check there), with a required <b>reason</b>. Pages and values are added one by one with <b>+ Add</b> and shown as chips. <b>👁 Preview affected items</b> lists exactly which audit items (or, for an exception set, which websites and items) will change, each with a link, before <b>Exempt</b> switches on.',

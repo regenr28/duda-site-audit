@@ -66,7 +66,7 @@ try:
         pg.goto(f'http://localhost:{APORT}/#/site/s1/profile/contacts'); pg.wait_for_selector('.ct-table', timeout=20000); time.sleep(0.5)
         pg.screenshot(path=os.path.join(OUT, 'contacts.png'), full_page=True)
         # View as client: Comments page works, Contacts page exists, no editor address shown as their website
-        pg.click('#sViewAs'); pg.wait_for_function("() => location.hash.startsWith('#/my/')", timeout=15000); time.sleep(1.5)
+        pg.click('#sOpen'); pg.click('#sViewAs'); pg.wait_for_function("() => location.hash.startsWith('#/my/')", timeout=15000); time.sleep(1.5)
         pg.goto(f'http://localhost:{APORT}/#/my/s1/comments'); time.sleep(1.5)
         ct = pg.inner_text('#clMain'); print('   client comments:', ct[:400].replace('\n', ' | '))
         check('WRONGTYPE' not in ct and 'Please make the logo bigger' in ct and 'Done, have a look!' in ct and 'Your team' in ct and 'Home' in ct, 'client Comments page loads (no error): their conversation in the editor, with the team\'s reply as "Your team"')
