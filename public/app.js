@@ -2101,12 +2101,12 @@
    * A list you add to one entry at a time: type it, "+ Add" (or Enter), and it shows as a chip with
    * its own ✕. `typed` lists carry a kind (phone, city…) picked beside the box.
    */
-  function chipField(host, { list, typed, placeholder, onChange }) {
+  function chipField(host, { list, typed, placeholder, onChange, note, onType }) {
     host.innerHTML = `<div class="chips"></div><div class="chip-add">${typed ? `<select class="chip-type" aria-label="Kind">${EX_VTYPES.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>` : ''}
       <input type="text" class="chip-in" placeholder="${esc(placeholder)}"><button type="button" class="btn sm chip-btn">+ Add</button></div>`;
     const inp = host.querySelector('.chip-in'), sel = host.querySelector('.chip-type'), box = host.querySelector('.chips');
     const draw = () => {
-      box.innerHTML = list.length ? list.map((x, i) => `<span class="chip${typed ? '' : ' mono'}">${typed ? `<b>${esc(exTypeLabel(x.type))}</b> ${esc(x.value)}` : esc(x)}<button type="button" data-chipx="${i}" aria-label="Remove">✕</button></span>`).join('') : '<span class="faint small">Nothing added yet</span>';
+      box.innerHTML = list.length ? list.map((x, i) => `<span class="chip${typed ? '' : ' mono'}">${typed ? `<b>${esc(exTypeLabel(x.type))}</b> ${esc(x.value)}` : esc(x)}${note && note(x) ? `<span class="chip-note">${esc(note(x))}</span>` : ''}<button type="button" data-chipx="${i}" aria-label="Remove">✕</button></span>`).join('') : '<span class="faint small">Nothing added yet</span>';
       box.querySelectorAll('[data-chipx]').forEach((b) => { b.onclick = () => { list.splice(Number(b.dataset.chipx), 1); draw(); onChange(); }; });
     };
     const add = () => {
@@ -2115,10 +2115,11 @@
       else v.split(/[\s,]+/).map((p) => A.exemptPath(p)).filter(Boolean).forEach((p) => { if (!list.includes(p)) list.push(p); });
       inp.value = ''; draw(); onChange(); return true;
     };
-    host.querySelector('.chip-btn').onclick = () => { add(); inp.focus(); };
-    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+    host.querySelector('.chip-btn').onclick = () => { add(); inp.focus(); if (onType) onType(''); };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); if (onType) onType(''); } };
+    if (onType) inp.oninput = () => onType(inp.value.trim());
     draw();
-    return { flush: add };
+    return { flush: add, redraw: draw };
   }
   /** Which open items of one audit a change of rules would close (gain) or bring back (back). */
   function exImpact(s, before, after) {
@@ -2136,6 +2137,12 @@
       <td>${f.num ? `<a href="#/site/${esc(auditId)}/item/${esc(f.num)}" target="_blank" rel="noopener">Check ↗</a>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
   async function exRules(s) { const d = await api('/api/exempt?op=list' + (s ? '&site=' + encodeURIComponent(s.siteId) : '')); ex.groups = d.groups; return d; }
   const exTitle = (r) => (r.scope === 'all' ? 'Whole website' : 'Specific pages');
+  /** The pages the last scan read: { path, title }, one per page. */
+  function exSitePages(s) {
+    const seen = new Set();
+    return (s.pages || []).filter((p) => p && p.path && !p.notFound && !p.error).map((p) => ({ path: A.exemptPath(p.path), title: String(p.title || '').slice(0, 90) }))
+      .filter((p) => (seen.has(p.path) ? false : seen.add(p.path)));
+  }
   /** The contact value an item is about, if it can be exempted on the whole website: { type, value }. */
   function exValueOf(f) {
     if (A.exemptGroupOf(f) !== 'contact') return null;
@@ -2202,7 +2209,9 @@
           <label class="ex-opt"><input type="radio" name="exScope" value="all" ${scope === 'all' ? 'checked' : ''}><span><b>Whole website</b><span class="small faint">Contact info that is right anywhere on this website (a second location's address, the manufacturer's phone)</span></span></label>
           <label class="ex-opt"><input type="radio" name="exScope" value="pages" ${scope === 'pages' ? 'checked' : ''}><span><b>Specific pages</b><span class="small faint">Pages where some checks don't apply (a manufacturer's landing page)</span></span></label></div>
         <div id="exAll"><div class="field"><span>Contact info that is fine anywhere on this website</span><div id="exVals"></div></div></div>
-        <div id="exPg"><div class="field"><span>Pages <span class="small muted">the full link or the path · * means "anything": /xpel-*, *ppf*</span></span><div id="exPages"></div></div>
+        <div id="exPg"><div class="field"><span>Pages <span class="small muted">tick them below, or type a path or a pattern · * means "anything": /xpel-*, *ppf*</span></span><div id="exPages"></div><div class="small" id="exPgHint"></div></div>
+          ${exSitePages(s).length ? `<div class="ex-pages"><div class="ex-pages-h"><span><b>Pages on this website</b> <span class="small faint">${exSitePages(s).length} from the last scan · tick to add</span></span><input type="search" id="exPgQ" placeholder="Filter pages…" aria-label="Filter pages"></div><div class="ex-pg-list" id="exPgList"></div></div>`
+            : '<div class="small faint" style="margin:-4px 0 10px">Scan the website to pick its pages from a list.</div>'}
           <div class="field"><span>What not to check on these pages</span>${exTicks(r.skip || init.skip)}</div></div>
         <label class="field">Reason <span class="small muted">(required)</span><input type="text" id="exNote" value="${esc(r.note || '')}" placeholder="XPEL's own landing page: its phone and socials are right"></label>
         <div class="ex-prevbar"><button class="btn" id="exPrev" type="button">👁 Preview affected items</button><span class="small faint" id="exPrevHint">See exactly what changes before exempting.</span></div>
@@ -2212,7 +2221,36 @@
     let ready = false;
     const stale = () => { if (!ready) return; ready = false; $('#exSave').disabled = true; $('#exOut').innerHTML = '<div class="small faint">Changed — preview again.</div>'; };
     const vf = chipField($('#exVals'), { list: values, typed: true, placeholder: 'e.g. (800) 447-9928 or Davie', onChange: stale });
-    const pf = chipField($('#exPages'), { list: pages, typed: false, placeholder: '/xpel-paint-protection-film', onChange: stale });
+    // The website's own pages, from the last scan: tick to add, or type a pattern and see what it catches.
+    const sp = exSitePages(s);
+    const openOn = {};
+    (s.findings || []).forEach((f) => { if (f.status === 'open' || f.status === 'exempt') (f.pages && f.pages.length ? f.pages : [f.path]).filter(Boolean).forEach((p) => { const k = A.exemptPath(p); openOn[k] = (openOn[k] || 0) + 1; }); });
+    const hits = (pat) => sp.filter((p) => A.exemptMatch(pat, p.path));
+    const coverOf = (path) => pages.find((pat) => pat.includes('*') && A.exemptMatch(pat, path));
+    const drawPages = () => {
+      const box = $('#exPgList'); if (!box) return;
+      const q = ($('#exPgQ').value || '').trim().toLowerCase();
+      const list = sp.filter((p) => !q || p.path.includes(q) || p.title.toLowerCase().includes(q))
+        .sort((a, b) => (openOn[b.path] || 0) - (openOn[a.path] || 0) || a.path.localeCompare(b.path));
+      box.innerHTML = list.length ? list.map((p) => { const cov = coverOf(p.path); const on = cov || pages.includes(p.path); const n = openOn[p.path] || 0;
+        return `<label class="ex-pg${cov ? ' cov' : ''}"><input type="checkbox" data-pg="${esc(p.path)}" ${on ? 'checked' : ''} ${cov ? 'disabled' : ''}><span class="ex-pg-t"><span class="mono">${esc(p.path)}</span>${p.title ? `<span class="small faint">${esc(p.title)}</span>` : ''}</span>${cov ? `<span class="small faint">covered by ${esc(cov)}</span>` : ''}${n ? `<span class="badge subtle" title="Open or exempt audit items on this page">${n} item${n === 1 ? '' : 's'}</span>` : ''}</label>`; }).join('')
+        : '<div class="small faint" style="padding:8px">No page matches.</div>';
+      $$('[data-pg]', box).forEach((i) => { i.onchange = () => {
+        const k = pages.indexOf(i.dataset.pg);
+        if (i.checked && k < 0) pages.push(i.dataset.pg); else if (!i.checked && k >= 0) pages.splice(k, 1);
+        pf.redraw(); stale();
+      }; });
+    };
+    const hint = (v) => {
+      const h = $('#exPgHint'); if (!h) return;
+      if (!v || !sp.length) { h.innerHTML = ''; return; }
+      const m = hits(v);
+      h.innerHTML = m.length ? `<span class="faint">${v.includes('*') ? 'Matches' : 'Is'} <b>${m.length}</b> page${m.length === 1 ? '' : 's'}: ${m.slice(0, 6).map((p) => `<span class="mono">${esc(p.path)}</span>`).join(', ')}${m.length > 6 ? ` and ${m.length - 6} more` : ''}</span>`
+        : '<span class="faint">No page from the last scan matches (it can still match pages added later).</span>';
+    };
+    const pf = chipField($('#exPages'), { list: pages, typed: false, placeholder: '/xpel-paint-protection-film or /xpel-*', onChange: () => { stale(); drawPages(); },
+      note: (x) => (sp.length && x.includes('*') ? `${hits(x).length} page${hits(x).length === 1 ? '' : 's'}` : ''), onType: hint });
+    if ($('#exPgQ')) { $('#exPgQ').oninput = drawPages; drawPages(); }
     const showScope = () => { $('#exAll').hidden = scope !== 'all'; $('#exPg').hidden = scope !== 'pages'; };
     $$('[name="exScope"]').forEach((i) => { i.onchange = () => { scope = i.value; showScope(); stale(); }; });
     $$('[data-exk]').forEach((i) => { i.onchange = stale; });

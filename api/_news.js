@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-15-exempt-pick-pages', date: '2026-10-15', audience: 'all', tag: 'Audits',
+    title: 'Exempting pages: pick them from the website\'s own list, or see what a pattern catches',
+    what: 'In <b>🚫 Audit exceptions → + Specific pages</b>, the pages from the last scan are listed (with their titles and how many audit items each has) to tick, with a filter box. Typing a pattern like <span class="mono">/xpel-*</span> shows straight away which pages it matches, its chip says how many, and the pages it covers are ticked for you.',
+    where: ['An audit → <b>🚫 Audit exceptions</b> → <b>+ Specific pages</b>.'],
+    link: '#/help/exceptions', linkText: 'How audit exceptions work',
+  },
+  {
     id: '2026-10-15-people-picker', date: '2026-10-15', audience: 'all', tag: 'Team',
     title: 'Profile photos, and picking who to assign by name, photo and role',
     what: 'Every "assign to" list now opens a picker with each person\'s photo, grouped by role (<b>Admins</b>, <b>Jaguars</b>, <b>Members</b>…) with <b>Unassigned</b> first, their email underneath (so two people with the same name are told apart) and a search box. Add your own photo from <b>Your account → 📷 Add a profile photo</b>: it shows wherever your initials did.',

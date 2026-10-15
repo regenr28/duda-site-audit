@@ -29,7 +29,7 @@ finds = [F(1, 'TEL_MISMATCH', 'critical', 'Contact info', '/xpel-ppf', '(800) 44
          F(6, 'MAILTO_MISMATCH', 'critical', 'Contact info', '/about-us-team', 'info@xpel.com'),
          F(7, 'DESIGNER_CREDIT', 'critical', 'Business name', '/xpel-ppf', 'Website by Someone Else')]
 now = '2026-10-15T03:15:00Z'
-site = {'id': 's1', 'siteId': 'abc123', 'host': 'ed.multiscreensite.com', 'businessName': 'Velvet Auto Care', 'people': ['dev@8bitcreative.com'], 'findings': finds, 'scan': {'state': 'complete', 'finishedAt': now, 'pages': 12}}
+site = {'pages': [{'path': '/', 'title': 'Home'}, {'path': '/xpel-ppf', 'title': 'XPEL Paint Protection Film'}, {'path': '/xpel-tint', 'title': 'XPEL Window Tint'}, {'path': '/contact', 'title': 'Contact'}, {'path': '/about-us-team', 'title': 'Our team'}, {'path': '/gone', 'notFound': True}], 'id': 's1', 'siteId': 'abc123', 'host': 'ed.multiscreensite.com', 'businessName': 'Velvet Auto Care', 'people': ['dev@8bitcreative.com'], 'findings': finds, 'scan': {'state': 'complete', 'finishedAt': now, 'pages': 12}}
 redis(['SET', 'dsa:site:s1', json.dumps(site)], ['HSET', 'dsa:fnum:s1', *sum([[f['id'], str(f['num'])] for f in finds], [])])
 def items():
     s, b = call(ADMIN, '/api/store?op=site&id=s1')
@@ -128,6 +128,19 @@ with sync_playwright() as p:
             pg.click('#sExempt'); pg.wait_for_selector('#exAddPages', timeout=20000)
             check('XPEL Landing Page' in pg.inner_text('.ex-tab') and '/xpel-ppf' in pg.inner_text('.ex-tab'), 'the tab lists this website\'s exceptions and the sets')
             pg.screenshot(path=os.path.join(OUT, 'exempt-tab.png'), full_page=True)
+            # the website's own pages, to tick or to match with a pattern
+            pg.click('#exAddPages'); pg.wait_for_selector('#exPgList .ex-pg')
+            check(pg.locator('#exPgList .ex-pg').count() == 5, 'the form lists the pages from the last scan (not the missing one)', pg.locator('#exPgList .ex-pg').count())
+            pg.check('[data-pg="/contact"]')
+            check(pg.locator('#exPages .chip', has_text='/contact').count() == 1, 'ticking a page adds it as a chip')
+            pg.fill('#exPages .chip-in', '/xpel-*')
+            check('Matches 2 pages' in pg.inner_text('#exPgHint'), 'typing a pattern shows which pages it matches', pg.inner_text('#exPgHint'))
+            pg.press('#exPages .chip-in', 'Enter')
+            check('2 pages' in pg.inner_text('#exPages .chips') and pg.is_disabled('[data-pg="/xpel-tint"]') and pg.is_checked('[data-pg="/xpel-tint"]'), 'the pattern chip says 2 pages; those pages show as covered')
+            pg.fill('#exPgQ', 'tint')
+            check(pg.locator('#exPgList .ex-pg').count() == 1, 'the page list can be filtered')
+            pg.screenshot(path=os.path.join(OUT, 'exempt-pages.png'))
+            pg.click('[data-close]')
             # specific pages, with chips and a preview first
             pg.click('#exAddPages'); pg.wait_for_selector('#exPages .chip-in')
             pg.fill('#exPages .chip-in', '/xpel-ppf'); pg.click('#exPages .chip-btn')
