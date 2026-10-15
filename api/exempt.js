@@ -23,25 +23,29 @@ import '../public/engine.js';
 const A = () => globalThis.DudaAudit;
 const GKEY = P + 'exsets';
 const SKEY = (id) => P + 'exsite:' + id;
-const VALUE_TYPES = ['name', 'phone', 'email', 'address', 'social'];
+const VALUE_TYPES = ['phone', 'email', 'address', 'city', 'state', 'name', 'social'];
+const TYPE_WORD = { phone: 'phone', email: 'email', address: 'address', city: 'city', state: 'state', name: 'business name', social: 'social link' };
 const groupLabel = (k) => ((A().EXEMPT_GROUPS.find((g) => g.k === k) || {}).label || k).toLowerCase();
 const skipWords = (skip) => (skip || []).map(groupLabel).join(', ') || 'nothing';
 
 function cleanRule(b, kind) {
   const groups = A().EXEMPT_GROUPS.map((g) => g.k);
   const raw = Array.isArray(b.pages) ? b.pages : String(b.pages || '').split(/[\n,]+/);
-  const pages = [...new Set(raw.map((p) => A().exemptPath(p)).filter((p) => p && p.length <= 200))].slice(0, 30);
-  const skip = [...new Set((b.skip || []).filter((k) => groups.includes(k)))];
-  const values = kind === 'global'
-    ? (b.values || []).map((v) => ({ type: VALUE_TYPES.includes(v && v.type) ? v.type : '', value: String((v && v.value) || '').trim().slice(0, 200) })).filter((v) => v.type && v.value).slice(0, 80)
-    : [];
-  return { name: String(b.name || '').trim().slice(0, 80), pages, skip, values, note: String(b.note || '').trim().slice(0, 300) };
+  const scope = kind === 'site' && b.scope === 'all' ? 'all' : 'pages';
+  let pages = [...new Set(raw.map((p) => A().exemptPath(p)).filter((p) => p && p.length <= 200))].slice(0, 30);
+  let skip = [...new Set((b.skip || []).filter((k) => groups.includes(k)))];
+  let values = (b.values || []).map((v) => ({ type: VALUE_TYPES.includes(v && v.type) ? v.type : '', value: String((v && v.value) || '').trim().slice(0, 200) }))
+    .filter((v, i, all) => v.type && v.value && all.findIndex((x) => x.type === v.type && x.value.toLowerCase() === v.value.toLowerCase()) === i).slice(0, 80);
+  // One website: either the whole website (values that are fine anywhere on it) or some pages (and
+  // what not to check there). A set may have both.
+  if (kind === 'site') { if (scope === 'all') { pages = []; skip = []; } else values = []; }
+  return { scope, name: String(b.name || '').trim().slice(0, 80), pages, skip, values, note: String(b.note || '').trim().slice(0, 300) };
 }
-/** What changed, in words, for the history and the activity log. */
+/** What it covers, in words, for the history and the activity log. */
 function describe(r) {
   const bits = [];
   if (r.pages.length) bits.push(`pages ${r.pages.join(', ')} (not checking ${skipWords(r.skip)})`);
-  if (r.values.length) bits.push(`${r.values.length} allowed value${r.values.length === 1 ? '' : 's'}`);
+  if (r.values.length) bits.push(`${r.scope === 'all' ? 'anywhere on the website: ' : 'fine anywhere: '}${r.values.slice(0, 6).map((v) => `${TYPE_WORD[v.type]} ${v.value}`).join(', ')}${r.values.length > 6 ? ` and ${r.values.length - 6} more` : ''}`);
   return bits.join('; ');
 }
 async function readGlobal() { const [raw] = await redis(['GET', GKEY]); const g = jparse(raw) || {}; return { v: g.v || 0, sets: g.sets || [] }; }
@@ -80,17 +84,19 @@ async function handler(req, res) {
         const x = list.find((r) => r.id === b.id);
         if (!x) return res.status(404).json({ error: 'That exception is gone already.' });
         await redis(['SET', SKEY(site), JSON.stringify(list.filter((r) => r.id !== b.id))]);
-        await auditLog(ids, me, `removed the page exception for ${x.pages.join(', ')}: those pages are checked normally again`);
+        await auditLog(ids, me, `removed the exception (${describe(Object.assign({ values: [], pages: [] }, x))}): checked normally again`);
         await Promise.all(ids.map((id) => saveIndex(id).catch(() => null)));
         return res.status(200).json({ ok: true });
       }
       const r = cleanRule(b.rule || {}, 'site');
-      if (!r.pages.length) return res.status(400).json({ error: 'Add the page address (or a pattern like /xpel-*).' });
-      if (!r.skip.length) return res.status(400).json({ error: 'Tick at least one thing not to check.' });
+      if (r.scope === 'all' && !r.values.length) return res.status(400).json({ error: 'Add at least one value (a phone, email, address, city…).' });
+      if (r.scope === 'pages' && !r.pages.length) return res.status(400).json({ error: 'Add the page address (or a pattern like /xpel-*).' });
+      if (r.scope === 'pages' && !r.skip.length) return res.status(400).json({ error: 'Tick at least one thing not to check.' });
+      if (r.note.length < 3) return res.status(400).json({ error: 'Write the reason for the exception.' });
       const old = b.rule && b.rule.id ? list.find((x) => x.id === b.rule.id) : null;
       const rule = Object.assign(old || { id: newId(8), by: me.email, byName: me.name, at: now(), history: [] }, r, { kind: 'site' });
       if (old) Object.assign(rule, { updatedBy: me.email, updatedByName: me.name, updatedAt: now() });
-      const what = (old ? 'changed' : 'added') + ' the page exception: ' + describe(rule) + (rule.note ? ` · "${rule.note}"` : '');
+      const what = (old ? 'changed' : 'added') + ' an audit exception: ' + describe(rule) + (rule.note ? ` · reason: "${rule.note}"` : '');
       rule.history = (rule.history || []).concat({ at: now(), by: me.email, byName: me.name, what }).slice(-30);
       await redis(['SET', SKEY(site), JSON.stringify(old ? list.map((x) => (x.id === old.id ? rule : x)) : list.concat(rule).slice(-50))]);
       await auditLog(ids, me, what);
@@ -112,20 +118,26 @@ async function handler(req, res) {
       const rows = [];
       for (let i = 0; i < audits.length; i += 30) {
         const chunk = audits.slice(i, i + 30);
-        const got = await redis(...chunk.flatMap((a) => [['GET', P + 'site:' + a.id], ['HGETALL', P + 'fstate:' + a.id], ['GET', SKEY(a.siteId)]]));
+        const got = await redis(...chunk.flatMap((a) => [['GET', P + 'site:' + a.id], ['HGETALL', P + 'fstate:' + a.id], ['GET', SKEY(a.siteId)], ['HGETALL', P + 'fnum:' + a.id]]));
         chunk.forEach((a, k) => {
-          const site = unpackJSON(got[k * 3]); if (!site) return;
-          const st = {}; const fs = got[k * 3 + 1] || [];
+          const site = unpackJSON(got[k * 4]); if (!site) return;
+          const st = {}; const fs = got[k * 4 + 1] || [];
           for (let j = 0; j < fs.length; j += 2) st[fs[j]] = jparse(fs[j + 1]) || {};
-          const own = jparse(got[k * 3 + 2]) || [];
-          let gain = 0, back = 0;
+          const own = jparse(got[k * 4 + 2]) || [];
+          const nums = {}; const fn2 = got[k * 4 + 3] || [];
+          for (let j = 0; j < fn2.length; j += 2) nums[fn2[j]] = Number(fn2[j + 1]);
+          (site.findings || []).forEach((f) => { if (nums[f.id]) f.num = nums[f.id]; });
+          let gain = 0, back = 0; const items = [];
           (site.findings || []).forEach((f) => {
             const status = (st[f.id] && st[f.id].status) || (f.done ? 'done' : 'open');
             if (status !== 'open') return;
             const was = !!A().exemptRuleFor(f, own.concat(before)), will = !!A().exemptRuleFor(f, own.concat(after));
-            if (!was && will) gain++; else if (was && !will) back++;
+            const ch = !was && will ? 'gain' : was && !will ? 'back' : '';
+            if (!ch) return;
+            if (ch === 'gain') gain++; else back++;
+            if (items.length < 40) items.push({ ch, id: f.id, num: f.num || null, message: String(f.message || f.code).slice(0, 160), path: f.path || '', found: String(f.found || '').slice(0, 90) });
           });
-          if (gain || back) rows.push({ id: a.id, name: a.businessName || a.siteId, siteId: a.siteId, status: a.status || '', assignee: a.assignee || '', gain, back });
+          if (gain || back) rows.push({ id: a.id, name: a.businessName || a.siteId, siteId: a.siteId, status: a.status || '', assignee: a.assignee || '', gain, back, items });
         });
       }
       const done = (x) => x.status === 'Complete';
@@ -145,6 +157,7 @@ async function handler(req, res) {
       }
       const r = cleanRule(b.set || {}, 'global');
       if (!r.name) return res.status(400).json({ error: 'Give the set a name, e.g. "XPEL Landing Page".' });
+      if (r.note.length < 3) return res.status(400).json({ error: 'Write the reason for the exception set.' });
       if (!r.pages.length && !r.values.length) return res.status(400).json({ error: 'Add at least one page or one value.' });
       if (r.pages.length && !r.skip.length) return res.status(400).json({ error: 'Tick at least one thing not to check on those pages.' });
       const old = b.set && b.set.id ? g.sets.find((x) => x.id === b.set.id) : null;

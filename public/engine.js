@@ -3082,10 +3082,22 @@
       if (g === 'contact' && (r.values || []).length) {
         if (av === undefined) av = allowValueOf(f);
         if (av && r.values.some((v) => allowKey(v.type, v.value) === av.key)) return r;
-        if (/ADDRESS/.test(f.code || '') && f.found && r.values.some((v) => v.type === 'address' && compact(v.value).length >= 6 && compact(f.found).includes(compact(v.value)))) return r;
+        if (f.found && r.values.some((v) => placeValueIn(v, f.found))) return r;
       }
     }
     return null;
+  }
+  /**
+   * An address, city or state somebody said is fine: found inside the text of an item. An address is
+   * compared loosely (punctuation and spacing aside); a city or state must be a whole word, so "IL"
+   * never matches "mail".
+   */
+  function placeValueIn(v, text) {
+    if (!v || !text) return false;
+    if (v.type === 'address') return compact(v.value).length >= 6 && compact(text).includes(compact(v.value));
+    if (v.type !== 'city' && v.type !== 'state') return false;
+    const w = String(v.value || '').trim().toLowerCase();
+    return w.length >= 2 && new RegExp('(^|[^a-z0-9])' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+') + '([^a-z0-9]|$)').test(String(text).toLowerCase());
   }
   /** The same for one thing the auto audit found on a live page: { type, value, path }. */
   function exemptIssueRule(x, rules) {
@@ -3093,7 +3105,7 @@
     const key = x.type === 'address' ? '' : allowKey(x.type, x.value);
     for (const r of rules) {
       if ((r.skip || []).includes('contact') && x.path && (r.pages || []).some((pat) => exemptMatch(pat, x.path))) return r;
-      if ((r.values || []).some((v) => (v.type === x.type && (key ? allowKey(v.type, v.value) === key : compact(x.value).includes(compact(v.value)) && compact(v.value).length >= 6)))) return r;
+      if ((r.values || []).some((v) => (key ? v.type === x.type && allowKey(v.type, v.value) === key : placeValueIn(v, x.value)))) return r;
     }
     return null;
   }

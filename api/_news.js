@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-15-audit-exceptions', date: '2026-10-15', audience: 'all', tag: 'Audits',
+    title: 'Audit exceptions: their own tab, whole-website or page exceptions, chips, and a preview before exempting',
+    what: 'Every audit now has a <b>🚫 Audit exceptions</b> tab. An exception covers either the <b>whole website</b> (a phone, email, address, city, state, business name or social link that is right anywhere on it) or <b>specific pages</b> (and what not to check there), with a required <b>reason</b>. Pages and values are added one by one with <b>+ Add</b> and shown as chips. <b>👁 Preview affected items</b> lists exactly which audit items (or, for an exception set, which websites and items) will change, each with a link, before <b>Exempt</b> switches on.',
+    where: ['An audit → <b>🚫 Audit exceptions</b> tab.', '<b>Settings → 🚫 Audit exceptions</b> (admins).'],
+    link: '#/help/exceptions', linkText: 'How audit exceptions work',
+  },
+  {
     id: '2026-10-15-exceptions', date: '2026-10-15', audience: 'all', tag: 'Audits',
     title: 'Exceptions: manufacturer landing pages and values are no longer raised',
     what: 'A manufacturer\'s landing page (XPEL, 3M…) is meant to show the manufacturer\'s phone, email and socials. Now anyone can <b>exempt a page</b> on one website and tick what not to check there (contact info, meta, headings, content, links), and admins can make <b>exception sets</b> for every website, like <b>XPEL Landing Page</b>: page patterns such as <span class="mono">/xpel-*</span> plus the manufacturer\'s phones, emails and social links, fine anywhere. Before saving or removing, you see exactly what changes (the items on this website, or every audit a set touches) and confirm. Covered items show as <b>Exempt</b> (closed) and come back as Open if the exception is removed. Every change is in the Activity log.',

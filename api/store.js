@@ -39,7 +39,7 @@ async function loadSite(id) {
     f.status = s.status || (f.done ? 'done' : 'open');
     if (f.status === 'open' && rules.length) {
       const r = globalThis.DudaAudit.exemptRuleFor(f, rules);
-      if (r) { f.status = 'exempt'; f.exempt = { id: r.id, kind: r.kind || 'site', name: r.name || (r.pages || []).join(', '), by: r.byName || '' }; }
+      if (r) { f.status = 'exempt'; f.exempt = { id: r.id, kind: r.kind || 'site', name: r.name || (r.scope === 'all' ? 'the whole website' : (r.pages || []).join(', ')), by: r.byName || '', note: r.note || '' }; }
     }
     f.assignee = s.assignee !== undefined ? s.assignee : (f.assignee || '');
     f.statusBy = s.updatedBy || ''; f.statusAt = s.updatedAt || '';

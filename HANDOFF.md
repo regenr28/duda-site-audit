@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`). The next update is **140**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …`). The next update is **141**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 139: styles v22, engine v9, app v25).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 140: styles v23, engine v10, app v26).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v26.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (15 Oct 2026)
 
-- **On GitHub:** up to 137 (commit `be8e334`, "135 + 136 + 137"). **Delivered as one zip (update-139.zip), maybe not uploaded yet:** 138 (sign-up Slack check, approve with a role, Send to Jaguars) and 139 (exceptions), below. Check `git log origin/main` and ask Reymark if unsure.
+- **On GitHub:** up to 139 (commit `536e331`, "138 + 139"). **Delivered as a zip, maybe not uploaded yet:** 140 (audit exceptions reworked, below). Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
 - **Harmless log noise:** red `[DEP0169] url.parse()` lines in Vercel's runtime logs are a Node 24 deprecation warning from outside the app's code. Requests succeed.
 - **Waiting on keys (Reymark adds them in Vercel):** `GOOGLE_MAPS_API_KEY` (Google Maps ID check, Online presence), PageSpeed key, a Google service account (GA4 + Search Console). Rotating the Anthropic/OpenAI keys was recommended.
@@ -81,6 +81,13 @@ The Jaguars are a team of 6 being onboarded. Their job: fix all the audits. Agre
 - **Check first:** `op: 'preview'` (admins) counts, per audit, items a set change would make Exempt (`gain`) or bring back (`back`), reading every audit in chunks of 30. One website's preview is computed in the browser (`exImpact`). Forms are two steps (form → table → "Are you sure?"); removals list what comes back first.
 - **Front end:** `openExceptions`, `exemptForm`, `drawExceptionSets` in `app.js` (search "EXCEPTIONS —"); 🚫 Exceptions button on the audit; 🚫 Exempt this page… in the item panel; Settings → 🚫 Exceptions. Test: `tests/tk/e2e_exempt.py`.
 
-## Next: update 140
+## Update 140 — audit exceptions reworked (built)
 
-- **Update 140:** the Tasks tab also gets **Projects** (projects in the Jaguars phase assigned to me) and **Special tasks** (one-off tasks an admin creates: title, notes, link, due date, assignee).
+- One website's exception has `scope`: `all` (values only: phone, email, address, city, state, name, social — fine anywhere on the website) or `pages` (pages + what not to check). A reason (`note`) is required for website exceptions and sets.
+- Engine: `placeValueIn` matches address (loose) and city/state (whole word) values inside an item's text.
+- Audit page: **🚫 Audit exceptions** tab (`renderExceptionsTab`, route `#/site/<id>/exceptions`); `openExceptions` now goes there. Forms use `chipField` (+ Add / Enter, chips with ✕). Preview first: Exempt/Save stay disabled until **👁 Preview** and switch off again on any change. Set previews (`op: 'preview'`) return up to 40 items per website (`items`), shown in an expandable list.
+- Item panel: **🚫 Exempt this page…** and **🚫 Exempt this <phone/email/…> on the whole website…** (`exValueOf`).
+
+## Next: update 141
+
+- **Update 141:** the Tasks tab also gets **Projects** (projects in the Jaguars phase assigned to me) and **Special tasks** (one-off tasks an admin creates: title, notes, link, due date, assignee).
