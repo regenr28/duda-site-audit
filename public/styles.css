@@ -1940,3 +1940,27 @@ table.cp-dns td.mono { word-break: break-all; }
 .gbp-note { margin-top: 4px; }
 .gbp-ok { color: var(--ok); }
 .gbp-bad { color: var(--crit); }
+
+/* Tasks: the Jaguars board */
+.jg-board { grid-auto-columns: minmax(230px, 1fr); }
+.jg-set { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 6px; font-size: 13px; }
+.jg-set label { display: inline-flex; gap: 6px; align-items: center; }
+.jg-set select, .jg-set input[type=number] { width: auto; }
+.jg-set input[type=number] { width: 64px; }
+.jg-basis { margin: 0 2px 12px; }
+.jg-take { width: 100%; margin-bottom: 8px; }
+.jg-why { margin: -4px 2px 8px; }
+.jg-card .badge { margin: 4px 4px 0 0; }
+.jg-next { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft), var(--shadow); }
+.jg-locked { opacity: .55; }
+.jg-mine { border-left: 3px solid var(--accent); }
+.jg-done { opacity: .85; }
+.jg-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.jg-acts:empty { display: none; }
+.jg-nums { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; }
+.jg-bar { height: 6px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--border); margin-top: 6px; overflow: hidden; }
+.jg-bar i { display: block; height: 100%; background: var(--ok); border-radius: 99px; }
+.jg-scan { margin-top: 4px; }
+.jg-log { list-style: none; padding: 0; margin: 0 0 10px; }
+.jg-log li { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+@media (max-width: 760px) { .jg-board { grid-auto-flow: row; grid-auto-columns: auto; overflow-x: visible; } }

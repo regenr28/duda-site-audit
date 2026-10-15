@@ -534,8 +534,8 @@ export const NOTIFY_GROUPS = [
   { key: 'mentions', label: 'Mentions and replies', kinds: ['mention', 'reply'], channels: ['bell', 'popup', 'slack', 'email'], locked: ['bell'],
     desc: 'Someone types @your name in a comment, or replies to one of yours.',
     lockNote: 'Always reaches your bell, so nothing addressed to you can go unseen.' },
-  { key: 'assigned', label: 'Work assigned to you', kinds: ['assign', 'site-assign', 'site-unassign', 'site-reopen'], channels: ['bell', 'popup', 'slack'],
-    desc: 'An audit item or a whole website is given to you, taken off you, or reopened.' },
+  { key: 'assigned', label: 'Work assigned to you', kinds: ['assign', 'site-assign', 'site-unassign', 'site-reopen', 'jag-assign', 'jag-back', 'jag-approved', 'jag-review'], channels: ['bell', 'popup', 'slack'],
+    desc: 'An audit item or a whole website is given to you, taken off you, or reopened; on the Jaguars board, a website handed to you, sent back, approved, or waiting for your review.' },
   { key: 'tickets', label: 'Client change requests', kinds: ['ticket-new', 'ticket-reply', 'ticket-assign'], channels: ['bell', 'popup', 'slack'],
     desc: 'A client sends a change request from their website page, answers one, or a request is given to you.' },
   { key: 'comments', label: 'Duda comments waiting', kinds: ['comment-waiting'], channels: ['bell', 'popup', 'slack'],
@@ -620,6 +620,10 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   'ticket-new': 'sent a ticket',
   'ticket-reply': 'replied on a change request',
   'ticket-assign': 'gave you a client change request',
+  'jag-assign': 'handed you a website on the Jaguars board',
+  'jag-back': 'sent a website back to you',
+  'jag-approved': 'approved your website',
+  'jag-review': 'finished a website that needs your review',
   access: 'changed what you can do',
   security: 'needs a look: repeated wrong passwords',
   test: 'sent you a test message' };
@@ -819,6 +823,10 @@ export const PERMISSIONS = [
     { key: 'analytics.view', label: 'See website analytics', desc: 'Visits, visitors, page views and actions on each website\'s profile, from Duda and any connected Google account.' },
     { key: 'analytics.manage', label: 'Connect custom analytics', desc: 'Add or remove Google Analytics or Search Console on a website.' },
   ] },
+  { group: 'Jaguars board', items: [
+    { key: 'jags.take', label: 'Take websites from the Jaguars queue', desc: 'The Tasks page: take the next website, fix it, finish it. The Jaguar role has this.' },
+    { key: 'jags.lead', label: 'Approve Jaguar audits and run the queue', desc: 'Approve or send back a finished website that has false alarms or questions, choose the queue order and rules, pin a website to the top, hand any website on.' },
+  ] },
   { group: 'Audit items', items: [
     { key: 'item.status', label: 'Change audit item statuses', desc: 'Done, On hold, For clarification, False alarm.' },
     { key: 'item.assign', label: 'Assign audit items to people', desc: '' },
@@ -870,6 +878,9 @@ export const BUILTIN_ROLES = [
   { id: 'member', name: 'Member', builtin: true,
     desc: 'The everyday role: audit websites, talk about them, report a false alarm.',
     perms: ['site.scan', 'site.manage', 'site.remove', 'site.bi', 'item.status', 'item.assign', 'leads.view', 'leads.contacts', 'ticket.view', 'ticket.manage', 'analytics.view'] },
+  { id: 'jaguar', name: 'Jaguar', builtin: true,
+    desc: 'The Jaguars team: take websites from the queue on Tasks and fix everything on them. Sees only the websites they hold or held.',
+    perms: ['jags.take', 'site.scan', 'item.status', 'item.assign'] },
 ];
 /** The client role is not a team role and never appears on the Roles screen. */
 export const isTeamRole = (id) => id !== 'client';

@@ -1033,6 +1033,24 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'jaguars', group: 'Collaboration', title: 'Tasks — the Jaguars board', audience: 'all',
+    html: `<p><b>Tasks</b> is where the Jaguars fix audits, one website at a time, <b>first in, first out</b>.</p>
+<h3>The board</h3>
+<p><b>Queue → In progress → Needs review → Complete.</b> The queue is the live websites the auto audit found critical errors on, in the order the admins chose. Pinned websites come first.</p>
+<h3>Taking a website</h3>
+<p>Click <b>Take next</b>. You get the website at the top of the queue, its audit is assigned to you, and it opens. With <b>first in, first out</b> on, the other websites in the queue are locked: nobody picks the easy ones. You can hold as many websites at once as the admins allow (usually one).</p>
+<p>The queue doesn't show what is wrong with a website. Scan it after taking it: the card then shows <b>Criticals left</b> and <b>All items left</b> to the whole team, with a bar for how much is fixed.</p>
+<h3>Finishing</h3>
+<p>Fix <b>everything</b>: audit items first (criticals first), then <b>Design polish</b> and <b>Lengths</b>. Then <b>Rescan</b> and click <b>Done</b> on the card. Done is refused while anything is still open, or when items were marked fixed after the last scan — the rescan is what proves the fixes are on the website.</p>
+<p>If you marked any item <b>False alarm</b>, left one <b>For clarification</b> or put one <b>On hold</b>, the website goes to <b>Needs review</b>. Someone allowed to approve looks at it and either <b>approves</b> it or <b>sends it back</b> with what still needs doing.</p>
+<h3>Not sure?</h3>
+<p>Unsure about one item: assign that item to another Jaguar or an admin from the audit, as usual. Handing on the <b>whole website</b> (<b>Hand on</b> on the card) needs a reason, and can also put it back in the queue. Every card has a <b>History</b>; the same lines are in the audit's <b>Activity</b> tab.</p>
+<h3>For admins</h3>
+<p>Above the board: the <b>queue order</b> (oldest or newest website first, most or fewest errors first), <b>which websites</b> go in (critical errors only, or any contact error), the <b>first in, first out</b> lock and <b>websites per person</b>. The error counts in the queue are the contact-info errors the auto audit found; the full count shows once a website is scanned. <b>Pin to top</b> puts an urgent website first.</p>
+<p>The <b>Jaguar</b> role takes websites from the queue, scans and fixes them, and sees only the websites it holds or held. <b>Approve Jaguar audits and run the queue</b> is the permission for approving and for these settings; admins have it.</p>
+<p>A finished website comes back to the queue (<b>Back again</b>) if the auto audit later still finds critical errors on the live website.</p>`,
+  },
+  {
     id: 'projects', group: 'Collaboration', title: 'Projects — running a build', audience: 'all',
     html: `<p><b>Projects</b> is the build itself, from the client's files to the client's comments. An <b>audit</b> is one scan of one website; a <b>project</b> is the whole job, and it can exist before the website does.</p>
 <h3>Starting one</h3>

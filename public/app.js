@@ -145,7 +145,7 @@
     const u = user(email);
     if (!u && !email) return '';
     const name = u ? u.name : email;
-    return `<span class="av" style="background:${esc(u ? u.color : '#6b7280')};${size ? `width:${size}px;height:${size}px;font-size:${Math.round(size / 2.3)}px` : ''}" title="${esc(name)}">${esc(initials(name))}</span>`;
+    return `<span class="av" style="background:${esc((u && u.color) || '#6b7280')};${size ? `width:${size}px;height:${size}px;font-size:${Math.round(size / 2.3)}px` : ''}" title="${esc(name)}">${esc(initials(name))}</span>`;
   }
   function userOptions(selected, emptyLabel) {
     const list = activeUsers();
@@ -517,6 +517,7 @@
   function navGroups() {
     const g = [{ items: [{ key: 'home', href: '#/home', label: 'Home', ic: 'home' }] }];
     g.push({ title: 'Work', items: [
+      (can('jags.take') || can('jags.lead')) && { key: 'tasks', href: '#/tasks', label: 'Tasks', ic: 'check' },
       { key: 'sites', href: '#/', label: 'Audits', ic: 'audits' },
       can('project.view') && { key: 'projects', href: '#/projects', label: 'Projects', ic: 'projects', dot: projWaiting() },
     ].filter(Boolean) });
@@ -575,7 +576,8 @@
     // The bottom bar on a phone: the four places used most, and More for the rest.
     const tb = $('#tabBar'); if (!tb) return;
     const all = groups.flatMap((g) => g.items);
-    const order = ['home', 'sites', 'projects', 'requests', 'live'];
+    // A Jaguar's day starts on the board, so it gets a button of its own.
+    const order = can('jags.take') && !can('jags.lead') ? ['home', 'tasks', 'sites', 'projects', 'requests'] : ['home', 'sites', 'projects', 'requests', 'live'];
     const picks = order.map((k) => all.find((i) => i.key === k)).filter(Boolean).slice(0, 4);
     const hidden = all.filter((i) => !picks.includes(i));
     const moreFlag = hidden.some((i) => i.count || i.dot);
@@ -770,6 +772,7 @@
     if (/^domain-/.test(n.kind)) return n.dudaSite ? '#/live/site/' + encodeURIComponent(n.dudaSite) : '#/live/problems';
     // Wrong details: the website's profile (where they are listed), or every website with some.
     if (n.kind === 'leads-quiet') return '#/analysis/quiet';
+    if (/^jag-/.test(n.kind)) return (n.kind === 'jag-assign' || n.kind === 'jag-back') && n.siteId ? `#/site/${encodeURIComponent(n.siteId)}` : '#/tasks';
     if (n.kind === 'watch-issue') return n.dudaSite ? '#/dr/' + encodeURIComponent(n.dudaSite) + '/auto-audit' : '#/live/content';
     if (n.kind === 'watch-digest') return '#/live/content';
     if (n.kind === 'comment-waiting') return n.dudaSite ? '#/comments/' + encodeURIComponent(n.dudaSite) : '#/comments';
@@ -1822,6 +1825,138 @@
       F.forEach((f) => { const el = $(`#fe-${f.key}`); if (el && el.value.trim()) facts[f.key] = el.value.trim(); });
       try { await post('/api/projects', { op: 'facts', id: p.id, facts }); closeModal(); renderProject(p.id); } catch (e) { toast(e.message); }
     };
+  }
+
+  // =====================================================================
+  // TASKS — the Jaguars board. First in, first out: "Take next" hands over the top website of the
+  // queue; it is fixed completely (must-fix, design polish, lengths), confirmed by a rescan, and
+  // anything with false alarms or questions is looked at by an approver before it counts as done.
+  // =====================================================================
+  const jg = { data: null, busy: false };
+  const JG_ORDER = { oldest: 'Oldest website first', newest: 'Newest website first', most: 'Most errors first', least: 'Fewest errors first' };
+  async function loadJags() { jg.data = await api('/api/jags?op=board'); return jg.data; }
+  async function renderTasks() {
+    if (!jg.data) { $('#view').innerHTML = '<div class="empty">Loading…</div>'; try { await loadJags(); } catch (e) { $('#view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; } }
+    const d = jg.data, set = d.settings || {}, lead = d.lead;
+    const cards = d.cards || [];
+    const col = (st) => cards.filter((c) => c.state === st).sort((a, b) => String(b.doneAt || b.takenAt).localeCompare(String(a.doneAt || a.takenAt)));
+    const prog = col('progress'), rev = col('review'), done = col('complete');
+    const atLimit = !lead && d.holding >= (set.limit || 1);
+    const firstOnly = set.lock && !lead;
+    const pct = (p) => (p && p.total ? Math.round(((p.total - p.open) / p.total) * 100) : 0);
+    const counts = (c) => !c.scanned ? '<div class="small faint jg-scan">Not scanned yet</div>'
+      : `<div class="jg-nums"><span class="badge ${c.progress.crit ? 'sev-critical' : 'sev-ok'}">Criticals: ${c.progress.crit ? c.progress.crit + ' left' : 'none left'}</span>
+          <span class="small">All items: <b>${c.progress.open}</b> left of ${c.progress.total}</span></div>
+          <div class="jg-bar" title="${pct(c.progress)}% fixed"><i style="width:${pct(c.progress)}%"></i></div>`;
+    const who = (c) => `<div class="pj-card-f">${avatar(c.by, 20)}<span class="small">${esc(c.byName || nameOf(c.by))}</span><span class="small faint">· ${esc(ago(c.state === 'progress' ? c.takenAt : c.doneAt))}</span></div>`;
+    const mine = (c) => c.by === d.me;
+    const open = (c) => (c.auditId && (mine(c) || lead) ? `<a class="btn sm" href="#/site/${esc(c.auditId)}">Open audit</a>` : '');
+    const qCard = (r, i) => {
+      const locked = firstOnly && i > 0;
+      return `<div class="pj-card jg-card${i === 0 ? ' jg-next' : ''}${locked ? ' jg-locked' : ''}">
+        <b>${locked ? '🔒 ' : ''}${esc(r.name)}</b>${r.domain ? `<div class="small faint">${esc(r.domain)}</div>` : ''}
+        ${r.back ? '<span class="badge sev-warning">Back again: the live website still has errors</span>' : ''}
+        ${r.pinned ? '<span class="badge subtle">📌 Pinned</span>' : ''}
+        ${lead ? `<div class="small muted">${r.n} contact error${r.n === 1 ? '' : 's'} · ${r.c} critical</div>` : ''}
+        <div class="jg-acts">${!firstOnly && i > 0 && !atLimit ? `<button class="btn sm" data-jtake="${esc(r.dudaId)}">Take</button>` : ''}
+          ${lead ? `<button class="btn sm ghost" data-jpin="${esc(r.dudaId)}" data-on="${r.pinned ? '' : '1'}">${r.pinned ? 'Unpin' : '📌 Pin to top'}</button>` : ''}</div></div>`;
+    };
+    const pCard = (c) => `<div class="pj-card jg-card${mine(c) ? ' jg-mine' : ''}"><b>${esc(c.name)}</b>${c.domain ? `<div class="small faint">${esc(c.domain)}</div>` : ''}
+        ${who(c)}${counts(c)}
+        <div class="jg-acts">${open(c)}${mine(c) || lead ? `<button class="btn sm primary" data-jdone="${esc(c.dudaId)}">Done</button><button class="btn sm ghost" data-jhand="${esc(c.dudaId)}">Hand on</button>` : ''}
+          <button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
+    const rCard = (c) => `<div class="pj-card jg-card"><b>${esc(c.name)}</b>${who(c)}
+        <div class="small"><span class="badge fs-clarification">${esc((c.reasons || []).join(' · ') || 'Needs a look')}</span></div>
+        <div class="jg-acts">${open(c)}${lead ? `<button class="btn sm primary" data-jok="${esc(c.dudaId)}">Approve</button><button class="btn sm ghost" data-jback="${esc(c.dudaId)}">Send back</button>` : '<span class="small faint">Waiting for an approver</span>'}
+          <button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
+    const cCard = (c) => `<div class="pj-card jg-card jg-done"><b>✅ ${esc(c.name)}</b>${who(c)}
+        ${c.progress ? `<div class="small faint">${c.progress.closed} item${c.progress.closed === 1 ? '' : 's'} fixed${c.approvedBy ? ` · approved by ${esc(c.approvedBy)}` : ''}</div>` : ''}
+        <div class="jg-acts"><button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
+    const q = d.queue || [];
+    $('#view').innerHTML = `<div class="page-head"><div><h1>Tasks</h1>
+        <div class="muted">The Jaguars board. Take the next website, fix <b>everything</b> on it (audit items, Design polish and Lengths), rescan, then click <b>Done</b>.</div></div></div>
+      ${lead ? `<div class="jg-set">
+        <label>Queue order <select id="jgOrder">${Object.entries(JG_ORDER).map(([k, v]) => `<option value="${k}" ${set.order === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label>Websites <select id="jgScope"><option value="critical" ${set.scope !== 'any' ? 'selected' : ''}>With critical errors</option><option value="any" ${set.scope === 'any' ? 'selected' : ''}>With any contact error</option></select></label>
+        <label class="check-row"><input type="checkbox" id="jgLock" ${set.lock ? 'checked' : ''}> First in, first out (only the top website can be taken)</label>
+        <label>Websites per person <input type="number" id="jgLimit" min="1" max="10" value="${set.limit || 1}"></label></div>
+        <div class="small faint jg-basis">Error counts in the queue are the contact-info errors the auto audit found on the live website. The full count shows once a website is scanned.</div>` : ''}
+      <div class="pj-board jg-board">
+        <div class="pj-col"><div class="pj-col-h"><b>Queue</b> <span class="faint">${d.queueTotal || 0}</span><div class="small faint">${esc(JG_ORDER[set.order] || '')}</div></div>
+          ${q.length ? `<button class="btn primary jg-take" id="jgTake" ${atLimit ? 'disabled' : ''}>Take next</button>
+            ${atLimit ? `<div class="small faint jg-why">${set.limit === 1 ? 'Finish the website you have first.' : `You have ${d.holding} websites — finish one first.`}</div>` : ''}` : '<div class="small faint">Nothing waiting.</div>'}
+          ${q.map(qCard).join('')}${d.queueTotal > q.length ? `<div class="small faint">and ${d.queueTotal - q.length} more</div>` : ''}</div>
+        <div class="pj-col"><div class="pj-col-h"><b>In progress</b> <span class="faint">${prog.length || ''}</span></div>${prog.map(pCard).join('') || '<div class="small faint">Nobody is on one.</div>'}</div>
+        <div class="pj-col"><div class="pj-col-h"><b>Needs review</b> <span class="faint">${rev.length || ''}</span><div class="small faint">False alarms, questions, items on hold</div></div>${rev.map(rCard).join('') || '<div class="small faint">Nothing to review.</div>'}</div>
+        <div class="pj-col"><div class="pj-col-h"><b>Complete</b> <span class="faint">${done.length || ''}</span><div class="small faint">Last 30 days</div></div>${done.map(cCard).join('') || '<div class="small faint">None yet.</div>'}</div>
+      </div>`;
+    const go = async (body, msg) => {
+      if (jg.busy) return; jg.busy = true;
+      try { const r = await post('/api/jags', body); if (msg) toast(typeof msg === 'function' ? msg(r) : msg); return r; }
+      catch (e) { toast(e.message); return null; }
+      finally { jg.busy = false; }
+    };
+    const again = async () => { try { await loadJags(); } catch (e) { /* keep what is shown */ } if (route().name === 'tasks') renderTasks(); };
+    const card = (id) => cards.find((c) => c.dudaId === id);
+    const take = async (id) => {
+      const r = await go({ op: 'take', dudaId: id || undefined });
+      if (r && r.card) { jg.data = null; loadSites(true).catch(() => {}); toast(`${r.card.name} is yours. Scan it to see what needs fixing.`); location.hash = `#/site/${encodeURIComponent(r.card.auditId)}`; }
+    };
+    if ($('#jgTake')) $('#jgTake').onclick = () => take(q[0] && q[0].dudaId);
+    $$('[data-jtake]').forEach((b) => { b.onclick = () => take(b.dataset.jtake); });
+    $$('[data-jpin]').forEach((b) => { b.onclick = async () => { await go({ op: 'pin', dudaId: b.dataset.jpin, on: !!b.dataset.on }); again(); }; });
+    $$('[data-jdone]').forEach((b) => { b.onclick = async () => {
+      const c = card(b.dataset.jdone);
+      try { const r = await post('/api/jags', { op: 'done', dudaId: c.dudaId }); toast(r.review ? 'Sent for review' : 'Complete 🎉'); again(); }
+      catch (e) {
+        modal(`<header><h2>Not finished yet</h2><button class="btn ghost" data-close>✕</button></header>
+          <div class="body"><p>${esc(e.message)}</p></div>
+          <footer><span class="spacer"></span>${c.auditId ? `<a class="btn primary" href="#/site/${esc(c.auditId)}" data-close>Open the audit</a>` : ''}</footer>`);
+      }
+    }; });
+    $$('[data-jok]').forEach((b) => { b.onclick = async () => { const r = await go({ op: 'approve', dudaId: b.dataset.jok }, 'Approved'); if (r) again(); }; });
+    $$('[data-jback]').forEach((b) => { b.onclick = () => jgNote('Send back', 'What still needs doing', 'Send back', async (note) => go({ op: 'sendback', dudaId: b.dataset.jback, note }, 'Sent back').then((r) => { if (r) again(); return r; })); });
+    $$('[data-jhand]').forEach((b) => { b.onclick = () => jgHand(card(b.dataset.jhand), go, again); });
+    $$('[data-jlog]').forEach((b) => { b.onclick = () => jgLog(card(b.dataset.jlog)); });
+    const saveSet = async (ch) => { const r = await go(Object.assign({ op: 'settings' }, ch), 'Saved'); if (r) again(); };
+    if ($('#jgOrder')) {
+      $('#jgOrder').onchange = (e) => saveSet({ order: e.target.value });
+      $('#jgScope').onchange = (e) => saveSet({ scope: e.target.value });
+      $('#jgLock').onchange = (e) => saveSet({ lock: e.target.checked });
+      $('#jgLimit').onchange = (e) => saveSet({ limit: Number(e.target.value) });
+    }
+  }
+  /** One question with a required answer: the reason is the point of the record. */
+  function jgNote(title, label, btn, send, extra) {
+    modal(`<header><h2>${esc(title)}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">${extra || ''}<label class="field">${esc(label)}<textarea id="jgNote" rows="3" autofocus></textarea></label></div>
+      <footer><span class="spacer"></span><button class="btn primary" id="jgGo">${esc(btn)}</button></footer>`);
+    $('#jgGo').onclick = async () => {
+      const note = $('#jgNote').value.trim();
+      if (note.length < 3) { toast('Please write the reason first.'); $('#jgNote').focus(); return; }
+      $('#jgGo').disabled = true;
+      const r = await send(note, $('#jgWho') ? $('#jgWho').value : '');
+      if (r) closeModal(); else if ($('#jgGo')) $('#jgGo').disabled = false;
+    };
+  }
+  function jgHand(c, go, again) {
+    if (!c) return;
+    const people = (state.users || []).filter((u) => u.status === 'active' && u.role !== 'client' && u.email !== c.by);
+    jgNote(`Hand on ${c.name}`, 'Why are you handing the whole website on?', 'Hand on', async (note, to) => {
+      if (to === '__queue') return go({ op: 'release', dudaId: c.dudaId, note }, 'Back in the queue').then((r) => { if (r) again(); return r; });
+      if (!to) { toast('Pick who gets it.'); return null; }
+      return go({ op: 'reassign', dudaId: c.dudaId, to, note }, 'Handed on').then((r) => { if (r) again(); return r; });
+    }, `<label class="field">To whom<select id="jgWho"><option value="">Pick someone…</option>
+        ${people.map((u) => `<option value="${esc(u.email)}">${esc(u.name)}${u.role === 'jaguar' ? ' (Jaguar)' : ''}</option>`).join('')}
+        <option value="__queue">Nobody: put it back in the queue</option></select>
+      <span class="small muted">Not sure about one item only? Assign that item from the audit instead.</span></label>`);
+  }
+  function jgLog(c) {
+    if (!c) return;
+    const rows = (c.log || []).slice().reverse();
+    modal(`<header><h2>${esc(c.name)} · history</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body">${rows.length ? `<ul class="jg-log">${rows.map((l) => `<li><b>${esc(l.byName)}</b> ${esc(l.what)}${l.note ? `<div class="small">“${esc(l.note)}”</div>` : ''}<div class="small faint">${esc(fmtFull(l.at))}</div></li>`).join('')}</ul>` : '<div class="empty">Nothing yet.</div>'}
+        ${c.auditId ? `<div class="small faint">Everything done on the audit itself is in its <a href="#/site/${esc(c.auditId)}/activity" data-close>Activity</a> tab.</div>` : ''}</div>`);
   }
 
   /** The handover. One screen, because it is one decision: who, which phase, by when, and why. */
@@ -5431,6 +5566,7 @@
     { route: 'home', icon: '🏠', label: 'Home', words: 'home dashboard overview start today needs attention my work what to do first', href: '#/home', help: 'home' },
     { route: 'settings', icon: '🎨', label: 'Appearance: dark mode, light mode and colours', words: 'appearance dark mode light mode theme colour color night start page tips look', href: '#/settings/appearance', help: 'home' },
     { route: 'sites', icon: '📋', label: 'Audits', words: 'audits websites list scan home', href: '#/', help: 'audits' },
+    { route: 'tasks', icon: '🐆', label: 'Tasks: the Jaguars board', words: 'tasks jaguars jags queue board take next first in first out kanban review approve', href: '#/tasks', perm: 'jags.take', help: 'jaguars' },
     { route: 'projects', icon: '🏗', label: 'Projects', words: 'projects build phases dev qa cleanup client handover', href: '#/projects', perm: 'project.view', help: 'projects' },
     { route: 'live', icon: '🌐', label: 'DR Websites', words: 'dr websites live dr sites published websites duda list domains', href: '#/live', perm: 'live.view', help: 'live' },
     { route: 'customers', icon: '👤', label: 'Customers', words: 'customers customer clients client profile profiles account accounts portal sign in temporary password websites owner owners test profile', href: '#/customers', perm: 'client.viewas', help: 'customers' },
@@ -7843,6 +7979,7 @@
     if (parts[0] === 'ai') return { name: 'ai' };
     if (parts[0] === 'requests') return { name: 'requests', site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', id: parts[1] && parts[1] !== 'site' ? decodeURIComponent(parts[1]) : '', page: parts[2] === 'page' };
     if (parts[0] === 'projects') return { name: 'projects' };
+    if (parts[0] === 'tasks') return { name: 'tasks' };
     if (parts[0] === 'customers') return { name: 'customers' };
     if (parts[0] === 'project' && parts[1]) return { name: 'project', id: decodeURIComponent(parts[1]) };
     if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : parts[1] === 'trends' ? 'trends' : parts[1] === 'ranks' ? 'ranks' : 'published',
@@ -7912,6 +8049,7 @@
       }
       return renderComments();
     }
+    if (r.name === 'tasks') { if (!can('jags.take') && !can('jags.lead')) { $('#view').innerHTML = '<div class="empty">Your role does not include the Jaguars board.</div>'; return; } jg.data = null; return renderTasks(); }
     if (r.name === 'projects') { if (!can('project.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include projects.</div>'; return; } return renderProjects(); }
     if (r.name === 'project') { if (!can('project.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include projects.</div>'; return; } return renderProject(r.id); }
     if (r.name === 'live') {

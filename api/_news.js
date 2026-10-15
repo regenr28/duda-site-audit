@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-10-15-jaguars', date: '2026-10-15', audience: 'all', tag: 'Audits',
+    title: 'Tasks: the Jaguars board — take the next website, fix everything, done',
+    what: 'A new <b>Tasks</b> page runs the audit fixing <b>first in, first out</b>. The queue is the live websites with critical errors, in the order the admins choose. <b>Take next</b> gives you the top website; scan it and the card shows how many criticals and items are left, for the whole team to see. <b>Done</b> needs everything fixed (Design polish and Lengths included) and a rescan; false alarms and questions go to <b>Needs review</b> for an admin first. Handing a website on needs a reason, and every card has its history. New <b>Jaguar</b> role.',
+    where: ['<b>Tasks</b> in the menu.'],
+    link: '#/help/jaguars', linkText: 'How the board works',
+  },
+  {
     id: '2026-10-14-lengths', date: '2026-10-14', audience: 'all', tag: 'Audits',
     title: 'Lengths get their own tab; spelling, punctuation and spacing in titles, descriptions and alt text are checked',
     what: 'SEO titles, meta descriptions and alt text that are too long or too short now sit on their own <b>📏 Lengths</b> tab, after the audit items, and Audits counts them apart (<b>📏 Lengths 0/12</b>). What those words say is checked harder: <b>alt text is proofread</b>, <b>punctuation</b> mistakes are found, and <b>spacing slips</b> ("Schaumburg,IL", two spaces, "today!!") in titles, descriptions and alt text are raised. A Google Maps link that names only an ID is now <b>confirmed against Google\'s own listing</b> for the business when the Online presence check has found it.',
