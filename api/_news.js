@@ -4,6 +4,27 @@
 
 export const NEWS = [
   {
+    id: '2026-11-10-page-fit', date: '2026-11-10', audience: 'all', tag: 'Audits',
+    title: 'Every page is read against its address: wrong service, wrong town, name slips and notes left in. "Lengths" is now "SEO Lengths"',
+    what: 'A page built from a copy of a sister page can keep the sister\'s words. Scans now read each page\'s <b>address first</b>, then its SEO title, H1, meta description and copy: a <b>ceramic coating</b> page that is about <b>paint protection film</b>, or a <b>Temple</b> page whose H1 says <b>Copperas Cove</b>, is <b>critical</b>. The AI reads every page against its address too. Business name slips such as <b>"Ceramic Coating" for "Ceramic Coatings"</b> are caught even when Business Info has both, and are critical in an H1 or SEO title. Notes left in the copy (<b>"[Matthew: confirm this is free before publishing.]"</b>, a button that just says <b>"Button"</b>) are critical. The <b>📏 Lengths</b> tab is renamed <b>📏 SEO Lengths</b>.',
+    where: [
+      '<b>Walkthrough:</b> open an audit → <b>Rescan</b>. New items show under <b>Content</b> ("The H1 heading is about …, but this page\'s address is the … page") and <b>Location</b> ("The H1 heading names …, but this is the … page").',
+      'A website → <b>📏 SEO Lengths</b> tab (same list as before, new name).',
+    ],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
+    id: '2026-10-16-review-items', date: '2026-10-16', audience: 'all', tag: 'Audits',
+    title: 'Jaguars: Needs review lists the flagged items, "Only mine" on Tasks, and an in-app alert when someone peeks',
+    what: '<b>Needs review</b> cards now list the items that sent the website there: each false alarm marked on this round, and every item For clarification or On hold, with its number, what it says and who marked it. Approvers can mark each one <b>✓ OK</b> or <b>↺ Reopen</b> it, then <b>Approve</b>, or <b>Send back</b> with the reopened numbers already in the note.<br><br><b>Only mine:</b> above the board, switch between <b>Everyone</b> and <b>Only mine</b> (websites you hold, sent, or are on). The queue always shows everything.<br><br><b>Fixed:</b> the \u201cComments waiting\u201d Slack message could arrive several times at once when more than one person had Duda comments open. Each website now sends it once.<br><br><b>Watching:</b> when a teammate peeks at your website, the app tells you (bell and pop-up, no Slack message). Every card shows the photos of everyone else on the website (peeking, given an item or mentioned).',
+    where: [
+      '<b>Walkthrough (approvers):</b> Tasks → <b>Needs review</b> → a card. Click an item number to look at it, then <b>✓ OK</b> or <b>↺ Reopen</b>. All fine → <b>Approve</b>. Anything reopened → <b>Send back</b>; the note starts with the reopened numbers.',
+      '<b>Walkthrough (everyone):</b> Tasks → <b>Only mine</b> above the board; <b>Everyone</b> to go back.',
+      '<b>Walkthrough (Jaguars):</b> when someone peeks at your website, a pop-up and the bell say so and link to the audit. The 👁 photos on your card show who is on it.',
+    ],
+    link: '#/help/jaguars', linkText: 'How the board works',
+  },
+  {
     id: '2026-10-16-hold-peek', date: '2026-10-16', audience: 'all', tag: 'Audits',
     title: 'Jaguars: put a website on hold and take the next; peek at teammates\' websites; assigned or mentioned means you can see it',
     what: '<b>⏸ On hold</b> (with a note) moves a website to <b>Needs review</b> and frees you to take the next one; <b>▶ Resume</b> brings it back. When the admins allow it, <b>👁 Peek</b> opens a teammate\'s website read-only and keeps it on your Audits as <b>Watching</b> until you <b>Stop watching</b>. Anyone assigned an audit item or @mentioned on a website can now open it from their Audits. Every one of these is in the Activity log.',

@@ -536,6 +536,9 @@ export const NOTIFY_GROUPS = [
     lockNote: 'Always reaches your bell, so nothing addressed to you can go unseen.' },
   { key: 'assigned', label: 'Work assigned to you', kinds: ['assign', 'site-assign', 'site-unassign', 'site-reopen', 'jag-assign', 'jag-back', 'jag-approved', 'jag-review'], channels: ['bell', 'popup', 'slack'],
     desc: 'An audit item or a whole website is given to you, taken off you, or reopened; on the Jaguars board, a website handed to you, sent back, approved, or waiting for your review.' },
+  // In the app only (bell and pop-up): being looked at is worth knowing, not worth a Slack message.
+  { key: 'watching', label: 'Someone watching your website', kinds: ['jag-watch'], channels: ['bell', 'popup'],
+    desc: 'On the Jaguars board, a teammate starts peeking (read-only) at a website you are holding.' },
   { key: 'tickets', label: 'Client change requests', kinds: ['ticket-new', 'ticket-reply', 'ticket-assign'], channels: ['bell', 'popup', 'slack'],
     desc: 'A client sends a change request from their website page, answers one, or a request is given to you.' },
   { key: 'comments', label: 'Duda comments waiting', kinds: ['comment-waiting'], channels: ['bell', 'popup', 'slack'],
@@ -580,6 +583,7 @@ export function wants(user, kind, channel) {
   const g = GROUP_OF[kind];
   if (!g) return true;                                    // unlisted kind: deliver it
   if ((g.locked || []).includes(channel)) return true;
+  if ((channel === 'slack' || channel === 'popup') && !g.channels.includes(channel)) return false; // a group without that channel never uses it
   if (channel === 'slack' && user && user.slackDM === false) return false;  // the master Slack switch
   return !(user && Array.isArray(user.notifyOff) && user.notifyOff.includes(g.key + ':' + channel));
 }
@@ -624,6 +628,7 @@ const KIND = { mention: 'mentioned you', reply: 'replied to your comment', assig
   'jag-back': 'sent a website back to you',
   'jag-approved': 'approved your website',
   'jag-review': 'finished a website that needs your review',
+  'jag-watch': 'is watching your website on the Jaguars board (read-only)',
   access: 'changed what you can do',
   security: 'needs a look: repeated wrong passwords',
   approved: 'approved your Duda Site Auditor access',

@@ -197,6 +197,7 @@ function answerDueAt(atISO, hours = WAIT_HOURS) {
  * behind again, it starts fresh.
  */
 const ALERT_KEY = P + 'cmtalert';       // dudaSiteId → { at, n, oldest } for the last thing we said
+const CLAIM = P + 'cmtclaim:';          // + dudaSiteId: "this run is sending about it" (expires with the quiet period)
 const DIGEST_LINES = 5;                 // listed in full; the rest are counted
 const ROLLUP_SITES = 5;                 // more websites than this in one go and it becomes one message
 export const QUIET_HOURS = 20;                 // never more than one message a day about the same website
@@ -243,7 +244,16 @@ async function alertStale(rows, isClient, nameOf) {
   if (!due.length && !clear.length) return 0;
 
   const cmds = [];
-  clear.forEach((id) => cmds.push(['HDEL', ALERT_KEY, id]));
+  clear.forEach((id) => cmds.push(['HDEL', ALERT_KEY, id], ['DEL', CLAIM + id]));
+  if (!due.length) { if (cmds.length) await redis(...cmds); return 0; }
+
+  // This runs every time anyone opens Duda comments, so several browsers can reach this point at
+  // the same moment, each seeing "nothing said yet" — and each used to send the same message. Each
+  // website is now claimed first with a single atomic write; only the run that wins the claim
+  // speaks, and the claim lasts as long as the quiet period, so a repeat can't slip in.
+  const claims = await redis(...due.map((g) => ['SET', CLAIM + g.site, now(), 'NX', 'EX', QUIET_HOURS * 3600]));
+  const mine = due.filter((g, i) => claims[i] === 'OK');
+  due.length = 0; due.push(...mine);
   if (!due.length) { if (cmds.length) await redis(...cmds); return 0; }
 
   const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');

@@ -81,6 +81,66 @@ check('dev@8bitcreative.com' in site['people'] and any(w['email'] == 'dev@8bitcr
 act = [json.loads(x)['text'] for x in redis(['LRANGE', 'dsa:act:' + A1, 0, 30])[0]]
 check(any('brought Kim Jag' in t and 'assigned' in t for t in act) and any('brought Dana Dev' in t and 'mentioned' in t for t in act), 'both are in the Activity log', act[:6])
 
+# --- 145: the holder is told about a peek; cards show who else is on the website
+n = [json.loads(x) for x in redis(['LRANGE', 'dsa:notif:jag1@8bitcreative.com', 0, 20])[0]]
+check(any(x['kind'] == 'jag-watch' and 'Kim Jag' in x['text'] for x in n), 'the Jaguar holding the website is told someone is peeking', [x['kind'] for x in n])
+s, b = call(J1, '/api/jags?op=board')
+c1 = [c for c in b['cards'] if c['dudaId'] == 'w1'][0]
+check(any(w['email'] == 'jag2@8bitcreative.com' and w['how'] in ('peek', 'assigned') for w in c1.get('watchers', [])) and not any(w['email'] == 'jag1@8bitcreative.com' for w in c1.get('watchers', [])), 'the card lists who else is on it (not the holder)', c1.get('watchers'))
+
+out = subprocess.run(['node', '-e', "import('" + APP + "/api/_lib.js').then(m=>console.log(JSON.stringify([m.wants({}, 'jag-watch', 'bell'), m.wants({}, 'jag-watch', 'slack'), m.wants({}, 'jag-assign', 'slack'), m.wants({}, 'jag-watch', 'popup')])))"], capture_output=True, text=True).stdout.strip()
+check(out.endswith('[true,false,true,true]'), 'a peek reaches the bell and a pop-up, not Slack; other board notices still go to Slack', out)
+
+# --- 145: "Comments waiting" goes out once, however many people load Duda comments at the same moment
+import threading
+old_at = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() - 5 * 86400))
+redis(['HSET', 'dsa:watch', 'dupsite', json.dumps({'name': 'Darker Image Auto Studio', 'needName': False})],
+      ['HSET', 'dsa:convidx', 'conv-dup', json.dumps({'s': 'dupsite', 'n': 103, 'st': 'open', 'lb': 'client@darkerimage.com', 'la': old_at, 'tx': 'Hi, our SEO team picked up the meta titles', 'd': 'DESKTOP'})])
+before = len([json.loads(x) for x in redis(['LRANGE', 'dsa:notif:reymark@8bitcreative.com', 0, 200])[0] if json.loads(x)['kind'] == 'comment-waiting'])
+ths = [threading.Thread(target=lambda: call(ADMIN, '/api/comments?op=sites')) for _ in range(5)]
+[t.start() for t in ths]; [t.join() for t in ths]
+after = [json.loads(x) for x in redis(['LRANGE', 'dsa:notif:reymark@8bitcreative.com', 0, 200])[0] if json.loads(x)['kind'] == 'comment-waiting']
+check(len(after) - before == 1, 'five people opening Duda comments at once: "Comments waiting" goes out once', len(after) - before)
+
+# --- 145: Needs review lists the flagged items
+taken = c1['takenAt']
+card = json.loads(redis(['HGET', 'dsa:jag:cards', 'w1'])[0]); card.update({'state': 'review', 'reasons': ['1 false alarm']})
+site = unpack(redis(['GET', 'dsa:site:' + A1])[0])
+site['findings'].append({'id': 'f2', 'code': 'EMAIL_MISMATCH', 'severity': 'critical', 'category': 'Contact info', 'message': 'Email differs', 'path': '/', 'pages': ['/'], 'location': 'Body', 'selector': '#y', 'visibleOn': ['desktop'], 'found': 'a@b.c'})
+site['findings'].append({'id': 'f3', 'code': 'TEL_MISMATCH', 'severity': 'critical', 'category': 'Contact info', 'message': 'Old false alarm', 'path': '/', 'pages': ['/'], 'location': 'Body', 'selector': '#z', 'visibleOn': ['desktop'], 'found': '777'})
+redis(['HSET', 'dsa:jag:cards', 'w1', json.dumps(card)], ['SET', 'dsa:site:' + A1, json.dumps(site)], ['HSET', 'dsa:fnum:' + A1, 'f2', '2', 'f3', '3'],
+      ['HSET', 'dsa:fstate:' + A1, 'f1', json.dumps({'status': 'false', 'updatedAt': '2099-01-01T00:00:00Z', 'updatedBy': 'jag1@8bitcreative.com'}),
+       'f2', json.dumps({'status': 'clarification', 'updatedAt': '2026-01-01T00:00:00Z', 'updatedBy': 'jag1@8bitcreative.com'}),
+       'f3', json.dumps({'status': 'false', 'updatedAt': '2001-01-01T00:00:00Z', 'updatedBy': 'someone@8bitcreative.com'})])
+s, b = call(ADMIN, '/api/jags?op=board')
+ri = [c for c in b['cards'] if c['dudaId'] == 'w1'][0].get('reviewItems') or []
+check([x['num'] for x in ri] == [1, 2] and ri[0]['status'] == 'false' and ri[1]['status'] == 'clarification' and ri[0]['by'] == 'jag1@8bitcreative.com', 'review card lists this round\'s false alarm and the clarification (not an old false alarm)', ri)
+s, b = call(J1, '/api/jags', {'op': 'itemok', 'dudaId': 'w1', 'findingId': 'f2'})
+check(s == 403, 'only approvers mark items OK')
+s, b = call(ADMIN, '/api/jags', {'op': 'itemok', 'dudaId': 'w1', 'findingId': 'f2'})
+check(s == 200 and 'f2' in b['itemOk'], 'an approver marks an item ✓ OK')
+s, b = call(ADMIN, '/api/jags?op=board')
+ri = [c for c in b['cards'] if c['dudaId'] == 'w1'][0].get('reviewItems') or []
+check([x for x in ri if x['id'] == 'f2'][0]['ok'] is not None, 'and it shows as OK on the card')
+with sync_playwright() as p:
+    br = p.chromium.launch()
+    ctx = br.new_context(viewport={'width': 1300, 'height': 900}); ctx.add_cookies([{'name': 'dsa_sess', 'value': ADMIN, 'url': f'http://localhost:{APORT}'}])
+    pg = ctx.new_page(); errs0 = []; pg.on('pageerror', lambda e: errs0.append(str(e)))
+    pg.goto(f'http://localhost:{APORT}/#/tasks'); pg.wait_for_selector('.jg-ri li', timeout=20000)
+    check(pg.locator('.jg-ri li').count() == 2 and pg.locator('.jg-ri a[href*="/item/1"]').count() == 1, 'Tasks: the review card lists the items, linked to them')
+    check(pg.locator('.jg-watch').count() >= 1, 'Tasks: the card shows who else is on it')
+    pg.screenshot(path=os.path.join(OUT, 'jags2-review.png'))
+    pg.click('[data-jrire="w1"][data-fid="f1"]'); pg.wait_for_timeout(1500)
+    st = json.loads(redis(['HGET', 'dsa:fstate:' + A1, 'f1'])[0])
+    check(st['status'] == 'open', '↺ Reopen puts the item back to Open', st)
+    pg.wait_for_selector('[data-jback="w1"]'); pg.click('[data-jback="w1"]'); pg.wait_for_selector('#jgNote')
+    check(pg.input_value('#jgNote').startswith('Reopened #1'), 'Send back starts with the reopened item numbers', pg.input_value('#jgNote'))
+    pg.fill('#jgNote', 'Reopened #1: the phone is really wrong'); pg.click('#jgGo'); pg.wait_for_timeout(1500)
+    check(not errs0, 'no script errors on the review card', errs0[:3])
+    ctx.close(); br.close()
+card = json.loads(redis(['HGET', 'dsa:jag:cards', 'w1'])[0])
+check(card['state'] == 'progress' and not card.get('itemOk'), 'sent back: In progress again, the OKs cleared')
+
 # a second peek, to see the screen and to stop watching
 s, b = call(J2, '/api/jags', {'op': 'peek', 'dudaId': 'w2'})
 A2 = b.get('auditId')
@@ -95,6 +155,11 @@ with sync_playwright() as p:
     pg.screenshot(path=os.path.join(OUT, 'jags2-holder.png'))
     pg.goto(f'http://localhost:{APORT}/#/tasks'); pg.wait_for_selector('.jg-board', timeout=20000)
     check(pg.locator('[data-jhold]').count() >= 1, 'Tasks: ⏸ On hold on my card')
+    pg.click('[data-jmine="1"]'); pg.wait_for_timeout(300)
+    check(pg.locator('.jg-filter [data-jmine="1"].on').count() == 1 and pg.locator('[data-jhold]').count() >= 1, 'Tasks: Only mine keeps my websites')
+    pg.reload(); pg.wait_for_selector('.jg-board', timeout=20000)
+    check(pg.locator('.jg-filter [data-jmine="1"].on').count() == 1, 'Only mine is remembered')
+    pg.click('[data-jmine=""]'); pg.wait_for_timeout(300)
     ctx.close()
     ctx = br.new_context(viewport={'width': 1300, 'height': 900}); ctx.add_cookies([{'name': 'dsa_sess', 'value': J2, 'url': f'http://localhost:{APORT}'}])
     pg = ctx.new_page(); pg.on('pageerror', lambda e: errs.append(str(e)))

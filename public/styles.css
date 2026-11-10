@@ -2082,3 +2082,16 @@ td .pp-btn { height: 32px; font-size: 13px; }
 .ro-note { margin: 4px 0 0; }
 body.ro-site #tabBody td select, body.ro-site #tabBody td .pp-btn, body.ro-site #tabBody td input[type=checkbox], body.ro-site #tabBody th input[type=checkbox], body.ro-site #sRescan,
 body.ro-site .drawer .status-btns, body.ro-site .drawer .pp-btn, body.ro-site .drawer select, body.ro-site #drRecheck, body.ro-site .ex-add, body.ro-site [data-exedit], body.ro-site [data-exdel] { pointer-events: none; opacity: .55; }
+/* Tasks: who else is on a website, and what sent it to review */
+.jg-watch { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.jg-w { display: inline-flex; margin-right: -4px; }
+.jg-w + .small { margin-left: 8px; }
+.jg-ri { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.jg-ri li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.jg-ri li.ok { opacity: .75; }
+.jg-ri .badge { margin: 0; }
+.jg-ri-m { flex: 1 1 140px; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.jg-ri-ok { color: var(--ok); font-weight: 600; }
+.jg-ri-a { display: inline-flex; gap: 10px; margin-left: auto; }
+.jg-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 12px; }
+.jg-filter .btn.on { background: var(--accent-soft, var(--panel-2)); border-color: var(--accent); color: var(--text); }

@@ -339,6 +339,18 @@
         'Spacing slips in the SEO title, meta description and alt text: two spaces in a row, a space before a comma, no space after one ("Schaumburg,IL")',
       ],
     },
+    {
+      v: 27,
+      date: '2026-11-10',
+      title: 'Every page is read against its address: service, town, business name and notes left in',
+      items: [
+        'Wrong service: a page whose address is one service (/ceramic-coating) but whose SEO title, H1, meta description or copy is about another (paint protection film). Critical when the title, H1 or description is wrong',
+        'Wrong town: on a town\u2019s page (/locations/temple-tx/\u2026), a title, H1 or meta description naming another of the website\u2019s towns (\u201cCopperas Cove\u2019s top provider\u201d) and not its own. Critical. Copy that names another town more than its own is raised too',
+        'The AI reads every page against its address as well (service, town, business name, notes left in) and catches what the rules can\u2019t word for word',
+        'Business name: a one-letter slip such as \u201cCoating\u201d for \u201cCoatings\u201d is raised even when Business Info carries both spellings, and is critical in an H1 or SEO title. SEO titles are checked for the name too',
+        'Notes left in the copy: \u201c[Matthew: confirm this is free before publishing.]\u201d, \u201c\u2026 before publishing\u201d, \u201cnote to client\u201d, \u201cinsert \u2026 here\u201d, and Duda\u2019s own default labels (a button that just says \u201cButton\u201d)',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -399,8 +411,17 @@
     [/click (here )?to edit|add paragraph text|click [“"]?edit text[”"]?|add your (text|title) here|this is a paragraph/i, 'Duda default placeholder text'],
     [/\[(insert|your|business|name|city|phone|email|address)[^\]]{0,30}\]/i, 'Unfilled [placeholder]'],
     [/\{\{[^}]{1,60}\}\}/, 'Unresolved {{dynamic}} placeholder'],
-    [/\bTBD\b|\bXXX+\b|\bTODO\b/, 'TBD / XXX / TODO marker'],
+    [/\bTBD\b|\bXXX+\b|\bTODO\b|\bFIXME\b/, 'TBD / XXX / TODO marker'],
+    // Notes from the writer or the team that were never taken out: "[Matthew: confirm this is free before publishing.]"
+    [/\[\s*[A-Z][A-Za-z.'’ -]{1,30}:\s*[^\]]{3,240}\]/, 'Editor note left in the text ([Name: …])'],
+    [/\[\s*(?:note|notes|todo|tbd|fixme|placeholder|insert|add|update|confirm|check|verify|need|needs|client|writer|editor|internal|link|photo|image|pic|cta|source|citation|stat|price|pricing)\b[^\]]{0,200}\]/i, 'Unfilled or editor [note] left in the text'],
+    [/\b(?:confirm|verify|check|double[- ]check|update|replace|add|remove|ask)\b[^.!?\]]{0,90}\bbefore (?:publishing|we publish|going live|it goes live|launch(?:ing)?|posting)\b/i, 'Editor note left in the text ("… before publishing")'],
+    [/\b(?:note to (?:self|client|writer|editor|designer|dev)|internal note|writer[’']?s note|editor[’']?s note|for internal use)\b/i, 'Internal note left in the text'],
+    [/\b(?:pending|awaiting|needs?) (?:client|owner|shop) (?:approval|confirmation|input|info)\b/i, 'Internal note left in the text (waiting on the client)'],
+    [/\binsert (?:the |a |an |your |their )?(?:[\w-]+ ){0,3}here\b/i, 'Placeholder ("insert … here") left in the text'],
   ];
+  // A Duda element whose own default label was never changed: a button that just says "Button".
+  const DEFAULT_LABEL = /^(?:Button|New Button|Button Text|Button Label|Heading|New Heading|Subtitle|Sub Title|Paragraph|New Paragraph|Caption|Image Caption|Image Title|Title Here|Your Title|Text Here|Your Text Here|Link Text|Label)$/;
 
   const PHONE_RE = /(?<![\d$.,])(?:\+?1[\s.\-]?)?\(?([2-9]\d{2})\)?[\s.\-]{0,2}(\d{3})[\s.\-](\d{4})(?![\d])/g;
   const EMAIL_RE = /[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/gi;
@@ -1769,6 +1790,7 @@
         const m = t.match(re);
         if (m) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: label, found: cut(t, 160) });
       }
+      if (DEFAULT_LABEL.test(t)) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: `Duda's default label left on the page ("${t}")`, found: t, expected: 'Real wording, or remove the element' });
       const cm = t.match(/(?:©|\(c\)|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})\s*(.{0,70})/i);
       if (cm) {
         const yr = parseInt(cm[1], 10);
@@ -2120,10 +2142,16 @@
       external: Array.from(external.keys()).map((url) => ({ url, selector: uniqueSelector(external.get(url).el), location: locationOf(external.get(url).el), hiddenBy: hiddenReason(external.get(url).el, device) || '' })),
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
       alts: altList,
-      textIndex: textIndex.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
+      textIndex: textIndex.map((x) => { const hd = x.el.closest && x.el.closest('h1, h2, h3, h4, h5, h6'); return { text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '', ...(hd ? { heading: hd.tagName } : {}) }; }),
       prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       fonts,
-      meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon },
+      meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon,
+        // What the page says it is about, for the "does the page match its address" checks: every H1
+        // (a hidden one still tells Google what the page is), and the section headings under it.
+        fit: {
+          h1: Array.from(doc.querySelectorAll('body h1')).map((h) => ({ text: clean(h.textContent), selector: uniqueSelector(h) })).filter((h) => h.text).slice(0, 3),
+          heads: heads.filter((h) => /^H[23]$/.test(h.tagName)).map((h) => clean(h.textContent)).filter(Boolean).slice(0, 24),
+        } },
       schema: schemas.map((s) => s.data),
     };
   }
@@ -2157,11 +2185,36 @@
   const nameSkel = (s) => String(s || '').toLowerCase().replace(/[’'`]s\b/g, '').replace(/\s*[&+]\s*/g, ' and ').replace(/[^a-z0-9]/g, '');
   const quoteNorm = (s) => String(s || '').replace(/[‘’`]/g, "'").replace(/\s+/g, ' ').trim();
   function nameVariants(textIdx, truth) {
-    const official = quoteNorm(truth && truth.businessName);
+    let official = quoteNorm(truth && truth.businessName);
     if (!official) return [];
+    // Business Info with two spellings one letter apart ("Ceramic Coating" in one place, "Ceramic
+    // Coatings" in another): the one the website itself uses most is the name, the other the slip.
+    {
+      const sk = nameSkel(official);
+      const near = (truth.names || []).map(quoteNorm).filter((n) => { const k = nameSkel(n); return k !== sk && (lev1(k, sk) || k + 's' === sk || k === sk + 's'); });
+      if (near.length) {
+        const all = (textIdx || []).map((x) => x.text).join(' \n ');
+        const uses = (n) => { const re = new RegExp('\\b' + n.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+') + '(?![A-Za-z])', 'gi'); return (all.match(re) || []).length; };
+        const best = [official].concat(near).map((n) => ({ n, c: uses(n) })).sort((a, b) => b.c - a.c)[0];
+        if (best.n !== official && best.c > uses(official)) truth = Object.assign({}, truth, { businessName: best.n, names: [best.n].concat((truth.names || []).filter((n) => quoteNorm(n) !== best.n)) }), official = best.n;
+      }
+    }
     const target = nameSkel(official);
     if (target.length < 5) return [];
-    const okForms = new Set([official].concat((truth.names || []).map(quoteNorm)).filter(Boolean));
+    // The name without "LLC" / "Inc." is the name as people write it on a website: compared too.
+    const LEGAL = /[\s,]+(llc|l\.l\.c\.|inc|co|corp|ltd|company|pllc)\.?$/i;
+    const targets = [target]; const bare = nameSkel(official.replace(LEGAL, '')); if (bare !== target && bare.length >= 5) targets.push(bare);
+    // A second spelling in Business Info that differs by one letter ("Coating" next to "Coatings") is
+    // not a second name: it is the same slip, made in Duda. The first one is the name; the near-twin
+    // is reported wherever the website uses it, so the site ends up written one way.
+    const twin = (n) => { const k = nameSkel(n); return k !== target && targets.some((t) => lev1(k, t) || k + 's' === t || k === t + 's'); };
+    const twins = (truth.names || []).map(quoteNorm).filter((n) => n && twin(n));
+    const okForms = new Set([official, official.replace(LEGAL, '')].concat((truth.names || []).map(quoteNorm)).filter((n) => n && !twins.includes(n)));
+    // Other names in Business Info ("HH Ceramic Coatings" next to "Harker Heights Ceramic Coatings"):
+    // a one-letter slip of any of them is a slip too.
+    // Only a real slip, not singular against plural: which of those two is right is the official name's call.
+    const aliasT = [];
+    [...okForms].forEach((n) => { const k = nameSkel(n.replace(LEGAL, '')); if (k.length >= 8 && !targets.includes(k)) aliasT.push(k); });
     const nWords = official.split(/[\s&+]+/).filter(Boolean).length;
     const maxW = Math.min(8, nWords * 2 + 1);
     const out = [];
@@ -2175,10 +2228,12 @@
           let surf = quoteNorm(raw).replace(/^[^A-Za-z0-9&]+|[^A-Za-z0-9&]+$/g, '').replace(/'s$/i, '');
           if (!surf) continue;
           const k = nameSkel(surf);
-          if (!k || k[0] !== target[0]) continue;
+          if (!k || !targets.concat(aliasT).some((t) => t[0] === k[0])) continue;
+          if (aliasT.includes(k)) continue;
           let typo = false;
-          if (k !== target) {
-            if (target.length < 8 || !/^[A-Z]/.test(surf) || !lev1(k, target)) continue;
+          if (!targets.includes(k)) {
+            const slip = targets.some((t) => lev1(k, t)) || aliasT.some((t) => lev1(k, t) && k + 's' !== t && k !== t + 's');
+            if (target.length < 8 || !/^[A-Z]/.test(surf) || !slip) continue;
             typo = true;
           }
           if (okForms.has(surf)) continue;
@@ -2191,9 +2246,14 @@
           if ([...okForms].some((o) => surf.includes(o))) continue;
           if (seen.has(surf)) continue;
           seen.add(surf);
+          // Singular for plural ("Ceramic Coating" for "Ceramic Coatings") says what changed.
+          const plural = typo && targets.some((t) => k + 's' === t) ? ' (missing the final "s")' : typo && targets.some((t) => k === t + 's') ? ' (an extra "s")' : '';
+          // In the H1 or the SEO title it is the first thing Google and a visitor read: critical.
+          const top = x.heading === 'H1' || x.heading === 'TITLE';
+          const where = x.heading === 'H1' ? ' in the H1 heading' : x.heading === 'TITLE' ? ' in the SEO title' : '';
           out.push({
-            code: 'NAME_SPELLING', severity: 'warning', category: 'Business name',
-            message: typo ? 'Business name looks misspelled' : 'Business name is written differently from Business Info',
+            code: 'NAME_SPELLING', severity: top ? 'critical' : 'warning', category: 'Business name',
+            message: (typo ? 'Business name looks misspelled' : 'Business name is written differently from Business Info') + where + plural + (twins.includes(surf) ? '. Business Info has this spelling too: correct it there as well' : ''),
             found: surf, expected: official, spelling: typo ? 'typo' : 'format',
             path: x.path, device: x.device, selector: x.selector, location: x.location,
             visible: !x.hiddenBy, hiddenBy: x.hiddenBy, snippet: cut(x.text, 120),
@@ -2203,6 +2263,181 @@
     });
     return out;
   }
+  // ---------- page fit: does each page say what its address promises? ----------
+  /**
+   * A page's address is a promise: /locations/nolanville-tx/ceramic-coating is the Nolanville ceramic
+   * coating page. Pages built from a copy of a sister page keep the sister's words: the ceramic page
+   * ends up about paint protection film, the Temple page's heading names Copperas Cove. Nothing else in
+   * the audit is wrong on such a page (the phone, the name, the links are fine), so it needs its own check.
+   *
+   * Read in order: the address (what service, what town), then the SEO title, the H1, the meta
+   * description, the section headings and the body copy. The business's own name is taken out first:
+   * "Harker Heights Ceramic Coatings" says nothing about the topic or the town of a page.
+   */
+  const SERVICES = [
+    { key: 'ppf', label: 'Paint protection film (PPF)', primary: true, slug: /paint-protection-film|(^|-)ppf(-|$)|clear-?bra|protection-film/,
+      re: /\bpaint[\s-]+protection[\s-]+films?\b|\bPPF\b|\bclear[\s-]?bras?\b/gi },
+    { key: 'tint', label: 'Window tint', primary: true, slug: /tint|window-film/,
+      re: /\bwindow[\s-]+tint(?:s|ing|ed)?\b|\btint(?:s|ing|ed)?\b|\bwindow[\s-]+films?\b/gi },
+    { key: 'ceramic', label: 'Ceramic coating', primary: true, slug: /ceramic/, re: /\bceramic\b/gi },
+    { key: 'graphene', label: 'Graphene coating', slug: /graphene/, re: /\bgraphene\b/gi },
+    { key: 'correction', label: 'Paint correction', slug: /paint-correction|(^|-)correction(-|$)|polish|swirl/, re: /\bpaint[\s-]+correction\b|\bswirl[\s-]+(?:marks?|removal)\b|\bpolishing\b/gi },
+    { key: 'wrap', label: 'Vinyl wraps', slug: /(^|-)wraps?(-|$)|wrapping|vinyl/, re: /\b(?:vinyl|car|vehicle|truck|colou?r[\s-]+change|commercial|fleet)[\s-]+wraps?\b|\bwraps?\b/gi },
+    { key: 'headlight', label: 'Headlight restoration', slug: /headlight/, re: /\bheadlights?\b/gi },
+    { key: 'detailing', label: 'Detailing', slug: /detail/, re: /\bdetail(?:s|ing|ed)?\b/gi },
+  ];
+  const US_STATES = new Set('al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy dc'.split(' '));
+  const AREA_DIRS = /^(locations?|service-areas?|areas?|areas-we-serve|areas-served|cities|city|communities|near-me)$/;
+  const SLUG_FILLER = new Set(('ceramic coating coatings paint protection film films ppf clear bra window windows tint tinting detailing detail detailer detailers ' +
+    'auto car cars truck mobile correction wraps wrap vinyl graphene service services and in near at for best top the of located serving ' +
+    'location locations headlight restoration interior exterior installation install installer shop pro professional').split(' '));
+  const isBlogPath = (p) => /\/(blog|blogs|post|posts|news|articles?)\//i.test(p);
+  const titleCase = (w) => w.split(' ').map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(' ');
+
+  /** The town a page's address is about ("temple" from /locations/temple-tx/…), or ''. */
+  function placeOfPath(path) {
+    const segs = String(path || '').toLowerCase().split('/').filter(Boolean);
+    for (let i = 0; i < segs.length; i++) {
+      let toks = segs[i].split('-').filter(Boolean);
+      const underArea = i > 0 && AREA_DIRS.test(segs[i - 1]);
+      const st = toks.length >= 2 && US_STATES.has(toks[toks.length - 1]) ? toks.pop() : '';
+      if (!st && !underArea) continue;
+      while (toks.length && SLUG_FILLER.has(toks[0])) toks.shift();
+      if (!toks.length || toks.length > 4 || toks.some((t) => /\d/.test(t))) continue;
+      const place = toks.join(' ');
+      if (place.length >= 3) return place;
+    }
+    return '';
+  }
+  /** The services a page's address names, read from its last segment that names any. */
+  function servicesOfPath(path) {
+    const segs = String(path || '').toLowerCase().split('/').filter(Boolean);
+    for (let i = segs.length - 1; i >= 0; i--) {
+      if (i > 0 && AREA_DIRS.test(segs[i - 1])) continue;          // the town's own segment
+      const hit = [];
+      SERVICES.forEach((s) => { if (s.slug.test(segs[i])) hit.push(s.key); });
+      // "ceramic-coating" also matches nothing else; "paint-protection-film" must not count as "paint-correction"
+      if (hit.includes('ppf')) { const k = hit.indexOf('correction'); if (k >= 0) hit.splice(k, 1); }
+      if (hit.length) return hit;
+    }
+    return [];
+  }
+  /** Words with the business's own name(s) taken out. */
+  function withoutNames(text, truth) {
+    let t = ' ' + String(text || '') + ' ';
+    const forms = [(truth && truth.businessName) || ''].concat((truth && truth.names) || []).filter((n) => n && n.length >= 4);
+    forms.sort((a, b) => b.length - a.length).forEach((n) => {
+      // Any capitals, "Coating"/"Coatings", "&"/"and", with or without the possessive
+      const core = n.replace(/\b(llc|inc|co|corp|ltd|company)\.?\s*$/i, '').trim().replace(/s$/i, '');
+      const pat = core.split(/\s+/).map((w) => (/^(&|and)$/i.test(w) ? '(?:&|and)' : w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('[\\s-]+');
+      t = t.replace(new RegExp(pat + "s?(?:[’']s)?", 'gi'), ' ');
+    });
+    return t;
+  }
+  const countRe = (re, t) => { re.lastIndex = 0; const m = String(t || '').match(re); return m ? m.length : 0; };
+  const placeRe = (place) => new RegExp('\\b' + place.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '[\\s-]+') + '\\b', 'gi');
+  /** Mentions of a town written as a name (capitalised or in capitals), not the ordinary word ("temple"). */
+  function placeCount(place, text) {
+    const re = placeRe(place); let n = 0, m;
+    const t = String(text || '');
+    while ((m = re.exec(t))) if (/^[A-Z]/.test(m[0])) n++;
+    return n;
+  }
+
+  /**
+   * pages: [{ path, title, description, h1: [{text, selector}], heads: [..], body: 'all body text' }]
+   * Returns audit items (critical when the title or H1 is wrong, warning when only the body copy is).
+   */
+  function pageFitFindings(pages, truth) {
+    const out = [];
+    const live = (pages || []).filter((p) => p && p.path && !p.notFound && !p.error);
+    // Every town the website has a page for, plus its own town(s).
+    const places = new Set();
+    live.forEach((p) => { const pl = placeOfPath(p.path); if (pl) places.add(pl); });
+    ((truth && truth.addresses) || []).forEach((a) => { if (a.city) places.add(String(a.city).toLowerCase().trim()); });
+    const homeTowns = new Set(((truth && truth.addresses) || []).map((a) => String(a.city || '').toLowerCase().trim()).filter(Boolean));
+    const base = (p, f) => Object.assign({ path: p.path, device: 'desktop', visible: true, hiddenBy: '', snippet: '' }, f);
+    live.forEach((p) => {
+      const h1 = (p.h1 || [])[0] || null;
+      const parts = {
+        title: withoutNames(p.title, truth),
+        h1: withoutNames((p.h1 || []).map((h) => h.text).join(' · '), truth),
+        desc: withoutNames(p.description, truth),
+        heads: withoutNames((p.heads || []).join(' · '), truth),
+        body: withoutNames(p.body, truth),
+      };
+      const where = (k) => (k === 'title' ? { selector: 'head > title', location: 'Head / Meta', found: p.title }
+        : k === 'desc' ? { selector: 'meta[name="description"]', location: 'Head / Meta', found: p.description }
+        : { selector: (h1 && h1.selector) || 'h1', location: 'Body', found: (h1 && h1.text) || '' });
+
+      // --- the service ---
+      const want = servicesOfPath(p.path);
+      if (want.length && want.length <= 2) {
+        const sc = {};
+        SERVICES.forEach((s) => { sc[s.key] = { title: countRe(s.re, parts.title), h1: countRe(s.re, parts.h1), desc: countRe(s.re, parts.desc), heads: countRe(s.re, parts.heads), body: countRe(s.re, parts.body) }; });
+        const label = (k) => SERVICES.find((s) => s.key === k).label;
+        const wantLabel = want.map(label).join(' / ');
+        const others = SERVICES.filter((s) => s.primary && !want.includes(s.key)
+          // Graphene and ceramic are both coatings: a graphene page talking about ceramic is not a mix-up.
+          && !(s.key === 'ceramic' && want.includes('graphene')));
+        const wantIn = (part) => want.some((w) => sc[w][part] > 0);
+        let flagged = false;
+        ['title', 'h1', 'desc'].forEach((part) => {
+          if (!parts[part].trim()) return;
+          if (wantIn(part)) return;
+          const d = others.filter((s) => sc[s.key][part] > 0).sort((a, b) => sc[b.key].body - sc[a.key].body)[0];
+          if (!d) return;
+          flagged = true;
+          const w = where(part);
+          const what = part === 'title' ? 'SEO title' : part === 'h1' ? 'H1 heading' : 'meta description';
+          out.push(base(p, { code: 'PAGE_TOPIC_MISMATCH', severity: 'critical', category: 'Content',
+            message: `The ${what} is about ${d.label}, but this page's address is the ${wantLabel} page`,
+            found: cut(w.found, 200), expected: `A ${what} about ${wantLabel}${placeOfPath(p.path) ? ' in ' + titleCase(placeOfPath(p.path)) : ''}`,
+            selector: w.selector, location: w.location, topic: d.key, urlTopic: want.join(',') }));
+        });
+        if (!isBlogPath(p.path)) {
+          const wantBody = Math.max(...want.map((w) => sc[w].body + sc[w].heads));
+          const d = others.map((s) => ({ s, n: sc[s.key].body + sc[s.key].heads })).sort((a, b) => b.n - a.n)[0];
+          if (d && d.n >= 6 && d.n >= 3 * Math.max(1, wantBody)) {
+            out.push(base(p, { code: 'PAGE_TOPIC_BODY', severity: flagged ? 'critical' : 'warning', category: 'Content',
+              message: `Most of this page's copy is about ${d.s.label} (${d.n} mentions) rather than ${wantLabel} (${wantBody}), which its address promises`,
+              found: `${d.s.label}: ${d.n} mentions · ${wantLabel}: ${wantBody}`, expected: `Copy about ${wantLabel}`,
+              selector: '(page)', location: 'Body', topic: d.s.key, urlTopic: want.join(',') }));
+          }
+        }
+      }
+
+      // --- the town ---
+      const own = placeOfPath(p.path);
+      if (own && places.size >= 2) {
+        const rivals = [...places].filter((q) => q !== own && !q.includes(own) && !own.includes(q));
+        let named = false;
+        ['h1', 'title', 'desc'].forEach((part) => {
+          const t = parts[part];
+          if (!t.trim() || placeCount(own, t) > 0) return;
+          const q = rivals.find((x) => placeCount(x, t) > 0);
+          if (!q) return;
+          named = true;
+          const w = where(part);
+          const what = part === 'title' ? 'SEO title' : part === 'h1' ? 'H1 heading' : 'meta description';
+          out.push(base(p, { code: 'PAGE_WRONG_CITY', severity: 'critical', category: 'Location',
+            message: `The ${what} names ${titleCase(q)}, but this is the ${titleCase(own)} page`,
+            found: cut(w.found, 200), expected: `${titleCase(own)} in the ${what}`, selector: w.selector, location: w.location, place: q, urlPlace: own }));
+        });
+        if (!isBlogPath(p.path)) {
+          const ownN = placeCount(own, parts.body) + placeCount(own, parts.heads);
+          rivals.filter((q) => !homeTowns.has(q)).forEach((q) => {
+            const n = placeCount(q, parts.body) + placeCount(q, parts.heads);
+            if (n >= 3 && n > ownN) out.push(base(p, { code: 'PAGE_WRONG_CITY_BODY', severity: named ? 'critical' : 'warning', category: 'Location',
+              message: `The copy names ${titleCase(q)} ${n} times and ${titleCase(own)} ${ownN === 0 ? 'not once' : ownN + ' time' + (ownN > 1 ? 's' : '')}, on the ${titleCase(own)} page`,
+              found: `${titleCase(q)}: ${n} · ${titleCase(own)}: ${ownN}`, expected: `Copy about ${titleCase(own)}`, selector: '(page)', location: 'Body', place: q, urlPlace: own }));
+          });
+        }
+      }
+    });
+    return out;
+  }
+
   // ---------- merging ----------
   /** /thank-you, /thanks, /thankyou-quote, /quote-thank-you, /confirmation, /form-success … */
   function isThankYouPath(path) {
@@ -2636,6 +2871,7 @@
           info.title = info.title || r.meta.title;
           info.h1 = info.h1 || (r.meta.h1 || [])[0] || '';
           info.description = info.description || r.meta.description;
+          if (device === devices[0] && r.meta.fit) info.fit = r.meta.fit;
           if (r.meta.favicon) siteIcon.favicon = true;
           if (r.meta.touchIcon) siteIcon.touchIcon = true;
           info.devices = (info.devices || []).concat(device);
@@ -2704,8 +2940,18 @@
       });
     }
 
-    // The business name spelled some other way
-    nameVariants(textIdx, truth).forEach((f) => raw.push(f));
+    // The business name spelled some other way: in the copy, and in each page's SEO title
+    const titleRows = Object.values(pageInfo).filter((p) => p.title && !p.notFound).map((p) => ({ text: p.title, path: p.path, device: devices[0], selector: 'head > title', location: 'Head / Meta', heading: 'TITLE', hiddenBy: '' }));
+    nameVariants(textIdx.concat(titleRows), truth).forEach((f) => raw.push(f));
+
+    // Does each page say what its address promises (service and town)?
+    const bodyOf = {};
+    textIdx.forEach((x) => { if (x.device !== devices[0] || x.location !== 'Body' || x.heading) return; const b = bodyOf[x.path] || (bodyOf[x.path] = []); if (b.length < 400) b.push(x.text); });
+    const fitPages = Object.values(pageInfo).filter((p) => !p.notFound && !p.error).map((p) => ({
+      path: p.path, title: p.title || '', description: p.description || '', h1: (p.fit && p.fit.h1) || (p.h1 ? [{ text: p.h1, selector: 'h1' }] : []),
+      heads: (p.fit && p.fit.heads) || [], body: (bodyOf[p.path] || []).join(' \n '),
+    }));
+    pageFitFindings(fitPages, truth).forEach((f) => raw.push(f));
 
     // The website's typefaces, and the text that doesn't use them
     let fontSys = null;
@@ -2798,6 +3044,8 @@
       findings: merged,
       pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', h1: p.h1 || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
       links: Array.from(linkMap.values()),
+      // For the AI read of whether each page fits its address. Not saved with the audit.
+      fit: fitPages.map((p) => ({ path: p.path, title: p.title, description: p.description, h1: p.h1.map((h) => h.text), h1Sel: (p.h1[0] && p.h1[0].selector) || '', heads: p.heads.slice(0, 14), excerpt: p.body.slice(0, 2400), urlServices: servicesOfPath(p.path), urlPlace: placeOfPath(p.path) })),
       externalLinks: external.size,
       images: images.size,
       alts: Array.from(altMap.values()),
@@ -2920,6 +3168,46 @@
       // The spelling as written, picked out of the quote, so reports can group by it.
       if (v.type === 'name_variant' && truth) { const nv = nameVariants([{ text: v.quote || t }], truth)[0]; if (nv) f.variant = nv.found; }
       f.id = hash([f.code, f.selector, f.found, f.message, pages.length > 1 ? '*' : f.path].join('|'));
+      if (!findings.some((x) => x.id === f.id)) findings.push(f);
+    });
+    return sortFindings(findings);
+  }
+
+  /**
+   * The AI's read of each whole page against its address (op 'pagefit'):
+   * { i (index into fit pages), type: wrong_service | wrong_city | name_variant | editor_note, part: title | h1 | desc | body, quote, confidence, reason, suggestion }
+   * When a rule already reported the same thing on that page, the AI's opinion joins that item.
+   */
+  function applyPageFit(findings, fit, issues, truth) {
+    const RULES = {
+      wrong_service: ['AI_PAGE_TOPIC', 'Content', /^PAGE_TOPIC_/, "AI: this page's content doesn't match the service in its address"],
+      wrong_city: ['AI_PAGE_CITY', 'Location', /^PAGE_WRONG_CITY/, "AI: this page names a different town than the one in its address"],
+      name_variant: ['AI_PAGE_NAME', 'Business name', /^(NAME_SPELLING|AI_TEXT_NAME_VARIANT)$/, 'AI: business name is written differently'],
+      editor_note: ['AI_PAGE_NOTE', 'Content', /^PLACEHOLDER$/, 'AI: a note from the writer or the team was left in the text'],
+    };
+    const PART = { title: ['head > title', 'Head / Meta', 'SEO title'], h1: ['h1', 'Body', 'H1 heading'], desc: ['meta[name="description"]', 'Head / Meta', 'meta description'], body: ['(page)', 'Body', 'page copy'] };
+    (issues || []).forEach((v) => {
+      const pg = fit[v.i];
+      const rule = RULES[v.type];
+      if (!pg || !rule || Number(v.confidence) < 0.7) return;
+      const [code, category, sameRe, message] = rule;
+      const part = PART[v.part] ? v.part : 'body';
+      const ai = { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote };
+      const quote = String(v.quote || '').toLowerCase();
+      const same = findings.find((f) => sameRe.test(f.code) && (f.pages || [f.path]).includes(pg.path)
+        && (v.type !== 'name_variant' && v.type !== 'editor_note' ? true : quote && String(f.found || '').toLowerCase().includes(quote.slice(0, 30))));
+      if (same) { same.ai = ai; return; }
+      const [selector, location, what] = PART[part];
+      const top = part !== 'body' || v.type === 'editor_note';
+      const f = {
+        code, severity: top ? 'critical' : 'warning', category,
+        message: `${message} (${what})`,
+        found: v.quote ? `"${v.quote}"` : part === 'title' ? pg.title : part === 'h1' ? (pg.h1 || [])[0] || '' : part === 'desc' ? pg.description : '',
+        expected: v.suggestion ? 'Suggested: ' + v.suggestion : '',
+        path: pg.path, pages: [pg.path], devices: ['desktop'], visibleOn: ['desktop'], hiddenOn: [],
+        selector: part === 'h1' && pg.h1Sel ? pg.h1Sel : selector, location, snippet: cut(v.reason || '', 160), ai,
+      };
+      f.id = hash([f.code, f.selector, f.found, f.message, f.path].join('|'));
       if (!findings.some((x) => x.id === f.id)) findings.push(f);
     });
     return sortFindings(findings);
@@ -3115,6 +3403,6 @@
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

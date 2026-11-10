@@ -5,6 +5,8 @@
 // POST /api/ai { op: 'proof', business, items: [{ i, text, location, page }] }        → { results: [{ i, type: spelling|grammar|incomplete, quote, confidence, reason, suggestion }] }
 // POST /api/ai { op: 'links', business, pages: [{ path, title }], items: [{ i, text, context, near, from, to, toTitle, toH1, button }] }
 //                                                                                     → { results: [{ i, verdict: 'wrong_page', confidence, reason, expected }] }
+// POST /api/ai { op: 'pagefit', business, pages: [{ path, title }], items: [{ i, path, title, description, h1, heads, excerpt, urlServices, urlPlace }] }
+//                                                                                     → { results: [{ i, type: wrong_service|wrong_city|name_variant|editor_note, part, quote, confidence, reason, suggestion }] }
 // When every model is busy or at its limit → 429 { allBusy: true, retryAt, providers }
 //
 // Several AI providers are chained. The first one that is available answers; when one hits a rate limit, a daily cap,
@@ -63,6 +65,8 @@ const AGENCIES = (process.env.AGENCY_NAMES || 'Detailers Roadmap, 8bit Creative'
 const ALT_VERDICTS = ['describes_image', 'this_business', 'partner_logo', 'other_business', 'wrong_location', 'placeholder', 'unclear'];
 const TEXT_TYPES = ['other_business', 'wrong_location', 'name_variant'];
 const PROOF_TYPES = ['spelling', 'grammar', 'punctuation', 'incomplete'];
+const FIT_TYPES = ['wrong_service', 'wrong_city', 'name_variant', 'editor_note'];
+const FIT_PARTS = ['title', 'h1', 'desc', 'body'];
 
 const env = (k, d) => (process.env[k] !== undefined && process.env[k] !== '' ? process.env[k] : d);
 const CATALOG = {
@@ -359,7 +363,7 @@ Respond with JSON only: {"results":[{"i":<number>,"verdict":"<verdict>","confide
 const TEXT_SYSTEM = `You proofread WEBSITE TEXT for one business and report ONLY real problems about its business name and location. ${CONTEXT}
 Report these problem types:
 - "other_business": the text names a different business as if it were this one ("here at Smith's Detailing", "call Joe's Auto Spa today", "© 2023 Shine Pros LLC"). Usually leftover from a previous client.
-- "wrong_location": the text says this business is in, or serves, a city/state that conflicts with its location. Its own city, nearby towns in the same metro/state, and places that have their own service-area page on this site are fine. A page whose own URL names a town (e.g. /auto-detailing-located-in-aberdeen) IS a location page for that town, so its title, headings and copy are SUPPOSED to name it — never report that. Be conservative; mentions of where a customer or car came from are fine.
+- "wrong_location": the text says this business is in, or serves, a city/state that conflicts with its location. Its own city, nearby towns in the same metro/state, and places that have their own service-area page on this site are fine, EXCEPT on a page whose URL names a different town: on /locations/temple-tx/..., a title or heading presenting the shop as "Copperas Cove's top provider" is wrong_location (left over from the Copperas Cove page). A page whose own URL names a town (e.g. /auto-detailing-located-in-aberdeen) IS a location page for that town, so its title, headings and copy are SUPPOSED to name it — never report that. Be conservative; mentions of where a customer or car came from are fine.
 - "name_variant": this business's own name written in a clearly different way (different or missing words, e.g. "Upscale Detailing Co" vs "Upscale Detail Co."). Ignore capitalization, punctuation, "&" vs "and", and adding/removing LLC/Inc/Co.
 Do not report spelling, grammar, style or anything else. Most blocks have no problem: return nothing for them.
 Respond with JSON only: {"results":[{"i":<block number>,"type":"<type>","quote":"<the exact words from the block, max 15 words>","confidence":<0..1>,"reason":"<max 20 words>","suggestion":"<corrected wording>"}]}. Use {"results":[]} if there are no problems.`;
@@ -385,6 +389,28 @@ Report "wrong_page" ONLY when the page it opens clearly does not match what the 
 These are FINE (never report): any call to action (book, schedule, get a quote, free estimate, get started, call) that opens a contact, quote, booking or estimate page; a generic button that opens a closely related or overview page (services, all packages); "Home" or a logo opening the home page; a page whose topic matches even if its wording differs.
 If you are not sure, do not report it. Most items are fine: return nothing for them.
 Respond with JSON only: {"results":[{"i":<number>,"verdict":"wrong_page","confidence":<0..1>,"reason":"<max 20 words, plain English>","expected":"<the address from THE SITE'S PAGES that it should open, or empty>"}]}. Use {"results":[]} when every item is fine.`;
+
+// Does each page say what its address promises? Pages are often built by copying a sister page, and
+// the copy keeps the sister's service or town: /locations/nolanville-tx/ceramic-coating ends up about
+// paint protection film, the Temple page's heading names Copperas Cove.
+const PAGEFIT_SYSTEM = `You check that each PAGE of a small business website is about what its ADDRESS (URL) says. ${CONTEXT}
+Pages are often made by copying a sister page (another service, or another town's page) and some words are never changed. Read the address FIRST: it names the service (e.g. /ceramic-coating, /paint-protection-film, /window-tint) and/or the town (e.g. /locations/temple-tx/...). Some location pages name only a town and cover several services: then only the town matters. Then read the SEO title, the H1, the meta description, the section headings and the copy.
+Report:
+- "wrong_service": the title, H1, meta description, or most of the copy is about a DIFFERENT service than the one in the address (a ceramic coating page that is really about paint protection film / PPF, a PPF page about ceramic coating). Mentioning a related service in passing, comparing services, or upselling is fine.
+- "wrong_city": the title, H1, meta description or copy presents the page as being for a DIFFERENT town than the one in its address (the Temple page whose heading says "Copperas Cove's top provider"). On a town's page, other towns may be mentioned only in passing ("we also serve…", "minutes from…"). The business's own name may contain a town (e.g. "Harker Heights Ceramic Coatings"): that is the name, not a location claim.
+- "name_variant": this business's name written differently from its official name, including a missing or extra letter or "s" ("Ceramic Coating" for "Ceramic Coatings"), in any capitals.
+- "editor_note": a note from a writer, the agency or the client left in the text: "[Matthew: confirm this is free before publishing.]", "TBD", "insert photo here", "need price from client", a stray default label like "Button" sitting in the copy.
+Quote the exact words. "part" says where: "title", "h1", "desc" (meta description) or "body". Be strict about the address: the shop owner reads these pages. But do not report pages that are fine. Most pages are fine: return nothing for them.
+Respond with JSON only: {"results":[{"i":<page number>,"type":"wrong_service|wrong_city|name_variant|editor_note","part":"title|h1|desc|body","quote":"<exact words, max 20 words>","confidence":<0..1>,"reason":"<max 25 words, plain English>","suggestion":"<the corrected words, or empty>"}]}. Use {"results":[]} when every page is fine.`;
+const fitPrompt = (b, items) => `${businessHeader(b)}
+PAGES
+${items.map((x) => `=== [${x.i}] ${String(x.path || '/').slice(0, 120)}
+Address says: service = ${[].concat(x.urlServices || []).join(', ') || 'none (location or general page)'}; town = ${x.urlPlace || 'none'}
+SEO title: ${String(x.title || '-').slice(0, 160)}
+H1: ${[].concat(x.h1 || []).join(' | ').slice(0, 300) || '-'}
+Meta description: ${String(x.description || '-').slice(0, 300)}
+Headings: ${[].concat(x.heads || []).join(' | ').slice(0, 700) || '-'}
+Copy: ${String(x.excerpt || '').replace(/\s+/g, ' ').slice(0, 2400)}`).join('\n')}`;
 
 // A second, stricter read of what the first one called a grammar mistake or unfinished copy. The
 // first pass is told to be careful and still sometimes "corrects" a sentence that was fine; a reader
@@ -427,11 +453,12 @@ ${items.map((x) => `${x.i} | ${x.button ? '[button] ' : ''}${String(x.text).slic
 async function extraCheck(req, res, b, list, owner) {
   const business = b.business || {};
   const proof = b.op === 'proof';
-  const items = [].concat(b.items || []).slice(0, 60).filter((x) => x && Number.isFinite(Number(x.i)) && typeof x.text === 'string' && x.text.trim() && (proof || typeof x.to === 'string'));
+  const fit = b.op === 'pagefit';
+  const items = [].concat(b.items || []).slice(0, fit ? 8 : 60).filter((x) => x && Number.isFinite(Number(x.i)) && (fit ? typeof x.path === 'string' : typeof x.text === 'string' && x.text.trim() && (proof || typeof x.to === 'string')));
   if (!items.length) return res.status(200).json({ results: [] });
   const cacheKey = P + 'aic:' + sha([business.name, business.city, business.region, (business.areaPages || []).length].join('|')).slice(0, 20);
   // 'p2': answers from before the second read of grammar flags are not reused.
-  const keyOf = (x) => (proof ? 'p2' : 'l') + sha(proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1].join('|')).slice(0, 18);
+  const keyOf = (x) => (fit ? 'f1' : proof ? 'p2' : 'l') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt]) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1].join('|')).slice(0, 18);
   const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
   const results = []; const todo = [];
   items.forEach((x, k) => {
@@ -453,14 +480,16 @@ async function extraCheck(req, res, b, list, owner) {
         return res.status(429).json({ error: "Today's AI allowance for the team is used up. The rest is checked automatically tomorrow.", allBusy: true, retryAt: tomorrow.getTime(), results });
       }
     }
-    const { parsed, p } = await callChain(list, proof ? PROOF_SYSTEM : LINK_SYSTEM, proof ? proofPrompt(business, todo) : linkPrompt(business, b.pages, todo));
+    const { parsed, p } = await callChain(list, fit ? PAGEFIT_SYSTEM : proof ? PROOF_SYSTEM : LINK_SYSTEM, fit ? fitPrompt(business, todo) : proof ? proofPrompt(business, todo) : linkPrompt(business, b.pages, todo));
     used = p;
     const byI = new Map(todo.map((x) => [Number(x.i), []]));
     const found = [];
     (parsed.results || []).forEach((x) => {
       const i = Number(x && x.i); if (!byI.has(i)) return;
       const confidence = Math.max(0, Math.min(1, Number(x.confidence) || 0));
-      const r = proof
+      const r = fit
+        ? (FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240) } : null)
+        : proof
         ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200) } : null)
         : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 200), expected: String(x.expected || '').slice(0, 160) } : null);
       if (!r) return;
@@ -631,7 +660,7 @@ async function handler(req, res) {
   try {
     let pvUsed = null;
     const b = readBody(req);
-    if (b.op === 'proof' || b.op === 'links') return await extraCheck(req, res, b, list, owner);
+    if (b.op === 'proof' || b.op === 'links' || b.op === 'pagefit') return await extraCheck(req, res, b, list, owner);
     if (!['alt', 'text'].includes(b.op)) return res.status(400).json({ error: 'Unknown op' });
     const business = b.business || {};
     const field = b.op === 'alt' ? 'alt' : 'text';

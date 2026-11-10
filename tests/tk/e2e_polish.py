@@ -66,7 +66,7 @@ try:
         row = pg.locator('tr[data-open="s1"]').inner_text()
         print('   row:', row.replace('\n', ' | '))
         check('5/5' in row and 'Must-fix done' in row and 'Polish 0/4' in row and 'Lengths 0/2' in row, 'the Closed column says 5/5 ✓ Must-fix done, with Polish 0/4 and Lengths 0/2 underneath')
-        check('📏 2 length' in row, 'open issues: a "2 length" count')
+        check('📏 2 SEO length' in row, 'open issues: a "2 SEO length" count')
         check('🎨 4 polish' in row and 'warning' not in row, 'open issues: a "4 polish" count instead of warnings')
         check(pg.locator('#statMust .n').inner_text() == '1', 'a Must-fix done count at the top')
         pg.select_option('#fmust', 'crit'); time.sleep(0.3)

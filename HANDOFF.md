@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **145**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **147**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,9 +16,9 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 144: styles v27, engine v10, app v30).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 146: styles v28, engine v11, app v32).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
-- **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v26.
+- **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v27.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
 - **AI:** `api/ai.js` (proofreading, wrong-page links, alt text, business name/location wording, verification pass). Answers cached 45 days in `aic:<hash>`. Several providers with fallbacks; the company app uses Anthropic/OpenAI keys, the copy uses free providers.
 - **Auto audit (live websites):** `api/_watch.js` reads the ~700 published websites (plain HTML) for contact-info discrepancies. Per-site result `cw:<dudaId>`, summary hash `cwsum` (`n` issues, `c` criticals). Cron in `api/watch.js` (also runs the "forms gone quiet" alert from `api/_leadkv.js`).
@@ -38,9 +38,9 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 3. Send the zip plus the commit title and description. Don't commit.
 4. Once Reymark says it's uploaded: `git fetch && git merge --ff-only origin/main`.
 
-## Where things stand (15 Oct 2026)
+## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 143 (commit `dbe5172`). **Delivered as a zip, maybe not uploaded yet:** 144 (on hold, peeking, brought in by assignment/mention, below). Check `git log origin/main` and ask Reymark if unsure.
+- **On GitHub:** up to 144 (commit `b64d352`). **Delivered as zips, maybe not uploaded yet:** 145 (watching and reviewing) and 146 (page vs address; its zip also carries 145's files). Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
 - **Harmless log noise:** red `[DEP0169] url.parse()` lines in Vercel's runtime logs are a Node 24 deprecation warning from outside the app's code. Requests succeed.
 - **Waiting on keys (Reymark adds them in Vercel):** `GOOGLE_MAPS_API_KEY` (Google Maps ID check, Online presence), PageSpeed key, a Google service account (GA4 + Search Console). Rotating the Anthropic/OpenAI keys was recommended.
@@ -55,7 +55,7 @@ The Jaguars are a team of 6 being onboarded. Their job: fix all the audits. Agre
   - The queue = live websites with critical issues from the auto audit (`cwsum`), in the order the admin chooses: oldest first, newest first, most errors first, fewest errors first. Admins can pin a website to the top. A note says the counts are contact-info errors from the auto audit; the full count shows after the scan.
   - **First in, first out:** a Jag clicks **"Take next"** and gets the top website. With the lock on (admin switch, this tab only), other queue cards can't be taken. A **per-Jag limit** on websites held at once (start at 1).
   - Queue cards don't show the issues. Once taken and scanned, the card shows its error count to everyone, plus progress like "Criticals: 0 left · All items: 23 left".
-  - **Complete means everything is fixed** — must-fix, Design polish and Lengths. "Done" rescans first and only completes if nothing is open.
+  - **Complete means everything is fixed** — must-fix, Design polish and SEO Lengths. "Done" rescans first and only completes if nothing is open.
   - If any item is false alarm or needs clarification → **Needs review**; an approver approves or sends it back with a note.
   - **Reassigning a whole website needs a note** (why). Every card has an activity log. Notifications for assigned, sent back, approved.
   - Scanned websites appear on the Audits tab as usual (a scan creates the audit).
@@ -110,14 +110,36 @@ The Jaguars are a team of 6 being onboarded. Their job: fix all the audits. Agre
 - **Watchers:** `site.watchers = [{email, name, how: 'peek'|'assigned'|'mentioned', at}]`; summaries carry `watch: [{e, h}]`. `canSeeSite` and the Audits list include watchers. `bringIn()` in `api/store.js` adds item assignees (`patchFinding`) and @mentioned people (`comment`) to `site.people` + watchers, logged.
 - **Peek:** setting `peek` on the board (admins). `op: 'peek'` (dudaId) adds a `peek` watcher (logged); `op: 'unpeek'` (auditId) removes it (logged). Peek-only users (`peekOnly()`) are refused every store write except comments (guard at the top of the POST switch); the page gets `body.ro-site` (CSS disables editing controls) and a "You're watching" note with Stop watching. Test: `tests/tk/e2e_jags2.py`.
 
-## Next: update 145 (agreed with Reymark, NOT started — no code written yet)
+## Update 145 — watching and reviewing (built)
 
-1. **Watching, for Jaguars:** live presence ("X is also here") already works for every role (checked with a Jaguar + admin). Add: when someone peeks (`op: 'peek'` in `api/jags.js`), notify the card holder (new kind e.g. `jag-watch`, put it in the "Work assigned to you" notify group, KIND text, `notifLink` → the audit), and show watchers' avatars on the Tasks card (from the audit summary's `watch`).
-2. **Needs review shows the flagged items:** in the board GET (`cards` map in `api/jags.js`), for review cards without `hold`, read the audit's findings + `fstate` and add `reviewItems: [{num, status ('false'|'clarification'|'hold'), message, by}]` (false alarms marked since `takenAt`, all clarification/hold). On the review card (`rCard` in `renderTasks`, `public/app.js`) list them with links `#/site/<auditId>/item/<num>`; for admins add **✓ OK** (keep) and **↺ Reopen** (store `patchFinding` → status `open`). Reopened item numbers pre-fill the **Send back** note. Answering Reymark's questions: legit false alarm → **Approve** (→ Complete); not a false alarm → **Send back** with a note (→ same Jaguar, In progress); the auditor is the card's person (photo + name) and **History**.
-3. Then: Help (`jaguars` section) + What's New + tests (`tests/tk/e2e_jags2.py` is the place) + bump `?v=`.
+- **Peek notifies the holder (bell only):** `op: 'peek'` in `api/jags.js` tells the card's holder (kind `jag-watch`, its own notify group `watching` with `channels: ['bell', 'popup']` (no Slack); `wants()` now refuses slack/popup for a group that doesn't list them, and `popupMuted` in app.js likewise; KIND text in `api/_lib.js`; `notifLink` opens the audit) when a new watcher is added and the card is in progress or review.
+- **Watchers on cards:** the board GET adds `watchers: [{email, how}]` to every card from the audit summary's `watch` (holder left out). Front end `watching(c)` in `renderTasks` shows their avatars after 👁 (hover: name + how). Note: a peeker later given an item has `how: 'assigned'`.
+- **Needs review lists the flagged items:** `reviewItems(list)` in `api/jags.js` (one pipeline: site, `fstate`, `fnum` per review card without `hold`) → `card.reviewItems: [{id, num, status, message, by, at, ok}]` = false alarms marked since `takenAt` (not `auto`), plus every For clarification / On hold item; max 40. Front end `revItems(c)` lists them with links `#/site/<auditId>/item/<num>`. Approvers: **✓ OK** → new `op: 'itemok'` (`{dudaId, findingId, ok}`, `jags.lead`, stored as `card.itemOk[findingId] = {by, byName, at}`, cleared by approve/sendback); **↺ Reopen** → store `patchFinding` status `open`. Reopened numbers are kept in `jg.reopened[dudaId]` and pre-fill the **Send back** note ("Reopened #1, #4: ").
+- **Duplicate "Comments waiting" Slack fix:** `alertStale` in `api/comments.js` runs on every Duda comments load; concurrent loads all saw "nothing said yet". Each due website is now claimed with `SET dsa:cmtclaim:<site> NX EX QUIET_HOURS*3600` before sending; only the winner sends; the claim is deleted when the website is answered.
+- **Only mine filter:** `.jg-filter` above the board, `localStorage dsa-jg-mine`; `involved(c)` = holder, `sentBy`, or in `watchers`. Queue never filtered.
+- Styles `.jg-watch`, `.jg-w`, `.jg-ri*`. Help `jaguars` ("Reviewing a website", peek notice), What's New `2026-10-16-review-items`. Test: `tests/tk/e2e_jags2.py` (145 section).
 
-## After that: update 146
+## Update 146 — every page read against its address (built)
 
-- The Tasks tab also gets
+Why: the hhceramiccoatings.com owner scanned his website and found what the audit missed: `/locations/nolanville-tx/ceramic-coating` was about PPF (and the PPF page about ceramic coating), the Temple PPF page's H1 said "Copperas Cove", the Georgetown H1 said "Harker Heights Ceramic Coating" (singular), and `/fort-hood-window-tint-law` still had "[Matthew: confirm this is free before publishing.]".
 
-- **Update 145:** the Tasks tab also gets **Projects** (projects in the Jaguars phase assigned to me) and **Special tasks** (one-off tasks an admin creates: title, notes, link, due date, assignee).
+- **Rules (engine.js `pageFitFindings`, run in `runScan` after the cross-page duplicates):** `servicesOfPath` (last address segment naming a service: ppf, tint, ceramic, graphene, correction, wrap, headlight, detailing) and `placeOfPath` (`/locations/<town>-<st>/`, any `…-<town>-<st>` segment, or the segment after `locations|service-areas|areas|cities…`). The business's own name(s) are removed first (`withoutNames`). `PAGE_TOPIC_MISMATCH` critical per part (SEO title, H1, meta description) naming another primary service (ppf/tint/ceramic) and not the address's; `PAGE_TOPIC_BODY` warning when another primary service has ≥6 mentions and ≥3× the address's (critical if a headline was also wrong; not on blog paths). `PAGE_WRONG_CITY` critical when a title/H1/description names another of the site's towns and not its own; `PAGE_WRONG_CITY_BODY` when copy names another town ≥3 times and more than its own (home town left out). Town mentions must be capitalised ("temple" the word doesn't count). Town-only pages get the town check only.
+- **Business name (`nameVariants`):** near-twin spellings in Business Info ("Coating"/"Coatings") no longer excuse each other: the one the website uses most is the name, the other is reported ("Business Info has this spelling too"). The name without LLC/Inc is a target too; a one-letter slip of any other Business Info name counts (but not singular/plural against an alias). Critical in an H1 or SEO title (SEO titles are now checked; `textIndex` rows carry `heading`).
+- **Notes left in (`PLACEHOLDERS` + `DEFAULT_LABEL`):** `[Name: …]`, `[note/todo/insert/confirm…]`, "… before publishing", "note to client", "pending client approval", "insert … here", FIXME, and Duda default labels alone ("Button", "Heading", "Subtitle"…).
+- **AI (`op: 'pagefit'` in `api/ai.js`, `PAGEFIT_SYSTEM`, cached `f1<hash>` 45 days):** `runScan` returns `res.fit` (not saved: path, title, description, H1s, H2/H3s, 2,400-character excerpt, `urlServices`, `urlPlace`); `aiDeepCheck` in app.js sends 6 pages per call before proofreading; `applyPageFit` makes `AI_PAGE_TOPIC/CITY/NAME/NOTE` (critical for title/H1/description and notes, warning for body; confidence ≥0.7) or attaches `.ai` to the rule's item. `TEXT_SYSTEM` now says another town in a title/heading on a different town's page IS wrong_location. Scan panel line "Read N pages against their address".
+- `PAGE_WRONG_CITY*` and `AI_PAGE_*` are full-rescan only (`RECHECK_SITE_WIDE`). CHECK_RELEASES v27.
+- **"Lengths" → "SEO Lengths"** everywhere in the UI and Help (old What's New entries left as written).
+- Help `rules` + `ai` paragraphs, What's New `2026-11-10-page-fit`. Test: `tests/tk/e2e_pagefit.py` (an hh-like website, Business Info with both spellings).
+
+## Audit checklist (every website, every scan — add to it when a client finds something we missed)
+
+- Each page matches its address: service in the URL = service in the SEO title, H1, meta description and most of the copy.
+- Town pages name their own town (not a sister page's) in the title, H1 and description, and mostly in the copy.
+- The business name is spelled one way everywhere, H1s and titles included (watch singular/plural, LLC, "&"/"and").
+- No notes left in: [Name: …], TBD, "before publishing", "insert … here", a button that says "Button".
+- Contact details, other businesses' names, placeholder text, broken links, alt text, schema (the existing checks).
+- Biggest clients: rescan and read the critical list before telling the client the website is done.
+
+## Next: update 147 (agreed, NOT started)
+
+- The Tasks tab also gets **Projects** (projects in the Jaguars phase assigned to me) and **Special tasks** (one-off tasks an admin creates: title, notes, link, due date, assignee).

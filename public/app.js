@@ -865,7 +865,7 @@
     if (/^domain-/.test(n.kind)) return n.dudaSite ? '#/live/site/' + encodeURIComponent(n.dudaSite) : '#/live/problems';
     // Wrong details: the website's profile (where they are listed), or every website with some.
     if (n.kind === 'leads-quiet') return '#/analysis/quiet';
-    if (/^jag-/.test(n.kind)) return (n.kind === 'jag-assign' || n.kind === 'jag-back') && n.siteId ? `#/site/${encodeURIComponent(n.siteId)}` : '#/tasks';
+    if (/^jag-/.test(n.kind)) return (n.kind === 'jag-assign' || n.kind === 'jag-back' || n.kind === 'jag-watch') && n.siteId ? `#/site/${encodeURIComponent(n.siteId)}` : '#/tasks';
     if (n.kind === 'watch-issue') return n.dudaSite ? '#/dr/' + encodeURIComponent(n.dudaSite) + '/auto-audit' : '#/live/content';
     if (n.kind === 'watch-digest') return '#/live/content';
     if (n.kind === 'comment-waiting') return n.dudaSite ? '#/comments/' + encodeURIComponent(n.dudaSite) : '#/comments';
@@ -1292,7 +1292,7 @@
   function popupMuted(kind) {
     const off = (state.me && state.me.notifyOff) || [];
     const g = ((state.config && state.config.notifyGroups) || []).find((x) => (x.kinds || []).includes(kind));
-    return !!(g && off.includes(g.key + ':popup'));
+    return !!(g && (off.includes(g.key + ':popup') || !(g.channels || []).includes('popup'))); // a bell-only group never pops up
   }
   /**
    * One row per kind of notification, one column per way it can reach you.
@@ -1954,13 +1954,18 @@
   // queue; it is fixed completely (must-fix, design polish, lengths), confirmed by a rescan, and
   // anything with false alarms or questions is looked at by an approver before it counts as done.
   // =====================================================================
-  const jg = { data: null, busy: false };
+  const jg = { data: null, busy: false, reopened: {} };
   const JG_ORDER = { oldest: 'Oldest website first', newest: 'Newest website first', most: 'Most errors first', least: 'Fewest errors first' };
   async function loadJags() { jg.data = await api('/api/jags?op=board'); return jg.data; }
   async function renderTasks() {
     if (!jg.data) { $('#view').innerHTML = '<div class="empty">Loading…</div>'; try { await loadJags(); } catch (e) { $('#view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; } }
     const d = jg.data, set = d.settings || {}, lead = d.lead;
-    const cards = d.cards || [];
+    const allCards = d.cards || [];
+    // Everyone's work, or only what involves me: held by me, sent by me, or I'm on it (watching,
+    // given an item, mentioned). The queue is shared, so it is never filtered. Remembered per browser.
+    const involved = (c) => c.by === d.me || c.sentBy === d.me || (c.watchers || []).some((w) => w.email === d.me);
+    let only = ''; try { only = localStorage.getItem('dsa-jg-mine') || ''; } catch (e) { /* private window */ }
+    const cards = only ? allCards.filter(involved) : allCards;
     const col = (st) => cards.filter((c) => c.state === st).sort((a, b) => String(b.doneAt || b.takenAt).localeCompare(String(a.doneAt || a.takenAt)));
     const prog = col('progress'), rev = col('review'), done = col('complete');
     const atLimit = !lead && d.holding >= (set.limit || 1);
@@ -1971,6 +1976,21 @@
           <span class="small">All items: <b>${c.progress.open}</b> left of ${c.progress.total}</span></div>
           <div class="jg-bar" title="${pct(c.progress)}% fixed"><i style="width:${pct(c.progress)}%"></i></div>`;
     const who = (c) => `<div class="pj-card-f">${avatar(c.by, 20)}<span class="small">${esc(c.byName || nameOf(c.by))}</span><span class="small faint">· ${esc(ago(c.state === 'progress' ? c.takenAt : c.doneAt))}</span></div>`;
+    // Everyone else on the audit: peeking read-only, or brought in by an item or a mention.
+    const HOW = { peek: 'watching (read-only)', assigned: 'given an item', mentioned: 'mentioned' };
+    const watching = (c) => ((c.watchers || []).length ? `<div class="jg-watch" title="${esc(c.watchers.map((w) => `${nameOf(w.email)}: ${HOW[w.how] || 'watching'}`).join('\n'))}">
+        <span class="small faint">👁</span>${c.watchers.slice(0, 5).map((w) => `<span class="jg-w">${avatar(w.email, 18)}</span>`).join('')}${c.watchers.length > 5 ? `<span class="small faint">+${c.watchers.length - 5}</span>` : ''}
+        <span class="small faint">${c.watchers.length === 1 ? esc(nameOf(c.watchers[0].email)) + ' ' + esc(HOW[c.watchers[0].how] || 'watching') : c.watchers.length + ' others on it'}</span></div>` : '');
+    // What sent it to review, item by item. Approvers can agree (✓ OK) or reopen it for the Jaguar.
+    const ST_WORD = { false: 'False alarm', clarification: 'For clarification', hold: 'On hold' };
+    const revItems = (c) => {
+      const list = c.reviewItems || [];
+      if (!list.length) return '';
+      return `<ul class="jg-ri">${list.map((x) => `<li class="${x.ok ? 'ok' : ''}"><a href="#/site/${esc(c.auditId)}/item/${esc(x.num)}" title="${esc(x.message)}">#${esc(x.num)}</a>
+          <span class="badge fs-${esc(x.status)}">${esc(ST_WORD[x.status] || x.status)}</span><span class="small jg-ri-m">${esc(x.message)}</span>
+          ${x.by ? `<span class="small faint">· ${esc(nameOf(x.by))}</span>` : ''}${x.ok ? `<span class="small jg-ri-ok" title="${esc(x.ok.byName || '')}">✓ OK</span>` : ''}
+          ${lead ? `<span class="jg-ri-a">${x.ok ? `<button class="linkbtn" data-jriok="${esc(c.dudaId)}" data-fid="${esc(x.id)}" data-off="1">Undo</button>` : `<button class="linkbtn" data-jriok="${esc(c.dudaId)}" data-fid="${esc(x.id)}" title="Looked at it: it is right as it is">✓ OK</button>`}<button class="linkbtn" data-jrire="${esc(c.dudaId)}" data-fid="${esc(x.id)}" data-num="${esc(x.num)}" title="Not right: back to Open for the Jaguar">↺ Reopen</button></span>` : ''}</li>`).join('')}</ul>`;
+    };
     const mine = (c) => c.by === d.me;
     const open = (c) => (c.auditId && (mine(c) || lead) ? `<a class="btn sm" href="#/site/${esc(c.auditId)}">Open audit</a>` : '');
     const qCard = (r, i) => {
@@ -1986,11 +2006,12 @@
     // A teammate's website, read-only (when the admins allow it). Admins can simply open it.
     const peekBtn = (c) => (set.peek && !lead && !mine(c) && c.auditId ? `<button class="btn sm ghost" data-jpeek="${esc(c.dudaId)}" title="Look at it read-only; it stays on your Audits list until you stop watching">👁 Peek</button>` : '');
     const pCard = (c) => `<div class="pj-card jg-card${mine(c) ? ' jg-mine' : ''}"><b>${esc(c.name)}</b>${c.domain ? `<div class="small faint">${esc(c.domain)}</div>` : ''}
-        ${who(c)}${counts(c)}
+        ${who(c)}${counts(c)}${watching(c)}
         <div class="jg-acts">${open(c)}${mine(c) || lead ? `<button class="btn sm primary" data-jdone="${esc(c.dudaId)}">Done</button><button class="btn sm ghost" data-jhold="${esc(c.dudaId)}" title="Waiting on an answer: it goes to Needs review and you can take the next website">⏸ On hold</button><button class="btn sm ghost" data-jhand="${esc(c.dudaId)}">Hand on</button>` : ''}
           ${peekBtn(c)}<button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
     const rCard = (c) => `<div class="pj-card jg-card"><b>${esc(c.name)}</b>${who(c)}
         <div class="small">${c.hold ? `<span class="badge sev-hold">⏸ On hold</span> <span class="small">${esc(c.hold.note)}</span>` : `<span class="badge fs-clarification">${esc((c.reasons || []).join(' · ') || 'Needs a look')}</span>`}</div>
+        ${c.hold ? '' : revItems(c)}${watching(c)}
         <div class="jg-acts">${open(c)}${c.hold
           ? `${lead || mine(c) ? `<button class="btn sm primary" data-jresume="${esc(c.dudaId)}">▶ Resume</button>` : ''}${lead || mine(c) ? `<button class="btn sm ghost" data-jhand="${esc(c.dudaId)}">Hand on</button>` : ''}${!lead && !mine(c) ? '<span class="small faint">Waiting for an answer</span>' : ''}`
           : lead ? `<button class="btn sm primary" data-jok="${esc(c.dudaId)}">Approve</button><button class="btn sm ghost" data-jback="${esc(c.dudaId)}">Send back</button>` : '<span class="small faint">Waiting for an approver</span>'}
@@ -2000,7 +2021,7 @@
         <div class="jg-acts">${peekBtn(c)}<button class="btn sm ghost" data-jlog="${esc(c.dudaId)}">History</button></div></div>`;
     const q = d.queue || [];
     $('#view').innerHTML = `<div class="page-head"><div><h1>Tasks</h1>
-        <div class="muted">The Jaguars board. Take the next website, fix <b>everything</b> on it (audit items, Design polish and Lengths), rescan, then click <b>Done</b>.</div></div></div>
+        <div class="muted">The Jaguars board. Take the next website, fix <b>everything</b> on it (audit items, Design polish and SEO Lengths), rescan, then click <b>Done</b>.</div></div></div>
       ${lead ? `<div class="jg-set">
         <label>Queue order <select id="jgOrder">${Object.entries(JG_ORDER).map(([k, v]) => `<option value="${k}" ${set.order === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label>Websites <select id="jgScope"><option value="critical" ${set.scope !== 'any' ? 'selected' : ''}>With critical errors</option><option value="any" ${set.scope === 'any' ? 'selected' : ''}>With any contact error</option></select></label>
@@ -2008,12 +2029,16 @@
         <label class="check-row" title="They see it read-only and are listed as watching it, until they stop"><input type="checkbox" id="jgPeek" ${set.peek ? 'checked' : ''}> Jaguars can peek at each other's websites (read-only)</label>
         <label>Websites per person <input type="number" id="jgLimit" min="1" max="10" value="${set.limit || 1}"></label></div>
         <div class="small faint jg-basis">Error counts in the queue are the contact-info errors the auto audit found on the live website. The full count shows once a website is scanned.</div>` : ''}
+      <div class="jg-filter" role="group" aria-label="Show"><span class="small muted">Show</span>
+        <button class="btn sm ${only ? 'ghost' : 'on'}" data-jmine="" aria-pressed="${!only}">Everyone <span class="faint">${allCards.filter((c) => c.state !== 'queued').length}</span></button>
+        <button class="btn sm ${only ? 'on' : 'ghost'}" data-jmine="1" aria-pressed="${!!only}">Only mine <span class="faint">${allCards.filter((c) => c.state !== 'queued' && involved(c)).length}</span></button>
+        ${only ? '<span class="small faint">Websites you hold, sent, or are on (watching, given an item, mentioned). The queue always shows everything.</span>' : ''}</div>
       <div class="pj-board jg-board">
         <div class="pj-col"><div class="pj-col-h"><b>Queue</b> <span class="faint">${d.queueTotal || 0}</span><div class="small faint">${esc(JG_ORDER[set.order] || '')}</div></div>
           ${q.length ? `<button class="btn primary jg-take" id="jgTake" ${atLimit ? 'disabled' : ''}>Take next</button>
             ${atLimit ? `<div class="small faint jg-why">${set.limit === 1 ? 'Finish the website you have first.' : `You have ${d.holding} websites — finish one first.`}</div>` : ''}` : '<div class="small faint">Nothing waiting.</div>'}
           ${q.map(qCard).join('')}${d.queueTotal > q.length ? `<div class="small faint">and ${d.queueTotal - q.length} more</div>` : ''}</div>
-        <div class="pj-col"><div class="pj-col-h"><b>In progress</b> <span class="faint">${prog.length || ''}</span></div>${prog.map(pCard).join('') || '<div class="small faint">Nobody is on one.</div>'}</div>
+        <div class="pj-col"><div class="pj-col-h"><b>In progress</b> <span class="faint">${prog.length || ''}</span></div>${prog.map(pCard).join('') || `<div class="small faint">${only ? 'None of yours.' : 'Nobody is on one.'}</div>`}</div>
         <div class="pj-col"><div class="pj-col-h"><b>Needs review</b> <span class="faint">${rev.length || ''}</span><div class="small faint">False alarms, questions, items on hold</div></div>${rev.map(rCard).join('') || '<div class="small faint">Nothing to review.</div>'}</div>
         <div class="pj-col"><div class="pj-col-h"><b>Complete</b> <span class="faint">${done.length || ''}</span><div class="small faint">Last 30 days</div></div>${done.map(cCard).join('') || '<div class="small faint">None yet.</div>'}</div>
       </div>`;
@@ -2024,7 +2049,8 @@
       finally { jg.busy = false; }
     };
     const again = async () => { try { await loadJags(); } catch (e) { /* keep what is shown */ } if (route().name === 'tasks') renderTasks(); };
-    const card = (id) => cards.find((c) => c.dudaId === id);
+    const card = (id) => allCards.find((c) => c.dudaId === id);
+    $$('[data-jmine]').forEach((b) => { b.onclick = () => { try { localStorage.setItem('dsa-jg-mine', b.dataset.jmine); } catch (e) { /* private window */ } renderTasks(); }; });
     const take = async (id) => {
       const r = await go({ op: 'take', dudaId: id || undefined });
       if (r && r.card) { jg.data = null; loadSites(true).catch(() => {}); toast(`${r.card.name} is yours. Scan it to see what needs fixing.`); location.hash = `#/site/${encodeURIComponent(r.card.auditId)}`; }
@@ -2042,7 +2068,24 @@
       }
     }; });
     $$('[data-jok]').forEach((b) => { b.onclick = async () => { const r = await go({ op: 'approve', dudaId: b.dataset.jok }, 'Approved'); if (r) again(); }; });
-    $$('[data-jback]').forEach((b) => { b.onclick = () => jgNote('Send back', 'What still needs doing', 'Send back', async (note) => go({ op: 'sendback', dudaId: b.dataset.jback, note }, 'Sent back').then((r) => { if (r) again(); return r; })); });
+    $$('[data-jback]').forEach((b) => { b.onclick = () => {
+      const id = b.dataset.jback, nums = jg.reopened[id] || [];
+      jgNote('Send back', 'What still needs doing', 'Send back', async (note) => go({ op: 'sendback', dudaId: id, note }, 'Sent back').then((r) => { if (r) { delete jg.reopened[id]; again(); } return r; }));
+      // The items just reopened are the reason: start the note with them.
+      if (nums.length && $('#jgNote')) $('#jgNote').value = `Reopened ${nums.map((n) => '#' + n).join(', ')}: `;
+    }; });
+    $$('[data-jriok]').forEach((b) => { b.onclick = async () => { const r = await go({ op: 'itemok', dudaId: b.dataset.jriok, findingId: b.dataset.fid, ok: !b.dataset.off }); if (r) again(); }; });
+    $$('[data-jrire]').forEach((b) => { b.onclick = async () => {
+      const c = card(b.dataset.jrire); if (!c || jg.busy) return;
+      jg.busy = true;
+      try {
+        await store({ op: 'patchFinding', siteId: c.auditId, findingIds: [b.dataset.fid], changes: { status: 'open' } });
+        const list = jg.reopened[c.dudaId] = jg.reopened[c.dudaId] || [];
+        if (!list.includes(b.dataset.num)) list.push(b.dataset.num);
+        toast(`#${b.dataset.num} reopened. Send it back to ${c.byName || 'the Jaguar'} when you're done looking.`);
+      } catch (e) { toast(e.message); } finally { jg.busy = false; }
+      again();
+    }; });
     $$('[data-jhand]').forEach((b) => { b.onclick = () => jgHand(card(b.dataset.jhand), go, again); });
     $$('[data-jhold]').forEach((b) => { b.onclick = () => jgNote('Put on hold', 'What needs clarifying, and from whom?', 'Put on hold', async (note) => go({ op: 'hold', dudaId: b.dataset.jhold, note }, 'On hold · you can take the next website').then((r) => { if (r) again(); return r; }),
       '<p class="small muted">It moves to <b>Needs review</b> with your note, the admins are told, and you are free to take the next website. It comes back to you when it is taken off hold.</p>'); });
@@ -3344,7 +3387,7 @@
           <div class="pf-card pf-card-wide">
             <div class="pf-card-h">Audit ${s ? `<a href="#/site/${esc(s.id)}">open ↗</a>` : ''}</div>
             ${s ? `<div class="pf-counts">${sev('critical', 'critical')}${sev('outdated', 'outdated')}${sev('warning', 'warning')}${sev('info', 'info')}</div>
-              <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}${sc.finishedAt ? ` · last scan ${esc(fmtWhen(Date.parse(sc.finishedAt)))}` : ' · never scanned'}${polishOpen ? ` · <a href="#/site/${esc(s.id)}/polish">🎨 ${polishOpen} design polish</a>` : ''}${lengthOpen ? ` · <a href="#/site/${esc(s.id)}/length">📏 ${lengthOpen} length</a>` : ''}</div>`
+              <div class="small faint">${esc(s.status || 'Open')}${sc.pages ? ` · ${sc.pages} pages checked` : ''}${sc.finishedAt ? ` · last scan ${esc(fmtWhen(Date.parse(sc.finishedAt)))}` : ' · never scanned'}${polishOpen ? ` · <a href="#/site/${esc(s.id)}/polish">🎨 ${polishOpen} design polish</a>` : ''}${lengthOpen ? ` · <a href="#/site/${esc(s.id)}/length">📏 ${lengthOpen} SEO length</a>` : ''}</div>`
               : `<div class="pf-big faint">—</div><div class="small faint">Not audited yet.</div>`}
           </div>
           ${s ? `<div class="pf-card">
@@ -6040,7 +6083,7 @@
     { icon: '⚠', label: 'Live websites with domain problems', words: 'domain problems broken domains', filter: true, act: () => { live.tab = 'published'; live.q = ''; live.dom = 'problem'; live.audit = ''; live.page = 0; location.hash = '#/live'; }, perm: 'live.view', help: 'live' },
     { icon: '✅', label: 'Audits with every must-fix item closed', words: 'must fix done finished complete critical fixed only fonts photos polish left boss', filter: true, act: () => { state.filters.must = 'done'; location.hash = '#/'; render(); }, help: 'polish' },
     { icon: '🔴', label: 'Audits with critical items still open', words: 'critical open still urgent not fixed meeting check', filter: true, act: () => { state.filters.must = 'crit'; location.hash = '#/'; render(); }, help: 'polish' },
-    { icon: '📏', label: 'Lengths: SEO titles, descriptions and alt text too long or short', words: 'length lengths long short title description alt text meta characters chars tidy later', filter: true, act: () => { location.hash = '#/'; }, help: 'polish' },
+    { icon: '📏', label: 'SEO Lengths: titles, descriptions and alt text too long or short', words: 'seo length lengths long short title description alt text meta characters chars tidy later', filter: true, act: () => { location.hash = '#/'; }, help: 'polish' },
     { icon: '🎨', label: 'Design polish: inconsistent fonts and duplicate photos', words: 'design polish fonts typefaces duplicate photos pictures repeated images later not urgent', filter: true, act: () => { location.hash = '#/'; }, help: 'polish' },
     { icon: '🟢', label: 'Who is online now', words: 'online now active who is working', filter: true, act: () => { memFilter.view = 'online'; location.hash = '#/settings/team'; }, help: 'team' },
     { icon: '✏️', label: 'Members who need a full name', words: 'needs full name nickname one word name', filter: true, act: () => { memFilter.view = 'name'; location.hash = '#/settings/team'; }, perm: 'members.manage', help: 'admin-members' },
@@ -6758,7 +6801,7 @@
         const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || [], (aiMore && aiMore.used) || []))];
         const paused = (aiText && aiText.paused) || (aiAlt && aiAlt.paused) || null;
         aiSummary = Object.assign({}, aiAlt || { checked: 0, cached: 0, flagged: 0, softened: 0 }, { text: aiText, aliases: used.join(', '), paused },
-          aiMore && !aiMore.skipped ? { proof: aiMore.proof, links: aiMore.links } : {});
+          aiMore && !aiMore.skipped ? { proof: aiMore.proof, links: aiMore.links, fit: aiMore.fit || null } : {});
         const pend = [].concat(pendingFindings('alt', (aiAlt && aiAlt.pending) || [], paused), pendingFindings('text', (aiText && aiText.pending) || [], paused));
         aiSummary.pendingItems = pend.length;
         res.findings.push(...pend);
@@ -6954,7 +6997,18 @@
       }
       return all;
     };
-    if (proofItems.length) {
+    // Does each page say what its address promises (service, town, name, no notes left in)? First,
+    // because a page about the wrong service is the costliest mistake a client can find.
+    const fitPages = (res.fit || []).filter((p) => p.path && (p.urlServices && p.urlServices.length || p.urlPlace || p.title));
+    if (fitPages.length) {
+      const fitItems = fitPages.slice(0, 160).map((p, i) => ({ i: res.fit.indexOf(p), path: p.path, title: p.title, description: p.description, h1: p.h1, heads: p.heads, excerpt: p.excerpt, urlServices: p.urlServices, urlPlace: p.urlPlace }));
+      out.fit = { pages: fitItems.length, of: (res.fit || []).length, flagged: 0 };
+      const verdicts = await run('pagefit', batches(fitItems, 18000, 6, (x) => (x.excerpt || '').length + 600), 'reading each page against its address', { pages });
+      const before = res.findings.length;
+      res.findings = A.applyPageFit(res.findings, res.fit, verdicts, res.truth);
+      out.fit.flagged = res.findings.length - before;
+    }
+    if (proofItems.length && !out.paused) {
       const issues = await run('proof', batches(proofItems, 16000, 60, (x) => x.text.length), 'proofreading');
       const before = res.findings.length;
       res.findings = A.applyProofIssues(res.findings, proofTexts, issues);
@@ -8677,7 +8731,7 @@
     return `<div class="small ${done ? 'must-done' : ''}" title="Audit items that affect the business and SEO: ${c.closed || 0} of ${c.total || 0} closed">${done ? '✓ ' : ''}${c.closed || 0}/${c.total || 0}${done ? ' <b>Must-fix done</b>' : ''}</div>
       <div class="progress"><i style="width:${pct}%;background:var(--ok)"></i></div>
       ${c.pt ? `<a class="small faint polish-line" href="#/site/${esc(s.id)}/polish" data-stop title="Design polish (fonts, duplicate photos): ${c.pc || 0} of ${c.pt} closed">🎨 Polish ${c.pc || 0}/${c.pt}</a>` : ''}
-      ${c.lt ? `<a class="small faint polish-line" href="#/site/${esc(s.id)}/length" data-stop title="Lengths (SEO titles, meta descriptions, alt text): ${c.lc || 0} of ${c.lt} closed">📏 Lengths ${c.lc || 0}/${c.lt}</a>` : ''}`;
+      ${c.lt ? `<a class="small faint polish-line" href="#/site/${esc(s.id)}/length" data-stop title="SEO Lengths (SEO titles, meta descriptions, alt text): ${c.lc || 0} of ${c.lt} closed">📏 SEO Lengths ${c.lc || 0}/${c.lt}</a>` : ''}`;
   }
   function issueChips(c, done, siteId) {
     c = c || {};
@@ -8697,7 +8751,7 @@
       : `<span class="badge subtle">💬 ${c.comments}</span>`);
     if (!chips.length && done) chips.push(c.po || c.lo ? '<span class="badge scan-complete" title="Only design polish and lengths are left">✓ Must-fix done</span>' : '<span class="badge scan-complete">No open issues</span>');
     if (c.po) chips.push(siteId ? `<a class="badge subtle badge-btn polish-chip" href="#/site/${esc(siteId)}/polish" data-stop title="Inconsistent fonts and duplicate photos, on their own tab: fix after the audit items">🎨 ${c.po} polish</a>` : `<span class="badge subtle polish-chip">🎨 ${c.po} polish</span>`);
-    if (c.lo) chips.push(siteId ? `<a class="badge subtle badge-btn polish-chip" href="#/site/${esc(siteId)}/length" data-stop title="SEO titles, meta descriptions and alt text longer or shorter than ideal, on their own tab: tidy after the audit items">📏 ${c.lo} length</a>` : `<span class="badge subtle polish-chip">📏 ${c.lo} length</span>`);
+    if (c.lo) chips.push(siteId ? `<a class="badge subtle badge-btn polish-chip" href="#/site/${esc(siteId)}/length" data-stop title="SEO titles, meta descriptions and alt text longer or shorter than ideal, on their own tab: tidy after the audit items">📏 ${c.lo} SEO length</a>` : `<span class="badge subtle polish-chip">📏 ${c.lo} SEO length</span>`);
     return `<span class="chips">${chips.join('')}</span>`;
   }
   /**
@@ -9249,7 +9303,7 @@
         <a href="#/site/${esc(s.id)}/profile" class="${r.tab === 'profile' || r.tab === 'leads' ? 'on' : ''}">Profile${leadCount(s.siteId) ? ` <span class="tcount" title="form submissions">✉ ${leadCount(s.siteId)}</span>` : ''}</a>
         <a href="#/site/${esc(s.id)}" class="${ftab === 'findings' ? 'on' : ''}" title="Contact details, links, spelling, SEO: what affects the business">Audit items ${tabN('must')}</a>
         <a href="#/site/${esc(s.id)}/polish" class="${ftab === 'polish' ? 'on' : ''}" title="Inconsistent fonts and duplicate photos: fix after the audit items">🎨 Design polish ${tabN('polish')}</a>
-        <a href="#/site/${esc(s.id)}/length" class="${ftab === 'length' ? 'on' : ''}" title="SEO titles, meta descriptions and alt text that are longer or shorter than ideal: tidy after the audit items">📏 Lengths ${tabN('length')}</a>
+        <a href="#/site/${esc(s.id)}/length" class="${ftab === 'length' ? 'on' : ''}" title="SEO titles, meta descriptions and alt text that are longer or shorter than ideal: tidy after the audit items">📏 SEO Lengths ${tabN('length')}</a>
         <a href="#/site/${esc(s.id)}/exceptions" class="${r.tab === 'exceptions' ? 'on' : ''}" title="What is not checked on this website, and why">🚫 Audit exceptions${(s.findings || []).some((f) => f.status === 'exempt') ? ` <span class="tcount">${(s.findings || []).filter((f) => f.status === 'exempt').length}</span>` : ''}</a>
         <a href="#/site/${esc(s.id)}/comments" class="${r.tab === 'comments' ? 'on' : ''}">Comments <span class="tcount">${generalComments}</span></a>
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
@@ -9405,7 +9459,7 @@
   // Checks that compare the whole website (duplicate titles across pages, the font system, repeated
   // photos, the favicon, a name found on one page and searched for on every other) cannot be judged
   // from a few pages: they would vanish simply because the rest was not read. Those need a full Rescan.
-  const RECHECK_SITE_WIDE = /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_[A-Z_]+|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR)$/;
+  const RECHECK_SITE_WIDE = /^(PAGE_WRONG_CITY|PAGE_WRONG_CITY_BODY|AI_PAGE_[A-Z]+|META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_[A-Z_]+|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR)$/;
   const RECHECK_MAX_PAGES = 12;
   // Rows ticked in the audit items table, for acting on several at once.
   const pick = { site: '', ids: new Set() };
@@ -9550,6 +9604,7 @@
   /** What the AI found on this scan, in one line. */
   function aiShort(ai) {
     const bits = [];
+    if (ai.fit) bits.push(`Read ${ai.fit.pages} pages against their address: <b>${ai.fit.flagged}</b> more found by the AI`);
     if (ai.proof) bits.push(`Proofread ${ai.proof.blocks} blocks: <b>${ai.proof.flagged}</b> spelling or grammar`);
     if (ai.links) bits.push(`<b>${ai.links.flagged}</b> button${ai.links.flagged === 1 ? '' : 's'} open the wrong page`);
     if (ai.text) bits.push(`<b>${ai.text.flagged || 0}</b> name or place`);
@@ -10126,7 +10181,7 @@
     const nFont = polishCount(/^FONT_/), nDup = polishCount(/^IMAGE_DUPLICATE$/);
     const nLen = (re) => findings.filter((f) => re.test(f.code) && (f.status === 'open' || f.status === 'clarification')).length;
     const lengthHead = `<div class="polish-head length-head">
-      <div class="polish-head-t">📏 Lengths <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
+      <div class="polish-head-t">📏 SEO Lengths <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
       <div class="small">${findings.length ? `<b>${nLen(/^META_TITLE_/)}</b> SEO title${nLen(/^META_TITLE_/) === 1 ? '' : 's'}, <b>${nLen(/^META_DESC_/)}</b> meta description${nLen(/^META_DESC_/) === 1 ? '' : 's'} and <b>${nLen(/^ALT_LONG$/)}</b> alt text${nLen(/^ALT_LONG$/) === 1 ? '' : 's'} longer or shorter than ideal. ` : ''}Worth tidying, but the wording itself (spelling, punctuation, a wrong name or phone) is checked on the <a href="#/site/${esc(s.id)}">Audit items</a> tab${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}, which comes first.</div>
     </div>`;
     const polishHead = lengths ? lengthHead : `<div class="polish-head">
@@ -10148,6 +10203,7 @@
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<details class="scan-more"${uiOpen('scanai') ? ' open' : ''} data-ui="scanai"><summary class="small">${aiShort(sc.ai)} <span class="faint">· details</span></summary><div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Business name and location: <b>${sc.ai.text.blocks}</b> blocks that mention a name, a place or contact details checked${sc.ai.text.skipped ? ` <span class="faint" title="These blocks contain no business name, place or contact detail, so there is nothing in them for this check to get wrong. They are still proofread.">(the other ${sc.ai.text.skipped} have none)</span>` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
+            ${sc.ai.fit ? ` Read <b>${sc.ai.fit.pages}</b> pages against their address (service, town, name): <b>${sc.ai.fit.flagged}</b> new item${sc.ai.fit.flagged === 1 ? '' : 's'}.` : ''}
             ${sc.ai.proof ? ` Proofread <b>${sc.ai.proof.blocks}</b>${sc.ai.proof.of ? ` of ${sc.ai.proof.of}` : ''} blocks of text: <b>${sc.ai.proof.flagged}</b> spelling, grammar or unfinished.${sc.ai.proof.of && sc.ai.proof.blocks < sc.ai.proof.of ? ' <span class="faint">(the website is very large: see Scan notes)</span>' : ''}` : ''}
             ${sc.ai.links ? ` Buttons and links: <b>${sc.ai.links.checked}</b> of ${sc.ai.links.of} checked for where they go${sc.ai.links.checked < sc.ai.links.of ? ' (the rest plainly match their page)' : ''}, <b>${sc.ai.links.flagged}</b> open the wrong page.` : ''}
             ${sc.ai.aliases && state.ai && state.ai.owner ? `<span class="faint">Answered by ${esc(sc.ai.aliases)}</span>` : ''} <a href="javascript:void 0" class="small" data-ai-status>AI Status ↗</a></div></details>
@@ -10191,8 +10247,8 @@
         <div ${state.refTab === 'history' ? '' : 'hidden'}>${biReference(s)}</div>
       </details>
       ${polish ? `<div class="note grp-note"><b>🎨 Design polish</b> — inconsistent fonts and duplicate photos. They don't change the business's details, links or what Google reads, so they come after the <a href="#/site/${esc(s.id)}">Audit items</a>${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}.</div>`
-        : findings.length && !mineOpen && sc.state === 'complete' ? `<div class="note good grp-note"><b>✓ Every audit item that affects the business is closed.</b>${otherOpen ? ` What's left can follow: <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a> and <a href="#/site/${esc(s.id)}/length">📏 Lengths</a> (${otherOpen} open).` : ''}</div>`
-        : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a>, and title, description and alt-text lengths on <a href="#/site/${esc(s.id)}/length">📏 Lengths</a> (${otherOpen} open), so this list is what affects the business and SEO.</div>` : ''}
+        : findings.length && !mineOpen && sc.state === 'complete' ? `<div class="note good grp-note"><b>✓ Every audit item that affects the business is closed.</b>${otherOpen ? ` What's left can follow: <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a> and <a href="#/site/${esc(s.id)}/length">📏 SEO Lengths</a> (${otherOpen} open).` : ''}</div>`
+        : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a>, and title, description and alt-text lengths on <a href="#/site/${esc(s.id)}/length">📏 SEO Lengths</a> (${otherOpen} open), so this list is what affects the business and SEO.</div>` : ''}
 `;
     body.innerHTML = `
       ${topHtml}

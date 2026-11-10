@@ -19,6 +19,7 @@
 // POST { op:'release', dudaId, note }  → put it back in the queue, with the reason
 // POST { op:'settings', … }            → queue order, which websites, lock, limit (jags.lead)
 // POST { op:'pin', dudaId, on }        → pin a website to the top of the queue  (jags.lead)
+// POST { op:'itemok', dudaId, findingId, ok } → mark one flagged item as looked at and fine (jags.lead)
 import { metered, requireUser, readBody, can, jparse, now, newId, redis, P, notifyUser, listUsers, unpackJSON, packJSON, savedEditorHost, globalLog } from './_lib.js';
 import { saveIndex } from './store.js';
 
@@ -160,6 +161,33 @@ async function approvers() {
   const ok = await Promise.all(all.map((u) => can(u, 'jags.lead').catch(() => false)));
   return all.filter((u, i) => ok[i]);
 }
+/**
+ * What sent a website to Needs review, item by item: false alarms marked since it was taken, and
+ * everything waiting on an answer (For clarification, On hold). One round of reads for all cards.
+ */
+async function reviewItems(list) {
+  const out = {};
+  if (!list.length) return out;
+  const cmds = [];
+  list.forEach((c) => cmds.push(['GET', P + 'site:' + c.auditId], ['HGETALL', P + 'fstate:' + c.auditId], ['HGETALL', P + 'fnum:' + c.auditId]));
+  const rs = await redis(...cmds);
+  list.forEach((c, i) => {
+    const site = unpackJSON(rs[i * 3]);
+    if (!site) return;
+    const st = flat(rs[i * 3 + 1]); const nums = flat(rs[i * 3 + 2]);
+    const since = Date.parse(c.takenAt || 0) || 0;
+    const ok = c.itemOk || {};
+    out[c.dudaId] = (site.findings || []).map((f) => {
+      const s = jparse(st[f.id]) || {};
+      if (f.gone) return null;
+      if (s.status === 'false' && !s.auto && (Date.parse(s.updatedAt || 0) || 0) >= since) { /* flagged on this round */ }
+      else if (s.status !== 'clarification' && s.status !== 'hold') return null;
+      return { id: f.id, num: Number(nums[f.id]) || f.num || null, status: s.status, message: String(f.message || '').slice(0, 160), by: s.updatedBy || '', at: s.updatedAt || '',
+        ok: ok[f.id] || null };
+    }).filter(Boolean).sort((a, b) => (a.num || 0) - (b.num || 0)).slice(0, 40);
+  });
+  return out;
+}
 const tell = (email, me, card, kind, text, extra = {}) => (email && email !== me.email
   ? notifyUser(email, Object.assign({ by: me.email, byName: me.name, kind, siteId: card.auditId || '', siteName: card.name, dudaSite: card.dudaId, text }, extra)).catch(() => {})
   : null);
@@ -179,10 +207,16 @@ async function handler(req, res) {
       // they have taken one and scanned it.
       const q = queue.slice(0, 60).map((r) => (lead ? r : { dudaId: r.dudaId, name: r.name, domain: r.domain, launched: r.launched, back: r.back, pinned: r.pinned, sent: r.sent }));
       const cutoff = Date.now() - 30 * DAY;
-      const cards = Object.values(all.cards).filter((c) => c.state !== 'complete' || Date.parse(c.doneAt || 0) > cutoff).map((c) => {
-        const a = c.auditId ? Object.values(all.audits).find((x) => x.id === c.auditId) : null;
+      const byAudit = {}; Object.values(all.audits).forEach((x) => { byAudit[x.id] = x; });
+      const kept = Object.values(all.cards).filter((c) => c.state !== 'complete' || Date.parse(c.doneAt || 0) > cutoff);
+      const items = await reviewItems(kept.filter((c) => c.state === 'review' && !c.hold && c.auditId));
+      const cards = kept.map((c) => {
+        const a = c.auditId ? byAudit[c.auditId] : null;
         const scanned = !!(a && a.scan && a.scan.finishedAt);
-        return Object.assign({}, c, { scanned, scannedAt: scanned ? a.scan.finishedAt : '', progress: scanned ? progress(a) : null, log: lead || c.by === me.email ? c.log : (c.log || []).slice(-8) });
+        // Who else has the audit open read-only or was brought in (from the audit's summary), minus the holder.
+        const watchers = ((a && a.watch) || []).filter((w) => w.e && w.e !== c.by).map((w) => ({ email: w.e, how: w.h }));
+        return Object.assign({}, c, { scanned, scannedAt: scanned ? a.scan.finishedAt : '', progress: scanned ? progress(a) : null, watchers,
+          reviewItems: items[c.dudaId] || undefined, log: lead || c.by === me.email ? c.log : (c.log || []).slice(-8) });
       });
       return res.status(200).json({ lead, me: me.email, settings: all.set, queue: q, queueTotal: queue.length, cards,
         holding: cards.filter((c) => c.state === 'progress' && c.by === me.email).length });
@@ -295,6 +329,19 @@ async function handler(req, res) {
     if (!card) return res.status(404).json({ error: 'That website is not on the board.' });
     const holder = card.by === me.email;
 
+    if (b.op === 'itemok') {
+      // An approver went through one flagged item and agrees with it (a real false alarm, a fair
+      // question). Remembered on the card until the website is approved or sent back.
+      if (!lead) return res.status(403).json({ error: 'Your role does not allow approving Jaguar audits.' });
+      if (card.state !== 'review' || card.hold) return res.status(409).json({ error: 'This website is not waiting for review.' });
+      const fid = String(b.findingId || '');
+      if (!fid) return res.status(400).json({ error: 'Which item?' });
+      card.itemOk = Object.assign({}, card.itemOk);
+      if (b.ok === false) delete card.itemOk[fid];
+      else card.itemOk[fid] = { by: me.email, byName: me.name, at: now() };
+      await saveCard(card);
+      return res.status(200).json({ ok: true, itemOk: card.itemOk });
+    }
     if (b.op === 'hold') {
       // Stuck on something only somebody else can answer: the website waits in Needs review with
       // the reason, and the Jaguar is free to take the next one.
@@ -336,6 +383,8 @@ async function handler(req, res) {
         await redis(['SET', P + 'site:' + card.auditId, packJSON(site)]);
         await siteLog(card.auditId, me, 'started watching this website (peeked from Tasks, read-only)', card.name);
         await saveIndex(card.auditId);
+        // Nobody is looked over without knowing it: the person holding the website is told.
+        if (card.by && ['progress', 'review'].includes(card.state)) await tell(card.by, me, card, 'jag-watch', `${me.name} is watching ${card.name} (read-only)`);
       }
       return res.status(200).json({ auditId: card.auditId });
     }
@@ -384,7 +433,7 @@ async function handler(req, res) {
       const note = noteOf(b.note);
       if (b.op === 'sendback') {
         if (note.length < 3) return res.status(400).json({ error: 'Say what still needs doing.' });
-        card.state = 'progress'; card.doneAt = ''; card.hold = null;
+        card.state = 'progress'; card.doneAt = ''; card.hold = null; card.itemOk = {};
         addLog(card, me, 'sent it back', note);
         await saveCard(card);
         await setStatus(card.auditId, 'In progress');
@@ -392,7 +441,7 @@ async function handler(req, res) {
         await tell(card.by, me, card, 'jag-back', `${me.name} sent ${card.name} back to you: ${note}`);
         return res.status(200).json({ card });
       }
-      card.state = 'complete'; card.doneAt = now(); card.approvedBy = me.name;
+      card.state = 'complete'; card.doneAt = now(); card.approvedBy = me.name; card.itemOk = {};
       addLog(card, me, 'approved it', note);
       await saveCard(card);
       await setStatus(card.auditId, 'Complete');
