@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-11-dashboard', date: '2026-11-11', audience: 'all', tag: 'Audits',
+    title: 'Every audit has a Dashboard: findings at a glance, and every scan compared',
+    what: 'A new <b>📊 Dashboard</b> tab on each audit: open and critical items, how much is closed, open items by severity, category and page, and a <b>scan history</b> with a column per scan and a table of what changed. Results from <b>other tools</b> (Semrush, Ahrefs, Screaming Frog…) can be added by hand to compare, and the history downloads as CSV.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>📊 Dashboard</b>. Rescan to add a column. <b>＋ Add another tool\'s result</b> to put another tool\'s numbers next to ours; <b>⬇ Download as CSV</b> for a report.'],
+    link: '#/help/dashboard', linkText: 'How the Dashboard works',
+  },
+  {
     id: '2026-11-11-demo-mode', date: '2026-11-11', audience: 'all', tag: 'Everyone',
     title: 'Demo mode: show the app to a prospect without showing any client',
     what: 'Every business name, person, phone, email, website address and street address in the app is swapped for a made-up one (our own agency names too), pictures are blurred, comment text is hidden, and nothing can be saved. Only your browser changes.',

@@ -657,6 +657,23 @@ async function handler(req, res) {
         site.findings.forEach((f) => { if (!f.gone && c[f.severity] !== undefined) c[f.severity]++; });
         if (site.scan) site.scan.counts = c;
         const activeN = site.findings.filter((f) => !f.gone).length;
+        // One line per scan for the website's Dashboard: what was found, so the next scan, or another
+        // tool, can be compared with it. Kept small (counts only) and for the last 40 scans.
+        {
+          const live = site.findings.filter((f) => !f.gone);
+          const cats = {}; const groups = { must: 0, polish: 0, length: 0 };
+          live.forEach((f) => { const k = f.category || 'Other'; cats[k] = (cats[k] || 0) + 1; const g = globalThis.DudaAudit.groupOf(f); groups[g] = (groups[g] || 0) + 1; });
+          const snap = { at: now(), by: me.email, byName: me.name, tool: 'Site Auditor', auto: true, cv: Number((site.scan && site.scan.cv) || 0),
+            pages: (r.pages || []).length, counts: Object.assign({}, c), total: activeN, cats, groups,
+            fixed: fixedN, added: Math.max(0, seq - Number(seqRaw || 0)), reopened: backN + stillN };
+          const list = Array.isArray(site.scans) ? site.scans : [];
+          // Resuming the AI check finishes the same scan: its line is brought up to date, not doubled.
+          const last = list.length ? list[list.length - 1] : null;
+          if (b.mode === 'aiResume' && last && last.auto) Object.assign(last, { counts: snap.counts, total: snap.total, cats, groups });
+          else list.push(snap);
+          site.scans = list.slice(-40);
+          await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+        }
         if (b.mode === 'aiResume') {
           const a = b.aiLog || {};
           await log(b.id, me, 'ai', `resumed the AI check: ${a.checked || 0} item(s) checked, ${a.flagged || 0} new finding(s)${a.stillPending ? `, ${a.stillPending} still waiting for AI credits` : ''}`);
@@ -698,6 +715,41 @@ async function handler(req, res) {
             text: `${wasComplete ? `This audit was completed${site.completedAt ? ' on ' + new Date(site.completedAt).toDateString() : ''} and has been scanned again. ` : ''}${activeN} audit item${activeN === 1 ? '' : 's'}${fixedN ? ` (${fixedN} fixed since last time)` : ''}, ${c.critical || 0} critical · ${(r.pages || []).length} page${(r.pages || []).length === 1 ? '' : 's'}` });
         }
         return res.status(200).json(await saveIndex(b.id));
+      }
+      // A result from another tool (Semrush, Ahrefs, a manual QA pass…) typed in by hand, so the
+      // Dashboard can put it next to our own scans. Errors / warnings / notices map to critical / warning / info.
+      case 'compareAdd': {
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow adding scan results.')) return;
+        const [raw] = await redis(['GET', P + 'site:' + b.id]);
+        const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
+        if (!(await canSeeSite(me, site))) return res.status(404).json({ error: 'Not found' });
+        const n = (v) => Math.max(0, Math.min(100000, Math.round(Number(v) || 0)));
+        const tool = String(b.tool || '').trim().slice(0, 60);
+        if (!tool) return res.status(400).json({ error: 'Say which tool the result is from.' });
+        const at = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date || '')) ? b.date + 'T12:00:00.000Z' : now();
+        const counts = { critical: n(b.critical), warning: n(b.warning), info: n(b.info), outdated: 0 };
+        const total = b.total !== undefined && b.total !== '' ? n(b.total) : counts.critical + counts.warning + counts.info;
+        const snap = { at, by: me.email, byName: me.name, tool, auto: false, counts, total, pages: n(b.pages) || 0, note: String(b.note || '').trim().slice(0, 300), added: 0, fixed: 0, cats: {} };
+        site.scans = (Array.isArray(site.scans) ? site.scans : []).concat(snap).sort((x, y) => String(x.at).localeCompare(String(y.at))).slice(-60);
+        site.updatedAt = now();
+        await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+        await log(b.id, me, 'compare', `added a result from ${tool} for comparison (${counts.critical} critical, ${counts.warning} warnings, ${counts.info} notices${snap.note ? ' · ' + snap.note : ''})`);
+        return res.status(200).json(Object.assign(await saveIndex(b.id), { scans: site.scans }));
+      }
+      case 'compareRemove': {
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow removing scan results.')) return;
+        const [raw] = await redis(['GET', P + 'site:' + b.id]);
+        const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
+        if (!(await canSeeSite(me, site))) return res.status(404).json({ error: 'Not found' });
+        const list = Array.isArray(site.scans) ? site.scans : [];
+        // Only a typed-in result can be removed: our own scans are the record.
+        const i = list.findIndex((x) => !x.auto && x.at === b.at && x.tool === b.tool);
+        if (i < 0) return res.status(404).json({ error: 'That result is not there any more.' });
+        const [gone] = list.splice(i, 1);
+        site.scans = list;
+        await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+        await log(b.id, me, 'compare', `removed the ${gone.tool} result of ${String(gone.at).slice(0, 10)} from the comparison`);
+        return res.status(200).json(Object.assign(await saveIndex(b.id), { scans: site.scans }));
       }
       case 'maintenance': {
         if (await denyUnless(res, me, 'app.maintenance', 'Your role does not allow database clean-up.')) return;

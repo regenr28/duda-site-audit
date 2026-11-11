@@ -8465,7 +8465,7 @@
   function route() {
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
-    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : parts[2] === 'length' ? 'length' : parts[2] === 'exceptions' ? 'exceptions' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
+    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : parts[2] === 'length' ? 'length' : parts[2] === 'exceptions' ? 'exceptions' : parts[2] === 'dashboard' ? 'dashboard' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
       sub: parts[2] === 'profile' ? (parts[3] || '') : parts[2] === 'leads' ? 'submissions' : '' };
     if (parts[0] === 'home') return { name: 'home' };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
@@ -9310,6 +9310,7 @@
       </div>
       <div class="tabs">
         <a href="#/site/${esc(s.id)}/profile" class="${r.tab === 'profile' || r.tab === 'leads' ? 'on' : ''}">Profile${leadCount(s.siteId) ? ` <span class="tcount" title="form submissions">✉ ${leadCount(s.siteId)}</span>` : ''}</a>
+        <a href="#/site/${esc(s.id)}/dashboard" class="${r.tab === 'dashboard' ? 'on' : ''}" title="What this audit found at a glance, and how it compares with earlier scans and other tools">📊 Dashboard</a>
         <a href="#/site/${esc(s.id)}" class="${ftab === 'findings' ? 'on' : ''}" title="Contact details, links, spelling, SEO: what affects the business">Audit items ${tabN('must')}</a>
         <a href="#/site/${esc(s.id)}/polish" class="${ftab === 'polish' ? 'on' : ''}" title="Inconsistent fonts and duplicate photos: fix after the audit items">🎨 Design polish ${tabN('polish')}</a>
         <a href="#/site/${esc(s.id)}/length" class="${ftab === 'length' ? 'on' : ''}" title="SEO titles, meta descriptions and alt text that are longer or shorter than ideal: tidy after the audit items">📏 SEO Lengths ${tabN('length')}</a>
@@ -9387,6 +9388,7 @@
     if (r.tab === 'comments') renderCommentsTab(body, s);
     else if (r.tab === 'activity') renderActivityTab(body, s);
     else if (r.tab === 'exceptions') renderExceptionsTab(body, s);
+    else if (r.tab === 'dashboard') renderDashboardTab(body, s);
     else if (r.tab === 'profile' || r.tab === 'leads') renderProfileTab(body, s, { cnt, generalComments, sub: r.sub });
     else renderFindingsTab(body, s, { cnt, sc, live, grp: state.ff.grp });
     // Changing tab while scrolled down: bring the tabs to the top, so the new tab is what is seen.
@@ -10512,6 +10514,159 @@
   }
 
   const ACT_ICON = { slack: '💬', bi: '🏷', verify: '🌐', rename: '✏️', disable: '🚫', enable: '✅', allow: '👍', maintenance: '🧹', ai: '✨', 'scan-start': '▶', 'site-add': '＋', 'site-delete': '🗑', signup: '🙋', approve: '✅', reject: '⛔', remove: '⛔', role: '🛡', reset: '🔑', site: '＋', scan: '⟳', status: '●', assign: '👤', 'item-status': '✓', 'item-assign': '👤', comment: '💬', reply: '↩', 'item-comment': '💬', 'comment-delete': '🗑', 'fa-status': '🐞', 'fa-note': '🐞' };
+  // =====================================================================
+  // DASHBOARD: what the audit found, at a glance, and how it compares with earlier scans and other tools
+  // =====================================================================
+  const DB_SEV = [
+    { k: 'critical', label: 'Critical', icon: '⛔' }, { k: 'outdated', label: 'Outdated', icon: '🕓' },
+    { k: 'warning', label: 'Warning', icon: '⚠' }, { k: 'info', label: 'Info', icon: 'ⓘ' },
+  ];
+  const DB_TOOLS = ['Semrush', 'Ahrefs', 'Screaming Frog', 'Sitebulb', 'SE Ranking', 'Google Search Console', 'PageSpeed Insights', 'Manual QA'];
+  const dbOpen = (f) => !f.gone && (f.status === 'open' || f.status === 'clarification');
+  /** Every scan on record, oldest first. An audit scanned before this was kept still shows its last scan. */
+  function dbScans(s) {
+    const list = (s.scans || []).slice();
+    const sc = s.scan || {};
+    if (!list.some((x) => x.auto) && sc.finishedAt && sc.counts) {
+      const c = sc.counts; list.push({ at: sc.finishedAt, tool: 'Site Auditor', auto: true, counts: c, total: (c.critical || 0) + (c.outdated || 0) + (c.warning || 0) + (c.info || 0), pages: sc.pages || 0, byName: nameOf(sc.by), from: 'last' });
+    }
+    return list.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  }
+  const dbDate = (d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  /** A bar per row, longest first, the count written at its end. One colour: it is one measure. */
+  function dbHBars(rows, total, empty) {
+    if (!rows.length) return `<div class="small faint">${empty}</div>`;
+    const mx = Math.max(1, ...rows.map((r) => r.n));
+    return `<div class="db-hbars">${rows.map((r) => `<div class="db-hb" title="${esc(r.k)}: ${r.n} open${r.of !== undefined ? ` of ${r.of} found` : ''}">
+      <span class="db-hb-k">${r.href ? `<a href="${r.href}">${esc(r.k)}</a>` : esc(r.k)}</span>
+      <span class="db-hb-t"><span class="db-hb-f" style="width:${Math.max(r.n ? 2 : 0, Math.round((r.n / mx) * 100))}%"></span></span>
+      <span class="db-hb-n"><b>${r.n}</b>${r.of !== undefined ? `<span class="faint"> / ${r.of}</span>` : ''}</span></div>`).join('')}</div>`;
+  }
+  /** One bar split by severity, the number and name of each part written out under it. */
+  function dbSevBar(c) {
+    const all = DB_SEV.reduce((n, x) => n + (c[x.k] || 0), 0);
+    if (!all) return '<div class="small faint">Nothing open. ✓</div>';
+    return `<div class="db-seg" role="img" aria-label="${DB_SEV.filter((x) => c[x.k]).map((x) => `${c[x.k]} ${x.label}`).join(', ')}">${DB_SEV.filter((x) => c[x.k]).map((x) => `<span class="db-seg-p sevc-${x.k}" style="flex:${c[x.k]}" title="${x.label}: ${c[x.k]}"></span>`).join('')}</div>
+      <div class="db-seg-keys">${DB_SEV.filter((x) => c[x.k]).map((x) => `<span><i class="db-key sevc-${x.k}"></i>${x.icon} ${x.label} <b>${c[x.k]}</b> <span class="faint">${Math.round((c[x.k] / all) * 100)}%</span></span>`).join('')}</div>`;
+  }
+  /** Scans side by side: a column per scan, stacked by severity. Another tool's result is striped. */
+  function dbHistory(scans) {
+    if (!scans.length) return '<div class="small faint">No scan yet.</div>';
+    const shown = scans.slice(-14);
+    const tot = (x) => DB_SEV.reduce((n, k) => n + ((x.counts || {})[k.k] || 0), 0) || x.total || 0;
+    const mx = Math.max(1, ...shown.map(tot));
+    return `<div class="viz-legend">${DB_SEV.filter((k) => shown.some((x) => (x.counts || {})[k.k])).map((k) => `<span><i class="viz-key-bar sevc-${k.k}"></i>${k.label}</span>`).join('')}${shown.some((x) => !x.auto) ? '<span><i class="viz-key-bar db-other-key"></i>Another tool</span>' : ''}</div>
+      <div class="db-cols" id="dbCols">${shown.map((x, i) => {
+        const t = tot(x);
+        return `<div class="db-col${x.auto ? '' : ' db-col-other'}" data-dbi="${i}" tabindex="0">
+          <div class="db-col-plot"><span class="db-col-n">${t}</span><div class="db-col-stack" style="height:${Math.round((t / mx) * 100)}%">${DB_SEV.slice().reverse().filter((k) => (x.counts || {})[k.k]).map((k) => `<span class="sevc-${k.k}" style="flex:${x.counts[k.k]}"></span>`).join('')}${!DB_SEV.some((k) => (x.counts || {})[k.k]) && t ? '<span class="db-col-total" style="flex:1"></span>' : ''}</div></div>
+          <div class="db-col-l">${esc(new Date(x.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}${x.auto ? '' : `<br><span class="faint">${esc(x.tool)}</span>`}</div></div>`;
+      }).join('')}</div><div class="viz-tip" id="dbTip"></div>`;
+  }
+  function dbChange(a, b) {
+    if (!a) return '<span class="faint">—</span>';
+    const d = b - a;
+    return d === 0 ? '<span class="faint">no change</span>' : `<span class="${d < 0 ? 'db-better' : 'db-worse'}">${d < 0 ? '▼' : '▲'} ${Math.abs(d)}</span>`;
+  }
+  function renderDashboardTab(body, s) {
+    const items = (s.findings || []).filter((f) => f.status !== 'exempt');
+    const live = items.filter((f) => !f.gone);
+    const open = items.filter(dbOpen);
+    const closed = items.filter((f) => f.status === 'done' || f.status === 'false');
+    const st = (v) => items.filter((f) => f.status === v).length;
+    const pct = items.length ? Math.round((closed.length / items.length) * 100) : 0;
+    const sevOpen = {}; DB_SEV.forEach((x) => { sevOpen[x.k] = open.filter((f) => f.severity === x.k).length; });
+    const cats = {}; items.forEach((f) => { const k = f.category || 'Other'; const c = cats[k] || (cats[k] = { k, n: 0, of: 0 }); c.of++; if (dbOpen(f)) c.n++; });
+    const catRows = Object.values(cats).sort((a, b) => b.n - a.n || b.of - a.of).map((r) => Object.assign(r, { href: '' }));
+    const pages = {}; open.forEach((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).forEach((p) => { pages[p] = (pages[p] || 0) + 1; }));
+    const pageRows = Object.entries(pages).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => ({ k, n }));
+    const grp = { must: 0, polish: 0, length: 0 }; open.forEach((f) => { grp[groupOfItem(f)] = (grp[groupOfItem(f)] || 0) + 1; });
+    const scans = dbScans(s);
+    const ours = scans.filter((x) => x.auto);
+    const first = ours[0], last = ours[ours.length - 1];
+    const sc = s.scan || {};
+    const tot = (x) => (x ? DB_SEV.reduce((n, k) => n + ((x.counts || {})[k.k] || 0), 0) || x.total || 0 : 0);
+    // Compared with the previous result from the SAME tool: tools count differently, so a Semrush
+    // number is only ever set against an earlier Semrush number.
+    const prevSame = (i) => { for (let j = i - 1; j >= 0; j--) if (scans[j].tool === scans[i].tool) return scans[j]; return null; };
+    body.innerHTML = `<div class="db">
+      <div class="db-tiles">
+        <div class="db-tile"><span class="db-tile-n">${open.length}</span><span class="db-tile-l">Open items</span><span class="small faint">of ${items.length} found</span></div>
+        <div class="db-tile"><span class="db-tile-n ${sevOpen.critical ? 'db-crit' : ''}">${sevOpen.critical}</span><span class="db-tile-l">⛔ Critical open</span><span class="small faint">${items.filter((f) => f.severity === 'critical').length} found in all</span></div>
+        <div class="db-tile"><span class="db-tile-n">${pct}%</span><span class="db-tile-l">Closed</span><span class="db-prog"><span style="width:${pct}%"></span></span></div>
+        <div class="db-tile"><span class="db-tile-n">${st('done')}</span><span class="db-tile-l">✓ Done</span><span class="small faint">${items.filter((f) => f.gone).length} confirmed gone by a rescan</span></div>
+        <div class="db-tile"><span class="db-tile-n">${sc.pages || (s.pages || []).length || 0}</span><span class="db-tile-l">Pages scanned</span><span class="small faint">${sc.finishedAt ? 'last ' + esc(dbDate(sc.finishedAt)) : 'not scanned yet'}</span></div>
+        <div class="db-tile"><span class="db-tile-n">${ours.length}</span><span class="db-tile-l">Scans on record</span><span class="small faint">${scans.length - ours.length ? `+ ${scans.length - ours.length} from other tools` : 'add another tool below'}</span></div>
+      </div>
+      <div class="db-grid">
+        <section class="db-card db-wide"><h3>Open items by severity</h3>${dbSevBar(sevOpen)}
+          <div class="db-status small">${[['open', 'Open'], ['clarification', 'For clarification'], ['hold', 'On hold'], ['done', 'Done'], ['false', 'False alarm']].map(([v, l]) => `<span>${l} <b>${st(v)}</b></span>`).join('')}
+            <span>Lists: <a href="#/site/${esc(s.id)}">Audit items</a> <b>${grp.must || 0}</b> · <a href="#/site/${esc(s.id)}/polish">Design polish</a> <b>${grp.polish || 0}</b> · <a href="#/site/${esc(s.id)}/length">SEO Lengths</a> <b>${grp.length || 0}</b> open</span></div></section>
+        <section class="db-card"><h3>Open items by category</h3><p class="small faint db-sub">Open, out of everything found in that category</p>${dbHBars(catRows, items.length, 'No items.')}</section>
+        <section class="db-card"><h3>Pages with the most open items</h3><p class="small faint db-sub">An item on every page counts once per page</p>${dbHBars(pageRows, null, 'Nothing open.')}</section>
+        <section class="db-card db-wide"><div class="db-h"><h3>Scan history</h3><span class="small faint">Everything found at each scan, by severity${scans.length > 14 ? ' (the last 14)' : ''}</span></div>
+          ${first && last && first !== last ? `<p class="db-since">Since the first scan on <b>${esc(dbDate(first.at))}</b>: critical <b>${(first.counts || {}).critical || 0} → ${(last.counts || {}).critical || 0}</b> ${dbChange((first.counts || {}).critical || 0, (last.counts || {}).critical || 0)}, everything <b>${tot(first)} → ${tot(last)}</b> ${dbChange(tot(first), tot(last))}.</p>` : ''}
+          <div class="viz-wrap db-hist">${dbHistory(scans)}</div>
+          <div class="table-wrap"><table class="grid db-table">
+            <thead><tr><th>Date</th><th>Tool</th><th title="Critical / errors">Critical</th><th>Warning</th><th title="Info / notices">Info</th><th>Total</th><th title="Against the previous result from the same tool">Change</th><th>Pages</th><th>By</th><th></th></tr></thead>
+            <tbody>${scans.map((x, i) => { const p = prevSame(i); return `<tr class="${x.auto ? '' : 'db-row-other'}">
+              <td>${esc(dbDate(x.at))}</td><td>${x.auto ? 'Site Auditor' : `<b>${esc(x.tool)}</b>`}${x.note ? `<div class="small faint">${esc(x.note)}</div>` : ''}${x.cv ? `<div class="small faint" title="Version of the checks">checks v${x.cv}</div>` : ''}</td>
+              <td>${(x.counts || {}).critical || 0}${(x.counts || {}).outdated ? ` <span class="small faint">+${x.counts.outdated} outdated</span>` : ''}</td><td>${(x.counts || {}).warning || 0}</td><td>${(x.counts || {}).info || 0}</td><td><b>${tot(x)}</b></td>
+              <td>${dbChange(p ? tot(p) : 0, tot(x))}${x.auto && (x.fixed || x.added) ? `<div class="small faint">${x.fixed ? `${x.fixed} fixed` : ''}${x.fixed && x.added ? ' · ' : ''}${x.added ? `${x.added} new` : ''}</div>` : ''}</td>
+              <td>${x.pages || '—'}</td><td>${esc(x.byName || nameOf(x.by, '—'))}</td>
+              <td>${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
+          <div class="db-acts">${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
+            <span class="small faint">Each tool counts differently, so a result is only compared with an earlier result from the same tool.</span></div>
+          <form class="db-form" id="dbForm" hidden>
+            <label class="field">Tool<input id="dbTool" list="dbTools" required maxlength="60" placeholder="Semrush, Ahrefs…"><datalist id="dbTools">${DB_TOOLS.map((t) => `<option value="${esc(t)}">`).join('')}</datalist></label>
+            <label class="field">Date<input id="dbDate" type="date" required value="${new Date().toISOString().slice(0, 10)}"></label>
+            <label class="field">Critical / errors<input id="dbC" type="number" min="0" value="0"></label>
+            <label class="field">Warnings<input id="dbW" type="number" min="0" value="0"></label>
+            <label class="field">Info / notices<input id="dbI" type="number" min="0" value="0"></label>
+            <label class="field">Pages checked<input id="dbP" type="number" min="0" placeholder="optional"></label>
+            <label class="field db-note">Note<input id="dbN" maxlength="300" placeholder="optional: e.g. Semrush Site Audit, health score 84%"></label>
+            <div class="db-form-acts"><button class="btn primary sm" type="submit">Add to the comparison</button><button class="btn sm" type="button" id="dbCancel">Cancel</button></div>
+          </form>
+        </section>
+      </div></div>`;
+    // Hover (and keyboard focus) on a column: what it was made of.
+    const tip = $('#dbTip', body); const cols = $('#dbCols', body);
+    const shown = scans.slice(-14);
+    if (cols && tip) $$('.db-col', cols).forEach((el) => {
+      const show = () => {
+        const x = shown[Number(el.dataset.dbi)]; if (!x) return;
+        tip.innerHTML = `<div class="viz-tip-h">${esc(dbDate(x.at))} · ${esc(x.auto ? 'Site Auditor' : x.tool)}</div>${DB_SEV.filter((k) => (x.counts || {})[k.k]).map((k) => `<div class="viz-tip-r"><i class="viz-key-bar sevc-${k.k}"></i><span class="viz-tip-l">${k.label}</span> <b>${x.counts[k.k]}</b></div>`).join('')}<div class="viz-tip-r"><span class="viz-tip-l">Total</span> <b>${tot(x)}</b></div>${x.pages ? `<div class="viz-tip-r"><span class="viz-tip-l">Pages</span> <b>${x.pages}</b></div>` : ''}`;
+        const wr = cols.parentElement.getBoundingClientRect(); const r = el.getBoundingClientRect();
+        tip.style.display = 'block';
+        tip.style.left = Math.max(0, Math.min(wr.width - tip.offsetWidth, r.left - wr.left + r.width / 2 - tip.offsetWidth / 2)) + 'px';
+        tip.style.top = Math.max(0, r.top - wr.top - tip.offsetHeight + 30) + 'px';
+      };
+      const hide = () => { tip.style.display = 'none'; };
+      el.onmouseenter = show; el.onfocus = show; el.onmouseleave = hide; el.onblur = hide;
+    });
+    const form = $('#dbForm', body);
+    if ($('#dbAdd', body)) $('#dbAdd', body).onclick = () => { form.hidden = false; $('#dbTool', body).focus(); };
+    if ($('#dbCancel', body)) $('#dbCancel', body).onclick = () => { form.hidden = true; };
+    if (form) form.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await store({ op: 'compareAdd', id: s.id, tool: $('#dbTool', body).value, date: $('#dbDate', body).value, critical: $('#dbC', body).value, warning: $('#dbW', body).value, info: $('#dbI', body).value, pages: $('#dbP', body).value, note: $('#dbN', body).value });
+        toast('Added to the comparison'); await loadSite(s.id); renderSite();
+      } catch (er) { toast(er.message); }
+    };
+    $$('[data-dbrm]', body).forEach((b) => (b.onclick = async () => {
+      const x = scans[Number(b.dataset.dbrm)]; if (!x || !confirm(`Remove the ${x.tool} result of ${dbDate(x.at)} from the comparison?`)) return;
+      try { await store({ op: 'compareRemove', id: s.id, at: x.at, tool: x.tool }); toast('Removed'); await loadSite(s.id); renderSite(); } catch (er) { toast(er.message); }
+    }));
+    $('#dbCsv', body).onclick = () => {
+      const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+      const rows = [['Date', 'Tool', 'Critical', 'Outdated', 'Warning', 'Info', 'Total', 'Pages', 'Fixed since previous', 'New since previous', 'By', 'Note']]
+        .concat(scans.map((x) => [String(x.at).slice(0, 10), x.auto ? 'Site Auditor' : x.tool, (x.counts || {}).critical || 0, (x.counts || {}).outdated || 0, (x.counts || {}).warning || 0, (x.counts || {}).info || 0, tot(x), x.pages || '', x.fixed || '', x.added || '', x.byName || '', x.note || '']));
+      const blob = new Blob([rows.map((r) => r.map(q).join(',')).join('\n')], { type: 'text/csv' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `scan-history-${slug(s.businessName || s.siteId)}.csv`; a.click();
+    };
+  }
+
   function renderActivityTab(body, s) {
     const act = s.activity || [];
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {

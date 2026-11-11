@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **148**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **149**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 147: styles v29, demo v1, engine v11, app v33).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 148: styles v30, demo v2, engine v11, app v34).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v27.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). **Delivered as a zip, maybe not uploaded yet:** 147 (demo mode).
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). **Delivered as a zip, maybe not uploaded yet:** 147 + 148 (demo mode, Dashboard; one zip).
 - **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
 - **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
@@ -151,7 +151,15 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - Limits: words quoted from a website's own text in an item can still hold a name the app never loaded (another shop's); towns in page paths are kept.
 - Help `demo`, What's New `2026-11-11-demo-mode`. Test: demo section at the end of `tests/tk/e2e_pagefit.py` (no real name/person/phone/agency in text or attributes, title swapped, stays on across pages, status change refused, name slip still reads as a slip, Exit restores).
 
-## Next: update 148 (agreed, NOT started)
+## Update 148 — audit Dashboard and scan history (built)
+
+- **Scan history:** `saveScan` in `api/store.js` appends `site.scans[]` (last 40): `{at, by, byName, tool:'Site Auditor', auto:true, cv, pages, counts{critical,outdated,warning,info}, total, cats{category:n}, groups{must,polish,length}, fixed, added, reopened}`. `aiResume` updates the last auto line instead of adding one. Audits scanned before 148 show one line made from `site.scan` until rescanned.
+- **Other tools:** store ops `compareAdd` {id, tool, date YYYY-MM-DD, critical, warning, info, total?, pages?, note} and `compareRemove` {id, at, tool} (only `auto:false` lines), both `site.scan` permission, logged as activity type `compare`. Up to 60 lines.
+- **Front end:** tab `#/site/<id>/dashboard` (📊 Dashboard, before Audit items), `renderDashboardTab`: tiles (open, critical open, % closed, Done, pages, scans), severity segmented bar (`--sev-*` tokens: status critical/serious/warning + neutral info, every part labelled), work status line, open-by-category and top-8 pages bars (`--viz-1`), scan history columns stacked by severity (other tools striped with a mask; hover/focus tooltip `#dbTip`), "since the first scan" line, history table (change vs the previous result of the SAME tool), add/remove another tool's result, CSV download.
+- demo.js v2 also blocks downloads started by `a.click()` on an anchor not in the page (CSV exports).
+- Help `dashboard`, What's New `2026-11-11-dashboard`. Test: Dashboard section in `tests/tk/e2e_pagefit.py`.
+
+## Next: update 149 (agreed, NOT started)
 
 - Technical SEO checks (no API): copy-paste/thin town pages, service + town in title/H1, robots.txt, sitemap, orphan pages, redirects, per-page canonical, schema by page type, image weight, Googlebot's 2 MB HTML limit, content hidden on mobile, invalid tags in `<head>`, non-`<a>` links, mobile pop-ups on load, text in background images. Then Search Console URL Inspection (free API).
 - Then (was 146/147):

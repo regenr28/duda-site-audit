@@ -507,6 +507,19 @@ export const HELP_SECTIONS = [
 </ol>`,
   },
   {
+    id: 'dashboard', group: 'Audits', title: 'Dashboard: what an audit found, and how it compares', audience: 'all',
+    html: `<p>Every audit has a <b>📊 Dashboard</b> tab: the findings at a glance, and a record of every scan so the next scan, or another tool, can be compared with it.</p>
+<ul>
+<li><b>Tiles</b>: open items, critical open, how much is closed, Done, pages scanned and how many scans are on record.</li>
+<li><b>Open items by severity</b>: one bar split into Critical, Outdated, Warning and Info, with the number of each and the work status (Open, For clarification, On hold, Done, False alarm), and how many are open on each list (Audit items, Design polish, SEO Lengths).</li>
+<li><b>Open items by category</b> and <b>Pages with the most open items</b>: where the work is. Each bar shows open items, and "/ n" how many were found in all.</li>
+<li><b>Scan history</b>: a column per scan, stacked by severity (hover or tab to a column for its numbers), a line saying what changed since the first scan, and a table with every scan: date, critical, warning, info, total, the change since the previous one, what was fixed and what was new.</li>
+<li><b>＋ Add another tool's result</b>: type in what Semrush, Ahrefs, Screaming Frog or a manual QA pass found (errors → Critical, warnings, notices → Info), with the date and a note. It sits in the history striped, and is only ever compared with an earlier result <b>from the same tool</b>, because every tool counts differently.</li>
+<li><b>⬇ Download as CSV</b>: the whole history, for a report or a spreadsheet.</li>
+</ul>
+<p class="small">Scans are recorded from this update on. An audit scanned before shows its last scan until it is scanned again.</p>`,
+  },
+  {
     id: 'demo', group: 'More', title: 'Demo mode: show the app without showing any client', audience: 'all',
     html: `<p>For a show and tell with a prospect or a new client: the whole app works as usual, but every <b>business name</b>, <b>person</b>, <b>phone</b>, <b>email</b>, <b>website address</b> and <b>street address</b> is swapped for a made-up one. Our own names (Detailers Roadmap, 8bit Creative) are swapped too.</p>
 <ul>

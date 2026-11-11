@@ -339,6 +339,9 @@
       const a = e.target.closest && e.target.closest('a[download]');
       if (a) { e.preventDefault(); e.stopPropagation(); say('Downloads are off in demo mode: they would contain the real details.'); }
     }, true);
+    // A file built in the page (CSV export) is clicked without ever being on the page: stop that too.
+    const oc = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () { if (this.hasAttribute('download')) { say('Downloads are off in demo mode: they would contain the real details.'); return; } return oc.call(this); };
     // Typing in a search box is the viewer's own words: leave them.
     document.addEventListener('input', (e) => { if (e.target && e.target.dataset) e.target.dataset.demoTyped = '1'; }, true);
     if (window.Notification) {
