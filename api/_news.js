@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-11-demo-mode', date: '2026-11-11', audience: 'all', tag: 'Everyone',
+    title: 'Demo mode: show the app to a prospect without showing any client',
+    what: 'Every business name, person, phone, email, website address and street address in the app is swapped for a made-up one (our own agency names too), pictures are blurred, comment text is hidden, and nothing can be saved. Only your browser changes.',
+    where: ['<b>Walkthrough:</b> your profile → <b>🎭 Start demo mode</b> (or open the app with <span class="mono">?demo=1</span>). Show what you need. <b>Exit demo</b> on the bar at the bottom when you are done.'],
+    link: '#/help/demo', linkText: 'How demo mode works',
+  },
+  {
     id: '2026-11-10-page-fit', date: '2026-11-10', audience: 'all', tag: 'Audits',
     title: 'Every page is read against its address: wrong service, wrong town, name slips and notes left in. "Lengths" is now "SEO Lengths"',
     what: 'A page built from a copy of a sister page can keep the sister\'s words. Scans now read each page\'s <b>address first</b>, then its SEO title, H1, meta description and copy: a <b>ceramic coating</b> page that is about <b>paint protection film</b>, or a <b>Temple</b> page whose H1 says <b>Copperas Cove</b>, is <b>critical</b>. The AI reads every page against its address too. Business name slips such as <b>"Ceramic Coating" for "Ceramic Coatings"</b> are caught even when Business Info has both, and are critical in an H1 or SEO title. Notes left in the copy (<b>"[Matthew: confirm this is free before publishing.]"</b>, a button that just says <b>"Button"</b>) are critical. The <b>📏 Lengths</b> tab is renamed <b>📏 SEO Lengths</b>.',

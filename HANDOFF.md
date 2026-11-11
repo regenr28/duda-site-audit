@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **147**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **148**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 146: styles v28, engine v11, app v32).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 147: styles v29, demo v1, engine v11, app v33).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v27.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,9 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 144 (commit `b64d352`). **Delivered as zips, maybe not uploaded yet:** 145 (watching and reviewing) and 146 (page vs address; its zip also carries 145's files). Check `git log origin/main` and ask Reymark if unsure.
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). **Delivered as a zip, maybe not uploaded yet:** 147 (demo mode).
+- **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
+- **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
 - **Harmless log noise:** red `[DEP0169] url.parse()` lines in Vercel's runtime logs are a Node 24 deprecation warning from outside the app's code. Requests succeed.
 - **Waiting on keys (Reymark adds them in Vercel):** `GOOGLE_MAPS_API_KEY` (Google Maps ID check, Online presence), PageSpeed key, a Google service account (GA4 + Search Console). Rotating the Anthropic/OpenAI keys was recommended.
@@ -140,6 +142,18 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - Contact details, other businesses' names, placeholder text, broken links, alt text, schema (the existing checks).
 - Biggest clients: rescan and read the critical list before telling the client the website is done.
 
-## Next: update 147 (agreed, NOT started)
+## Update 147 — demo mode (built)
+
+- `public/demo.js` (loaded before engine/app, `window.DemoMode`). On with `?demo=1` (removed from the address), the profile's **🎭 Start demo mode**, or Search "demo"; `localStorage dsa-demo` = end time (8 h). Off with the bar's **Exit demo** or `?demo=0`.
+- `api()` in app.js: in demo mode every non-GET goes through `DemoMode.allowWrite(path, body)` (allowed: auth logout/me, pulse, check, social, ops preview/help/test; answered quietly: seen/opened/read/checked/busy/seclog/presence/thumb; everything else refused with a "view-only" toast), and every JSON answer goes through `DemoMode.harvest(data)`.
+- `harvest` learns business names (businessName, names, company, customer…, `name` next to siteId/host/phones), people (`name` next to `email`, byName…; first names too), hosts (owner = that object's businessName), streets, cities and ZIPs from address objects. Fakes are stable per value (`twin()`): businesses "Summit Auto Spa" (one fake per business whatever the spelling; a spelling that differs from the main one in plural gets an extra "s" so name items still make sense), people "Alex Rivera", phones (555) 555-01xx, websites `<fake>.example`, agencies Detailers Roadmap → Northstar Growth, 8bit Creative → Pixelworks Agency. Emails, phones and web addresses are also caught by shape; social profile handles swapped; well-known platforms kept (`KEEP_HOST`).
+- A MutationObserver rewrites text nodes, title/alt/placeholder/aria-label/href/data-copy/data-tip/data-who, input values (made read-only), initials avatars, the tab title, clipboard writes, copy events and desktop notifications; hides `.c-body, .cmt-text, .tk-d-text, .quote` text; blocks `a[download]`. CSS (`html.demo-mode`) blurs images, iframes and background images; `.demo-bar` (top on phones).
+- Limits: words quoted from a website's own text in an item can still hold a name the app never loaded (another shop's); towns in page paths are kept.
+- Help `demo`, What's New `2026-11-11-demo-mode`. Test: demo section at the end of `tests/tk/e2e_pagefit.py` (no real name/person/phone/agency in text or attributes, title swapped, stays on across pages, status change refused, name slip still reads as a slip, Exit restores).
+
+## Next: update 148 (agreed, NOT started)
+
+- Technical SEO checks (no API): copy-paste/thin town pages, service + town in title/H1, robots.txt, sitemap, orphan pages, redirects, per-page canonical, schema by page type, image weight, Googlebot's 2 MB HTML limit, content hidden on mobile, invalid tags in `<head>`, non-`<a>` links, mobile pop-ups on load, text in background images. Then Search Console URL Inspection (free API).
+- Then (was 146/147):
 
 - The Tasks tab also gets **Projects** (projects in the Jaguars phase assigned to me) and **Special tasks** (one-off tasks an admin creates: title, notes, link, due date, assignee).

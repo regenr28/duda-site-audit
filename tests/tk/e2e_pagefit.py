@@ -119,6 +119,34 @@ try:
             if (S2.get('scan') or {}).get('finishedAt') != (S.get('scan') or {}).get('finishedAt') and (S2.get('scan') or {}).get('state') == 'complete': break
         check(SEEN['calls'] == calls, f'a rescan asks the AI nothing new ({SEEN["calls"] - calls} new calls)')
         check(len([f for f in S2['findings'] if f['code'].startswith(('PAGE_', 'AI_PAGE_'))]) == len([f for f in F if f['code'].startswith(('PAGE_', 'AI_PAGE_'))]), '…and the page-fit items are still there')
+        # ---- Demo mode: the same audit, nothing real on the screen ----
+        REAL = ['Harker Heights Ceramic', 'HARKER HEIGHTS CERAMIC', 'Reymark', 'reymark@', '8bitcreative', '8bit Creative', '(254)', '254-555', 'Dana Dev', 'Buff & Beyond', 'Detailers Roadmap']
+        def leaks(txt): return [w for w in REAL if w.lower() in txt.lower()]
+        pg.goto(f'http://localhost:{APORT}/?demo=1#/site/s1'); pg.wait_for_selector('table.findings', timeout=20000); time.sleep(1.2)
+        check(pg.is_visible('.demo-bar') and 'demo=1' not in pg.url, 'demo mode starts from ?demo=1, shows its bar, and tidies the address')
+        txt = pg.inner_text('body')
+        check(not leaks(txt), 'the audit page shows no real business name, person, phone or agency name: ' + ', '.join(leaks(txt)))
+        html = pg.evaluate("() => [...document.querySelectorAll('[title],[href],[alt]')].map(e => (e.getAttribute('title')||'') + ' ' + (e.getAttribute('href')||'') + ' ' + (e.getAttribute('alt')||'')).join(' ')")
+        check(not leaks(html), 'tooltips, links and alt text are swapped too: ' + ', '.join(leaks(html)))
+        check(pg.evaluate("() => document.title").lower().find('harker') < 0, 'the browser tab title is swapped')
+        pg.screenshot(path=os.path.join(OUT, 'demo-audit.png'))
+        pg.goto(f'http://localhost:{APORT}/#/'); time.sleep(1.5)
+        txt = pg.inner_text('body')
+        check(pg.is_visible('.demo-bar') and not leaks(txt), 'it stays on across pages (Audits list) with nothing real showing: ' + ', '.join(leaks(txt)))
+        pg.screenshot(path=os.path.join(OUT, 'demo-list.png'))
+        pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('#sStatus', timeout=20000); time.sleep(0.8)
+        before = pg.input_value('#sStatus')
+        pg.select_option('#sStatus', 'In progress'); time.sleep(1.2)
+        refused = 'view-only' in pg.inner_text('#toast')
+        pg.reload(); pg.wait_for_selector('#sStatus', timeout=20000); time.sleep(0.8)
+        after = pg.input_value('#sStatus')
+        check(refused and before == after == 'Not started', f'it is view-only: changing the status is refused and nothing is saved ({before!r} → {after!r})')
+        nv = pg.evaluate("() => [...document.querySelectorAll('table.findings tr')].map(r => r.innerText).find(t => t.includes('missing the final'))") or ''
+        m = re.search(r'Found: (.+)\n+Expected: (.+)', nv)
+        check(m and m.group(2).strip() == m.group(1).strip() + 's', 'the name slip still reads as a slip with made-up names ("X" found, "Xs" expected): ' + (repr(m.groups()) if m else repr(nv[-200:])))
+        pg.set_viewport_size({'width': 390, 'height': 844}); time.sleep(0.5); pg.screenshot(path=os.path.join(OUT, 'demo-phone.png')); pg.set_viewport_size({'width': 1440, 'height': 1000})
+        pg.click('#demoExit'); pg.wait_for_selector('table.findings', timeout=20000); time.sleep(1)
+        check(not pg.is_visible('.demo-bar') and 'Harker Heights Ceramic' in pg.inner_text('body'), 'Exit demo brings the real names back')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

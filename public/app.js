@@ -62,6 +62,9 @@
 
   // ---------- API ----------
   async function api(path, opts = {}) {
+    // Demo mode (public/demo.js) is view-only: a change is refused here, before it leaves the browser.
+    const demo = window.DemoMode && window.DemoMode.on();
+    if (demo && opts.method && opts.method !== 'GET') { const ok = window.DemoMode.allowWrite(path, opts.body); if (ok !== true) return ok; }
     // opts.site: the audit this call is for, so the server counts what it costs against that audit.
     const r = await fetch(path, Object.assign({ credentials: 'same-origin' }, opts, { headers: Object.assign({ 'Content-Type': 'application/json' }, viewHeaders(), opts.site ? { 'x-dsa-site': String(opts.site) } : {}, opts.headers || {}) }));
     // The server tells every response what version of "who may do what" it answered with.
@@ -70,6 +73,8 @@
     else if (av && !state.accessVer) state.accessVer = av;
     const ct = r.headers.get('content-type') || '';
     const data = ct.includes('json') ? await r.json() : await r.text();
+    // …and every answer teaches it the names, people and contact details to swap for made-up ones.
+    if (demo && data && typeof data === 'object') window.DemoMode.harvest(data);
     if (r.status === 401 && !path.startsWith('/api/auth')) { state.me = null; renderAuth(); throw new Error('Please sign in'); }
     if (r.status === 403 && data && data.disabled) { state.auth.mode = 'disabled'; state.me = null; renderAuth(); throw new Error(data.error); }
     if (r.status === 403 && data && data.pending) { state.auth.mode = 'pending'; state.me = null; renderAuth(); throw new Error(data.error); }
@@ -1362,8 +1367,11 @@
         <div class="small muted" style="margin-top:-4px">Uses your Slack account with the same email as here: <b>${esc(state.me.email)}</b>.</div>
         <button class="btn sm" id="meSlackTest" type="button" style="justify-self:start">Send a Slack test message</button>` : ''}
       ${notifyGrid()}</div>
+      <div class="demo-row"><div><b>🎭 Demo mode</b><div class="small muted">For a show and tell: every business, person and contact detail becomes a made-up one, pictures and comments are hidden, and nothing can be saved. Only this browser. Or open the app with <span class="mono">?demo=1</span>.</div></div>
+        <button class="btn sm" id="meDemo" type="button">${window.DemoMode && window.DemoMode.on() ? 'Exit demo mode' : 'Start demo mode'}</button></div>
       <footer><button class="btn danger" id="meOut">Sign out</button><span class="spacer"></span><button class="btn primary" id="meSave">Save</button></footer>`);
     $('#meOut').onclick = () => { closeModal(); logout(); };
+    $('#meDemo').onclick = () => window.DemoMode && window.DemoMode.toggle();
     $('#mePw').onclick = () => openChangePassword();
     const savePhoto = async (photo) => {
       try { const r = await post('/api/users', { op: 'photo', photo }); state.me = Object.assign(state.me, { photo: r.user.photo }); await loadUsers(); renderTop(); render(); toast(photo ? 'Photo saved' : 'Photo removed'); openMe(); }
@@ -6085,6 +6093,7 @@
     { icon: '🔴', label: 'Audits with critical items still open', words: 'critical open still urgent not fixed meeting check', filter: true, act: () => { state.filters.must = 'crit'; location.hash = '#/'; render(); }, help: 'polish' },
     { icon: '📏', label: 'SEO Lengths: titles, descriptions and alt text too long or short', words: 'seo length lengths long short title description alt text meta characters chars tidy later', filter: true, act: () => { location.hash = '#/'; }, help: 'polish' },
     { icon: '🎨', label: 'Design polish: inconsistent fonts and duplicate photos', words: 'design polish fonts typefaces duplicate photos pictures repeated images later not urgent', filter: true, act: () => { location.hash = '#/'; }, help: 'polish' },
+    { icon: '🎭', label: 'Demo mode: hide every name and contact for a show and tell', words: 'demo mode show and tell censor hide names blur anonymous fake presentation prospect screenshot privacy', act: () => window.DemoMode && window.DemoMode.toggle(), help: 'demo' },
     { icon: '🟢', label: 'Who is online now', words: 'online now active who is working', filter: true, act: () => { memFilter.view = 'online'; location.hash = '#/settings/team'; }, help: 'team' },
     { icon: '✏️', label: 'Members who need a full name', words: 'needs full name nickname one word name', filter: true, act: () => { memFilter.view = 'name'; location.hash = '#/settings/team'; }, perm: 'members.manage', help: 'admin-members' },
   ];

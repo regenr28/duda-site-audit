@@ -2095,3 +2095,20 @@ body.ro-site .drawer .status-btns, body.ro-site .drawer .pp-btn, body.ro-site .d
 .jg-ri-a { display: inline-flex; gap: 10px; margin-left: auto; }
 .jg-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 12px; }
 .jg-filter .btn.on { background: var(--accent-soft, var(--panel-2)); border-color: var(--accent); color: var(--text); }
+
+/* ---------- Demo mode (public/demo.js): made-up names, blurred pictures, view-only ---------- */
+.demo-bar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 9999; display: flex; align-items: center; gap: 12px;
+  max-width: calc(100vw - 32px); padding: 8px 8px 8px 14px; border-radius: 999px; background: #1f2937; color: #f9fafb; font-size: 13px; line-height: 1.35;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .25); }
+.demo-bar b { color: #fde68a; }
+.demo-bar button { flex: none; border: 0; border-radius: 999px; padding: 6px 12px; background: #fde68a; color: #1f2937; font: inherit; font-weight: 600; cursor: pointer; }
+.demo-bar button:hover { background: #fcd34d; }
+@media (max-width: 760px) { .demo-bar { top: 66px; bottom: auto; white-space: nowrap; padding: 5px 5px 5px 12px; font-size: 12px; } .demo-bar button { padding: 5px 10px; } .demo-bar .demo-more { display: none; } }
+/* Team photos, screenshots, client pictures and website previews: blurred, never shown */
+html.demo-mode #view img, html.demo-mode .modal img, html.demo-mode img.av-img, html.demo-mode .lightbox img,
+html.demo-mode iframe, html.demo-mode [style*="background-image"] { filter: blur(14px) grayscale(.4); }
+html.demo-mode img.av-img { filter: blur(4px) grayscale(1); }
+html.demo-mode iframe { pointer-events: none; }
+.demo-hidden-text { font-style: italic; color: var(--muted); }
+.demo-row { display: flex; align-items: center; gap: 12px; justify-content: space-between; padding: 10px 12px; border: 1px dashed var(--border, #d1d5db); border-radius: 10px; }
+.demo-row .btn { flex: none; }
