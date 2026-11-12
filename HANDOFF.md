@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **150**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **151**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,9 +16,9 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 149: styles v30, demo v2, engine v12, app v34).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 150: styles v31, demo v2, engine v13, app v35).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
-- **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v28.
+- **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
 - **AI:** `api/ai.js` (proofreading, wrong-page links, alt text, business name/location wording, verification pass). Answers cached 45 days in `aic:<hash>`. Several providers with fallbacks; the company app uses Anthropic/OpenAI keys, the copy uses free providers.
 - **Auto audit (live websites):** `api/_watch.js` reads the ~700 published websites (plain HTML) for contact-info discrepancies. Per-site result `cw:<dudaId>`, summary hash `cwsum` (`n` issues, `c` criticals). Cron in `api/watch.js` (also runs the "forms gone quiet" alert from `api/_leadkv.js`).
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). 147 + 148 are on GitHub (`81b756c`). **Delivered as a zip, maybe not uploaded yet:** 149 (look-alike characters).
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 149 on GitHub (`b9fe3f7`). **Delivered as a zip, maybe not uploaded yet:** 150 (colour contrast).
 - **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
 - **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
@@ -164,7 +164,15 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - engine.js `PIPE_LIKE`, `DASH_SEP`, `INVISIBLE`, `CHAR_NAME`, and `oddChars()` in `auditDocument` next to the spacing check: code `META_LOOKALIKE_CHAR` (warning, Meta / SEO, falls under the Meta exception group). SEO title: pipe look-alikes (│ ┃ ║ ∣ ❘ ｜ ǀ । …), dashes used as a separator (" – ", " — ", minus, Unicode hyphens), invisible characters (zero-width, soft hyphen, BOM). Meta description: pipe look-alikes and invisible characters only. `expected` = the text with plain " | " and invisible characters removed. Non-breaking spaces and a plain " - " are not flagged.
 - CHECK_RELEASES v28. Help `rules`, What's New `2026-11-12-lookalike-pipe`. Test: `/window-tint` and `/paint-correction` pages in `tests/tk/e2e_pagefit.py`.
 
-## Next: update 150 (agreed, NOT started)
+## Update 150 — colour contrast (built)
+
+- `api/_contrast.js` (`contrastScan(url, device)`, `judge()`): real Chrome (same launcher as `_shoot.js`, whose `chromePath`, `Pipe`, `sleep`, `within`, `SETTLE` are now exported), device pixel ratio 1, reduced motion. `COLLECT` lists every text node's element (its own line boxes via Range rects), buttons/links, and form fields (placeholder colour from `::placeholder`, typed-text colour after filling "Sample text", border, the ring just outside the field); `HIDE` makes all text transparent; the page is photographed in 1500px PNG strips and `MEASURE` (in the page, on a canvas) gives the 10th/50th/90th percentile luminance and mean colour behind each box. Needs: 4.5:1 normal, 3:1 large (24px / 18.66px bold), placeholder 4.5:1, field edge (border or fill vs surroundings) 3:1. Codes `CONTRAST_TEXT`, `CONTRAST_IMAGE` (varied background; Info when only the lightest/darkest part fails), `CONTRAST_PLACEHOLDER`, `CONTRAST_FIELD_TEXT`, `CONTRAST_FIELD_EDGE`; category Accessibility; `f.contrast = {fg, bg, ratio, worst, need, large, image, edge}`.
+- Endpoint: `POST /api/capture {op:'contrast', site, path, devices}` (team + `site.scan`), runs inside capture.js so it uses the Chromium bundle already configured there.
+- App: `contrastCheck()` after `aiDeepCheck` in a scan: real pages (no blog posts / thank-you), max 40, 3 at a time, desktop + mobile; merged with `mergeDevices` + `groupAcrossPages`. `scan.contrast` summary in the scan panel. Pages that failed (or Chrome missing) are sent as `notChecked: [{prefix:'CONTRAST_', pages}]`; `saveScan` then carries those items unchanged (never closed as fixed, never reopened). `ctrChip()` shows the two colours and the ratio. `CONTRAST_*` is full-rescan only and "unknown" in the live check.
+- Tests: `tests/tk/harness.mjs` now finds Playwright's installed Chromium itself (the old hard-coded path was wrong, which is why e2e_profile's picture failed); `tests/tk/fixsite.mjs` `/contrast-test` (gold form, gray text, white-on-yellow button, text over a parent's photo, text over a sibling overlay); checks in `tests/tk/e2e_pagefit.py`.
+- CHECK_RELEASES v29, Help `rules`, What's New `2026-11-12-contrast`.
+
+## Next: update 151 (agreed, NOT started)
 
 - Technical SEO checks (no API): copy-paste/thin town pages, service + town in title/H1, robots.txt, sitemap, orphan pages, redirects, per-page canonical, schema by page type, image weight, Googlebot's 2 MB HTML limit, content hidden on mobile, invalid tags in `<head>`, non-`<a>` links, mobile pop-ups on load, text in background images. Then Search Console URL Inspection (free API).
 - Then (was 146/147):

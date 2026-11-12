@@ -23,13 +23,33 @@ header a{color:#fff}
 <footer class="sec" id="1666500104"><p id="foot">Footer text © Buff &amp; Beyond</p></footer>
 <script>const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)e.target.classList.add('in')}));document.querySelectorAll('.fade').forEach(x=>io.observe(x));</script>
 </body></html>`;
+// Colour contrast cases: a gold form like a real client's (pale placeholders, borders that barely show),
+// light gray text, a button with white on yellow, text in a wrapper with no background over its
+// parent's photo, and text over an overlay layer that is a sibling, not a parent.
+const CONTRAST_PAGE = `<!doctype html><html><head><title>Contrast | Buff &amp; Beyond</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+body{margin:0;font-family:Arial,sans-serif;color:#222}.ok{padding:30px;background:#fff}
+.gold{background:linear-gradient(#b8954a,#7a5f2a);padding:30px;max-width:420px}.gold h2{color:#fff;font-size:30px}
+.gold input,.gold textarea{display:block;width:90%;margin:10px 0;padding:12px;font-size:18px;background:transparent;border:2px solid #c4a35a;color:#fff}
+.gold input::placeholder{color:#d9c08a}.gold label{color:#fff}
+.photo{position:relative;height:300px;background:url('/photo.svg') center/cover}.photo .wrap{position:absolute;top:40px;left:20px;right:20px}.photo p{color:#fff;font-size:16px}
+.layered{position:relative;height:200px}.layered .bg{position:absolute;inset:0;background:#f4f4f4}.layered .overlay{position:absolute;inset:0;background:rgba(255,255,255,.6)}
+.layered .content{position:relative;padding:40px}.layered .content p{color:#bbb}
+.btn{display:inline-block;background:#fc0;color:#fff;padding:12px 20px;text-decoration:none}
+</style></head><body>
+<div class="ok"><p id="good">This dark text on white is fine.</p><p style="color:#aaa" id="gray">This light gray text is too light.</p><a class="btn" href="#">Book now</a></div>
+<div class="gold" id="quote"><h2>GET A QUOTE TODAY</h2><input placeholder="First Name"><input placeholder="Email"><label>Service Interested In</label><textarea></textarea></div>
+<div class="photo"><div class="wrap"><p id="overphoto">This is a very long text over a photo with no background of its own.</p></div></div>
+<div class="layered"><div class="bg"></div><div class="overlay"></div><div class="content"><p id="sibling">Text over a sibling overlay layer, not a parent.</p></div></div>
+</body></html>`;
 http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/__version') { version = Number(u.searchParams.get('v')); return res.end('ok'); }
+  if (u.pathname === '/photo.svg') { res.setHeader('Content-Type', 'image/svg+xml'); return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="300"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#e8e2d0"/><stop offset="1" stop-color="#20304a"/></linearGradient></defs><rect width="800" height="300" fill="url(#g)"/></svg>'); }
   if (u.pathname === '/img.svg') { res.setHeader('Content-Type', 'image/svg+xml'); return setTimeout(() => res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#${(Number(u.searchParams.get('i')) * 1234567 % 0xffffff).toString(16).padStart(6, '0')}"/><text x="20" y="100" font-size="30">IMG ${u.searchParams.get('i')}</text></svg>`), 150); }
   const m = u.pathname.match(/^\/site\/abc123(\/.*)?$/);
   if (!m) { res.statusCode = 404; return res.end('nope'); }
   const p = (m[1] || '/').replace(/\/+$/, '') || '/';
+  if (p === '/contrast-test') { res.setHeader('Content-Type', 'text/html'); return res.end(CONTRAST_PAGE); }
   if (!['/', '/about'].includes(p)) { res.statusCode = 404; return res.end('<h1>Not found</h1>'); }
   res.setHeader('Content-Type', 'text/html'); res.end(page(p, u.searchParams.get('dm_device')));
 }).listen(port, () => console.log('fixture site on ' + port));

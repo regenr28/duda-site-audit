@@ -1,10 +1,23 @@
 // Starts fake Redis + fake Duda preview + the app's dev server, seeds people and one website.
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 export const RPORT = 8078, APORT = 3998, SPORT = 8093;
 export const APP = process.argv[2], TESTS = process.argv[3];
 export const ADMIN = 'reymark@8bitcreative.com', MEMBER = 'dev@8bitcreative.com', CLIENT = 'owner@buffandbeyond.com', CLIENT2 = 'other@elsewhere.com';
 export const TOK = { [ADMIN]: 'tokadmin1234567890abcdef', [MEMBER]: 'tokmember1234567890abcde', [CLIENT]: 'tokclient1234567890abcde', [CLIENT2]: 'tokclient2234567890abcde' };
+// Whichever Chromium Playwright installed on this machine (the folder name carries its build number).
+function findChrome() {
+  if (process.env.CAPTURE_CHROME_PATH) return process.env.CAPTURE_CHROME_PATH;
+  const root = '/opt/pw-browsers';
+  let dirs = []; try { dirs = fs.readdirSync(root); } catch (e) { return ''; }
+  for (const d of dirs.filter((x) => /^chromium_headless_shell-/.test(x)).concat(dirs.filter((x) => /^chromium-\d/.test(x)))) {
+    for (const sub of ['chrome-headless-shell-linux64/chrome-headless-shell', 'chrome-linux/headless_shell', 'chrome-linux64/chrome', 'chrome-linux/chrome']) {
+      if (fs.existsSync(`${root}/${d}/${sub}`)) return `${root}/${d}/${sub}`;
+    }
+  }
+  return '';
+}
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 export async function redis(...cmds) {
   const r = await fetch(`http://127.0.0.1:${RPORT}/pipeline`, { method: 'POST', body: JSON.stringify(cmds) });
@@ -31,7 +44,7 @@ export async function start() {
   await redis(...cmds);
   const db = process.env.FAKE_PG ? { SUPABASE_URL: `http://127.0.0.1:${RPORT}`, SUPABASE_SECRET_KEY: 'sb_secret_test' } : { KV_REST_API_URL: `http://127.0.0.1:${RPORT}`, KV_REST_API_TOKEN: 'x' };
   const env = Object.assign({}, process.env, db, { PORT: String(APORT), ADMIN_EMAILS: ADMIN, SUGGESTIONS_OWNER: ADMIN,
-    CAPTURE_CHROME_PATH: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', CAPTURE_PREVIEW_ORIGIN: `http://127.0.0.1:${SPORT}` });
+    CAPTURE_CHROME_PATH: findChrome(), CAPTURE_PREVIEW_ORIGIN: `http://127.0.0.1:${SPORT}` });
   const p = spawn('node', [APP + '/dev-server.js'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   p.stderr.on('data', (d) => process.stderr.write('[app] ' + d));
   procs.push(p);

@@ -362,6 +362,17 @@
         'Each item names the character and its code, and gives the title back with plain pipes to paste in',
       ],
     },
+    {
+      v: 29,
+      date: '2026-11-12',
+      title: 'Colour contrast (WCAG AA), measured on a picture of every page',
+      items: [
+        'Text, button and link text that is hard to read against what is behind it: 4.5:1 for normal text, 3:1 for large text (24px, or 18.66px bold)',
+        'Text over a photo, a gradient, a video or an overlay layer is measured against the picture itself, whichever element the background belongs to (a wrapper with no background inside a section with a photo is measured against the photo)',
+        'Forms: placeholder text (4.5:1), the text a visitor types (each field is typed into), and whether each field\u2019s border or fill stands out from what is around it (3:1)',
+        'Checked on desktop and mobile; each item shows both colours and the ratio',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */

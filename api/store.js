@@ -550,8 +550,14 @@ async function handler(req, res) {
         // 'recheck-gone': closed by a quick recheck of selected items. It is the same claim as a rescan
         // closing it, so if a full scan finds it again it reopens the same way.
         const autoClosed = (st) => st && st.status === 'done' && ['rescan-gone', 'check-corrected', 'recheck-gone'].includes(st.auto);
+        // Checks that could not run this time (the contrast check needs a page browser, which can be
+        // busy or switched off): their items stay exactly as they were, never closed as fixed.
+        const notChecked = [].concat(b.notChecked || []).filter((x) => x && x.prefix);
+        const carried = new Set();
+        const skipped = (f) => notChecked.some((x) => String(f.code).startsWith(x.prefix) && (x.pages === '*' || (f.pages && f.pages.length ? f.pages : [f.path || '/']).some((pg) => [].concat(x.pages || []).includes(pg))));
         before.forEach((f) => {
           if (nowIds.has(f.id) || taken.has(f.id)) return;
+          if (!f.gone && skipped(f)) { site.findings.push(f); nowIds.add(f.id); carried.add(f.id); return; }
           // Already closed by this mechanism on an earlier scan: carried along until it ages out.
           if (f.gone) { if (Date.now() - Date.parse(f.gone.at) < KEEP_GONE_MS) site.findings.push(f); return; }
           const where = (f.pages && f.pages.length ? f.pages : [f.path || '/']).map(normP);
@@ -577,7 +583,7 @@ async function handler(req, res) {
         // "AI check pending" items checked by hand are carried back by the browser, not found again.
         let backN = 0; const stillBy = {};
         site.findings.forEach((f) => {
-          if (f.gone || f.manual) return;
+          if (f.gone || f.manual || carried.has(f.id)) return;
           const from = movedFrom[f.id];
           const cur = from ? prevSt[from.id] : prevSt[f.id];
           if (autoClosed(cur)) {

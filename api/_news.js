@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-12-contrast', date: '2026-11-12', audience: 'all', tag: 'Checks',
+    title: 'Colour contrast is checked: text, buttons and forms, even over photos and gradients',
+    what: 'Scans now draw every page in a real browser (desktop and mobile), hide the text, photograph what is behind it and measure the contrast (WCAG AA). That catches pale <b>placeholders</b>, <b>typed text</b> and <b>field borders</b> that barely show in a form, light gray text, white on yellow buttons, and text over a <b>background photo or gradient</b> even when the photo belongs to a parent section or an overlay layer. Each item shows both colours and the ratio.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>Rescan</b> → Audit items, category <b>Accessibility</b>. The scan panel says how many pages were measured.'],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
     id: '2026-11-12-lookalike-pipe', date: '2026-11-12', audience: 'all', tag: 'Checks',
     title: 'Look-alike pipes, dashes and invisible characters in SEO titles are caught',
     what: 'A title like "Window Tint <b>│</b> Temple" looks right in the editor, but that "│" is a box-drawing symbol, not the keyboard pipe "|": screen readers read it differently, find and replace misses it, and Google may rewrite the title. Scans now flag it, along with en/em dashes used as title separators and invisible characters, name each one, and give the fixed title to paste in. Thanks to QA for spotting it.',

@@ -6802,6 +6802,8 @@
       const aiAlt = await aiAltCheck(res, id, log);
       const aiText = await aiTextCheck(res, id, log, aiAlt && aiAlt.paused);
       const aiMore = await aiDeepCheck(res, id, log, (aiText && aiText.paused) || (aiAlt && aiAlt.paused));
+      // Colour contrast, read off a real picture of each page (server-side Chrome).
+      const ctr = await contrastCheck(res, id, log);
       // Text that is in the page code but hidden by the page's own styles: kept, as information.
       state.scanning[id] = Object.assign({}, state.scanning[id], { message: 'Checking which text visitors actually see…' }); renderProgress(id);
       await markHiddenText(res, async (path, device) => sApi('/api/fetch?' + new URLSearchParams({ host, site: site.siteId, path, device })), log, host).catch((e) => log.push('Visibility check: ' + e.message));
@@ -6826,9 +6828,9 @@
       const corrected = [...A.fixedSince((site.scan && site.scan.cv) || 1)];
       const lastDone = (site.scan && site.scan.finishedAt) || '';
       Object.values(state.fixedChecks || {}).forEach((x) => { if (x && x.code && lastDone && x.at > lastDone && !corrected.includes(x.code)) corrected.push(x.code); });
-      const sum = await store({ op: 'saveScan', id, corrected, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
+      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
-        scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary },
+        scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
       } });
       upsertSummary(sum);
       toast(`Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
@@ -6957,6 +6959,47 @@
     // A lead button opening a contact / quote / booking page is what it should do.
     if (A.LEAD_WORDS.test(l.text) && /contact|quote|estimate|book|schedul|appoint|reach|enquir|inquir/i.test([l.to, dest && dest.title, dest && dest.h1].join(' '))) return false;
     return true;
+  }
+  /**
+   * Colour contrast (WCAG AA) on every real page, desktop and mobile: text, buttons, links, form
+   * placeholders, typed text and field edges. Each page is drawn in a real Chrome on the server and
+   * the colour behind every piece of text is read off a picture of it, so text over a photo, a
+   * gradient or an overlay that belongs to another element is measured as a visitor sees it.
+   * Blog posts share one template, so they are left out; very large websites stop at 40 pages.
+   * Pages that could not be measured are sent back as "not checked", so their earlier contrast
+   * items are kept as they are rather than closed as fixed.
+   */
+  const CONTRAST_MAX_PAGES = 40;
+  async function contrastCheck(res, id, log) {
+    const pages = (res.pages || []).filter((p) => !p.notFound && !p.error && !/\/(blog|blogs|post|posts|news)\//i.test(p.path) && !A.isThankYouPath(p.path)).map((p) => p.path);
+    const todo = pages.slice(0, CONTRAST_MAX_PAGES);
+    const failed = []; let measured = 0, done = 0, stop = '';
+    const raw = [];
+    const one = async (path) => {
+      if (stop) { failed.push(path); return; }
+      try {
+        const r = await post('/api/capture', { op: 'contrast', site: id, path, devices: ['desktop', 'mobile'] });
+        (r.items || []).forEach((f) => raw.push(f));
+        measured += r.measured || 0;
+        if ((r.errors || []).length) {
+          failed.push(path);
+          if ((r.errors || []).some((e) => /not set up|could not start|did not start/i.test(e))) stop = r.errors[0].replace(/^\w+: /, '');
+        }
+      } catch (e) { failed.push(path); if (e.status === 403) stop = e.message; }
+      done++;
+      state.scanning[id] = Object.assign({}, state.scanning[id], { message: `🎨 Checking colour contrast ${done}/${todo.length} pages` }); renderProgress(id);
+    };
+    for (let k = 0; k < todo.length; k += 3) await Promise.all(todo.slice(k, k + 3).map(one));
+    if (raw.length) {
+      const items = A.groupAcrossPages(A.mergeDevices(raw.map((f) => Object.assign({ visible: true, hiddenBy: '' }, f))));
+      const have = new Set(res.findings.map((f) => f.id));
+      items.forEach((f) => { if (!have.has(f.id)) res.findings.push(f); });
+    }
+    if (stop) log.push('Colour contrast was not checked: ' + stop);
+    else if (failed.length) log.push(`Colour contrast: ${failed.length} page(s) could not be measured (${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}); their earlier contrast items are kept as they were.`);
+    if (pages.length > todo.length) log.push(`Colour contrast was measured on the first ${todo.length} of ${pages.length} pages.`);
+    const notChecked = stop ? [{ prefix: 'CONTRAST_', pages: '*' }] : failed.length ? [{ prefix: 'CONTRAST_', pages: failed }] : [];
+    return { notChecked, summary: { pages: todo.length - failed.length, of: pages.length, items: raw.length, pieces: measured, skipped: stop || '' } };
   }
   async function aiDeepCheck(res, id, log, pausedAlready) {
     if (!state.ai || !state.ai.enabled) return null;
@@ -8964,6 +9007,14 @@
   // =====================================================================
   // COMMENTS
   // =====================================================================
+  /** A contrast item shows the two colours, as they are, with the ratio. */
+  function ctrChip(f) {
+    const c = f && f.contrast; if (!c) return '';
+    const ok = (h) => /^#[0-9a-f]{6}$/i.test(String(h || ''));
+    if (!ok(c.fg) || !ok(c.bg)) return '';
+    return `<div class="kv ctr-chip"><span class="ctr-sw" style="color:${c.fg};background:${c.bg}${c.edge ? `;box-shadow:inset 0 0 0 3px ${c.fg}` : ''}" aria-hidden="true">${c.edge ? '' : 'Aa'}</span>
+      <span><b>${esc(String(c.ratio))}:1</b> <span class="faint">needs ${esc(String(c.need))}:1</span>${c.image ? ' <span class="faint">· over an image or gradient</span>' : ''}</span></div>`;
+  }
   function renderComment(c, site, opts = {}) {
     if (c.deleted) return `<div class="comment deleted" id="c-${esc(c.id)}"><div class="c-body faint small">Comment deleted${c.deletedAt ? ' · ' + esc(ago(c.deletedAt)) : ''}</div></div>`;
     const f = site && c.target && c.target !== 'site' ? (site.findings || []).find((x) => x.id === c.target) : null;
@@ -9455,7 +9506,8 @@
         const isAI = !!f.ai;
         const present = liveKeys.has(vKey(f));
         // Only items marked Done are verified. Open items aren't judged: the live site can differ from the preview
-        if (f.status === 'done') results[f.id] = present ? 'still' : (isAI && aiGap ? 'unknown' : 'ok');
+        // The live check reads the code only; colour contrast needs a picture of the page, so it can't say.
+        if (f.status === 'done') results[f.id] = /^CONTRAST_/.test(f.code) ? 'unknown' : present ? 'still' : (isAI && aiGap ? 'unknown' : 'ok');
       });
       const sum = await store({ op: 'saveVerify', id: s.id, verify: { domain: info.domain, publishedAt: info.publishedAt, pages: res.pages.length, results } });
       upsertSummary(sum);
@@ -9470,7 +9522,7 @@
   // Checks that compare the whole website (duplicate titles across pages, the font system, repeated
   // photos, the favicon, a name found on one page and searched for on every other) cannot be judged
   // from a few pages: they would vanish simply because the rest was not read. Those need a full Rescan.
-  const RECHECK_SITE_WIDE = /^(PAGE_WRONG_CITY|PAGE_WRONG_CITY_BODY|AI_PAGE_[A-Z]+|META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_[A-Z_]+|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR)$/;
+  const RECHECK_SITE_WIDE = /^(CONTRAST_[A-Z_]+|PAGE_WRONG_CITY|PAGE_WRONG_CITY_BODY|AI_PAGE_[A-Z]+|META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_[A-Z_]+|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR)$/;
   const RECHECK_MAX_PAGES = 12;
   // Rows ticked in the audit items table, for acting on several at once.
   const pick = { site: '', ids: new Set() };
@@ -10211,7 +10263,7 @@
         <div class="small" style="margin-top:3px">The business details on this website’s project come from the document the client supplied, so they are what every item below is measured against. Duda’s own Business Info is still accepted — nothing is flagged for using a value Duda holds.</div></div>` : ''}
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${scanBadge(s)}${state.scanning[s.id] || otherClaim(s.id) ? `<div class="small muted" style="margin-top:6px">${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to.</div>` : ''}</div><div id="aiCredits">${aiCreditsHtml()}</div></div>
-        ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
+        ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${sc.contrast ? (sc.contrast.skipped ? '<span title="' + esc(sc.contrast.skipped) + '">contrast not checked</span> · ' : `contrast on ${sc.contrast.pages}${sc.contrast.of > sc.contrast.pages ? '/' + sc.contrast.of : ''} pages · `) : ''}${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<details class="scan-more"${uiOpen('scanai') ? ' open' : ''} data-ui="scanai"><summary class="small">${aiShort(sc.ai)} <span class="faint">· details</span></summary><div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Business name and location: <b>${sc.ai.text.blocks}</b> blocks that mention a name, a place or contact details checked${sc.ai.text.skipped ? ` <span class="faint" title="These blocks contain no business name, place or contact detail, so there is nothing in them for this check to get wrong. They are still proofread.">(the other ${sc.ai.text.skipped} have none)</span>` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
             ${sc.ai.fit ? ` Read <b>${sc.ai.fit.pages}</b> pages against their address (service, town, name): <b>${sc.ai.fit.flagged}</b> new item${sc.ai.fit.flagged === 1 ? '' : 's'}.` : ''}
@@ -10315,7 +10367,7 @@
                 <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
               <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>${gbpIdNote(s, f)}${f.hiddenLive ? `<div><span class="badge subtle" title="Hidden by the page's own styles (${esc(f.hiddenLive)}): visitors don't see it, but it is in the page's code, which Google and SEO tools read">👁 Hidden on the page</span></div>` : ''}
-                ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
+                ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}${ctrChip(f)}
                 ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
               <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
@@ -10867,7 +10919,7 @@
         ${f.challenge ? `<div class="note bad" style="margin-top:10px"><b>Reopened by ${esc(f.challenge.byName || f.challenge.by)}</b> — ${f.challenge.was === 'done' ? 'was marked Done, but it is still wrong' : 'was called a False alarm, but it is real'}
           <div class="pj-note">${esc(f.challenge.why)}</div>
           <div class="small faint">${esc(fmtWhen(Date.parse(f.challenge.at)))}${f.challenge.of ? ` · ${esc(nameOf(f.challenge.of))} was told` : ''}</div></div>` : ''}
-        ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}
+        ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}
         ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
         ${isCorrected(s, f) ? `<div class="note fixed-checks" style="margin-top:10px"><b>⚠ The check that produced this item has since been corrected.</b>

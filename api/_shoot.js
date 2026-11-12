@@ -19,7 +19,7 @@ import { DEVICES } from './_devices.js';
 export { DEVICES };
 export const MAX_HEIGHT = 16000;   // CSS pixels; anything longer is cut, and the picture says so
 
-async function chromePath() {
+export async function chromePath() {
   if (process.env.CAPTURE_CHROME_PATH) {
     return { exe: process.env.CAPTURE_CHROME_PATH, args: ['--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-zygote'] };
   }
@@ -38,7 +38,7 @@ async function chromePath() {
 }
 
 /** A minimal Chrome DevTools Protocol client over --remote-debugging-pipe (messages end with \0). */
-class Pipe {
+export class Pipe {
   constructor(proc) {
     this.proc = proc; this.n = 0; this.wait = new Map(); this.subs = new Set(); this.dead = null;
     this.out = proc.stdio[3]; const inp = proc.stdio[4];
@@ -73,11 +73,11 @@ class Pipe {
   on(f) { this.subs.add(f); return () => this.subs.delete(f); }
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const within = (p, ms, label) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(label || 'Timed out')), ms))]);
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const within = (p, ms, label) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(label || 'Timed out')), ms))]);
 
 /** Runs in the page: scroll through once so late pictures and scroll-in sections appear. */
-const SETTLE = `(async (MAX) => {
+export const SETTLE = `(async (MAX) => {
   const H = () => Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
   document.querySelectorAll('img[loading="lazy"]').forEach((i) => { i.loading = 'eager'; });
   const step = Math.max(300, Math.round(innerHeight * 0.75));

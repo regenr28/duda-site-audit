@@ -47,6 +47,7 @@ PAGES = {
     '/fort-hood-window-tint-law': ('Fort Hood Window Tint Law', '<h1>Fort Hood Window Tint Law</h1><p>Window tint inspections on post are free for soldiers. [Matthew: confirm this is free before publishing.]</p><div class="dmButton"><span>Button</span></div>'),
     '/window-tint': ('Window Tint \u2502 Harker Heights \u2013 Ceramic\u200b Coatings', '<h1>Window Tint</h1><p>Window tint for every car. Tint that keeps the cabin cool.</p>'),
     '/paint-correction': ('Paint Correction | Harker Heights Ceramic Coatings', '<h1>Paint Correction</h1><p>Paint correction removes swirls \u2014 the kind a car wash leaves.</p>'),
+    '/contrast-test': ('Get a Quote | Harker Heights Ceramic Coatings', '<h1>Get a Quote</h1><p>Contrast cases are on the preview server.</p>'),
     '/ceramic-coating': ('Ceramic Coating | Harker Heights Ceramic Coatings', '<h1>Ceramic Coating</h1>' + CER + '<p>Pair it with PPF on the front end.</p>'),
 }
 def page_html(path):
@@ -128,6 +129,23 @@ try:
             check('box-drawing line "\u2502" (U+2502)' in m and 'en dash' in m and 'zero-width space' in m and 'keyboard pipe' in m, 'it names each character (box-drawing line, en dash used as a separator, zero-width space)')
             check(lk[0].get('expected') == 'Window Tint | Harker Heights | Ceramic Coatings', 'and gives the title with plain pipes and the invisible character removed: ' + repr(lk[0].get('expected')))
             check(lk[0]['severity'] == 'warning' and lk[0]['category'] == 'Meta / SEO', 'it is a Meta / SEO warning on Audit items')
+        # ---- Colour contrast (measured on the preview server's /contrast-test page) ----
+        ct = [f for f in F if f['code'].startswith('CONTRAST_')]
+        for f in ct: print('   ', f['code'], f['severity'], f.get('devices'), '|', f['message'][:110], '|', (f.get('found') or '')[:50])
+        sc = (S.get('scan') or {}).get('contrast') or {}
+        check(sc.get('pages', 0) >= 1, f'the scan measured colour contrast with a real browser: {sc}')
+        def ctr(code, word): return [f for f in ct if f['code'] == code and word in (f.get('message', '') + f.get('found', ''))]
+        check(ctr('CONTRAST_PLACEHOLDER', 'First Name') and ctr('CONTRAST_PLACEHOLDER', 'Email'), 'pale placeholders in the gold form are raised (placeholder text needs 4.5:1)')
+        check(ctr('CONTRAST_FIELD_TEXT', 'First Name'), 'what a visitor types into the gold form is measured too (the fields are typed into)')
+        check(ctr('CONTRAST_FIELD_EDGE', 'First Name') and ctr('CONTRAST_FIELD_EDGE', 'Service Interested In'), 'field borders that barely show are raised (3:1), the textarea named by the words above it')
+        check(ctr('CONTRAST_TEXT', 'light gray') and ctr('CONTRAST_TEXT', 'Book now'), 'light gray text and white-on-yellow button text are raised')
+        check(ctr('CONTRAST_IMAGE', 'over a photo'), 'text in a wrapper with no background, over its parent\'s photo, is measured against the photo')
+        check(ctr('CONTRAST_TEXT', 'sibling overlay'), 'text over an overlay that is a sibling (not a parent) is measured against what is really behind it')
+        check(not any('dark text on white' in (f.get('found') or '') for f in ct) and not any('GET A QUOTE' in (f.get('found') or '') for f in ct), 'text that passes (dark on white, large white heading on gold) is not raised')
+        g = ctr('CONTRAST_PLACEHOLDER', 'First Name')
+        check(g and g[0].get('contrast', {}).get('need') == 4.5 and sorted(g[0].get('devices') or []) == ['desktop', 'mobile'], 'items carry both colours and the ratio, and are measured on desktop and mobile')
+        sc_log = ' '.join((S.get('scan') or {}).get('log') or [])
+        check('could not be measured' in sc_log, 'pages the browser could not open are said in the scan notes (and their contrast items are kept)')
 
         # ---- Dashboard ----
         pg.goto(f'http://localhost:{APORT}/#/site/s1/dashboard'); pg.wait_for_selector('.db-tiles', timeout=20000); time.sleep(0.6)

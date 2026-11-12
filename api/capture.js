@@ -6,6 +6,7 @@
 // GET  /api/capture?op=slice&cap=&i=                → slice i, as an image
 // POST /api/capture { op:'shoot', site, device, path, fresh }   → take a new picture (or reuse a fresh one)
 // POST /api/capture { op:'upload', site, data, type, w, h }     → the client's own screenshot, used as the page
+// POST /api/capture { op:'contrast', site, path, devices:[…] }   → the team, during a scan: text, button and form contrast on that page (see _contrast.js)
 // POST /api/capture { op:'test', site? }                         → admins: check pictures work on this server
 // GET  /api/capture?op=thumb&site=<duda id>                      → the team: a website's small thumbnail (image)
 // POST /api/capture { op:'thumb', site:<duda id>, pub }          → the team: take it if missing, or older than its last publish / a week
@@ -13,9 +14,10 @@
 //
 // `site` is always the website's record id in this app; the page itself is opened on the Duda
 // preview of that website's draft, so it shows what the team is working on, not just what is live.
-import { metered, redis, P, newId, now, globalLog, readBody } from './_lib.js';
+import { metered, redis, P, newId, now, globalLog, readBody, can } from './_lib.js';
 import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today, cleanPath, siteRec, previewUrl, getTickets, putTicketCmd, keepCapCmds, cleanReplay } from './_tickets.js';
 import { shoot, DEVICES } from './_shoot.js';
+import { contrastScan } from './_contrast.js';
 
 const CLIENT_SHOTS_PER_DAY = 60;
 const MAX_UPLOAD = 3 * 1024 * 1024;   // a request body can be at most about 4.5 MB once encoded
@@ -86,6 +88,27 @@ async function handler(req, res) {
   const op = String((req.method === 'GET' ? req.query.op : b.op) || '');
   try {
     if (op === 'thumb') return await thumbOp(req, res, w, b);
+    if (op === 'contrast') {
+      // Part of a scan: only someone who may scan, on a website they can open.
+      if (!w.team || !(await can(w.me, 'site.scan'))) return res.status(403).json({ error: 'Your role does not allow running scans.' });
+      const site = String(b.site || '');
+      if (!mayseeSite(w, site)) return res.status(404).json({ error: 'Not found' });
+      const path = cleanPath(b.path);
+      if (!path) return res.status(400).json({ error: 'That page address is not valid.' });
+      const rec = await siteRec(site);
+      if (!rec) return res.status(404).json({ error: 'Not found' });
+      const devices = [].concat(b.devices || ['desktop']).filter((d) => DEVICES[d]).slice(0, 3);
+      const out = { items: [], measured: 0, errors: [] };
+      for (const device of devices) {
+        try {
+          const { url } = await previewUrl(rec, path, device);
+          const r = await contrastScan(url, device, { timeout: Math.floor(100000 / devices.length) });
+          r.items.forEach((f) => { f.path = path; });
+          out.items.push(...r.items); out.measured += r.measured;
+        } catch (e) { out.errors.push(`${device}: ${e.message}`); }
+      }
+      return res.status(200).json(out);
+    }
     if (req.method === 'GET') {
       if (op === 'latest') {
         const site = String(req.query.site || '');
