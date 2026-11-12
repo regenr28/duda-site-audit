@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-12-lookalike-pipe', date: '2026-11-12', audience: 'all', tag: 'Checks',
+    title: 'Look-alike pipes, dashes and invisible characters in SEO titles are caught',
+    what: 'A title like "Window Tint <b>│</b> Temple" looks right in the editor, but that "│" is a box-drawing symbol, not the keyboard pipe "|": screen readers read it differently, find and replace misses it, and Google may rewrite the title. Scans now flag it, along with en/em dashes used as title separators and invisible characters, name each one, and give the fixed title to paste in. Thanks to QA for spotting it.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>Rescan</b> → Audit items, category <b>Meta / SEO</b>: "The SEO title has a look-alike character…". Copy the <b>Expected</b> title into Duda\'s SEO settings for that page.'],
+    link: '#/help/rules', linkText: 'What the checks look for',
+  },
+  {
     id: '2026-11-11-dashboard', date: '2026-11-11', audience: 'all', tag: 'Audits',
     title: 'Every audit has a Dashboard: findings at a glance, and every scan compared',
     what: 'A new <b>📊 Dashboard</b> tab on each audit: open and critical items, how much is closed, open items by severity, category and page, and a <b>scan history</b> with a column per scan and a table of what changed. Results from <b>other tools</b> (Semrush, Ahrefs, Screaming Frog…) can be added by hand to compare, and the history downloads as CSV.',

@@ -45,6 +45,8 @@ PAGES = {
     '/locations/georgetown-tx/paint-protection-film': ('Paint Protection Film Georgetown, TX', '<h1>Harker Heights Ceramic Coating - Georgetown Paint Protection Film</h1><p>PPF in Georgetown, installed by Harker Heights Ceramic Coatings.</p>'),
     '/locations/belton-tx/window-tint': ('Window Tint in Belton, TX', '<h1>Window Tint in Belton</h1><p>Our team will keep your paint glossy for years in Belton.</p>'),
     '/fort-hood-window-tint-law': ('Fort Hood Window Tint Law', '<h1>Fort Hood Window Tint Law</h1><p>Window tint inspections on post are free for soldiers. [Matthew: confirm this is free before publishing.]</p><div class="dmButton"><span>Button</span></div>'),
+    '/window-tint': ('Window Tint \u2502 Harker Heights \u2013 Ceramic\u200b Coatings', '<h1>Window Tint</h1><p>Window tint for every car. Tint that keeps the cabin cool.</p>'),
+    '/paint-correction': ('Paint Correction | Harker Heights Ceramic Coatings', '<h1>Paint Correction</h1><p>Paint correction removes swirls \u2014 the kind a car wash leaves.</p>'),
     '/ceramic-coating': ('Ceramic Coating | Harker Heights Ceramic Coatings', '<h1>Ceramic Coating</h1>' + CER + '<p>Pair it with PPF on the front end.</p>'),
 }
 def page_html(path):
@@ -119,6 +121,14 @@ try:
             if (S2.get('scan') or {}).get('finishedAt') != (S.get('scan') or {}).get('finishedAt') and (S2.get('scan') or {}).get('state') == 'complete': break
         check(SEEN['calls'] == calls, f'a rescan asks the AI nothing new ({SEEN["calls"] - calls} new calls)')
         check(len([f for f in S2['findings'] if f['code'].startswith(('PAGE_', 'AI_PAGE_'))]) == len([f for f in F if f['code'].startswith(('PAGE_', 'AI_PAGE_'))]), '…and the page-fit items are still there')
+        lk = [f for f in F if f['code'] == 'META_LOOKALIKE_CHAR']
+        check(len(lk) == 1 and lk[0]['path'] == '/window-tint', 'look-alike characters in an SEO title are raised once, on that page only (a plain "|" title is fine)')
+        if lk:
+            m = lk[0]['message']; print('   ', m, '→', lk[0].get('expected'))
+            check('box-drawing line "\u2502" (U+2502)' in m and 'en dash' in m and 'zero-width space' in m and 'keyboard pipe' in m, 'it names each character (box-drawing line, en dash used as a separator, zero-width space)')
+            check(lk[0].get('expected') == 'Window Tint | Harker Heights | Ceramic Coatings', 'and gives the title with plain pipes and the invisible character removed: ' + repr(lk[0].get('expected')))
+            check(lk[0]['severity'] == 'warning' and lk[0]['category'] == 'Meta / SEO', 'it is a Meta / SEO warning on Audit items')
+
         # ---- Dashboard ----
         pg.goto(f'http://localhost:{APORT}/#/site/s1/dashboard'); pg.wait_for_selector('.db-tiles', timeout=20000); time.sleep(0.6)
         tiles = pg.inner_text('.db-tiles')

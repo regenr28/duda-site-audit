@@ -351,6 +351,17 @@
         'Notes left in the copy: \u201c[Matthew: confirm this is free before publishing.]\u201d, \u201c\u2026 before publishing\u201d, \u201cnote to client\u201d, \u201cinsert \u2026 here\u201d, and Duda\u2019s own default labels (a button that just says \u201cButton\u201d)',
       ],
     },
+    {
+      v: 28,
+      date: '2026-11-12',
+      title: 'Look-alike characters in SEO titles and meta descriptions',
+      items: [
+        'A character that looks like the keyboard pipe "|" but is not (the box-drawing "\u2502" from copy and paste or AI-written text, the full-width "\uff5c" and others) in an SEO title or meta description. Screen readers read it differently, find and replace misses it, and Google is more likely to rewrite the title',
+        'En dashes, em dashes and other look-alike dashes used as a separator in an SEO title (" \u2013 ", " \u2014 "): the separator is the keyboard pipe "|"',
+        'Invisible characters (zero-width space, soft hyphen, byte-order mark) in an SEO title or meta description',
+        'Each item names the character and its code, and gives the title back with plain pipes to paste in',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -422,6 +433,17 @@
   ];
   // A Duda element whose own default label was never changed: a button that just says "Button".
   const DEFAULT_LABEL = /^(?:Button|New Button|Button Text|Button Label|Heading|New Heading|Subtitle|Sub Title|Paragraph|New Paragraph|Caption|Image Caption|Image Title|Title Here|Your Title|Text Here|Your Text Here|Link Text|Label)$/;
+
+  // Characters that look like the keyboard pipe "|", dashes used as title separators, and invisible characters.
+  const PIPE_LIKE = /[\u2502\u2503\u2551\u23d0\u23ae\u2223\u2758\u2759\u275a\u01c0\u05c0\u0964\u0965\uff5c\uffe8\ufe31\ufe32\u2016\u23b8\u23b9\u2adb\u2af4\u2af5\u2af6]/g;
+  const DASH_SEP = /\s([\u2013\u2014\u2012\u2015\u2010\u2011\u2212\ufe58\ufe63\uff0d])\s/g;
+  const INVISIBLE = /[\u200b-\u200f\u2060\ufeff\u00ad]/g;
+  const CHAR_NAME = { '\u2502': 'box-drawing line', '\u2503': 'heavy box-drawing line', '\u2551': 'double box-drawing line', '\u23d0': 'vertical line extension', '\u23ae': 'integral extension',
+    '\u2223': '"divides" symbol', '\u2758': 'ornament bar', '\u2759': 'ornament bar', '\u275a': 'ornament bar', '\u01c0': 'click letter', '\u05c0': 'Hebrew paseq', '\u0964': 'danda', '\u0965': 'double danda',
+    '\uff5c': 'full-width pipe', '\uffe8': 'half-width bar', '\ufe31': 'vertical dash', '\ufe32': 'vertical dash', '\u2016': 'double vertical line',
+    '\u2013': 'en dash', '\u2014': 'em dash', '\u2012': 'figure dash', '\u2015': 'horizontal bar', '\u2010': 'Unicode hyphen', '\u2011': 'non-breaking hyphen', '\u2212': 'minus sign', '\ufe58': 'small em dash', '\ufe63': 'small hyphen', '\uff0d': 'full-width hyphen',
+    '\u200b': 'zero-width space', '\u200c': 'zero-width non-joiner', '\u200d': 'zero-width joiner', '\u200e': 'left-to-right mark', '\u200f': 'right-to-left mark', '\u2060': 'word joiner', '\ufeff': 'byte-order mark',
+    '\u00ad': 'soft hyphen', '\u00a0': 'non-breaking space', '\u202f': 'narrow non-breaking space', '\u2007': 'figure space' };
 
   const PHONE_RE = /(?<![\d$.,])(?:\+?1[\s.\-]?)?\(?([2-9]\d{2})\)?[\s.\-]{0,2}(\d{3})[\s.\-](\d{4})(?![\d])/g;
   const EMAIL_RE = /[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/gi;
@@ -1572,6 +1594,29 @@
       if (ctx.path === '/' && truth.businessName && !matchesBusiness(title, truth)) add(titleEl, { code: 'META_TITLE_NO_NAME', severity: 'info', category: 'Meta / SEO', message: "Home page SEO title doesn't mention the business name", found: title, expected: truth.businessName });
     }
     if (title) slipItem(titleEl, titleEl.textContent, 'SEO title', 'Meta / SEO');
+    // Look-alike characters in the words Google shows. "Ceramic Coating │ Temple" looks right in the
+    // editor, but "│" is a box-drawing symbol (from copy and paste, or AI-written text): screen readers
+    // read it differently, find-and-replace for "|" misses it, and Google is more likely to rewrite the
+    // title. The only separator is the keyboard pipe "|".
+    const oddChars = (raw, where, el) => {
+      const s0 = String(raw || '');
+      if (!s0.trim()) return;
+      const hits = new Map();
+      let m; PIPE_LIKE.lastIndex = 0;
+      while ((m = PIPE_LIKE.exec(s0))) hits.set(m[0], 'looks like the keyboard pipe "|" but is not');
+      // Dashes only count as a SEPARATOR in a title (" – ", " — "); inside a sentence they are punctuation.
+      if (where === 'SEO title') { DASH_SEP.lastIndex = 0; while ((m = DASH_SEP.exec(s0))) hits.set(m[1], 'used as a separator instead of the keyboard pipe "|"'); }
+      INVISIBLE.lastIndex = 0;
+      while ((m = INVISIBLE.exec(s0))) hits.set(m[0], 'an invisible character, usually from copy and paste');
+      if (!hits.size) return;
+      const fixed = s0.replace(PIPE_LIKE, '|').replace(where === 'SEO title' ? DASH_SEP : /(?!)/, ' | ').replace(INVISIBLE, '').replace(/\s{2,}/g, ' ').trim();
+      const what = [...hits].map(([c, why]) => `${CHAR_NAME[c] || 'character'} ${/\s|[\u200b-\u200f\u2060\ufeff\u00ad]/.test(c) ? '' : `"${c}" `}(U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}): ${why}`).join('; ');
+      add(el, { code: 'META_LOOKALIKE_CHAR', severity: 'warning', category: 'Meta / SEO',
+        message: `The ${where} has ${hits.size === 1 ? 'a look-alike character' : hits.size + ' look-alike characters'}: ${what}. Use only the standard keyboard pipe | as a separator`,
+        found: cut(s0, 200), expected: cut(fixed, 200) });
+    };
+    if (title) oddChars(titleEl.textContent, 'SEO title', titleEl);
+    if (desc) oddChars(descEl.getAttribute('content'), 'meta description', descEl);
     if (desc) slipItem(descEl, descEl.getAttribute('content'), 'meta description', 'Meta / SEO');
     if (!desc) add(descEl || titleEl, { code: 'META_DESC_MISSING', severity: 'warning', category: 'Meta / SEO', message: 'Page has no meta description' });
     else if (desc.length > 165) add(descEl, { code: 'META_DESC_LONG', severity: 'info', category: 'Meta / SEO', message: `Meta description is ${desc.length} chars (Google shows ~155)`, found: cut(desc, 200) });
