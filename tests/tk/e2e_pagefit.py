@@ -147,11 +147,19 @@ try:
         sc_log = ' '.join((S.get('scan') or {}).get('log') or [])
         check('could not be measured' in sc_log, 'pages the browser could not open are said in the scan notes (and their contrast items are kept)')
 
+        # ---- A third scan after a fix: the editor note is taken out ----
+        t, b0 = PAGES['/fort-hood-window-tint-law']; PAGES['/fort-hood-window-tint-law'] = (t, b0.replace(' [Matthew: confirm this is free before publishing.]', ''))
+        pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('#sRescan', timeout=20000); time.sleep(1); pg.click('#sRescan')
+        for _ in range(200):
+            time.sleep(1)
+            S3 = pg.evaluate("async () => (await fetch('/api/store?op=site&id=s1')).json()")
+            if (S3.get('scan') or {}).get('finishedAt') != (S2.get('scan') or {}).get('finishedAt') and (S3.get('scan') or {}).get('state') == 'complete': break
+
         # ---- Dashboard ----
         pg.goto(f'http://localhost:{APORT}/#/site/s1/dashboard'); pg.wait_for_selector('.db-tiles', timeout=20000); time.sleep(0.6)
         tiles = pg.inner_text('.db-tiles')
         check('Open items' in tiles and 'Critical open' in tiles and 'Scans on record' in tiles, 'the Dashboard tab shows the summary tiles')
-        check(pg.locator('.db-col').count() == 2, f'the scan history has one column per scan ({pg.locator(".db-col").count()})')
+        check(pg.locator('.db-col').count() == 3, f'the scan history has one column per scan ({pg.locator(".db-col").count()})')
         check(pg.locator('.db-seg-p').count() >= 2 and 'Critical' in pg.inner_text('.db-seg-keys'), 'open items are split by severity, each part named and counted')
         check(pg.locator('.db-hb').count() >= 3, 'open items by category and by page are drawn as bars')
         pg.hover('.db-col >> nth=0'); time.sleep(0.2)
@@ -160,19 +168,42 @@ try:
         pg.click('#dbForm button[type=submit]'); pg.wait_for_selector('.db-row-other', timeout=15000); time.sleep(0.6)
         row = pg.inner_text('.db-row-other')
         check('Semrush' in row and '59' in row and pg.locator('.db-col-other').count() == 1, 'another tool\'s result is added to the table and the chart (striped): ' + row.replace('\n', ' | '))
-        check(pg.locator('.db-col').count() == 3 and pg.inner_text('.db-col >> nth=0').find('Semrush') >= 0, 'it sits in date order (Nov 1, before our scans)')
+        check(pg.locator('.db-col').count() == 4 and pg.inner_text('.db-col >> nth=0').find('Semrush') >= 0, 'it sits in date order (Nov 1, before our scans)')
         pg.screenshot(path=os.path.join(OUT, 'dashboard.png'), full_page=True)
         pg.evaluate("document.documentElement.setAttribute('data-scheme','dark')"); time.sleep(0.3); pg.screenshot(path=os.path.join(OUT, 'dashboard-dark.png'), full_page=True); pg.evaluate("document.documentElement.removeAttribute('data-scheme')")
         pg.set_viewport_size({'width': 390, 'height': 844}); time.sleep(0.5); pg.screenshot(path=os.path.join(OUT, 'dashboard-phone.png'), full_page=True); pg.set_viewport_size({'width': 1440, 'height': 1000})
         with pg.expect_download() as dl: pg.click('#dbCsv')
         csv = open(dl.value.path()).read()
-        check(csv.startswith('"Date","Tool","Critical"') and 'Semrush' in csv and csv.count('\n') == 3, 'the history downloads as CSV')
+        check(csv.startswith('"Date","Tool","Critical"') and 'Semrush' in csv and csv.count('\n') == 4, 'the history downloads as CSV')
         pg.click('[data-dbrm]')
         try: pg.wait_for_function("() => !document.querySelector('.db-row-other')", timeout=10000); gone = True
         except Exception: gone = False
         check(gone, 'the typed-in result can be removed again')
         snaps = pg.evaluate("async () => (await (await fetch('/api/store?op=site&id=s1')).json()).scans || []")
-        check(len(snaps) == 2 and all(x.get('auto') and x['counts']['critical'] >= 1 and x.get('cats') for x in snaps), f'each scan is recorded with its counts and categories ({len(snaps)})')
+        check(len(snaps) == 3 and all(x.get('rep') for x in snaps), 'every scan keeps a report of its items')
+        # ---- Scan reports and comparisons ----
+        check(pg.locator('[data-dbview]').count() == 3, 'each scan in the table has a View button')
+        pg.click('[data-dbview] >> nth=0'); pg.wait_for_selector('#repList .rep-row', timeout=15000)
+        first_n = pg.locator('#repList .rep-row').count()
+        check(first_n >= 10 and 'Every item' in pg.inner_text('#repBody') and 'Matthew' in pg.inner_text('#repBody'), f'a past scan opens with its numbers, charts and every item it found ({first_n} shown)')
+        pg.fill('#repQ', 'Matthew'); time.sleep(0.3)
+        check(pg.locator('#repList .rep-row').count() == 1, 'the items can be searched')
+        with pg.expect_download() as dl: pg.click('#repDl')
+        doc = open(dl.value.path()).read()
+        check(doc.startswith('<!doctype html>') and 'Scan report' in doc and 'db-seg' in doc and 'Matthew' in doc, 'one scan downloads as its own report (a web page with the charts and every item)')
+        pg.select_option('#repWith', index=1); pg.click('#repCmp'); pg.wait_for_selector('#cmpBody .rep-tiles', timeout=15000); time.sleep(0.3)
+        ctext = pg.inner_text('#cmpBody')
+        check('Fixed (1)' in ctext and 'Matthew' in ctext.split('Fixed (1)')[1].split('New (')[0], 'comparing the first scan with the third shows the editor note as fixed')
+        check('Still there' in ctext and 'Before and after' in ctext and 'By category' in ctext, 'with before/after bars, the categories and what is still there')
+        pg.screenshot(path=os.path.join(OUT, 'compare.png'), full_page=True)
+        with pg.expect_download() as dl: pg.click('#cmpDl')
+        cdoc = open(dl.value.path()).read()
+        check('Scan comparison' in cdoc and 'Fixed (1)' in cdoc and 'cmp-bars' in cdoc, 'the comparison downloads as a report too')
+        pg.click('[data-close]'); time.sleep(0.3)
+        pg.click('#dbFirstNow'); pg.wait_for_selector('#cmpBody .rep-tiles', timeout=15000)
+        check('Today' in pg.inner_text('#cmpBody'), '"First scan vs today" compares the first scan with the audit as it is now')
+        pg.click('[data-close]')
+        check(len(snaps) == 3 and all(x.get('auto') and x['counts']['critical'] >= 1 and x.get('cats') for x in snaps), f'each scan is recorded with its counts and categories ({len(snaps)})')
 
         # ---- Demo mode: the same audit, nothing real on the screen ----
         REAL = ['Harker Heights Ceramic', 'HARKER HEIGHTS CERAMIC', 'Reymark', 'reymark@', '8bitcreative', '8bit Creative', '(254)', '254-555', 'Dana Dev', 'Buff & Beyond', 'Detailers Roadmap']

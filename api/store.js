@@ -292,6 +292,16 @@ async function handler(req, res) {
         }
         return res.status(200).json({ mode: 'kv', sites, scoped: !seeAll, ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true), build: buildId() });
       }
+      // One scan's report (see saveScan): every item that scan found.
+      if (op === 'scanReport') {
+        const l = await loadSite(req.query.id);
+        if (!l || !(await canSeeSite(me, l.site))) return res.status(404).json({ error: 'Not found' });
+        if (!/^[\w-]{4,20}$/.test(String(req.query.rep || ''))) return res.status(400).json({ error: 'Unknown report' });
+        const [raw] = await redis(['GET', P + 'scanrep:' + req.query.id + ':' + req.query.rep]);
+        const rep = unpackJSON(raw);
+        if (!rep) return res.status(404).json({ error: 'This scan\'s details are no longer kept.' });
+        return res.status(200).json(rep);
+      }
       if (op === 'site') {
         if (req.query.since) { const [v, cr] = await redis(['GET', P + 'ver:s:' + req.query.id], ['HGET', P + 'scanclaims', req.query.id]); if (String(v || 0) === String(req.query.since)) return res.status(200).json({ unchanged: true, ver: String(v || 0), claim: liveClaim(cr) }); }
         const l = await loadSite(req.query.id);
@@ -675,10 +685,27 @@ async function handler(req, res) {
           const list = Array.isArray(site.scans) ? site.scans : [];
           // Resuming the AI check finishes the same scan: its line is brought up to date, not doubled.
           const last = list.length ? list[list.length - 1] : null;
-          if (b.mode === 'aiResume' && last && last.auto) Object.assign(last, { counts: snap.counts, total: snap.total, cats, groups });
-          else list.push(snap);
+          const resumed = b.mode === 'aiResume' && last && last.auto;
+          if (resumed) Object.assign(last, { counts: snap.counts, total: snap.total, cats, groups });
+          else { snap.rep = newId(10); list.push(snap); }
+          // The scan's own report: every item it found, kept small, so any scan can be opened again
+          // later, downloaded, and compared with another. Its own key, so the audit record stays light.
+          const repId = resumed ? last.rep : snap.rep;
+          const cmds = [];
+          if (repId) {
+            const [stNow] = await redis(['HGETALL', P + 'fstate:' + b.id]);
+            const stm = pairs(stNow, true);
+            const cut = (v, n) => { v = String(v == null ? '' : v); return v.length > n ? v.slice(0, n - 1) + '…' : v; };
+            const items = live.map((f) => ({ id: f.id, n: Number(nums[f.id]) || 0, c: f.code, s: f.severity, g: f.category || 'Other', m: cut(f.message, 220),
+              p: f.path || '/', pc: (f.pages || []).length || 1, f: cut(f.found, 160), e: cut(f.expected, 120), l: f.location || '', st: (stm[f.id] && stm[f.id].status) || 'open',
+              ...(f.contrast ? { k: f.contrast } : {}) })).sort((x, y) => x.n - y.n);
+            cmds.push(['SET', P + 'scanrep:' + b.id + ':' + repId, packJSON({ at: resumed ? last.at : snap.at, cv: snap.cv, pages: snap.pages, counts: snap.counts, by: snap.byName, items })]);
+          }
+          // Reports of scans that dropped off the end of the history go with them.
+          list.slice(0, Math.max(0, list.length - 40)).forEach((x) => { if (x.rep) cmds.push(['DEL', P + 'scanrep:' + b.id + ':' + x.rep]); });
           site.scans = list.slice(-40);
-          await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+          cmds.push(['SET', P + 'site:' + b.id, packJSON(site)]);
+          await redis(...cmds);
         }
         if (b.mode === 'aiResume') {
           const a = b.aiLog || {};

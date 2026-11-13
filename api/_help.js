@@ -516,8 +516,11 @@ export const HELP_SECTIONS = [
 <li><b>Scan history</b>: a column per scan, stacked by severity (hover or tab to a column for its numbers), a line saying what changed since the first scan, and a table with every scan: date, critical, warning, info, total, the change since the previous one, what was fixed and what was new.</li>
 <li><b>＋ Add another tool's result</b>: type in what Semrush, Ahrefs, Screaming Frog or a manual QA pass found (errors → Critical, warnings, notices → Info), with the date and a note. It sits in the history striped, and is only ever compared with an earlier result <b>from the same tool</b>, because every tool counts differently.</li>
 <li><b>⬇ Download as CSV</b>: the whole history, for a report or a spreadsheet.</li>
+<li><b>📋 View</b> on any scan in the table: that scan's own report, with its numbers, the severity and category charts, the status of each item at the time, and <b>every item it found</b> (search them, or filter by severity). <b>⬇ Download this report</b> saves it as a web page that opens in any browser and prints to PDF.</li>
+<li><b>Compare</b>: from a report, pick another scan (or <b>Today</b>) and press <b>Compare</b>, or use <b>⇄ First scan vs today</b>. It shows what was <b>✓ Fixed</b> (in the earlier scan, gone in the later one), what is <b>＋ New</b> and what is <b>still there</b>, before-and-after bars by severity and a table by category. If the checks were updated in between, it says so, since some "new" items are newly checked rather than newly broken. <b>⬇ Download this comparison</b> saves it as a report too.</li>
+<li><b>📋 Today's report</b>: the audit as it is right now, with today's statuses.</li>
 </ul>
-<p class="small">Scans are recorded from this update on. An audit scanned before shows its last scan until it is scanned again.</p>`,
+<p class="small">Each scan's items are kept for its last 40 scans. Scans made before reports were kept show their numbers only ("numbers only").</p>`,
   },
   {
     id: 'demo', group: 'More', title: 'Demo mode: show the app without showing any client', audience: 'all',

@@ -2174,3 +2174,29 @@ html.demo-mode iframe { pointer-events: none; }
 /* Contrast items: the two colours as they are, with the ratio */
 .ctr-chip { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .ctr-sw { display: inline-grid; place-items: center; min-width: 38px; height: 26px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--border-strong); font: 600 14px/1 Arial, sans-serif; }
+
+/* Scan reports and comparisons */
+.rep { display: grid; gap: 12px; }
+.rep .db-card { margin: 0; }
+.rep-tiles { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.rep-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rep-cmp { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rep-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; } .rep-filter h3 { margin: 0 auto 0 0; }
+.rep-filter input { min-width: 200px; }
+.rep-list { display: grid; }
+.rep-row { display: grid; grid-template-columns: 74px 46px minmax(0, 1fr) minmax(120px, 30%); gap: 8px; align-items: start; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.rep-row .badge { justify-self: start; }
+.rep-n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.rep-found { overflow-wrap: anywhere; }
+.rep-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.rep-more { margin-top: 8px; }
+.db-row-acts { display: flex; gap: 8px; align-items: center; }
+.cmp-bars { display: grid; gap: 10px; }
+.cmp-r { display: grid; grid-template-columns: 110px minmax(0, 1fr) 90px; align-items: center; gap: 10px; font-size: 13px; }
+.cmp-pair { display: grid; gap: 3px; }
+.cmp-t { display: flex; align-items: center; gap: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.cmp-f { display: block; height: 10px; border-radius: 0 4px 4px 0; }
+.cmp-before { background: var(--viz-muted); }
+.cmp-after { background: var(--viz-1); }
+.cmp-c { text-align: right; }
+@media (max-width: 760px) { .rep-row { grid-template-columns: 70px minmax(0, 1fr); } .rep-n { display: none; } .rep-where { grid-column: 2; text-align: left; } .cmp-r { grid-template-columns: 80px minmax(0, 1fr) 70px; } }

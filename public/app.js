@@ -10620,6 +10620,148 @@
     const d = b - a;
     return d === 0 ? '<span class="faint">no change</span>' : `<span class="${d < 0 ? 'db-better' : 'db-worse'}">${d < 0 ? '▼' : '▲'} ${Math.abs(d)}</span>`;
   }
+  // ---------- one scan's report, and two scans compared ----------
+  const SEV_RANK = { critical: 0, outdated: 1, warning: 2, info: 3 };
+  const repCache = new Map();
+  /** Every item a scan found. Saved scans are read from the server; "now" is the audit as it is today. */
+  async function dbReport(s, x) {
+    if (x.now) {
+      const items = (s.findings || []).filter((f) => !f.gone && f.status !== 'exempt').map((f) => ({ id: f.id, n: f.num || 0, c: f.code, s: f.severity, g: f.category || 'Other', m: f.message, p: f.path || '/', pc: (f.pages || []).length || 1, f: f.found || '', e: f.expected || '', l: f.location || '', st: f.status || 'open', k: f.contrast }));
+      const counts = { critical: 0, outdated: 0, warning: 0, info: 0 }; items.forEach((i) => { if (counts[i.s] !== undefined) counts[i.s]++; });
+      return { at: new Date().toISOString(), now: true, counts, pages: (s.scan || {}).pages || 0, items };
+    }
+    if (!x.rep) return null;
+    const k = s.id + ':' + x.rep;
+    if (!repCache.has(k)) repCache.set(k, api(`/api/store?op=scanReport&id=${encodeURIComponent(s.id)}&rep=${encodeURIComponent(x.rep)}`).catch((e) => { repCache.delete(k); throw e; }));
+    return repCache.get(k);
+  }
+  const repName = (x) => (x.now ? 'Today (the audit as it is now)' : `Scan of ${fmtFull(x.at)}`);
+  const repKey = (i) => [i.c, i.f, i.p].join('|');
+  /** Two reports side by side: what was fixed, what is new, what is still there. Items are matched by their ID, or the same check, words and page. */
+  function compareReports(a, b) {
+    const inB = new Map(), inBloose = new Map();
+    b.items.forEach((i) => { inB.set(i.id, i); inBloose.set(repKey(i), i); });
+    const matched = new Set(); const fixed = [], still = [];
+    a.items.forEach((i) => { const m = inB.get(i.id) || inBloose.get(repKey(i)); if (m) { matched.add(m); still.push(m); } else fixed.push(i); });
+    const added = b.items.filter((i) => !matched.has(i));
+    const cats = {};
+    a.items.forEach((i) => { (cats[i.g] = cats[i.g] || { k: i.g, a: 0, b: 0 }).a++; });
+    b.items.forEach((i) => { (cats[i.g] = cats[i.g] || { k: i.g, a: 0, b: 0 }).b++; });
+    return { fixed, added, still, cats: Object.values(cats).sort((x, y) => (y.a + y.b) - (x.a + x.b)) };
+  }
+  const repSort = (list) => list.slice().sort((x, y) => (SEV_RANK[x.s] - SEV_RANK[y.s]) || (x.n - y.n));
+  function repRows(list, limit) {
+    const shown = repSort(list).slice(0, limit);
+    return `<div class="rep-list">${shown.map((i) => `<div class="rep-row"><span class="badge sev-${esc(i.s)}">${esc(i.s)}</span>
+      <span class="rep-n">${i.n ? '#' + i.n : ''}</span>
+      <div class="rep-main"><div>${esc(i.m)}</div>${i.f ? `<div class="small faint rep-found">Found: ${esc(i.f)}</div>` : ''}</div>
+      <span class="small muted rep-where" title="${esc(i.p)}">${esc(i.g)} · ${esc(i.p)}${i.pc > 1 ? ` +${i.pc - 1}` : ''}</span></div>`).join('')}</div>
+      ${list.length > limit ? `<button class="btn sm rep-more" type="button" data-repmore="${limit + 300}">Show ${Math.min(300, list.length - limit)} more of ${list.length - limit}</button>` : ''}`;
+  }
+  /** The scan's own report: numbers, charts and every item, filterable. */
+  async function openScanReport(s, x, scans) {
+    modal(`<header><h2>📋 ${esc(repName(x))}</h2><button class="btn ghost" data-close>✕</button></header><div class="body" id="repBody"><div class="empty small">Loading the report…</div></div>`, { wide: true });
+    let r; try { r = await dbReport(s, x); } catch (e) { $('#repBody').innerHTML = `<div class="empty small">${esc(e.message)}</div>`; return; }
+    const body = $('#repBody'); if (!body) return;
+    if (!r) { body.innerHTML = '<div class="empty small">This scan was made before scan reports were kept, so only its numbers are on record.</div>'; return; }
+    const others = scans.filter((y) => y !== x && (y.rep || y.now));
+    const cats = {}; r.items.forEach((i) => { const c = cats[i.g] || (cats[i.g] = { k: i.g, n: 0 }); c.n++; });
+    const st = (v) => r.items.filter((i) => i.st === v).length;
+    const def = others.length ? (x === scans.find((y) => y.rep || y.now) ? others[others.length - 1] : scans.find((y) => y.rep || y.now)) : null;
+    let q = '', sev = '', limit = 150;
+    const list = () => r.items.filter((i) => (!sev || i.s === sev) && (!q || [i.m, i.f, i.p, i.g, '#' + i.n].join(' ').toLowerCase().includes(q)));
+    body.innerHTML = `<div class="rep">
+      <div class="small muted">${esc(s.businessName || s.siteId)} · ${x.now ? 'as it is now' : `scanned by ${esc(r.by || x.byName || '—')}`}${r.pages ? ` · ${r.pages} pages` : ''}${r.cv ? ` · checks v${r.cv}` : ''}</div>
+      <div class="db-tiles rep-tiles">${[['Items found', r.items.length], ['⛔ Critical', r.counts.critical || 0], ['⚠ Warning', r.counts.warning || 0], ['ⓘ Info', r.counts.info || 0]].map(([l, n]) => `<div class="db-tile"><span class="db-tile-n">${n}</span><span class="db-tile-l">${l}</span></div>`).join('')}</div>
+      <section class="db-card"><h3>By severity</h3>${dbSevBar(r.counts)}<div class="db-status small">${[['open', 'Open'], ['clarification', 'For clarification'], ['hold', 'On hold'], ['done', 'Done'], ['false', 'False alarm']].map(([v, l]) => `<span>${l} <b>${st(v)}</b></span>`).join('')}<span class="faint">status ${x.now ? 'now' : 'at the time of the scan'}</span></div></section>
+      <section class="db-card"><h3>By category</h3>${dbHBars(Object.values(cats).sort((a, b) => b.n - a.n), null, 'No items.')}</section>
+      <div class="rep-acts"><button class="btn sm" id="repDl" type="button">⬇ Download this report</button>
+        ${others.length ? `<span class="rep-cmp"><label class="small muted" for="repWith">Compare with</label><select id="repWith">${others.map((y) => `<option value="${scans.indexOf(y)}" ${y === def ? 'selected' : ''}>${esc(y.now ? 'Today (now)' : dbDate(y.at) + ' · ' + new Date(y.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</option>`).join('')}</select><button class="btn sm primary" id="repCmp" type="button">Compare</button></span>` : '<span class="small faint">Scan again to have something to compare with.</span>'}</div>
+      <section class="db-card"><div class="rep-filter"><h3>Every item (${r.items.length})</h3><input id="repQ" type="search" placeholder="Search items, pages, #number"><select id="repSev"><option value="">All severities</option>${DB_SEV.map((k) => `<option value="${k.k}">${k.label}</option>`).join('')}</select></div><div id="repList"></div></section></div>`;
+    const draw = () => { const l = list(); $('#repList', body).innerHTML = l.length ? repRows(l, limit) : '<div class="small faint">Nothing matches.</div>'; const m = $('[data-repmore]', body); if (m) m.onclick = () => { limit = Number(m.dataset.repmore); draw(); }; };
+    draw();
+    $('#repQ', body).oninput = (e) => { q = e.target.value.trim().toLowerCase(); limit = 150; draw(); };
+    $('#repSev', body).onchange = (e) => { sev = e.target.value; limit = 150; draw(); };
+    $('#repDl', body).onclick = () => repDownload(`scan-report-${slug(s.businessName || s.siteId)}-${String(r.at).slice(0, 10)}.html`, reportHtml(s, x, r));
+    if ($('#repCmp', body)) $('#repCmp', body).onclick = () => { const y = scans[Number($('#repWith', body).value)]; if (y) openCompare(s, String(x.at) <= String(y.at) || y.now ? x : y, String(x.at) <= String(y.at) || y.now ? y : x, scans); };
+  }
+  /** Two scans: before and after. */
+  async function openCompare(s, xa, xb, scans) {
+    modal(`<header><h2>⇄ Compare scans</h2><button class="btn ghost" data-close>✕</button></header><div class="body" id="cmpBody"><div class="empty small">Loading both reports…</div></div>`, { wide: true });
+    let a, b; try { [a, b] = await Promise.all([dbReport(s, xa), dbReport(s, xb)]); } catch (e) { $('#cmpBody').innerHTML = `<div class="empty small">${esc(e.message)}</div>`; return; }
+    const body = $('#cmpBody'); if (!body) return;
+    if (!a || !b) { body.innerHTML = '<div class="empty small">One of these scans was made before scan reports were kept, so its items can\'t be compared.</div>'; return; }
+    const c = compareReports(a, b);
+    const tot = (r) => r.items.length;
+    body.innerHTML = `<div class="rep">${compareHtml(s, xa, xb, a, b, c, false)}
+      <div class="rep-acts"><button class="btn sm" id="cmpDl" type="button">⬇ Download this comparison</button><button class="btn sm" id="cmpA" type="button">Open the earlier report</button><button class="btn sm" id="cmpB" type="button">Open the later report</button></div>
+      <section class="db-card"><h3>✓ Fixed (${c.fixed.length})</h3><p class="small faint db-sub">In the earlier scan, gone in the later one</p>${c.fixed.length ? repRows(c.fixed, 100) : '<div class="small faint">Nothing.</div>'}</section>
+      <section class="db-card"><h3>＋ New (${c.added.length})</h3><p class="small faint db-sub">Not in the earlier scan${(a.cv || 0) < (b.cv || 0) ? ` · the checks were updated in between (v${a.cv} → v${b.cv}), so some are newly checked rather than newly broken` : ''}</p>${c.added.length ? repRows(c.added, 100) : '<div class="small faint">Nothing.</div>'}</section>
+      <section class="db-card"><h3>Still there (${c.still.length})</h3>${c.still.length ? repRows(c.still, 100) : '<div class="small faint">Nothing.</div>'}</section></div>`;
+    $$('[data-repmore]', body).forEach((m) => (m.onclick = () => openCompare(s, xa, xb, scans)));
+    $('#cmpDl', body).onclick = () => repDownload(`scan-comparison-${slug(s.businessName || s.siteId)}-${String(a.at).slice(0, 10)}-to-${String(b.at).slice(0, 10)}.html`, compareDoc(s, xa, xb, a, b, c));
+    $('#cmpA', body).onclick = () => openScanReport(s, xa, scans);
+    $('#cmpB', body).onclick = () => openScanReport(s, xb, scans);
+    void tot;
+  }
+  /** The before/after numbers, used on screen and in the downloaded file. */
+  function compareHtml(s, xa, xb, a, b, c, inFile) {
+    const n = (r, k) => (k === 'all' ? r.items.length : r.items.filter((i) => i.s === k).length);
+    const rows = [['all', 'Everything']].concat(DB_SEV.map((k) => [k.k, k.label])).filter(([k]) => k === 'all' || n(a, k) || n(b, k));
+    const mx = Math.max(1, ...rows.map(([k]) => Math.max(n(a, k), n(b, k))));
+    const chg = (x, y) => { const d = y - x; return d === 0 ? '<span class="faint">no change</span>' : `<span class="${d < 0 ? 'db-better' : 'db-worse'}">${d < 0 ? '▼' : '▲'} ${Math.abs(d)}</span>`; };
+    return `<div class="small muted">${esc(s.businessName || s.siteId)}: <b>${esc(repName(xa))}</b> → <b>${esc(repName(xb))}</b></div>
+      <div class="db-tiles rep-tiles">
+        <div class="db-tile"><span class="db-tile-n db-better">${c.fixed.length}</span><span class="db-tile-l">✓ Fixed</span></div>
+        <div class="db-tile"><span class="db-tile-n ${c.added.length ? 'db-worse' : ''}">${c.added.length}</span><span class="db-tile-l">＋ New</span></div>
+        <div class="db-tile"><span class="db-tile-n">${c.still.length}</span><span class="db-tile-l">Still there</span></div>
+        <div class="db-tile"><span class="db-tile-n">${n(a, 'critical')} → ${n(b, 'critical')}</span><span class="db-tile-l">⛔ Critical</span></div></div>
+      <section class="db-card"><h3>Before and after</h3><div class="viz-legend"><span><i class="viz-key-bar cmp-before"></i>Earlier scan</span><span><i class="viz-key-bar cmp-after"></i>Later scan</span></div>
+        <div class="cmp-bars">${rows.map(([k, l]) => `<div class="cmp-r"><span class="cmp-l">${esc(l)}</span><div class="cmp-pair">
+          <div class="cmp-t"><span class="cmp-f cmp-before" style="width:${Math.max(n(a, k) ? 1 : 0, Math.round((n(a, k) / mx) * 100))}%"></span><b>${n(a, k)}</b></div>
+          <div class="cmp-t"><span class="cmp-f cmp-after" style="width:${Math.max(n(b, k) ? 1 : 0, Math.round((n(b, k) / mx) * 100))}%"></span><b>${n(b, k)}</b></div></div><span class="cmp-c">${chg(n(a, k), n(b, k))}</span></div>`).join('')}</div></section>
+      <section class="db-card"><h3>By category</h3><div class="table-wrap"><table class="grid db-table"><thead><tr><th>Category</th><th>Earlier</th><th>Later</th><th>Change</th></tr></thead>
+        <tbody>${c.cats.map((x) => `<tr><td>${esc(x.k)}</td><td>${x.a}</td><td>${x.b}</td><td>${chg(x.a, x.b)}</td></tr>`).join('')}</tbody></table></div></section>${inFile ? '' : ''}`;
+  }
+  // ---------- downloaded reports: one HTML file that opens in any browser and prints to PDF ----------
+  function repDownload(name, html) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' })); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  const REP_CSS = `body{margin:0;background:#f6f7f9;color:#16181d;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+main{max-width:1000px;margin:0 auto;padding:28px 20px 60px}h1{font-size:24px;margin:0 0 4px}h2{font-size:17px;margin:26px 0 10px}h3{font-size:14px;margin:0 0 8px}
+.small{font-size:12px}.muted{color:#5d6572}.faint{color:#8a919c}.db-sub{margin:-4px 0 10px}
+.db-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}.db-tile{display:flex;flex-direction:column;padding:12px 14px;background:#fff;border:1px solid #e3e6eb;border-radius:10px}
+.db-tile-n{font-size:24px;font-weight:650}.db-tile-l{font-weight:600;font-size:13px}.db-card{background:#fff;border:1px solid #e3e6eb;border-radius:10px;padding:14px 16px;margin:12px 0;break-inside:avoid}
+.db-better{color:#15803d;font-weight:600}.db-worse{color:#c62828;font-weight:600}
+.sevc-critical{background:#d03b3b}.sevc-outdated{background:#ec835a}.sevc-warning{background:#fab219}.sevc-info{background:#8a96a8}
+.db-seg{display:flex;gap:2px;height:18px;border-radius:4px;overflow:hidden}.db-seg-keys{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:8px}.db-seg-keys span{display:inline-flex;align-items:center;gap:6px}.db-key,.viz-key-bar{display:inline-block;width:10px;height:10px;border-radius:3px}
+.db-status{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:10px;color:#5d6572}.db-status b{color:#16181d}
+.db-hbars{display:grid;gap:6px}.db-hb{display:grid;grid-template-columns:200px 1fr 60px;align-items:center;gap:10px}.db-hb-t{height:10px}.db-hb-f{display:block;height:100%;border-radius:0 4px 4px 0;background:#2a78d6}.db-hb-n{text-align:right}
+.viz-legend{display:flex;gap:14px;font-size:12px;color:#5d6572;margin-bottom:6px}.viz-legend span{display:inline-flex;align-items:center;gap:6px}
+.cmp-bars{display:grid;gap:10px}.cmp-r{display:grid;grid-template-columns:110px 1fr 90px;align-items:center;gap:10px}.cmp-pair{display:grid;gap:3px}.cmp-t{display:flex;align-items:center;gap:6px;font-size:12px}.cmp-f{display:block;height:10px;border-radius:0 4px 4px 0}.cmp-before{background:#b9b8b1}.cmp-after{background:#2a78d6}
+table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e3e6eb;vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#5d6572}
+.sev{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600;color:#fff}.sev.critical{background:#c62828}.sev.outdated{background:#c2410c}.sev.warning{background:#b45309}.sev.info{background:#3b5b86}
+footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background:#fff}main{padding:0}.db-card,.db-tile{border-color:#ccc}}`;
+  const repTable = (list) => `<table><thead><tr><th>#</th><th>Severity</th><th>Item</th><th>Category</th><th>Page</th><th>Status</th></tr></thead><tbody>${repSort(list).map((i) => `<tr><td>${i.n || ''}</td><td><span class="sev ${esc(i.s)}">${esc(i.s)}</span></td><td>${esc(i.m)}${i.f ? `<div class="small faint">Found: ${esc(i.f)}</div>` : ''}${i.e ? `<div class="small faint">Expected: ${esc(i.e)}</div>` : ''}</td><td>${esc(i.g)}</td><td>${esc(i.p)}${i.pc > 1 ? ` <span class="faint">+${i.pc - 1}</span>` : ''}</td><td>${esc(FLABEL[i.st] || i.st || '')}</td></tr>`).join('')}</tbody></table>`;
+  const repDoc = (title, inner) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${REP_CSS}</style></head><body><main>${inner}<footer>Made with Duda Site Auditor on ${esc(fmtFull(new Date().toISOString()))}. Open in a browser and print (Ctrl/Cmd + P) to save as PDF.</footer></main></body></html>`;
+  function reportHtml(s, x, r) {
+    const cats = {}; r.items.forEach((i) => { const c = cats[i.g] || (cats[i.g] = { k: i.g, n: 0 }); c.n++; });
+    const st = (v) => r.items.filter((i) => i.st === v).length;
+    return repDoc(`Scan report: ${s.businessName || s.siteId}`, `<h1>Scan report: ${esc(s.businessName || s.siteId)}</h1>
+      <div class="muted">${esc(repName(x))}${r.pages ? ` · ${r.pages} pages` : ''}${r.by ? ` · by ${esc(r.by)}` : ''}${r.cv ? ` · checks v${r.cv}` : ''}</div>
+      <div class="db-tiles">${[['Items found', r.items.length], ['Critical', r.counts.critical || 0], ['Warning', r.counts.warning || 0], ['Info', r.counts.info || 0]].map(([l, n]) => `<div class="db-tile"><span class="db-tile-n">${n}</span><span class="db-tile-l">${l}</span></div>`).join('')}</div>
+      <div class="db-card"><h3>By severity</h3>${dbSevBar(r.counts)}<div class="db-status">${[['open', 'Open'], ['clarification', 'For clarification'], ['hold', 'On hold'], ['done', 'Done'], ['false', 'False alarm']].map(([v, l]) => `<span>${l} <b>${st(v)}</b></span>`).join('')}</div></div>
+      <div class="db-card"><h3>By category</h3>${dbHBars(Object.values(cats).sort((a, b) => b.n - a.n), null, 'No items.')}</div>
+      <h2>Every item (${r.items.length})</h2>${repTable(r.items)}`);
+  }
+  function compareDoc(s, xa, xb, a, b, c) {
+    return repDoc(`Scan comparison: ${s.businessName || s.siteId}`, `<h1>Scan comparison: ${esc(s.businessName || s.siteId)}</h1>${compareHtml(s, xa, xb, a, b, c, true)}
+      <h2>Fixed (${c.fixed.length})</h2><p class="small faint">In the earlier scan, gone in the later one</p>${c.fixed.length ? repTable(c.fixed) : '<p class="faint">Nothing.</p>'}
+      <h2>New (${c.added.length})</h2><p class="small faint">Not in the earlier scan${(a.cv || 0) < (b.cv || 0) ? ` (the checks were updated in between, v${a.cv} → v${b.cv})` : ''}</p>${c.added.length ? repTable(c.added) : '<p class="faint">Nothing.</p>'}
+      <h2>Still there (${c.still.length})</h2>${c.still.length ? repTable(c.still) : '<p class="faint">Nothing.</p>'}`);
+  }
+
   function renderDashboardTab(body, s) {
     const items = (s.findings || []).filter((f) => f.status !== 'exempt');
     const live = items.filter((f) => !f.gone);
@@ -10666,8 +10808,8 @@
               <td>${(x.counts || {}).critical || 0}${(x.counts || {}).outdated ? ` <span class="small faint">+${x.counts.outdated} outdated</span>` : ''}</td><td>${(x.counts || {}).warning || 0}</td><td>${(x.counts || {}).info || 0}</td><td><b>${tot(x)}</b></td>
               <td>${dbChange(p ? tot(p) : 0, tot(x))}${x.auto && (x.fixed || x.added) ? `<div class="small faint">${x.fixed ? `${x.fixed} fixed` : ''}${x.fixed && x.added ? ' · ' : ''}${x.added ? `${x.added} new` : ''}</div>` : ''}</td>
               <td>${x.pages || '—'}</td><td>${esc(x.byName || nameOf(x.by, '—'))}</td>
-              <td>${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
-          <div class="db-acts">${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
+              <td class="db-row-acts">${x.rep ? `<button class="btn sm" data-dbview="${i}" title="Every item this scan found, to look through, download or compare">📋 View</button>` : x.auto ? '<span class="small faint" title="Scanned before scan reports were kept">numbers only</span>' : ''}${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
+          <div class="db-acts"><button class="btn sm" id="dbNow" type="button" title="Every item open or closed on this audit today">📋 Today's report</button>${scans.some((x) => x.rep) ? `<button class="btn sm" id="dbFirstNow" type="button" title="What was fixed, what is new and what is still there since the first scan with a report">⇄ ${scans.filter((x) => x.rep).length > 1 ? 'First scan vs today' : 'Scan vs today'}</button>` : ''}${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
             <span class="small faint">Each tool counts differently, so a result is only compared with an earlier result from the same tool.</span></div>
           <form class="db-form" id="dbForm" hidden>
             <label class="field">Tool<input id="dbTool" list="dbTools" required maxlength="60" placeholder="Semrush, Ahrefs…"><datalist id="dbTools">${DB_TOOLS.map((t) => `<option value="${esc(t)}">`).join('')}</datalist></label>
@@ -10710,6 +10852,11 @@
       const x = scans[Number(b.dataset.dbrm)]; if (!x || !confirm(`Remove the ${x.tool} result of ${dbDate(x.at)} from the comparison?`)) return;
       try { await store({ op: 'compareRemove', id: s.id, at: x.at, tool: x.tool }); toast('Removed'); await loadSite(s.id); renderSite(); } catch (er) { toast(er.message); }
     }));
+    // Reports: any saved scan, and the audit as it is today, to look through, download and compare.
+    const withNow = scans.concat({ now: true, at: new Date().toISOString(), tool: 'Site Auditor', auto: true });
+    $$('[data-dbview]', body).forEach((b) => (b.onclick = () => openScanReport(s, scans[Number(b.dataset.dbview)], withNow)));
+    $('#dbNow', body).onclick = () => openScanReport(s, withNow[withNow.length - 1], withNow);
+    if ($('#dbFirstNow', body)) $('#dbFirstNow', body).onclick = () => openCompare(s, scans.find((x) => x.rep), withNow[withNow.length - 1], withNow);
     $('#dbCsv', body).onclick = () => {
       const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
       const rows = [['Date', 'Tool', 'Critical', 'Outdated', 'Warning', 'Info', 'Total', 'Pages', 'Fixed since previous', 'New since previous', 'By', 'Note']]

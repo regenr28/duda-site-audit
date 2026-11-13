@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-13-scan-reports', date: '2026-11-13', audience: 'all', tag: 'Audits',
+    title: 'Every scan keeps its own report: open it, download it, and compare any two scans',
+    what: 'Each scan now saves every item it found. On the <b>📊 Dashboard</b>, <b>📋 View</b> opens a past scan with its charts and items (searchable), and <b>⬇ Download this report</b> saves it as a page that prints to PDF. <b>Compare</b> any two scans, or the first scan with today: what was <b>fixed</b>, what is <b>new</b> and what is <b>still there</b>, with before-and-after charts, and download that too.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>📊 Dashboard</b> → Scan history → <b>📋 View</b> on a scan → <b>Compare with</b> another scan → <b>Compare</b>. Or <b>⇄ First scan vs today</b>. Reports start with the next scan of each website.'],
+    link: '#/help/dashboard', linkText: 'How the Dashboard works',
+  },
+  {
     id: '2026-11-12-contrast', date: '2026-11-12', audience: 'all', tag: 'Checks',
     title: 'Colour contrast is checked: text, buttons and forms, even over photos and gradients',
     what: 'Scans now draw every page in a real browser (desktop and mobile), hide the text, photograph what is behind it and measure the contrast (WCAG AA). That catches pale <b>placeholders</b>, <b>typed text</b> and <b>field borders</b> that barely show in a form, light gray text, white on yellow buttons, and text over a <b>background photo or gradient</b> even when the photo belongs to a parent section or an overlay layer. Each item shows both colours and the ratio.',
