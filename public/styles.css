@@ -2260,27 +2260,38 @@ html.demo-mode iframe { pointer-events: none; }
 .dc-src { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; }
 .dc-src select { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
 
-/* vs Docs: the page's copy, block by block, website on the left, document on the right */
+/* vs Docs: the page's copy, section by section: document (source of truth) left, website right */
 .dcc-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; }
 .dcc-sum { display: inline-flex; flex-wrap: wrap; gap: 6px; }
-.dcc-n { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
-.dcc-n.changed { background: var(--warn-soft); color: var(--warn); }
-.dcc-n.missing { background: var(--crit-soft); color: var(--crit); }
-.dcc-n.extra { background: var(--accent-soft); color: var(--accent); }
+.dcc-n, .dcc-chip { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); white-space: nowrap; }
+.dcc-n.changed, .dcc-chip.changed { background: var(--warn-soft); color: var(--warn); }
+.dcc-n.missing, .dcc-chip.missing { background: var(--crit-soft); color: var(--crit); }
+.dcc-n.extra, .dcc-chip.added { background: var(--accent-soft); color: var(--accent); }
+.dcc-n.moved, .dcc-chip.moved { background: var(--panel-2); color: var(--text); border: 1px dashed var(--border); }
+.dcc-chip.same { color: var(--ok); }
 .dcc-only { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
-.dcc-head, .dcc-row { display: grid; grid-template-columns: 28px 1fr 1fr; gap: 12px; }
-.dcc-head { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 0; border-bottom: 1px solid var(--border); }
-.dcc-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; line-height: 1.5; }
+.dcc-head, .dcc-row { display: grid; grid-template-columns: 26px 1fr 1fr; gap: 12px; }
+.dcc-head { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 6px 0; }
+.dcc-sec { border: 1px solid var(--border); border-radius: 10px; margin: 0 0 10px; overflow: hidden; background: var(--panel); }
+.dcc-s-missing { border-color: var(--crit); }
+.dcc-s-added { border-color: var(--accent); }
+.dcc-sec-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.dcc-sec-t { font-weight: 700; }
+.dcc-sec-note { font-size: 12.5px; color: var(--muted); }
+.dcc-row { padding: 7px 12px 7px 0; border-top: 1px solid var(--border); font-size: 13.5px; line-height: 1.5; }
+.dcc-sec-h + .dcc-row { border-top: 0; }
 .dcc-k { font-weight: 700; text-align: center; }
-.dcc-same .dcc-k, .dcc-part .dcc-k { color: var(--ok); }
-.dcc-same .dcc-site, .dcc-same .dcc-doc, .dcc-part .dcc-site, .dcc-part .dcc-doc { color: var(--muted); }
-.dcc-changed .dcc-k { color: var(--warn); }
-.dcc-extra .dcc-k { color: var(--accent); }
-.dcc-extra .dcc-site { background: var(--accent-soft); border-radius: 6px; padding: 2px 6px; }
+.dcc-same .dcc-k { color: var(--ok); }
+.dcc-same .dcc-doc, .dcc-same .dcc-site, .dcc-dup .dcc-site { color: var(--muted); }
+.dcc-changed .dcc-k, .dcc-replaced .dcc-k { color: var(--warn); }
+.dcc-added .dcc-k, .dcc-dup .dcc-k { color: var(--accent); }
 .dcc-missing .dcc-k { color: var(--crit); }
-.dcc-missing .dcc-doc { background: var(--crit-soft); border-radius: 6px; padding: 2px 6px; }
-.dcc ins { background: rgba(34, 160, 90, .2); text-decoration: none; border-radius: 3px; padding: 0 2px; }
-.dcc del { background: rgba(220, 50, 50, .18); text-decoration: line-through; border-radius: 3px; padding: 0 2px; }
+.dcc-moved .dcc-k { color: var(--text); }
+.dcc-gone { background: rgba(220, 50, 50, .14); border-radius: 4px; padding: 1px 4px; }
+.dcc-new { background: rgba(34, 160, 90, .16); border-radius: 4px; padding: 1px 4px; }
+.dcc-note { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.dcc ins { background: rgba(34, 160, 90, .22); text-decoration: none; border-radius: 3px; padding: 0 2px; }
+.dcc del { background: rgba(220, 50, 50, .2); text-decoration: line-through; border-radius: 3px; padding: 0 2px; }
 .dcc-tag { display: inline-block; font-size: 10.5px; font-weight: 700; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
 .dcc-key { margin-top: 8px; }
-@media (max-width: 720px) { .dcc-head { display: none; } .dcc-row { grid-template-columns: 22px 1fr; } .dcc-doc { grid-column: 2; } }
+@media (max-width: 720px) { .dcc-head { display: none; } .dcc-row { grid-template-columns: 22px 1fr; } .dcc-site { grid-column: 2; } }

@@ -32,6 +32,9 @@ body = ('<w:tbl><w:tr>' + cell(['Client Information']) + cell(['Client: Bob Owne
         + para('Shine Like New in Dover', True) + para('We bring every car back to showroom condition with careful hand work and the best products.') + para('BUTTON> VIEW OUR SERVICES BUTTON> CALL (xxx) xxx-xxxx')
         + para('PAINT PROTECTION FILM', True) + para('TITLE: Paint Protection Film Experts | Buff & Beyond') + para('META DESCRIPTION: Clear film that stops chips. Call now!')
         + para('Invisible Armor for Your Paint', True) + para(INTRO_PPF) + para('BUTTON> GET A QUOTE') + para(LOST_PPF) + para('BUTTON> BOOK NOW') + para('DEVELOPER>>> ADD XPEL LOGO HERE')
+        + para('Our PPF Packages', True) + para('Front End', True) + para('Starting At $586', True) + para('Covers the hood, fenders, bumper and mirrors where chips happen most.') + para('BUTTON> BOOK FRONT END')
+        + para('Full Body', True) + para('Starting At $1,386', True) + para('Every painted panel wrapped edge to edge for complete protection.') + para('BUTTON> BOOK FULL BODY')
+        + para('Why Choose Us', True) + para('Certified installers with years of experience on every make and model.')
         + para('WINDOW TINT', True) + para('TITLE: Window Tinting Services | Buff & Beyond') + para('META DESCRIPTION: Cooler cabin, less glare. Call now!')
         + para('Stay Cool on Every Drive', True) + para('Our ceramic window film blocks the heat and the glare without making your windows too dark to see out of.') + para('BUTTON> GET A QUOTE')
         + para('BRENTWOOD, TN CERAMIC COATING & PPF', True) + para('TITLE: PPF & Ceramic Coating Brentwood, TN | Buff & Beyond') + para('META DESCRIPTION: Brentwood ceramic coating. Call now!')
@@ -223,6 +226,11 @@ try:
         check(pg.locator('#scanStrip').count() == 0, 'the progress goes away when the scan is done' + ('' if not pg.locator('#scanStrip').count() else ': ' + pg.inner_text('#scanStrip')[:160]))
         # ---- a published website: the document is checked against the LIVE website ----
         LIVE[0] = True
+        PPF0 = PAGES['/gloss-ppf']
+        PAGES['/gloss-ppf'] = (PPF0[0], '<h1>Invisible Armor for Your Paint</h1><p>' + INTRO_PPF + '</p>' + BTN('Get a quote', '/contact-us') + '<p>Ask about our packages.</p>' + BTN('Get a Quote', '/window-tint')
+            + '<h2>Why Choose Us</h2><p>Certified installers with years of experience on every make and model.</p>'
+            + '<h2>Our PPF Packages</h2><h3>Front End</h3><h4>Starting at $599</h4><p>Covers the hood, fenders, bumper and mirrors where chips happen most.</p>' + BTN('Book Front End', '/contact-us')
+            + '<h3>Full Body</h3><h4>Starting At $1,386</h4><p>Ask us about ceramic coating over the film.</p>' + BTN('Book Full Body', '/contact-us'))
         WT0 = PAGES['/window-tint']; PAGES['/window-tint'] = (WT0[0], WT0[1].replace('blocks the heat and the glare without', 'blocks heat and glare all summer without'))
         pg.goto(f'http://localhost:{APORT}/#/site/s1/docs'); pg.wait_for_selector('#dcRun', timeout=15000); time.sleep(0.4)
         check(pg.locator('#dcSrc').count() == 1, 'there is a choice: the live website or the draft')
@@ -234,23 +242,31 @@ try:
         check(LIVEF and all(d == 'buffandbeyond.com' for d, _ in LIVEF), f'a published website is read on its live domain ({len(LIVEF)} live pages read)')
         check('live website' in tiles and 'buffandbeyond.com' in tiles, 'the check says it was done on the live website: ' + tiles.replace(chr(10), ' ')[-120:])
         check('https://buffandbeyond.com/' in (pg.get_attribute('.dc-row a.dc-path', 'href') or ''), 'the page links open the live website')
-        # ---- copy, block by block (the live check above) ----
+        # ---- copy, section by section (the live check above) ----
         pg.click('details.dc-row[data-dcp="/gloss-ppf"] summary'); time.sleep(0.4)
         ppf = 'details.dc-row[data-dcp="/gloss-ppf"] '
-        kinds = pg.evaluate(f"""() => [...document.querySelectorAll('{ppf}.dcc-row')].map(r => [...r.classList].find(c => c.startsWith('dcc-') && c !== 'dcc-row') + '|' + r.querySelector('.dcc-site').innerText.slice(0, 30) + '|' + r.querySelector('.dcc-doc').innerText.slice(0, 30))""")
-        print('  rows:', kinds, flush=True)
-        ks = [k.split('|')[0] for k in kinds]
-        check(ks[:2] == ['dcc-same', 'dcc-same'], 'the website page is read top to bottom: its heading and first paragraph are the same as the document')
-        check(any(k.startswith('dcc-extra|Ask about our packages') for k in kinds), 'a paragraph that is not in the document is shown as "Not in the document"')
-        mi = [i for i, k in enumerate(ks) if k == 'dcc-missing']
-        check(len(mi) == 1 and 'Every film we install' in kinds[mi[0]] and mi[0] == 2, 'the paragraph the website left out is shown as missing, in its place (after the paragraph before it in the document)')
+        secs = pg.evaluate(f"""() => [...document.querySelectorAll('{ppf}.dcc-sec')].map(s => ({{ h: s.querySelector('.dcc-sec-h').innerText, rows: [...s.querySelectorAll('.dcc-row')].map(r => [...r.classList].find(c => c.startsWith('dcc-') && c !== 'dcc-row').slice(4) + ' | ' + r.querySelector('.dcc-doc').innerText.slice(0, 40) + ' | ' + r.querySelector('.dcc-site').innerText.replace(/\\n/g, ' / ').slice(0, 90)) }}))""")
+        for x in secs: print('  §', x['h'].replace(chr(10), ' '), *['\n      ' + r for r in x['rows']], flush=True)
+        H = [x['h'] for x in secs]; R = {x['h'].split(chr(10))[0]: x['rows'] for x in secs}
+        check(len(secs) == 4 and H[0].startswith('Invisible Armor') and H[1].startswith('Our PPF Packages') and H[2].startswith('Full Body') and H[3].startswith('Why Choose Us'), 'the page is shown in the document\'s sections, in the document\'s order: ' + ' / '.join(h.split(chr(10))[0] for h in H))
+        why = [x for x in secs if x['h'].startswith('Why Choose Us')][0]
+        check('Moved' in why['h'] and 'Invisible Armor' in why['h'] and all(r.startswith('same') for r in why['rows']), 'a section the designer put higher up is found anyway, marked Moved, and says where it is on the website')
+        fe = [x for x in secs if x['h'].startswith('Our PPF Packages')][0]['rows']
+        check(any(r.startswith('changed | HeadingStarting At $586') and '599' in r for r in fe), 'a changed price under a package shows the document and the website side by side')
+        check(sum(r.startswith('same') for r in fe) >= 4, 'the rest of the package (name, text, its own button) is the same')
+        fb = [x for x in secs if x['h'].startswith('Full Body')][0]['rows']
+        check(any(r.startswith('replaced | Every painted panel') and 'ceramic coating over the film' in r for r in fb), 'a paragraph with something else in its place is "Replaced", both shown')
+        top = secs[0]['rows']
+        miss = [r for r in top if r.startswith('missing') or r.startswith('replaced')]
+        check(any('Every film we install' in r for r in miss) and any('after' in r or 'Replaced' in r for r in miss), 'the left-out paragraph is shown where it belongs, with what is there instead or what it should follow')
+        pg.screenshot(path=os.path.join(OUT, 'docs-copy.png'), full_page=True)
+        pg.check(ppf + '[data-dcc-only]'); time.sleep(0.6)
+        check(pg.locator(ppf).get_attribute('open') is not None and pg.locator(ppf + '.dcc-same').count() == 0, '"Only differences" hides what is the same, and the open pages stay open')
+        pg.uncheck(ppf + '[data-dcc-only]'); time.sleep(0.4)
+        PAGES['/gloss-ppf'] = PPF0
         pg.click('details.dc-row[data-dcp="/window-tint"] summary'); time.sleep(0.3)
         ch = pg.locator('details.dc-row[data-dcp="/window-tint"] .dcc-changed')
         check(ch.count() == 1 and ch.locator('ins').count() >= 1 and ch.locator('del').count() >= 1, 'a reworded paragraph is "Changed", with the added words and the left-out words marked')
-        pg.screenshot(path=os.path.join(OUT, 'docs-copy.png'), full_page=True)
-        pg.check(ppf + '[data-dcc-only]'); time.sleep(0.6)
-        check(pg.locator('details.dc-row[data-dcp="/gloss-ppf"]').get_attribute('open') is not None and pg.locator('details.dc-row[data-dcp="/gloss-ppf"] .dcc-same').count() == 0 and pg.locator('details.dc-row[data-dcp="/gloss-ppf"] .dcc-missing').count() == 1, '"Only differences" hides the blocks that are the same, and the open pages stay open')
-        pg.uncheck(ppf + '[data-dcc-only]'); time.sleep(0.4)
         PAGES['/window-tint'] = WT0
         n_live = len(LIVEF)
         pg.select_option('#dcSrc', 'draft'); pg.click('#dcRun')

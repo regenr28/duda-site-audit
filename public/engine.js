@@ -1433,8 +1433,16 @@
     if (!body) return [];
     const SEL = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption, dt, dd, td, th, .dmNewParagraph, [data-element-type="paragraph"]';
     const out = [];
-    body.querySelectorAll(SEL).forEach((el) => {
-      if (out.length >= 300 || el.closest('script, style, noscript, nav, form, button, .dmButtonLink')) return;
+    // Buttons too, in their place: a section often ends with one, and a packages section has one per package.
+    body.querySelectorAll(SEL + ', a.dmButtonLink').forEach((el) => {
+      if (out.length >= 300 || el.closest('script, style, noscript, nav, form')) return;
+      if (el.matches('a.dmButtonLink')) {
+        if (locationOf(el) !== 'Body') return;
+        const t = clean(el.textContent); if (!t) return;
+        const hid = hiddenReason(el, device) || '';
+        out.push({ t: t.slice(0, 200), tag: 'btn', ...(hid ? { hid } : {}) }); return;
+      }
+      if (el.closest('button, .dmButtonLink')) return;
       if (el.querySelector(SEL)) return;
       if (locationOf(el) !== 'Body') return;
       const t = clean(el.textContent);

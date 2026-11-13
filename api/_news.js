@@ -5,9 +5,9 @@
 export const NEWS = [
   {
     id: '2026-11-16-docs-copy', date: '2026-11-16', audience: 'all', tag: 'Audits',
-    title: 'vs Docs: every paragraph of the page, side by side with the document',
-    what: 'Open a page on <b>📄 vs Docs</b> and its copy is shown block by block: the website page read top to bottom on the left, each heading and paragraph found in the document on the right. Each one is <b>✓ Same</b>, <b>≠ Changed</b> (the words added and left out are marked), <b>＋ Not in the document</b> or <b>✗ Missing from the website</b>, so nothing copied over wrong, or not at all, is missed. <b>Only differences</b> hides the rest.',
-    where: ['<b>Walkthrough:</b> open an audit → 🔎 Audit results → <b>📄 vs Docs</b> → <b>Check again</b> → open a page in the list → <b>Copy, block by block</b>.'],
+    title: 'vs Docs: the document and the website side by side, section by section',
+    what: 'Open a page on <b>📄 vs Docs</b> to see its copy as the document has it (left) next to the website (right), section by section: a heading and what follows it, buttons included. Sections are found by what they say, so one the designer moved is still found and marked <b>Moved</b>. Each block is <b>Same</b>, <b>Changed</b> (the words left out and added are marked, like a price that changed), <b>Replaced</b> (something else in its place), <b>Missing</b> (with what it should come after) or <b>Not in the document</b>. <b>Only differences</b> hides the rest.',
+    where: ['<b>Walkthrough:</b> open an audit → 🔎 Audit results → <b>📄 vs Docs</b> → <b>Check again</b> → open a page in the list → <b>Copy, section by section</b>.'],
     link: '#/help/docs', linkText: 'How vs Docs works',
   },
   {

@@ -10844,36 +10844,146 @@
   const bag = (w) => { const m = new Map(); w.forEach((x) => m.set(x, (m.get(x) || 0) + 1)); return m; };
   const bagShared = (a, b) => { let n = 0; a.forEach((c, k) => { n += Math.min(c, b.get(k) || 0); }); return n; };
   /**
-   * The page's copy against the document page. Each website block: 'same' (word for word), 'part' (word
-   * for word, but only part of a longer document paragraph), 'changed' (close, with words added or
-   * taken out) or 'extra' (not in the document). Document blocks never found: `missing`.
+   * The page's copy against the document page, section by section.
+   *
+   * A section is a heading (or a few headings in a row) and what follows it, up to the next heading:
+   * paragraphs, list items, often a button. The document is the source of truth, but the designer may
+   * have put its sections in another order, so sections are paired by what they say, not by place.
+   * Inside a pair, the blocks are lined up in order; a block the document has and the website does not
+   * is "missing" (and where it should have gone is said), a block the website has instead in the same
+   * spot is "replaced", a close one "changed". A missing block found elsewhere on the page is "moved".
    */
-  function docCopy(dp, site) {
-    const D = (dp.blocks || []).map((b, i) => ({ i, t: b.text, h: b.t === 'heading', ok: b.t === 'text' || b.t === 'heading' }))
-      .filter((x) => x.ok && dwords(x.t).length).map((x) => Object.assign(x, { w: dwords(x.t), toks: dtoks(x.t) }));
-    D.forEach((x) => { x.bag = bag(x.w); x.cover = 0; });
-    const rows = (site || []).slice(0, 300).map((sb) => {
-      const w = dwords(sb.t); const row = { t: sb.t, tag: sb.tag, ...(sb.hid ? { hid: sb.hid } : {}) };
-      if (!w.length) { row.k = 'extra'; return row; }
-      const sbag = bag(w); const stoks = dtoks(sb.t);
-      // Cheap first pass on shared words, then line the words up with the best few.
-      const cands = D.map((d) => { const sh = bagShared(sbag, d.bag); return { d, sh, sc: sh / Math.max(w.length, d.w.length), ss: sh / w.length, sd: sh / d.w.length }; })
-        .filter((c) => c.ss >= 0.4 || c.sd >= 0.5).sort((x, y) => y.sc - x.sc).slice(0, 4);
-      let best = null;
-      cands.forEach((c) => { const l = dlcs(stoks, c.d.toks); const fs = l.n / w.length, fd = l.n / c.d.w.length; const sc = Math.min(fs, fd) * 2 + Math.max(fs, fd); if (!best || sc > best.sc) best = { d: c.d, fs, fd, n: l.n, sc }; });
-      if (!best || (best.fs < 0.5 && best.fd < 0.5)) { row.k = 'extra'; return row; }
-      row.d = best.d.i;
-      if (dnorm(sb.t) === dnorm(best.d.t) || (best.fs >= 0.97 && best.fd >= 0.97)) row.k = 'same';
-      else if (best.fs >= 0.97) row.k = 'part';
-      else row.k = 'changed';
-      best.d.cover += best.n;
-      if (row.k === 'same') best.d.cover = Math.max(best.d.cover, best.d.w.length);
-      return row;
+  const dblk = (t, kind, extra) => Object.assign({ t: String(t || ''), kind, w: kind === 'b' ? bwords(t) : dwords(t), toks: dtoks(t) }, extra || {});
+  /** How alike two blocks are: { sim: 0..1 over the longer, a: share of a's words found in b, b: share of b's in a }. */
+  function bsim(x, y) {
+    if (!x.w.length || !y.w.length) return { sim: 0, a: 0, b: 0 };
+    if ((x.kind === 'b') !== (y.kind === 'b')) return { sim: 0, a: 0, b: 0 };
+    if (x.w.join(' ') === y.w.join(' ')) return { sim: 1, a: 1, b: 1 };
+    if (!bagShared(x.bag || (x.bag = bag(x.w)), y.bag || (y.bag = bag(y.w)))) return { sim: 0, a: 0, b: 0 };
+    if (x.kind === 'b') { const A2 = new Set(x.w); const n = y.w.filter((v) => A2.has(v)).length; return { sim: n / Math.max(x.w.length, y.w.length), a: n / x.w.length, b: n / y.w.length }; }
+    const ka = x.toks.filter((v) => v.k).length, kb = y.toks.filter((v) => v.k).length;
+    const n = dlcs(x.toks, y.toks).n;
+    return { sim: n / Math.max(ka, kb, 1), a: n / Math.max(ka, 1), b: n / Math.max(kb, 1) };
+  }
+  function dsections(blocks) {
+    const secs = []; let cur = null;
+    blocks.forEach((b) => {
+      // A heading starts a section, unless it follows another heading (a label above a title, a price under a package name).
+      if (!cur || (b.kind === 'h' && cur.items.some((x) => x.kind !== 'h'))) { cur = { items: [] }; secs.push(cur); }
+      cur.items.push(b);
     });
-    // A document block is on the page when the website blocks matched to it hold (almost) all its words.
-    const missing = D.filter((d) => d.cover / d.w.length < 0.85 && !rows.some((r) => r.d === d.i && r.k !== 'part')).map((d) => d.i);
-    const n = (k) => rows.filter((r) => r.k === k).length;
-    return { rows, missing, same: n('same') + n('part'), changed: n('changed'), extra: n('extra') };
+    secs.forEach((s, i) => { s.i = i; const h = s.items.find((x) => x.kind === 'h'); s.headBlk = h || null; s.head = (h || s.items[0]).t; s.bag = bag(s.items.flatMap((x) => x.w)); s.n = s.items.reduce((n, x) => n + x.w.length, 0); });
+    return secs;
+  }
+  const short = (t, n = 70) => { t = String(t || ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+  function docCopy(dp, site) {
+    const D = (dp.blocks || []).map((b, i) => ({ b, i })).filter((x) => ['text', 'heading', 'button'].includes(x.b.t))
+      .map((x) => dblk(x.b.text, x.b.t === 'heading' ? 'h' : x.b.t === 'button' ? 'b' : 'p', { i: x.i })).filter((x) => x.w.length);
+    const S = (site || []).slice(0, 300).map((x, j) => dblk(x.t, x.tag === 'btn' ? 'b' : /^h\d$/.test(x.tag || '') ? 'h' : 'p', { j, tag: x.tag, hid: x.hid || '' })).filter((x) => x.w.length);
+    const ds = dsections(D), ss = dsections(S);
+    // ---- pair the sections by what they say (heading counts extra) ----
+    const cand = [];
+    ds.forEach((a) => ss.forEach((b) => {
+      const sh = bagShared(a.bag, b.bag); if (!sh) return;
+      let sc = sh / Math.max(a.n, b.n, 1);
+      if (a.headBlk && b.headBlk) { const h = bsim(a.headBlk, b.headBlk).sim; if (h >= 0.8) sc += 0.35 * h; }
+      cand.push({ a, b, sc });
+    }));
+    cand.sort((x, y) => y.sc - x.sc);
+    const pairOfD = new Map(), pairOfS = new Map();
+    cand.forEach((c) => { if (c.sc >= 0.3 && !pairOfD.has(c.a.i) && !pairOfS.has(c.b.i)) { pairOfD.set(c.a.i, c.b); pairOfS.set(c.b.i, c.a); } });
+    // ---- sections placed in another order on the website ----
+    const paired = ds.filter((a) => pairOfD.has(a.i));
+    const seq = paired.map((a) => pairOfD.get(a.i).i);
+    const inOrder = new Set();
+    { // longest run that keeps the document's order; the rest moved
+      const n = seq.length, len = Array(n).fill(1), prev = Array(n).fill(-1);
+      for (let i = 0; i < n; i++) for (let j = 0; j < i; j++) if (seq[j] < seq[i] && len[j] + 1 > len[i]) { len[i] = len[j] + 1; prev[i] = j; }
+      let k = len.indexOf(Math.max(0, ...len)); while (k >= 0) { inOrder.add(paired[k].i); k = prev[k]; }
+    }
+    const allSite = S;
+    // ---- inside a pair: line the blocks up ----
+    function align(A2, B2) {
+      const n = A2.length, m = B2.length, sim = [];
+      for (let i = 0; i < n; i++) { sim[i] = []; for (let j = 0; j < m; j++) sim[i][j] = bsim(A2[i], B2[j]); }
+      const F = Array.from({ length: n + 1 }, () => new Float64Array(m + 1));
+      for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) F[i][j] = Math.max(F[i + 1][j], F[i][j + 1], sim[i][j].sim >= 0.45 ? F[i + 1][j + 1] + sim[i][j].sim : -1);
+      const ops = [];
+      let i = 0, j = 0;
+      while (i < n || j < m) {
+        if (i < n && j < m && sim[i][j].sim >= 0.45 && F[i][j] === F[i + 1][j + 1] + sim[i][j].sim) { ops.push({ d: A2[i], s: B2[j], r: sim[i][j] }); i++; j++; }
+        else if (i < n && (j >= m || F[i + 1][j] >= F[i][j + 1])) { ops.push({ d: A2[i] }); i++; }
+        else { ops.push({ s: B2[j] }); j++; }
+      }
+      // Between two lined-up blocks, what the document has and what the website has instead: side by side.
+      const out = [];
+      for (let k = 0; k < ops.length;) {
+        if (ops[k].d && ops[k].s) { out.push(ops[k]); k++; continue; }
+        const gd = [], gs = [];
+        while (k < ops.length && !(ops[k].d && ops[k].s)) { if (ops[k].d) gd.push(ops[k].d); else gs.push(ops[k].s); k++; }
+        const used = new Set();
+        gd.forEach((d) => {
+          const j2 = gs.findIndex((s, q) => !used.has(q) && (s.kind === 'b') === (d.kind === 'b'));
+          if (j2 >= 0) { used.add(j2); out.push({ d, s: gs[j2], r: bsim(d, gs[j2]), swap: true }); } else out.push({ d });
+        });
+        gs.forEach((s, q) => { if (!used.has(q)) out.push({ s }); });
+      }
+      return out;
+    }
+    const rowOf = (o, secHead) => {
+      const row = { d: o.d ? o.d.i : null, s: o.s ? o.s.t : null, st: o.s ? o.s.tag : '', ...(o.s && o.s.hid ? { hid: o.s.hid } : {}) };
+      if (o.d && o.s) {
+        const r = o.r || bsim(o.d, o.s);
+        row.k = r.sim >= 0.97 ? 'same' : r.sim >= 0.3 || r.a >= 0.6 ? 'changed' : 'replaced';
+        if (row.k !== 'same') row.sim = Math.round(r.sim * 100);
+      } else if (o.d) {
+        row.k = 'missing';
+        // Is it somewhere else on the page (another section, or joined into a longer paragraph)?
+        let best = null; allSite.forEach((s) => { const r = bsim(o.d, s); if (r.a >= 0.85 && (!best || r.a > best.r.a)) best = { s, r }; });
+        if (best) { row.k = 'moved'; row.s = best.s.t; row.st = best.s.tag; const sec = ss.find((x) => x.items.includes(best.s)); row.note = best.r.sim >= 0.97 ? `On the website under “${short(sec ? sec.head : '')}”` : `Inside a longer paragraph on the website${sec ? ` (under “${short(sec.head)}”)` : ''}`; }
+      } else {
+        row.k = 'added';
+        let best = null; D.forEach((d) => { const r = bsim(d, o.s); if (r.b >= 0.85 && (!best || r.b > best.r.b)) best = { d, r }; });
+        if (best) { const sec = ds.find((x) => x.items.includes(best.d)); row.k = 'dup'; row.d = best.d.i; row.note = `From the document’s “${short(sec ? sec.head : '')}” section`; }
+      }
+      return row;
+    };
+    const secs = [];
+    const placeNotes = (rows) => {
+      // Where a missing block should go: after the block before it (as the website has it), else at the top of the section.
+      rows.forEach((r, k) => {
+        if (r.k !== 'missing') return;
+        let p = k - 1; while (p >= 0 && !rows[p].s) p--;
+        const nx = rows.slice(k + 1).find((x) => x.s && x.k !== 'moved');
+        r.note = p >= 0 ? `Should come after “${short(rows[p].s, 60)}”` : nx ? `Should come before “${short(nx.s, 60)}”` : '';
+      });
+      return rows;
+    };
+    ds.forEach((a) => {
+      const b = pairOfD.get(a.i);
+      if (!b) {
+        const rows = a.items.map((d) => rowOf({ d }));
+        // The whole section: where it should go on the website.
+        const prevD = [...ds].slice(0, a.i).reverse().find((x) => pairOfD.has(x.i));
+        secs.push({ k: 'missing', dh: a.head, rows, note: prevD ? `Should come after the “${short(pairOfD.get(prevD.i).head)}” section` : 'Should be the first section of the page', di: a.i });
+        return;
+      }
+      const rows = placeNotes(align(a.items, b.items).map((o) => rowOf(o)));
+      const before = ss[b.i - 1];
+      secs.push({ k: rows.every((r) => r.k === 'same') ? 'same' : 'changed', dh: a.head, sh: b.head, rows, di: a.i, si: b.i,
+        ...(inOrder.has(a.i) ? {} : { mv: 1, note: before ? `Moved: on the website it comes after “${short(before.head)}”` : 'Moved: on the website it is the first section' }) });
+    });
+    // Website sections the document does not have, slotted in after the section before them on the website.
+    ss.filter((b) => !pairOfS.has(b.i)).forEach((b) => {
+      const rows = b.items.map((s) => rowOf({ s }));
+      const prevS = [...ss].slice(0, b.i).reverse().find((x) => pairOfS.has(x.i));
+      const at = prevS ? secs.findIndex((x) => x.si === prevS.i) : -1;
+      let k = at + 1; while (k < secs.length && secs[k].k === 'added' && secs[k].si < b.i) k++;
+      secs.splice(k, 0, { k: 'added', sh: b.head, rows, si: b.i, note: 'Not in the document' });
+    });
+    const all = secs.flatMap((x) => x.rows);
+    const n = (k) => all.filter((r) => r.k === k).length;
+    return { secs, same: n('same'), changed: n('changed') + n('replaced'), missing: n('missing'), added: n('added'), moved: n('moved') + secs.filter((x) => x.mv).length };
   }
   /** The two texts of a changed block, the website's added words and the document's left-out words marked. */
   function docDiffHtml(siteText, docText) {
@@ -10882,41 +10992,48 @@
       toks.forEach((t, i) => { if (keep[i]) { flush(); out += esc(t.w) + ' '; } else run.push(t.w); }); flush(); return out.trim(); };
     return { site: mark(a, l.a, 'ins'), doc: mark(b, l.b, 'del') };
   }
-  /** Website blocks in page order, with the document blocks that never turned up slotted in after the block before them. */
-  function docCopyRows(dp, c) {
-    const out = c.rows.map((r) => Object.assign({}, r));
-    const miss = (c.missing || []).slice().sort((x, y) => x - y);
-    miss.forEach((mi) => {
-      let at = -1; out.forEach((r, k) => { if (r.d != null && r.d < mi && r.k !== 'missing') at = k; });
-      // After the last block already placed for an earlier document block, so missing ones keep their order.
-      while (at + 1 < out.length && out[at + 1].k === 'missing' && out[at + 1].d < mi) at++;
-      out.splice(at + 1, 0, { k: 'missing', d: mi });
-    });
-    return out;
+  const DCC_K = { same: ['✓', 'Same'], changed: ['≠', 'Changed'], replaced: ['⇄', 'Replaced with something else'], missing: ['✗', 'Missing from the website'], moved: ['↕', 'Elsewhere on the page'], added: ['＋', 'Not in the document'], dup: ['＋', 'Repeated from another section'] };
+  /** One block's two sides: [document html, website html]. */
+  function docCopyCells(blocks, r) {
+    const dt = r.d != null && blocks[r.d] ? blocks[r.d].text : '';
+    const dTag = r.d != null && blocks[r.d] ? (blocks[r.d].t === 'heading' ? '<span class="dcc-tag">Heading</span>' : blocks[r.d].t === 'button' ? '<span class="dcc-tag">Button</span>' : '') : '';
+    const sTag = r.st === 'btn' ? '<span class="dcc-tag">Button</span>' : /^h\d$/.test(r.st || '') ? `<span class="dcc-tag">${esc(r.st.toUpperCase())}</span>` : r.st === 'li' ? '<span class="dcc-tag">•</span>' : '';
+    const hid = r.hid ? ` <span class="badge subtle" title="${esc(r.hid)}">hidden on desktop</span>` : '';
+    const note = r.note ? `<div class="dcc-note">${esc(r.note)}</div>` : '';
+    if (r.k === 'changed') { const x = docDiffHtml(r.s, dt); return [dTag + x.doc, sTag + x.site + hid]; }
+    if (r.k === 'replaced') return [`${dTag}<span class="dcc-gone">${esc(dt)}</span>`, `${sTag}<span class="dcc-new">${esc(r.s)}</span>${hid}<div class="dcc-note">Replaced: something else is in its place</div>`];
+    if (r.k === 'missing') return [`${dTag}<span class="dcc-gone">${esc(dt)}</span>`, `<span class="faint">Not on the website</span>${note}`];
+    if (r.k === 'moved') return [dTag + esc(dt), `${sTag}<span class="faint">${esc(short(r.s, 140))}</span>${hid}${note}`];
+    if (r.k === 'added') return ['<span class="faint">Not in the document</span>', `${sTag}<span class="dcc-new">${esc(r.s)}</span>${hid}`];
+    if (r.k === 'dup') return [`<span class="faint">${esc(short(dt, 140))}</span>`, `${sTag}${esc(r.s)}${hid}${note}`];
+    return [dTag + esc(dt), sTag + esc(r.s) + hid];
   }
   function docCopyHtml(s, dp, c) {
-    if (!c) return '';
+    if (!c || !c.secs) return '';
     const only = !!state.dcOnlyDiff;
     const blocks = (dp && dp.blocks) || [];
-    const list = docCopyRows(dp, c).filter((r) => !only || r.k !== 'same');
-    const tagLbl = (r) => (/^h\d$/.test(r.tag || '') ? `<span class="dcc-tag">${esc(r.tag.toUpperCase())}</span>` : r.tag === 'li' ? '<span class="dcc-tag">•</span>' : '');
-    const docTag = (i) => (blocks[i] && blocks[i].t === 'heading' ? '<span class="dcc-tag">Heading</span>' : '');
-    const K = { same: ['✓', 'Same'], part: ['✓', 'Same (part of a longer document paragraph)'], changed: ['≠', 'Changed'], extra: ['＋', 'Not in the document'], missing: ['✗', 'Missing from the website'] };
-    const rowHtml = (r) => {
-      const dt = r.d != null && blocks[r.d] ? blocks[r.d].text : '';
-      let left, right;
-      if (r.k === 'missing') { left = '<span class="faint">Not on the website</span>'; right = docTag(r.d) + esc(dt); }
-      else if (r.k === 'extra') { left = tagLbl(r) + esc(r.t); right = '<span class="faint">Not in the document</span>'; }
-      else if (r.k === 'changed') { const x = docDiffHtml(r.t, dt); left = tagLbl(r) + x.site; right = docTag(r.d) + x.doc; }
-      else { left = tagLbl(r) + esc(r.t); right = docTag(r.d) + esc(dt); }
-      return `<div class="dcc-row dcc-${r.k}"><div class="dcc-k" title="${esc(K[r.k][1])}">${K[r.k][0]}</div><div class="dcc-site">${left}${r.hid ? ` <span class="badge subtle" title="${esc(r.hid)}">hidden</span>` : ''}</div><div class="dcc-doc">${right}</div></div>`;
+    const secs = c.secs.filter((x) => !only || x.k !== 'same' || x.mv);
+    const secHtml = (x) => {
+      const rows = x.rows.filter((r) => !only || r.k !== 'same');
+      const bad = x.rows.filter((r) => r.k !== 'same').length;
+      const chip = x.k === 'missing' ? '<span class="dcc-chip missing">✗ Whole section missing</span>' : x.k === 'added' ? '<span class="dcc-chip added">＋ Not in the document</span>'
+        : `${bad ? `<span class="dcc-chip changed">≠ ${bad} difference${bad === 1 ? '' : 's'}</span>` : '<span class="dcc-chip same">✓ Same</span>'}${x.mv ? '<span class="dcc-chip moved">↕ Moved</span>' : ''}`;
+      return `<div class="dcc-sec dcc-s-${x.k}${x.mv ? ' dcc-s-mv' : ''}">
+        <div class="dcc-sec-h"><span class="dcc-sec-t">${esc(short(x.dh || x.sh, 90))}</span>${chip}${x.note && x.k !== 'added' ? `<span class="dcc-sec-note">${esc(x.note)}</span>` : ''}</div>
+        ${rows.map((r) => { const [l, rt] = docCopyCells(blocks, r); return `<div class="dcc-row dcc-${r.k}"><div class="dcc-k" title="${esc(DCC_K[r.k][1])}">${DCC_K[r.k][0]}</div><div class="dcc-doc">${l}</div><div class="dcc-site">${rt}</div></div>`; }).join('')}</div>`;
     };
-    return `<div class="dc-sec dcc"><div class="dcc-top"><b>Copy, block by block</b> <span class="faint">the page read top to bottom, each heading and paragraph looked up in the document</span>
-        <span class="dcc-sum"><span class="dcc-n same">✓ ${c.same} same</span><span class="dcc-n changed">≠ ${c.changed} changed</span><span class="dcc-n extra">＋ ${c.extra} not in the document</span><span class="dcc-n missing">✗ ${(c.missing || []).length} missing</span></span>
+    return `<div class="dc-sec dcc"><div class="dcc-top"><b>Copy, section by section</b> <span class="faint">the document (the source of truth) next to the website, each section found by what it says, wherever the designer put it</span>
+        <span class="dcc-sum"><span class="dcc-n same">✓ ${c.same} same</span><span class="dcc-n changed">≠ ${c.changed} changed</span><span class="dcc-n missing">✗ ${c.missing} missing</span><span class="dcc-n extra">＋ ${c.added} not in the document</span>${c.moved ? `<span class="dcc-n moved">↕ ${c.moved} moved</span>` : ''}</span>
         <label class="small dcc-only"><input type="checkbox" data-dcc-only ${only ? 'checked' : ''}> Only differences</label></div>
-      <div class="dcc-head"><div></div><div>Website (in page order)</div><div>Document</div></div>
-      ${list.length ? list.map(rowHtml).join('') : '<div class="small faint">Every block matches the document. ✓</div>'}
-      <div class="small faint dcc-key"><ins>green</ins> words are on the website but not in the document; <del>red</del> words are in the document but not on the website. The header, footer, menus and forms are not part of this list.</div></div>`;
+      <div class="dcc-head"><div></div><div>Document</div><div>Website</div></div>
+      ${secs.length ? secs.map(secHtml).join('') : '<div class="small faint">Every section matches the document. ✓</div>'}
+      <div class="small faint dcc-key"><del>Red</del> words are in the document but not on the website; <ins>green</ins> words are on the website but not in the document. The header, footer, menus and forms are left out.</div></div>`;
+  }
+  /** The same, as plain tables for the downloaded report. */
+  function docCopyReport(dp, c) {
+    const blocks = (dp && dp.blocks) || [];
+    return c.secs.map((x) => `<h3>${esc(short(x.dh || x.sh, 100))} <span class="muted">${x.k === 'missing' ? '· whole section missing' : x.k === 'added' ? '· not in the document' : x.rows.every((r) => r.k === 'same') ? '· same' : ''}${x.mv ? ' · moved' : ''}${x.note && x.k !== 'added' ? ' · ' + esc(x.note) : ''}</span></h3>
+      <table><thead><tr><th></th><th>Document</th><th>Website</th></tr></thead><tbody>${x.rows.map((r) => { const [l, rt] = docCopyCells(blocks, r); return `<tr><td class="small"><b>${esc(DCC_K[r.k][1])}</b></td><td>${l}</td><td>${rt}</td></tr>`; }).join('')}</tbody></table>`).join('');
   }
   const docScore = (r) => (r ? Math.round(((r.blocks.found + r.buttons.found + (r.title && r.title.ok ? 1 : 0) + (r.meta && r.meta.ok ? 1 : 0)) / Math.max(1, r.blocks.total + r.buttons.asked + (r.title ? 1 : 0) + (r.meta ? 1 : 0))) * 100) : 0);
   /** The document's client details against Business Info. */
@@ -11058,7 +11175,7 @@
   function docRowHtml(s, r, src, dp) {
     if (r.missing) return `<details class="dc-row dc-miss"><summary><span class="dc-ic">✗</span><b>${esc(r.name)}</b><span class="dc-path faint">not on the website</span><span class="badge sev-critical">Missing page</span></summary>
       <div class="small muted dc-body">${esc(r.reason || 'No page on the website carries this document page.')}${r.title ? `<div class="kv"><b>Its SEO title:</b> ${esc(r.title)}</div>` : ''}</div></details>`;
-    const bad = (r.title && !r.title.ok ? 1 : 0) + (r.meta && !r.meta.ok ? 1 : 0) + (r.copy ? r.copy.changed + r.copy.extra + (r.copy.missing || []).length : r.blocks.missing.length) + r.buttons.missing.length + r.buttons.inconsistent.length + r.buttons.broken.length + r.buttons.wrongPhone.length;
+    const bad = (r.title && !r.title.ok ? 1 : 0) + (r.meta && !r.meta.ok ? 1 : 0) + (r.copy && r.copy.secs ? r.copy.changed + r.copy.added + r.copy.missing + r.copy.moved : r.blocks.missing.length) + r.buttons.missing.length + r.buttons.inconsistent.length + r.buttons.broken.length + r.buttons.wrongPhone.length;
     const kv = (label, x) => (x ? `<div class="dc-kv ${x.ok ? 'ok' : 'bad'}"><span>${x.ok ? '✓' : '≠'} ${label}</span>${x.ok ? `<span class="faint">${esc(x.site)}</span>` : `<span><span class="faint">Document:</span> ${esc(x.doc)}<br><span class="faint">Website:</span> ${esc(x.site || '(none)')}</span>`}</div>` : '');
     return `<details class="dc-row" data-dcp="${esc(r.path)}"${(state.dcOpen || new Set()).has(r.path) ? ' open' : ''}><summary><span class="dc-ic ${bad ? 'bad' : 'ok'}">${bad ? '!' : '✓'}</span><b>${esc(r.name)}</b>
         <a class="dc-path mono small" href="${esc(src && src.live ? `https://${src.domain}${r.path}` : previewUrl(s, r.path, 'desktop'))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.path)}</a>
@@ -11066,7 +11183,7 @@
       <div class="dc-body">
         <div class="small faint">Found ${r.how === 'title' ? 'by its SEO title' : r.how === 'url' ? 'by the address in the document' : `by the AI (${Math.round((r.confidence || 0) * 100)}%): ${esc(r.reason || '')}`}</div>
         ${kv('SEO title', r.title)}${kv('Meta description', r.meta)}
-        ${r.copy ? docCopyHtml(s, dp, r.copy) : `<div class="dc-sec"><b>Copy</b> <span class="faint">${r.blocks.found} of ${r.blocks.total} pieces found word for word</span>
+        ${r.copy && r.copy.secs ? docCopyHtml(s, dp, r.copy) : `<div class="dc-sec"><b>Copy</b> <span class="faint">${r.blocks.found} of ${r.blocks.total} pieces found word for word</span>
           ${r.blocks.missing.length ? `<div class="dc-list"><div class="small">Missing from the page (${r.blocks.missing.length}):</div>${r.blocks.missing.slice(0, 40).map((b) => `<div class="dc-item bad">${b.t === 'heading' ? '<span class="badge subtle">heading</span> ' : ''}${esc(b.doc)}</div>`).join('')}</div>` : ''}
           ${r.blocks.changed.length ? `<div class="dc-list"><div class="small">Changed (${r.blocks.changed.length}):</div>${r.blocks.changed.slice(0, 30).map((b) => `<div class="dc-item"><div><span class="faint">Document:</span> ${esc(b.doc)}</div><div><span class="faint">Website (${b.score}% the same):</span> ${esc(b.site || '—')}</div></div>`).join('')}</div>` : ''}</div>`}
         <div class="dc-sec"><b>Buttons</b> <span class="faint">${r.buttons.found} of ${r.buttons.asked} the document asks for are on the page (more are fine)</span>
@@ -11143,11 +11260,7 @@
       `<h1>${esc(s.businessName || s.siteId)} vs the document</h1><div class="muted">${esc(d.name)} · checked ${last.source ? (last.source.live ? `on the live website ${esc(last.source.domain)} ` : 'on the draft in Duda ') : ''}${esc(fmtFull(last.at))} by ${esc(last.byName || '')}</div>
        <div class="db-card"><b>${esc(last.summary)}</b></div>
        <h2>Pages</h2><table><thead><tr><th>Document page</th><th>Website page</th><th>Match</th><th>Differences</th></tr></thead><tbody>${last.rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.missing ? '<b style="color:#c62828">Missing</b>' : esc(r.path)}</td><td>${r.missing ? '' : r.score + '%'}</td><td class="small">${r.missing ? esc(r.reason || '') : [r.title && !r.title.ok ? `SEO title differs: "${esc(r.title.site)}" (document: "${esc(r.title.doc)}")` : '', r.meta && !r.meta.ok ? 'Meta description differs' : '', ...r.blocks.missing.slice(0, 12).map((b) => 'Missing copy: ' + esc(b.doc.slice(0, 160))), ...r.buttons.missing.map((b) => 'Missing button: ' + esc(b)), ...r.buttons.inconsistent.map((b) => `"${esc(b.text)}" buttons go to ${b.to.map(esc).join(' and ')}`), ...r.buttons.broken.map((b) => `"${esc(b.text)}" opens a missing page ${esc(b.to)}`)].filter(Boolean).join('<br>') || '✓'}</td></tr>`).join('')}</tbody></table>
-       ${last.rows.filter((r) => r.copy && r.copy.rows && r.copy.rows.length).map((r) => { const dp = docPages(d).find((p) => p.i === r.i); const bl = (dp && dp.blocks) || [];
-         const K = { same: 'Same', part: 'Same (part)', changed: 'Changed', extra: 'Not in the document', missing: 'Missing from the website' };
-         return `<h2>${esc(r.name)} <span class="muted">${esc(r.path)}</span>: copy, block by block</h2><table><thead><tr><th></th><th>Website (in page order)</th><th>Document</th></tr></thead><tbody>${docCopyRows(dp, r.copy).map((x) => { const dt = x.d != null && bl[x.d] ? bl[x.d].text : '';
-           const df = x.k === 'changed' ? docDiffHtml(x.t, dt) : null;
-           return `<tr><td class="small"><b>${K[x.k]}</b></td><td>${x.k === 'missing' ? '—' : df ? df.site : esc(x.t)}</td><td>${x.k === 'extra' ? '—' : df ? df.doc : esc(dt)}</td></tr>`; }).join('')}</tbody></table>`; }).join('')}
+       ${last.rows.filter((r) => r.copy && r.copy.secs && r.copy.secs.length).map((r) => `<h2>${esc(r.name)} <span class="muted">${esc(r.path)}</span>: copy, section by section</h2>${docCopyReport(docPages(d).find((p) => p.i === r.i), r.copy)}`).join('')}
        <h2>Client details</h2><table><thead><tr><th></th><th>Document</th><th>Business Info / website</th><th></th></tr></thead><tbody>${last.client.map((c) => `<tr><td>${esc(c.label)}</td><td>${esc(c.doc || '—')}</td><td>${esc(c.now || '—')}</td><td>${c.ok === null ? 'not given' : c.ok ? 'same' : 'different'}</td></tr>`).join('')}</tbody></table>`));
   }
 
@@ -11347,7 +11460,7 @@
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' })); a.download = name; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
-  const REP_CSS = `ins{background:#d4f2df;text-decoration:none}del{background:#fbdada}.proof-in-rep{margin-top:6px}.proof-in-rep img{max-width:420px;width:100%;border:1px solid #e3e6eb;border-radius:6px;display:block}body{margin:0;background:#f6f7f9;color:#16181d;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  const REP_CSS = `ins{background:#d4f2df;text-decoration:none}del{background:#fbdada}.dcc-gone{background:#fbdada}.dcc-new{background:#d4f2df}.dcc-tag{font-size:10px;border:1px solid #ccc;border-radius:3px;padding:0 3px;margin-right:4px}.dcc-note{font-size:12px;color:#666}.proof-in-rep{margin-top:6px}.proof-in-rep img{max-width:420px;width:100%;border:1px solid #e3e6eb;border-radius:6px;display:block}body{margin:0;background:#f6f7f9;color:#16181d;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 main{max-width:1000px;margin:0 auto;padding:28px 20px 60px}h1{font-size:24px;margin:0 0 4px}h2{font-size:17px;margin:26px 0 10px}h3{font-size:14px;margin:0 0 8px}
 .small{font-size:12px}.muted{color:#5d6572}.faint{color:#8a919c}.db-sub{margin:-4px 0 10px}
 .db-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}.db-tile{display:flex;flex-direction:column;padding:12px 14px;background:#fff;border:1px solid #e3e6eb;border-radius:10px}

@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **158**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **159**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 155 on GitHub (`b704ce1`). **Delivered as a zip, maybe not uploaded yet:** 156 + 157 (one zip: audit tabs, scan progress everywhere, vs Docs live website, copy block by block).
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 155 on GitHub (`b704ce1`). **Delivered as a zip, maybe not uploaded yet:** 156 + 157 + 158 (one zip: audit tabs, scan progress everywhere, vs Docs live website, copy section by section).
 - **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
 - **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
@@ -227,3 +227,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - app `docCopy(dp, site)`: each website block looked up in the document page (word bags to pick candidates, then a word-level LCS `dlcs`): same / part / changed / extra; document blocks whose words never turned up: `missing`. `docCopyRows` slots missing ones after the block before them; `docCopyHtml` / `docDiffHtml` (ins/del) draw it; "Only differences" = `state.dcOnlyDiff`; open rows kept in `state.dcOpen`.
 - Stored as `result.rows[].copy` (site text only; document text comes from the parsed document). store `docSave` keeps the copy rows on the newest check only.
 - The page's difference count uses changed + not in the document + missing when a check has the copy (older checks: as before).
+
+## Update 158 — vs Docs: copy section by section (built; replaces 157's block list)
+- engine `pageCopy` also returns buttons (`a.dmButtonLink`, tag `btn`) in their place.
+- app `docCopy(dp, site)`: `dsections` splits both sides into sections (a heading starts one; headings in a row stay together). Sections are paired by shared words (+ heading likeness), greedy; out-of-order pairs (not in the longest in-order run) are `mv` with a note. Inside a pair `align` lines blocks up (weighted LCS on `bsim`, ≥0.45); unmatched blocks in the same gap are paired as `replaced`/`changed`; left-over document blocks are `missing` (or `moved` when found elsewhere on the page, also inside a longer paragraph), website ones `added` (or `dup`). Missing notes say what they should come after. Result `{ secs: [{ k, dh, sh, rows, mv?, note? }], same, changed, missing, added, moved }`.
+- `docCopyHtml` / `docCopyCells` / `docCopyReport` (download). Document left, website right (red = left out, green = added). Old checks without `secs` show the old list.
