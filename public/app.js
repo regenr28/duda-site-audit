@@ -6838,6 +6838,18 @@
         scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
       } });
       upsertSummary(sum);
+      // Proof pictures of the critical items, while they are on the page (skipped when the page browser isn't available).
+      if (!(ctr.summary && ctr.summary.skipped) && !(window.DemoMode && window.DemoMode.on())) {
+        try {
+          const fresh = await api('/api/store?op=site&id=' + encodeURIComponent(id));
+          const want = (fresh.findings || []).filter((f) => f.severity === 'critical' && !f.gone && !f.proof && (f.status === 'open' || f.status === 'clarification') && f.selector && f.selector !== '(page)').slice(0, PROOF_MAX);
+          if (want.length) {
+            const pr = await proofTake(fresh, want, 'scan', (n, of) => { state.scanning[id] = Object.assign({}, state.scanning[id], { message: `📸 Proof pictures ${n}/${of} pages` }); renderProgress(id); });
+            if (pr.done) log.push(`Proof pictures taken of ${pr.done} critical item${pr.done === 1 ? '' : 's'}.`);
+          }
+        } catch (e) { /* the scan is saved either way */ }
+      }
+      upsertSummary(sum);
       toast(`Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
     } catch (e) {
       console.error(e);
@@ -10461,7 +10473,7 @@
                 <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
               <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>${gbpIdNote(s, f)}${f.hiddenLive ? `<div><span class="badge subtle" title="Hidden by the page's own styles (${esc(f.hiddenLive)}): visitors don't see it, but it is in the page's code, which Google and SEO tools read">👁 Hidden on the page</span></div>` : ''}
-                ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}${ctrChip(f)}
+                ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}${proofHtml(s, f)}${ctrChip(f)}${proofHtml(s, f)}
                 ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}</td>
               <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
               <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
@@ -10631,6 +10643,8 @@
       return;
     }
     const send = Object.assign({}, changes); delete send.asked;
+    // Marked False alarm: a picture of it first-hand, while it is still on the page, in case it turns out to be real.
+    if (changes.status === 'false') { const items = (s.findings || []).filter((x) => ids.includes(x.id) && !x.proof).slice(0, 10); if (items.length) proofTake(s, items, 'false').catch(() => {}); }
     try { upsertSummary(await store({ op: 'patchFinding', siteId: s.id, findingIds: ids, changes: send })); await loadSite(s.id); renderSite(); if (changes.status && !changes.asked) toast(`Marked ${FLABEL[changes.status]}`); }
     catch (e) { toast('Save failed: ' + e.message); }
   }
@@ -10987,6 +11001,66 @@
     enqueue(s.id); render();
   }
 
+  // ---------- proof pictures ----------
+  // A cropped, dated picture of the problem with a red box around it (api/_proof.js), so an item can be
+  // shown to have been there. Taken for critical items after each scan (up to 25), by hand
+  // ("📸 Capture proof"), and when an item is marked False alarm. Kept 6 months.
+  const PROOF_MAX = 25;
+  const proofSrc = (s, f) => `/api/capture?op=proofImg&site=${encodeURIComponent(s.id)}&f=${encodeURIComponent(f.id)}`;
+  function proofHtml(s, f) {
+    const p = f.proof;
+    if (p) return `<div class="proof">${p.img ? `<button type="button" class="proof-th" data-proofimg="${esc(proofSrc(s, f))}" title="Open the proof picture"><img src="${esc(proofSrc(s, f))}" alt="Proof picture" loading="lazy"></button>` : ''}
+      <div class="small"><b>📸 Proof</b> <span class="faint">${esc(fmtFull(p.at))} · ${esc(A.DEVICE_LABEL[p.device] || p.device)}${p.img ? '' : p.head ? ' · in the page\'s code (head)' : p.note ? ' · ' + esc(p.note) : ''}</span>
+      ${p.code ? `<details class="proof-code"><summary>The code on the page</summary><code>${esc(p.code)}</code></details>` : ''}</div></div>`;
+    // Something missing (no favicon, no description) has nothing on the page to picture.
+    if (!can('site.scan') || !f.selector || f.selector === '(page)' || f.gone || f.manual || /MISSING|_OFF$|^ANALYTICS|^META_OG|^FONT_|^IMAGE_DUPLICATE|^AI_PENDING/.test(f.code)) return '';
+    return `<button type="button" class="linkbtn proof-cap" data-proofcap="${esc(f.id)}" title="Take a dated picture of this item on the page, as proof">📸 Capture proof</button>`;
+  }
+  /** Take proof pictures of these items: one browser per page and device. */
+  async function proofTake(s, items, why, onStep) {
+    const groups = new Map();
+    items.filter((f) => f.selector && f.selector !== '(page)' && !f.gone).forEach((f) => {
+      const device = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
+      const path = (f.pages && f.pages[0]) || f.path || '/';
+      const k = device + '|' + path; if (!groups.has(k)) groups.set(k, { device, path, items: [] });
+      groups.get(k).items.push({ id: f.id, selector: f.selector });
+    });
+    let done = 0, failed = 0, n = 0; const all = [...groups.values()];
+    for (let k = 0; k < all.length; k += 2) {
+      await Promise.all(all.slice(k, k + 2).map(async (g) => {
+        try { const r = await post('/api/capture', { op: 'proof', site: s.id, path: g.path, device: g.device, items: g.items, why }); done += (r.done || []).length; failed += (r.failed || []).length; }
+        catch (e) { failed += g.items.length; }
+        n++; if (onStep) onStep(n, all.length);
+      }));
+    }
+    return { done, failed };
+  }
+  /** The proof pictures of these report items, as data: addresses for a downloaded file (at most 40). */
+  async function proofImages(s, items) {
+    const byId = new Map((s.findings || []).filter((f) => f.proof && f.proof.img).map((f) => [f.id, f]));
+    const out = {};
+    for (const i of items.filter((x) => byId.has(x.id)).slice(0, 40)) {
+      try {
+        const blob = await (await fetch(proofSrc(s, byId.get(i.id)), { credentials: 'same-origin' })).blob();
+        const src = await new Promise((ok) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => ok(''); fr.readAsDataURL(blob); });
+        if (src) out[i.id] = { src, at: byId.get(i.id).proof.at, device: A.DEVICE_LABEL[byId.get(i.id).proof.device] || '' };
+      } catch (e) { /* that one goes without */ }
+    }
+    return out;
+  }
+  document.addEventListener('click', async (e) => {
+    const im = e.target.closest && e.target.closest('[data-proofimg]');
+    if (im) { e.preventDefault(); lightbox(im.dataset.proofimg); return; }
+    const cap = e.target.closest && e.target.closest('[data-proofcap]');
+    if (!cap || !state.current) return;
+    e.preventDefault(); e.stopPropagation();
+    const s = state.current; const f = (s.findings || []).find((x) => x.id === cap.dataset.proofcap); if (!f) return;
+    cap.disabled = true; cap.textContent = '📸 Taking the picture…';
+    const r = await proofTake(s, [f], 'hand');
+    toast(r.done ? 'Proof picture taken' : 'The picture could not be taken: the item may not be on the page any more');
+    if (state.current && state.current.id === s.id) { await loadSite(s.id); renderSite(); }
+  });
+
   // ---------- one scan's report, and two scans compared ----------
   const SEV_RANK = { critical: 0, outdated: 1, warning: 2, info: 3 };
   const repCache = new Map();
@@ -11050,7 +11124,7 @@
     draw();
     $('#repQ', body).oninput = (e) => { q = e.target.value.trim().toLowerCase(); limit = 150; draw(); };
     $('#repSev', body).onchange = (e) => { sev = e.target.value; limit = 150; draw(); };
-    $('#repDl', body).onclick = () => repDownload(`scan-report-${slug(s.businessName || s.siteId)}-${String(r.at).slice(0, 10)}.html`, reportHtml(s, x, r));
+    $('#repDl', body).onclick = async () => { repImgs = await proofImages(s, r.items); repDownload(`scan-report-${slug(s.businessName || s.siteId)}-${String(r.at).slice(0, 10)}.html`, reportHtml(s, x, r)); repImgs = {}; };
     if ($('#repCmp', body)) $('#repCmp', body).onclick = () => { const y = scans[Number($('#repWith', body).value)]; if (y) openCompare(s, String(x.at) <= String(y.at) || y.now ? x : y, String(x.at) <= String(y.at) || y.now ? y : x, scans); };
   }
   /** Two scans: before and after. */
@@ -11067,7 +11141,7 @@
       <section class="db-card"><h3>＋ New (${c.added.length})</h3><p class="small faint db-sub">Not in the earlier scan${(a.cv || 0) < (b.cv || 0) ? ` · the checks were updated in between (v${a.cv} → v${b.cv}), so some are newly checked rather than newly broken` : ''}</p>${c.added.length ? repRows(c.added, 100) : '<div class="small faint">Nothing.</div>'}</section>
       <section class="db-card"><h3>Still there (${c.still.length})</h3>${c.still.length ? repRows(c.still, 100) : '<div class="small faint">Nothing.</div>'}</section></div>`;
     $$('[data-repmore]', body).forEach((m) => (m.onclick = () => openCompare(s, xa, xb, scans)));
-    $('#cmpDl', body).onclick = () => repDownload(`scan-comparison-${slug(s.businessName || s.siteId)}-${String(a.at).slice(0, 10)}-to-${String(b.at).slice(0, 10)}.html`, compareDoc(s, xa, xb, a, b, c));
+    $('#cmpDl', body).onclick = async () => { repImgs = await proofImages(s, c.fixed.concat(c.still, c.added)); repDownload(`scan-comparison-${slug(s.businessName || s.siteId)}-${String(a.at).slice(0, 10)}-to-${String(b.at).slice(0, 10)}.html`, compareDoc(s, xa, xb, a, b, c)); repImgs = {}; };
     $('#cmpA', body).onclick = () => openScanReport(s, xa, scans);
     $('#cmpB', body).onclick = () => openScanReport(s, xb, scans);
     void tot;
@@ -11096,7 +11170,7 @@
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' })); a.download = name; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
-  const REP_CSS = `body{margin:0;background:#f6f7f9;color:#16181d;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  const REP_CSS = `.proof-in-rep{margin-top:6px}.proof-in-rep img{max-width:420px;width:100%;border:1px solid #e3e6eb;border-radius:6px;display:block}body{margin:0;background:#f6f7f9;color:#16181d;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 main{max-width:1000px;margin:0 auto;padding:28px 20px 60px}h1{font-size:24px;margin:0 0 4px}h2{font-size:17px;margin:26px 0 10px}h3{font-size:14px;margin:0 0 8px}
 .small{font-size:12px}.muted{color:#5d6572}.faint{color:#8a919c}.db-sub{margin:-4px 0 10px}
 .db-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}.db-tile{display:flex;flex-direction:column;padding:12px 14px;background:#fff;border:1px solid #e3e6eb;border-radius:10px}
@@ -11111,7 +11185,8 @@ main{max-width:1000px;margin:0 auto;padding:28px 20px 60px}h1{font-size:24px;mar
 table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e3e6eb;vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#5d6572}
 .sev{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600;color:#fff}.sev.critical{background:#c62828}.sev.outdated{background:#c2410c}.sev.warning{background:#b45309}.sev.info{background:#3b5b86}
 footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background:#fff}main{padding:0}.db-card,.db-tile{border-color:#ccc}}`;
-  const repTable = (list) => `<table><thead><tr><th>#</th><th>Severity</th><th>Item</th><th>Category</th><th>Page</th><th>Status</th></tr></thead><tbody>${repSort(list).map((i) => `<tr><td>${i.n || ''}</td><td><span class="sev ${esc(i.s)}">${esc(i.s)}</span></td><td>${esc(i.m)}${i.f ? `<div class="small faint">Found: ${esc(i.f)}</div>` : ''}${i.e ? `<div class="small faint">Expected: ${esc(i.e)}</div>` : ''}</td><td>${esc(i.g)}</td><td>${esc(i.p)}${i.pc > 1 ? ` <span class="faint">+${i.pc - 1}</span>` : ''}</td><td>${esc(FLABEL[i.st] || i.st || '')}</td></tr>`).join('')}</tbody></table>`;
+  let repImgs = {};
+  const repTable = (list) => `<table><thead><tr><th>#</th><th>Severity</th><th>Item</th><th>Category</th><th>Page</th><th>Status</th></tr></thead><tbody>${repSort(list).map((i) => `<tr><td>${i.n || ''}</td><td><span class="sev ${esc(i.s)}">${esc(i.s)}</span></td><td>${esc(i.m)}${i.f ? `<div class="small faint">Found: ${esc(i.f)}</div>` : ''}${i.e ? `<div class="small faint">Expected: ${esc(i.e)}</div>` : ''}${repImgs[i.id] ? `<div class="proof-in-rep"><img src="${repImgs[i.id].src}" alt="Proof picture"><div class="small faint">📸 Proof: ${esc(fmtFull(repImgs[i.id].at))} · ${esc(repImgs[i.id].device)}</div></div>` : ''}</td><td>${esc(i.g)}</td><td>${esc(i.p)}${i.pc > 1 ? ` <span class="faint">+${i.pc - 1}</span>` : ''}</td><td>${esc(FLABEL[i.st] || i.st || '')}</td></tr>`).join('')}</tbody></table>`;
   const repDoc = (title, inner) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${REP_CSS}</style></head><body><main>${inner}<footer>Made with Duda Site Auditor on ${esc(fmtFull(new Date().toISOString()))}. Open in a browser and print (Ctrl/Cmd + P) to save as PDF.</footer></main></body></html>`;
   function reportHtml(s, x, r) {
     const cats = {}; r.items.forEach((i) => { const c = cats[i.g] || (cats[i.g] = { k: i.g, n: 0 }); c.n++; });
@@ -11434,7 +11509,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
         ${f.challenge ? `<div class="note bad" style="margin-top:10px"><b>Reopened by ${esc(f.challenge.byName || f.challenge.by)}</b> — ${f.challenge.was === 'done' ? 'was marked Done, but it is still wrong' : 'was called a False alarm, but it is real'}
           <div class="pj-note">${esc(f.challenge.why)}</div>
           <div class="small faint">${esc(fmtWhen(Date.parse(f.challenge.at)))}${f.challenge.of ? ` · ${esc(nameOf(f.challenge.of))} was told` : ''}</div></div>` : ''}
-        ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}
+        ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}${proofHtml(s, f)}
         ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
         ${isCorrected(s, f) ? `<div class="note fixed-checks" style="margin-top:10px"><b>⚠ The check that produced this item has since been corrected.</b>

@@ -328,6 +328,10 @@ async function handler(req, res) {
         if (!l) return res.status(404).json({ error: 'Not found' });
         // A website somebody has never worked on is not theirs to open by guessing the address.
         if (!(await canSeeSite(me, l.site))) return res.status(404).json({ error: 'Not found' });
+        // Proof pictures taken of its items (only what they are; the pictures load on their own).
+        const [proofs] = await redis(['HGETALL', P + 'proofs:' + req.query.id]);
+        const pm = pairs(proofs, true); const old = Date.now() - 180 * 86400000;
+        (l.site.findings || []).forEach((f) => { const x = pm[f.id]; if (x && x.at && Date.parse(x.at) > old) f.proof = x; });
         const [act] = await redis(['LRANGE', P + 'act:' + req.query.id, 0, 299]);
         l.site.comments = l.comments.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         l.site.activity = (act || []).map((x) => jparse(x)).filter(Boolean);

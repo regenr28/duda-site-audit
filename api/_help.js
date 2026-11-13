@@ -507,6 +507,18 @@ export const HELP_SECTIONS = [
 </ol>`,
   },
   {
+    id: 'proof', group: 'Audit items', title: 'Proof pictures: show that an item was really there', audience: 'all',
+    html: `<p>When someone says an item was never on the website, a <b>📸 proof picture</b> shows it was: a cropped picture of that part of the page with a red box around the problem, the date and time, the page and the device, and the element's code.</p>
+<ul>
+<li><b>Taken by itself</b> after every scan for the <b>critical</b> items that don't have one yet (up to 25 per scan), while the problem is still on the page.</li>
+<li><b>By hand</b>: <b>📸 Capture proof</b> on any item.</li>
+<li><b>When an item is marked False alarm</b>: it is pictured first, so if it turns out to be real the picture is there.</li>
+<li>Click the thumbnail for the full picture. <b>The code on the page</b> shows the element as it was. Items in the page's head (SEO title, meta description) keep their code only, as there is nothing on screen to picture.</li>
+<li>Downloaded scan reports and comparisons include the pictures of their items.</li>
+<li>Pictures are small (a part of the page, about 20–40 KB) and kept for 6 months.</li>
+</ul>`,
+  },
+  {
     id: 'seo-websites', group: 'Live DR Sites', title: 'SEO Websites: audited again after every publish', audience: 'all',
     html: `<p><b>DR Websites → 🔍 SEO Websites</b> lists the published websites with the Duda label <b>SEO Customer</b> (any capitals): the websites the SEO company (seo@8bitcreative.com) works on.</p>
 <ul>

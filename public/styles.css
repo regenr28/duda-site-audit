@@ -2233,3 +2233,11 @@ html.demo-mode iframe { pointer-events: none; }
 .seo-run { display: grid; gap: 4px; margin-bottom: 12px; }
 .seo-pages { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 2px; }
 .seo-table td { vertical-align: top; }
+
+/* Proof pictures */
+.proof { display: flex; gap: 10px; align-items: flex-start; margin-top: 6px; }
+.proof-th { flex: none; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; background: var(--panel-2); cursor: zoom-in; width: 120px; height: 72px; }
+.proof-th img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+.proof-code summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.proof-code code { display: block; margin-top: 4px; padding: 6px 8px; background: var(--panel-2); border-radius: 6px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
+.proof-cap { margin-top: 4px; font-size: 12px; }

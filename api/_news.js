@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-14-proof', date: '2026-11-14', audience: 'all', tag: 'Audits',
+    title: 'Proof pictures: a dated picture of each critical item, with a red box around it',
+    what: 'After every scan, the <b>critical</b> items get a <b>📸 proof picture</b>: the part of the page around the problem, boxed in red, with the date, page, device and the element\'s code. Any item can be pictured with <b>📸 Capture proof</b>, an item marked <b>False alarm</b> is pictured first, and downloaded reports include the pictures. Kept 6 months.',
+    where: ['<b>Walkthrough:</b> open an audit → Audit items → the thumbnail under an item (click for the full picture). Not there yet? <b>📸 Capture proof</b>, or Rescan.'],
+    link: '#/help/proof', linkText: 'How proof pictures work',
+  },
+  {
     id: '2026-11-14-seo-websites', date: '2026-11-14', audience: 'all', tag: 'DR Websites',
     title: 'SEO Websites: the SEO company\'s websites are audited again after every publish',
     what: 'DR Websites has a new <b>🔍 SEO Websites</b> tab: the websites labelled <b>SEO Customer</b> in Duda. Each is audited again <b>4 hours after its last publish</b>, one at a time, and the audit lists the pages <b>seo@8bitcreative.com</b> created (from Duda\'s activity log), with how many items each has.',

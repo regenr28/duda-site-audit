@@ -7,6 +7,8 @@
 // POST /api/capture { op:'shoot', site, device, path, fresh }   → take a new picture (or reuse a fresh one)
 // POST /api/capture { op:'upload', site, data, type, w, h }     → the client's own screenshot, used as the page
 // POST /api/capture { op:'contrast', site, path, devices:[…] }   → the team, during a scan: text, button and form contrast on that page (see _contrast.js)
+// POST /api/capture { op:'proof', site, path, device, items:[{id, selector}], why } → the team: proof pictures of audit items (see _proof.js)
+// GET  /api/capture?op=proofImg&site=&f=          → one proof picture
 // POST /api/capture { op:'test', site? }                         → admins: check pictures work on this server
 // GET  /api/capture?op=thumb&site=<duda id>                      → the team: a website's small thumbnail (image)
 // POST /api/capture { op:'thumb', site:<duda id>, pub }          → the team: take it if missing, or older than its last publish / a week
@@ -18,6 +20,7 @@ import { metered, redis, P, newId, now, globalLog, readBody, can } from './_lib.
 import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today, cleanPath, siteRec, previewUrl, getTickets, putTicketCmd, keepCapCmds, cleanReplay } from './_tickets.js';
 import { shoot, DEVICES } from './_shoot.js';
 import { contrastScan } from './_contrast.js';
+import { proofShots } from './_proof.js';
 
 const CLIENT_SHOTS_PER_DAY = 60;
 const MAX_UPLOAD = 3 * 1024 * 1024;   // a request body can be at most about 4.5 MB once encoded
@@ -88,6 +91,32 @@ async function handler(req, res) {
   const op = String((req.method === 'GET' ? req.query.op : b.op) || '');
   try {
     if (op === 'thumb') return await thumbOp(req, res, w, b);
+    if (op === 'proof') {
+      if (!w.team || !(await can(w.me, 'site.scan'))) return res.status(403).json({ error: 'Your role does not allow this.' });
+      const site = String(b.site || '');
+      if (!mayseeSite(w, site)) return res.status(404).json({ error: 'Not found' });
+      const path = cleanPath(b.path);
+      if (!path) return res.status(400).json({ error: 'That page address is not valid.' });
+      const device = DEVICES[b.device] ? b.device : 'desktop';
+      const rec = await siteRec(site);
+      if (!rec) return res.status(404).json({ error: 'Not found' });
+      const items = [].concat(b.items || []).filter((x) => x && /^[\w-]{4,40}$/.test(String(x.id || '')) && x.selector).slice(0, 12);
+      if (!items.length) return res.status(200).json({ done: [], failed: [] });
+      let r;
+      try { const { url } = await previewUrl(rec, path, device); r = await proofShots(url, device, items, { timeout: 90000 }); }
+      catch (e) { return res.status(200).json({ done: [], failed: items.map((x) => ({ id: x.id, why: e.message })) }); }
+      const at = now(); const cmds = []; const done = []; const failed = [];
+      const KEEP = 180 * 86400;
+      r.shots.forEach((x) => {
+        if (!x.img && !x.code) { failed.push({ id: x.id, why: x.why || 'Not found' }); return; }
+        const meta = { at, by: w.me.email, byName: w.me.name, device, path, w: x.w || 0, h: x.h || 0, code: x.code || '', img: !!x.img, head: !!x.head, why: String(b.why || 'scan').slice(0, 20), note: x.img ? '' : (x.why || '') };
+        cmds.push(['HSET', P + 'proofs:' + site, x.id, JSON.stringify(meta)]);
+        if (x.img) cmds.push(['SET', P + 'proofimg:' + site + ':' + x.id, x.img, 'EX', KEEP]);
+        done.push(Object.assign({ id: x.id }, meta));
+      });
+      if (cmds.length) await redis(...cmds, ['EXPIRE', P + 'proofs:' + site, KEEP]);
+      return res.status(200).json({ done, failed });
+    }
     if (op === 'contrast') {
       // Part of a scan: only someone who may scan, on a website they can open.
       if (!w.team || !(await can(w.me, 'site.scan'))) return res.status(403).json({ error: 'Your role does not allow running scans.' });
@@ -110,6 +139,14 @@ async function handler(req, res) {
       return res.status(200).json(out);
     }
     if (req.method === 'GET') {
+      if (op === 'proofImg') {
+        const site = String(req.query.site || ''), f = String(req.query.f || '');
+        if (!mayseeSite(w, site) || !/^[\w-]{4,40}$/.test(f)) return res.status(404).end();
+        const [b64] = await redis(['GET', P + 'proofimg:' + site + ':' + f]);
+        if (!b64) return res.status(404).end();
+        res.setHeader('Content-Type', 'image/webp'); res.setHeader('Cache-Control', 'private, max-age=86400');
+        return res.status(200).end(Buffer.from(b64, 'base64'));
+      }
       if (op === 'latest') {
         const site = String(req.query.site || '');
         if (!mayseeSite(w, site)) return res.status(404).json({ error: 'Not found' });
