@@ -166,7 +166,9 @@ export const HELP_SECTIONS = [
   {
     id: 'scan', group: 'Audits', title: 'Scanning and rescanning', audience: 'all',
     html: `<ul>
-<li>The scan runs in <b>your browser tab</b>, 2 websites at a time. <b>Keep the tab open</b> until it finishes (the browser warns you if you try to close it).</li>
+<li>The scan runs in <b>your browser tab</b>, 2 websites at a time. <b>Keep the tab open</b> until it finishes (the browser asks first if you try to close or reload it). You can use any other page of the app meanwhile: the progress shows at the top of the audit, whichever of its tabs is open, and on its row in Audits.</li>
+<li><b>Reloaded by accident?</b> The scan starts again by itself from the beginning once the page is back (the same chosen pages too). Closing the tab stops it; press <b>⟳ Rescan</b> later.</li>
+<li>An audit's tabs: <b>Profile</b>, <b>📊 Audit Report</b> (the findings at a glance and every scan, to compare), <b>🔎 Audit results</b> (everything the scan found, in its own row of tabs: Audit items, 🎨 Design polish, 📏 SEO Lengths, 📄 vs Docs and 🚫 Audit exceptions), <b>Comments</b> and <b>Activity log</b>.</li>
 <li>It reads the Duda <b>preview</b> (what's in the editor now, published or not) on Desktop, Tablet and Mobile.</li>
 <li>The scan status shows <b>Queued</b>, <b>Scanning 12/45</b> with a progress bar and the current step, then <b>✓ Scan complete</b> or <b>Scan failed</b>. "Interrupted, rescan" means the tab running it was closed.</li>
 <li><b>Only one scan per website runs at a time.</b> If a teammate has it queued or is scanning it, you'll see "Queued by …" or "Scanning by …" and the Rescan button is greyed out until they finish. If their tab closed, it frees up within a few minutes.</li>
@@ -525,8 +527,8 @@ export const HELP_SECTIONS = [
 <li>Each one is audited again <b>4 hours after its last publish</b> (so several publishes in a row are audited once, when they are done), one website at a time. A website not on Audits yet is added first.</li>
 <li><b>Where it runs:</b> scans run in a browser, so a due website is audited by an open tab of someone who may scan websites, with <b>Run the auto audits in this tab</b> ticked (it is on unless you untick it). Only one tab audits a website at a time; a website published overnight is audited when the first person opens the app.</li>
 <li><b>Auto audit</b> column: <i>Due now</i>, <i>Due in 2h 10m</i>, <i>✓ Audited</i> (after the latest publish) or <i>Failed</i> (hover for why). <b>Audit now</b> runs it straight away.</li>
-<li><b>Pages by the SEO company</b>: read from Duda's activity log (pages created by seo@8bitcreative.com). The same list is attached to the scan in the audit's Dashboard ("🔍 SEO auto audit"), and the scan's <b>📋 View</b> report shows each of those pages with how many audit items it has.</li>
-<li>These scans don't ring anyone's bell; open the audit's Dashboard or Audit items to see what was found.</li>
+<li><b>Pages by the SEO company</b>: read from Duda's activity log (pages created by seo@8bitcreative.com). The same list is attached to the scan in the audit's Audit Report ("🔍 SEO auto audit"), and the scan's <b>📋 View</b> report shows each of those pages with how many audit items it has.</li>
+<li>These scans don't ring anyone's bell; open the audit's Audit Report or Audit results to see what was found.</li>
 </ul>
 <p class="small">The label and the email can be changed by the app owner (SEO_LABEL, SEO_EMAIL, SEO_DELAY_HOURS).</p>`,
   },
@@ -534,6 +536,8 @@ export const HELP_SECTIONS = [
     id: 'docs', group: 'Audits', title: 'vs Docs: check a website against its copy documents', audience: 'all',
     html: `<p>The <b>📄 vs Docs</b> tab on an audit checks the website against the Word documents (.docx) it was built from: the full "Website Writing" document, or a one-page one ("PPF Page").</p>
 <ul>
+<li><b>Copy, block by block</b> (open a page): the website page is read top to bottom, and each heading and paragraph is looked up in the document, the document being the source of truth. Website on the left, document on the right: <b>✓ Same</b>, <b>≠ Changed</b> (<span style="background:#d4f2df">green</span> words were added on the website, <span style="background:#fbdada;text-decoration:line-through">red</span> words from the document are not there), <b>＋ Not in the document</b>, and <b>✗ Missing from the website</b>: a document paragraph that never turned up, shown where it should have been. Tick <b>Only differences</b> to hide the blocks that match. The header, footer, menus and forms are left out (they are the same on every page).</li>
+<li><b>Live or draft:</b> a published website is checked as visitors see it, on its live domain; a website not published yet is read from the draft in Duda. Pick <b>against: the draft in Duda</b> next to the button to check changes that are not published yet. Each check says which one it read.</li>
 <li><b>Drop the documents</b> on the dashed area at the top of the tab (one or several at once), or click it, or use <b>＋ Add documents</b>: .docx files (up to 3 MB each; from Google Docs, File → Download → Microsoft Word). Each gets its own tab, and <b>⬇ Download the document</b> gives the file back.</li>
 <li>The document is read the way the writers write: <b>TITLE / PAGE NAME / META TITLE</b> is the SEO title (even when it says "Page name"), <b>META DESCRIPTION</b>, <b>BUTTON&gt;</b> lines are buttons (a "CALL (xxx) xxx-xxxx" button is a phone button), <b>DEVELOPER&gt;&gt;&gt;</b> and <b>INSERT&gt;&gt;&gt;</b> lines are notes, "Website Pages To Include" is the list of pages, and the table at the top is the client's details. The AI then names each page the way the website would.</li>
 <li><b>🔎 Check the website against this document</b>: each document page is found on the website, first by its SEO title or an address in the document, then by the AI (it allows renaming: "Paint Protection Film" may be "Gloss PPF", "Window Tinting" may be "Window Tint"). Pages the website does not have are listed as <b>Missing page</b>. The website must have been scanned once, so the app knows its pages.</li>
@@ -551,8 +555,8 @@ export const HELP_SECTIONS = [
 <li>The website has to have been scanned in full once first.</li></ul>`,
   },
   {
-    id: 'dashboard', group: 'Audits', title: 'Dashboard: what an audit found, and how it compares', audience: 'all',
-    html: `<p>Every audit has a <b>📊 Dashboard</b> tab: the findings at a glance, and a record of every scan so the next scan, or another tool, can be compared with it.</p>
+    id: 'dashboard', group: 'Audits', title: 'Audit Report: what an audit found, and how it compares', audience: 'all',
+    html: `<p>Every audit has a <b>📊 Audit Report</b> tab (it used to be called Dashboard): the findings at a glance, and a record of every scan so the next scan, or another tool, can be compared with it.</p>
 <ul>
 <li><b>Tiles</b>: open items, critical open, how much is closed, Done, pages scanned and how many scans are on record.</li>
 <li><b>Open items by severity</b>: one bar split into Critical, Outdated, Warning and Info, with the number of each and the work status (Open, For clarification, On hold, Done, False alarm), and how many are open on each list (Audit items, Design polish, SEO Lengths).</li>

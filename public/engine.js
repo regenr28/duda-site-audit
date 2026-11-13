@@ -1424,6 +1424,30 @@
     return false;
   }
 
+  /**
+   * A page's copy as a reader goes through it: every heading and paragraph of the page body, top to
+   * bottom, one entry each (a paragraph with a link in it stays one paragraph). The header, footer,
+   * menus, pop-ups and forms are left out: they are the same on every page. Used by vs Docs.
+   */
+  function pageCopy(body, device) {
+    if (!body) return [];
+    const SEL = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, figcaption, dt, dd, td, th, .dmNewParagraph, [data-element-type="paragraph"]';
+    const out = [];
+    body.querySelectorAll(SEL).forEach((el) => {
+      if (out.length >= 300 || el.closest('script, style, noscript, nav, form, button, .dmButtonLink')) return;
+      if (el.querySelector(SEL)) return;
+      if (locationOf(el) !== 'Body') return;
+      const t = clean(el.textContent);
+      if (t.length < 3 || !/[a-z]/i.test(t)) return;
+      const hd = el.closest('h1, h2, h3, h4, h5, h6');
+      const tag = hd ? hd.tagName.toLowerCase() : el.tagName.toLowerCase() === 'li' ? 'li' : 'p';
+      const hid = hiddenReason(el, device) || '';
+      const prev = out[out.length - 1];
+      if (prev && prev.t === t) return;
+      out.push({ t: t.slice(0, 2000), tag, ...(hid ? { hid } : {}) });
+    });
+    return out;
+  }
   function locationOf(el) {
     for (let e = el; e && e.nodeType === 1; e = e.parentElement) {
       const c = cls(e);
@@ -2209,6 +2233,7 @@
       alts: altList,
       textIndex: textIndex.map((x) => { const hd = x.el.closest && x.el.closest('h1, h2, h3, h4, h5, h6'); return { text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '', ...(hd ? { heading: hd.tagName } : {}) }; }),
       prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
+      ...(ctx.copy ? { copy: pageCopy(body, device) } : {}),
       fonts,
       meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon,
         // What the page says it is about, for the "does the page match its address" checks: every H1
@@ -2932,13 +2957,14 @@
             continue;
           }
           const doc = parser.parseFromString(res.html, 'text/html');
-          const r = auditDocument(doc, { device, path, pageUrl: res.url || `https://${opts.host}/site/${opts.siteId}${path === '/' ? '' : path}`, truth, siteId: opts.siteId, host: opts.host, noIndex: pagesMeta[path] && pagesMeta[path].noIndex });
+          const r = auditDocument(doc, { device, path, pageUrl: res.url || `https://${opts.host}/site/${opts.siteId}${path === '/' ? '' : path}`, truth, siteId: opts.siteId, host: opts.host, noIndex: pagesMeta[path] && pagesMeta[path].noIndex, copy: !!opts.keepCopy && device === devices[0] });
           if (r.notFound) { info.notFound = true; break; }
           info.title = info.title || r.meta.title;
           info.h1 = info.h1 || (r.meta.h1 || [])[0] || '';
           info.description = info.description || r.meta.description;
           if (device === devices[0] && r.meta.fit) info.fit = r.meta.fit;
           if (device === devices[0] && r.meta.buttons) info.buttons = r.meta.buttons;
+          if (r.copy) info.copy = r.copy;
           if (r.meta.favicon) siteIcon.favicon = true;
           if (r.meta.touchIcon) siteIcon.touchIcon = true;
           info.devices = (info.devices || []).concat(device);
@@ -3114,6 +3140,8 @@
       // For the AI read of whether each page fits its address. Not saved with the audit.
       // Buttons on each page, in order (desktop). Not saved with the audit.
       buttons: Object.fromEntries(Object.values(pageInfo).filter((p) => p.buttons).map((p) => [p.path, p.buttons])),
+      // keepCopy: each page's own copy, in reading order (headings and paragraphs). Not saved with the audit.
+      ...(opts.keepCopy ? { copy: Object.fromEntries(Object.values(pageInfo).filter((p) => p.copy).map((p) => [p.path, p.copy])) } : {}),
       fit: fitPages.map((p) => ({ path: p.path, title: p.title, description: p.description, h1: p.h1.map((h) => h.text), h1Sel: (p.h1[0] && p.h1[0].selector) || '', heads: p.heads.slice(0, 14), excerpt: p.body.slice(0, 2400), urlServices: servicesOfPath(p.path), urlPlace: placeOfPath(p.path) })),
       externalLinks: external.size,
       images: images.size,

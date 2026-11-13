@@ -822,6 +822,8 @@ async function handler(req, res) {
         if (b.ai && typeof b.ai === 'object') d.ai = b.ai;
         if (b.result && typeof b.result === 'object') {
           d.results = [Object.assign({}, b.result, { at: now(), by: me.email, byName: me.name })].concat(d.results || []).slice(0, 10);
+          // Only the newest check keeps the page copy, block by block (the biggest part); older ones keep their summary.
+          d.results.slice(1).forEach((x) => (x.rows || []).forEach((r) => { if (r.copy) r.copy = { same: r.copy.same, changed: r.copy.changed, extra: r.copy.extra, missing: r.copy.missing, rows: [] }; }));
           await log(b.id, me, 'docs', `checked the website against "${d.name}": ${b.result.summary || ''}`);
         }
         await redis(['SET', DOCS(b.id), packJSON(list)]);

@@ -91,9 +91,14 @@ META = {'host': 'ed.multiscreensite.com', 'siteId': SITE, 'site': {'site_busines
         'content': {'location_data': {'phones': [{'phoneNumber': '(302) 421-7788'}], 'emails': [{'emailAddress': 'hello@buffandbeyond.com'}], 'address': {'street': '9 Old Road', 'city': 'Dover', 'region': 'DE', 'zip_code': '19901'}}},
         'pages': [{'path': p, 'title': p, 'noIndex': False} for p in PAGES], 'errors': []}
 FETCHED = []
+SLOW = [0]
+LIVE = [False]; LIVEF = []
 def route(r):
     u = urllib.parse.urlparse(r.request.url); q = dict(urllib.parse.parse_qsl(u.query)); p = u.path
+    if p == '/api/fetch' and SLOW[0]: time.sleep(SLOW[0])
+    if p == '/api/fetch' and q.get('live'): LIVEF.append((q.get('domain'), q.get('path')))
     if p == '/api/fetch': FETCHED.append(q.get('path')); return r.fulfill(status=200, content_type='application/json', body=json.dumps(page_html(q.get('path'))))
+    if p == '/api/site' and q.get('light') and LIVE[0]: return r.fulfill(status=200, content_type='application/json', body=json.dumps({'siteId': SITE, 'domain': 'buffandbeyond.com', 'publishStatus': 'PUBLISHED', 'publishedAt': '2026-11-01T10:00:00Z'}))
     if p == '/api/site': return r.fulfill(status=200, content_type='application/json', body=json.dumps(META))
     if p in ('/api/social', '/api/check'): return r.fulfill(status=200, content_type='application/json', body='[]' if p == '/api/check' else '{}')
     if p == '/api/imghash': return r.fulfill(status=200, content_type='application/json', body=json.dumps({'hashes': {}}))
@@ -121,7 +126,7 @@ try:
         check((S.get('scan') or {}).get('state') == 'complete', 'the website was scanned once, so its pages are known')
         # ---- the document ----
         pg.goto(f'http://localhost:{APORT}/#/site/s1/docs'); pg.wait_for_selector('.dc-top', timeout=15000)
-        check('vs Docs' in pg.inner_text('.tabs'), 'the audit has a vs Docs tab')
+        check('vs Docs' in pg.inner_text('.res-tabs'), 'the audit has a vs Docs tab')
         pg.set_input_files('#dcFile', files=[{'name': 'Website Writing - Buff & Beyond.docx', 'mimeType': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'buffer': DOC}])
         pg.wait_for_selector('.dc-plan li', timeout=20000); time.sleep(0.5)
         plan = pg.inner_text('.dc-plan')
@@ -137,7 +142,7 @@ try:
         check(set(x for x in FETCHED if x) <= {'/', '/gloss-ppf', '/window-tint', '/contact-us'}, f'only the matched pages are read for the check: {sorted(set(x for x in FETCHED if x))}')
         ppf = pg.locator('.dc-row', has=pg.locator('summary', has_text='/gloss-ppf')); ppf.locator('summary').click(); time.sleep(0.2)
         pt = ppf.inner_text()
-        check('ten year warranty' in pt and 'Missing from the page' in pt, 'a paragraph of the document that is not on the page is listed')
+        check('ten year warranty' in pt and 'Not on the website' in pt, 'a paragraph of the document that is not on the page is listed')
         check('Missing button: BOOK NOW' in pt, 'a button the document asks for that is not on the page is listed')
         check('go to different places' in pt and '/contact-us' in pt and '/window-tint' in pt, '"Get a Quote" buttons going to two different pages are flagged')
         home = pg.locator('.dc-row', has=pg.locator('summary', has_text='Home')); home.locator('summary').click(); time.sleep(0.2)
@@ -185,6 +190,75 @@ try:
         time.sleep(1); refused = pg.inner_text('#dcDrop') if pg.locator('#dcDrop').count() else refused
         check('notes.txt' in refused and '.docx' in refused, 'a file that is not a Word document is refused with a message: ' + refused[:120])
         pg.screenshot(path=os.path.join(OUT, 'docs-drop.png'))
+        # ---- the audit's tabs: Audit results grouped, Audit Report, the scan's progress on every tab ----
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/docs'); pg.wait_for_selector('.res-tabs', timeout=15000); time.sleep(0.4)
+        top = pg.inner_text('.tabs'); sub = pg.inner_text('.res-tabs')
+        pg.screenshot(path=os.path.join(OUT, 'res-tabs.png'))
+        check('Audit Report' in top and 'Audit results' in top and 'Dashboard' not in top and 'Design polish' not in top, 'the main tabs: Profile, Audit Report, Audit results, Comments, Activity log: ' + top.replace(chr(10), ' ')[:120])
+        check(all(x in sub for x in ['Audit items', 'Design polish', 'SEO Lengths', 'vs Docs', 'Audit exceptions']) and pg.locator('.res-tabs .pf-tab.on').inner_text().strip().startswith('📄'), 'Audit results has its own row of tabs, with vs Docs picked')
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/report'); pg.wait_for_selector('.tabs a.on', timeout=15000); time.sleep(0.6)
+        check('Audit Report' in pg.inner_text('.tabs a.on') and pg.locator('.res-tabs').count() == 0, 'the Audit Report address opens the Audit Report tab, without the results row')
+        SLOW[0] = 0.4
+        pg.click('#sRescan'); time.sleep(0.3)
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/profile')
+        pg.wait_for_selector('#scanStrip .progress', timeout=15000); time.sleep(0.3)
+        check(pg.locator('#scanStrip .progress').count() == 1 and 'Keep this browser tab open' in pg.inner_text('#scanStrip'), 'the scan\'s progress shows at the top of the Profile tab')
+        pg.screenshot(path=os.path.join(OUT, 'scan-strip-profile.png'))
+        pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('#scanStrip', timeout=10000); time.sleep(0.3)
+        check(pg.locator('.progress i[id^="pg-"]').count() == 1, 'on Audit items the progress shows once (at the top), not twice')
+        pg.goto(f'http://localhost:{APORT}/#/'); time.sleep(1.0)
+        check(pg.locator('[id^="pb-"]').count() >= 1, 'the Audits list shows the scan on the website\'s row')
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/report'); pg.wait_for_selector('#scanStrip', timeout=10000)
+        pg.reload(); pg.wait_for_selector('#scanStrip', timeout=15000)
+        for _ in range(20):
+            if 'started again' in pg.inner_text('#toast'): break
+            time.sleep(0.3)
+        check('started again' in pg.inner_text('#toast'), 'a reload in the middle of a scan starts it again by itself: ' + pg.inner_text('#toast')[:100])
+        SLOW[0] = 0
+        S3 = wait_scan(pg, (S2.get('scan') or {}).get('finishedAt'))
+        check((S3.get('scan') or {}).get('state') == 'complete', 'the restarted scan finishes')
+        for _ in range(40):
+            if pg.locator('#scanStrip').count() == 0: break
+            time.sleep(0.5)
+        check(pg.locator('#scanStrip').count() == 0, 'the progress goes away when the scan is done' + ('' if not pg.locator('#scanStrip').count() else ': ' + pg.inner_text('#scanStrip')[:160]))
+        # ---- a published website: the document is checked against the LIVE website ----
+        LIVE[0] = True
+        WT0 = PAGES['/window-tint']; PAGES['/window-tint'] = (WT0[0], WT0[1].replace('blocks the heat and the glare without', 'blocks heat and glare all summer without'))
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/docs'); pg.wait_for_selector('#dcRun', timeout=15000); time.sleep(0.4)
+        check(pg.locator('#dcSrc').count() == 1, 'there is a choice: the live website or the draft')
+        pg.click('#dcRun')
+        for _ in range(60):
+            time.sleep(1)
+            if 'live website' in (pg.inner_text('.db-tiles') if pg.locator('.db-tiles').count() else ''): break
+        tiles = pg.inner_text('.db-tiles') if pg.locator('.db-tiles').count() else ''
+        check(LIVEF and all(d == 'buffandbeyond.com' for d, _ in LIVEF), f'a published website is read on its live domain ({len(LIVEF)} live pages read)')
+        check('live website' in tiles and 'buffandbeyond.com' in tiles, 'the check says it was done on the live website: ' + tiles.replace(chr(10), ' ')[-120:])
+        check('https://buffandbeyond.com/' in (pg.get_attribute('.dc-row a.dc-path', 'href') or ''), 'the page links open the live website')
+        # ---- copy, block by block (the live check above) ----
+        pg.click('details.dc-row[data-dcp="/gloss-ppf"] summary'); time.sleep(0.4)
+        ppf = 'details.dc-row[data-dcp="/gloss-ppf"] '
+        kinds = pg.evaluate(f"""() => [...document.querySelectorAll('{ppf}.dcc-row')].map(r => [...r.classList].find(c => c.startsWith('dcc-') && c !== 'dcc-row') + '|' + r.querySelector('.dcc-site').innerText.slice(0, 30) + '|' + r.querySelector('.dcc-doc').innerText.slice(0, 30))""")
+        print('  rows:', kinds, flush=True)
+        ks = [k.split('|')[0] for k in kinds]
+        check(ks[:2] == ['dcc-same', 'dcc-same'], 'the website page is read top to bottom: its heading and first paragraph are the same as the document')
+        check(any(k.startswith('dcc-extra|Ask about our packages') for k in kinds), 'a paragraph that is not in the document is shown as "Not in the document"')
+        mi = [i for i, k in enumerate(ks) if k == 'dcc-missing']
+        check(len(mi) == 1 and 'Every film we install' in kinds[mi[0]] and mi[0] == 2, 'the paragraph the website left out is shown as missing, in its place (after the paragraph before it in the document)')
+        pg.click('details.dc-row[data-dcp="/window-tint"] summary'); time.sleep(0.3)
+        ch = pg.locator('details.dc-row[data-dcp="/window-tint"] .dcc-changed')
+        check(ch.count() == 1 and ch.locator('ins').count() >= 1 and ch.locator('del').count() >= 1, 'a reworded paragraph is "Changed", with the added words and the left-out words marked')
+        pg.screenshot(path=os.path.join(OUT, 'docs-copy.png'), full_page=True)
+        pg.check(ppf + '[data-dcc-only]'); time.sleep(0.6)
+        check(pg.locator('details.dc-row[data-dcp="/gloss-ppf"]').get_attribute('open') is not None and pg.locator('details.dc-row[data-dcp="/gloss-ppf"] .dcc-same').count() == 0 and pg.locator('details.dc-row[data-dcp="/gloss-ppf"] .dcc-missing').count() == 1, '"Only differences" hides the blocks that are the same, and the open pages stay open')
+        pg.uncheck(ppf + '[data-dcc-only]'); time.sleep(0.4)
+        PAGES['/window-tint'] = WT0
+        n_live = len(LIVEF)
+        pg.select_option('#dcSrc', 'draft'); pg.click('#dcRun')
+        for _ in range(60):
+            time.sleep(1)
+            if 'on the draft' in (pg.inner_text('.db-tiles') if pg.locator('.db-tiles').count() else ''): break
+        check('on the draft' in pg.inner_text('.db-tiles') and len(LIVEF) == n_live, 'picking "the draft in Duda" reads the draft instead')
+        LIVE[0] = False
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

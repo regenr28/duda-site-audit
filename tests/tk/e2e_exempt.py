@@ -121,9 +121,9 @@ with sync_playwright() as p:
             pg.goto(f'http://localhost:{APORT}/#/site/s1/item/4'); pg.wait_for_selector('.ex-note', timeout=20000)
             check('XPEL Landing Page' in pg.inner_text('.ex-note'), f'{tag}: the item says which exception covers it')
         if tag == 'member':
-            pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('.tabs a[href="#/site/s1/exceptions"]', timeout=20000)
+            pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('.res-tabs a[href="#/site/s1/exceptions"]', timeout=20000)
             pg.click('#sMore'); pg.wait_for_selector('#sExempt')
-            check('Audit exceptions' in pg.inner_text('.tabs') and 'Audit exceptions' in pg.inner_text('#sExempt'), 'the audit has an "Audit exceptions" tab and a shortcut in the ⋯ menu')
+            check('Audit exceptions' in pg.inner_text('.res-tabs') and 'Audit exceptions' in pg.inner_text('#sExempt'), 'the audit has an "Audit exceptions" tab and a shortcut in the ⋯ menu')
             pg.screenshot(path=os.path.join(OUT, 'head-more.png'))
             pg.click('#sExempt'); pg.wait_for_selector('#exAddPages', timeout=20000)
             check('XPEL Landing Page' in pg.inner_text('.ex-tab') and '/xpel-ppf' in pg.inner_text('.ex-tab'), 'the tab lists this website\'s exceptions and the sets')

@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **156**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **158**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 155: styles v36, demo v2, engine v14, app v41).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 157: styles v38, demo v2, engine v15, app v43).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 154 on GitHub (`7eea037`). **Delivered as a zip, maybe not uploaded yet:** 155 (vs Docs drag and drop).
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 155 on GitHub (`b704ce1`). **Delivered as a zip, maybe not uploaded yet:** 156 + 157 (one zip: audit tabs, scan progress everywhere, vs Docs live website, copy block by block).
 - **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
 - **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
@@ -214,3 +214,16 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `renderDocsTab`: a dashed `#dcDrop` area (label for hidden `#dcFile2`, multiple .docx) above the document tabs, big when there are no documents, slim (`.small`) after. Dragging anywhere on the tab works (`body.ondragover/ondrop`), Enter/Space opens the picker.
 - Files that are not .docx are skipped; the reason stays in the drop area (`.dc-drop-note`, `state.docDropNote`) because the "Reading…" toasts replace any toast straight away.
 - Test: `tests/tk/e2e_docs.py` drops two .docx + a .txt with a DataTransfer.
+
+## Update 156 — audit tabs, scan progress everywhere, vs Docs on the live website (built)
+- Audit tabs: Profile · 📊 Audit Report (was Dashboard; `#/site/<id>/report`, `/dashboard` still works) · 🔎 Audit results · Comments · Activity log. Audit results has its own row (`.pf-nav.res-tabs`): Audit items, Design polish, SEO Lengths, vs Docs, Audit exceptions. Routes unchanged.
+- `scanStrip(s)`: the scan's progress above the tabs on every audit tab (the bar's ids `pg-/pm-/pb-` exist once; the Audit items panel no longer shows its own badge while scanning).
+- Reload mid-scan: `pagehide` saves `{ ids, opts, stopped }` to sessionStorage `dsa:scanAfterReload` (opts from `state.runOpts`, so chosen-page scans resume as chosen pages); `resumeAfterReload` restarts and says so.
+- vs Docs `docCheck`: asks `/api/site?light=1` and, when published, reads pages with `/api/fetch?live=1&domain=` (draft otherwise, or when `#dcSrc` = draft). `result.source = { live, domain }` shown on the Checked tile, the row links and the download.
+- Fixed from 154: the contrast chip and proof picture were added twice on each audit item row.
+
+## Update 157 — vs Docs: copy block by block (built)
+- engine `pageCopy(body, device)`: a page's headings and paragraphs, body only, in reading order `{ t, tag, hid? }`. Only when `runScan({ keepCopy: true })` (vs Docs), first device; returned as `res.copy[path]`.
+- app `docCopy(dp, site)`: each website block looked up in the document page (word bags to pick candidates, then a word-level LCS `dlcs`): same / part / changed / extra; document blocks whose words never turned up: `missing`. `docCopyRows` slots missing ones after the block before them; `docCopyHtml` / `docDiffHtml` (ins/del) draw it; "Only differences" = `state.dcOnlyDiff`; open rows kept in `state.dcOpen`.
+- Stored as `result.rows[].copy` (site text only; document text comes from the parsed document). store `docSave` keeps the copy rows on the newest check only.
+- The page's difference count uses changed + not in the document + missing when a check has the copy (older checks: as before).

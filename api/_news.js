@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-docs-copy', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: 'vs Docs: every paragraph of the page, side by side with the document',
+    what: 'Open a page on <b>📄 vs Docs</b> and its copy is shown block by block: the website page read top to bottom on the left, each heading and paragraph found in the document on the right. Each one is <b>✓ Same</b>, <b>≠ Changed</b> (the words added and left out are marked), <b>＋ Not in the document</b> or <b>✗ Missing from the website</b>, so nothing copied over wrong, or not at all, is missed. <b>Only differences</b> hides the rest.',
+    where: ['<b>Walkthrough:</b> open an audit → 🔎 Audit results → <b>📄 vs Docs</b> → <b>Check again</b> → open a page in the list → <b>Copy, block by block</b>.'],
+    link: '#/help/docs', linkText: 'How vs Docs works',
+  },
+  {
+    id: '2026-11-15-audit-tabs', date: '2026-11-15', audience: 'all', tag: 'Audits',
+    title: 'Audits: the scan\'s progress on every tab, "Audit results" grouped, and Dashboard is now Audit Report',
+    what: 'While a website is scanning, its progress bar now shows at the top of the audit on <b>every</b> tab (Profile and Audit Report too), not only on Audit items. Audit items, Design polish, SEO Lengths, vs Docs and Audit exceptions all come from the scan, so they now live together under one tab, <b>🔎 Audit results</b>. <b>📊 Dashboard</b> is renamed <b>📊 Audit Report</b>. If the page is reloaded in the middle of a scan, the scan now starts again by itself. And <b>vs Docs</b> now checks a published website on its <b>live</b> domain (or the draft, if you pick it).',
+    where: ['<b>Walkthrough:</b> open an audit → <b>🔎 Audit results</b> → the row of tabs underneath. Rescan, then open Profile: the progress bar is at the top.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-14-docs-drop', date: '2026-11-14', audience: 'all', tag: 'Audits',
     title: 'vs Docs: drag and drop the Word documents',
     what: 'The <b>📄 vs Docs</b> tab has a drop area: drag one Word document or several at once onto it and each is read and gets its own tab. A file that is not a .docx is skipped, and the drop area says which one and why.',

@@ -159,6 +159,9 @@ try:
         pg.goto(f'http://localhost:{APORT}/#/site/s1/dashboard'); pg.wait_for_selector('.db-tiles', timeout=20000); time.sleep(0.6)
         tiles = pg.inner_text('.db-tiles')
         check('Open items' in tiles and 'Critical open' in tiles and 'Scans on record' in tiles, 'the Dashboard tab shows the summary tiles')
+        for _ in range(30):
+            if pg.locator('.db-col').count() >= 3: break
+            time.sleep(0.5)
         check(pg.locator('.db-col').count() == 3, f'the scan history has one column per scan ({pg.locator(".db-col").count()})')
         check(pg.locator('.db-seg-p').count() >= 2 and 'Critical' in pg.inner_text('.db-seg-keys'), 'open items are split by severity, each part named and counted')
         check(pg.locator('.db-hb').count() >= 3, 'open items by category and by page are drawn as bars')
@@ -228,7 +231,7 @@ try:
         after = pg.input_value('#sStatus')
         check(refused and before == after == 'Not started', f'it is view-only: changing the status is refused and nothing is saved ({before!r} → {after!r})')
         nv = pg.evaluate("() => [...document.querySelectorAll('table.findings tr')].map(r => r.innerText).find(t => t.includes('missing the final'))") or ''
-        m = re.search(r'Found: (.+)\n+Expected: (.+)', nv)
+        m = re.search(r'Found: (.+)\n+(?:.*Capture proof.*\n+)?Expected: (.+)', nv)
         check(m and m.group(2).strip() == m.group(1).strip() + 's', 'the name slip still reads as a slip with made-up names ("X" found, "Xs" expected): ' + (repr(m.groups()) if m else repr(nv[-200:])))
         pg.set_viewport_size({'width': 390, 'height': 844}); time.sleep(0.5); pg.screenshot(path=os.path.join(OUT, 'demo-phone.png')); pg.set_viewport_size({'width': 1440, 'height': 1000})
         pg.click('#demoExit'); pg.wait_for_selector('table.findings', timeout=20000); time.sleep(1)
