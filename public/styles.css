@@ -2241,3 +2241,13 @@ html.demo-mode iframe { pointer-events: none; }
 .proof-code summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .proof-code code { display: block; margin-top: 4px; padding: 6px 8px; background: var(--panel-2); border-radius: 6px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
 .proof-cap { margin-top: 4px; font-size: 12px; }
+
+.dc-drop { display: flex; align-items: center; gap: 14px; padding: 28px 22px; border: 2px dashed var(--border-strong); border-radius: var(--radius); background: var(--panel); cursor: pointer; transition: border-color .15s, background .15s; }
+.dc-drop.small { padding: 12px 16px; }
+.dc-drop:hover, .dc-drop:focus-visible, .dc-drop.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+.dc-drop.busy { opacity: .7; pointer-events: none; }
+.dc-drop-ic { font-size: 28px; line-height: 1; }
+.dc-drop.small .dc-drop-ic { font-size: 20px; }
+
+.dc-drop-note{display:inline-block;margin-top:4px;font-size:12px;color:var(--warn,#b45309)}
+.dc-drop-note[hidden]{display:none}

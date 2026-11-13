@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-14-docs-drop', date: '2026-11-14', audience: 'all', tag: 'Audits',
+    title: 'vs Docs: drag and drop the Word documents',
+    what: 'The <b>📄 vs Docs</b> tab has a drop area: drag one Word document or several at once onto it and each is read and gets its own tab. A file that is not a .docx is skipped, and the drop area says which one and why.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>📄 vs Docs</b> → drag the .docx files onto the dashed area (or click it to choose them).'],
+    link: '#/help/docs', linkText: 'How vs Docs works',
+  },
+  {
     id: '2026-11-14-proof', date: '2026-11-14', audience: 'all', tag: 'Audits',
     title: 'Proof pictures: a dated picture of each critical item, with a red box around it',
     what: 'After every scan, the <b>critical</b> items get a <b>📸 proof picture</b>: the part of the page around the problem, boxed in red, with the date, page, device and the element\'s code. Any item can be pictured with <b>📸 Capture proof</b>, an item marked <b>False alarm</b> is pictured first, and downloaded reports include the pictures. Kept 6 months.',

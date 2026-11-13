@@ -166,6 +166,25 @@ try:
         pg.click('#sMore'); pg.click('text=Scan chosen pages'); pg.wait_for_selector('#spList .sp-row')
         check(pg.locator('#spList .sp-row').count() >= 5, 'Scan chosen pages lists the website\'s pages to pick from')
         pg.click('[data-close]')
+        # ---- drag and drop: several files at once, a non-Word file refused ----
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/docs'); pg.wait_for_selector('#dcDrop', timeout=15000); time.sleep(0.4)
+        n0 = pg.locator('.dc-tabs a').count()
+        b64 = __import__('base64').b64encode(DOC).decode()
+        pg.evaluate("""(b64) => { const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); const dt = new DataTransfer();
+          dt.items.add(new File([bin], 'PPF Page - Buff & Beyond.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+          dt.items.add(new File([bin], 'Tint Page - Buff & Beyond.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+          dt.items.add(new File(['hello'], 'notes.txt', { type: 'text/plain' }));
+          const zone = document.querySelector('#dcDrop'); zone.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
+          const over = zone.classList.contains('over');
+          zone.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true })); return over; }""", b64)
+        refused = pg.inner_text('#dcDrop')
+        for _ in range(30):
+            time.sleep(1)
+            if pg.locator('.dc-tabs a').count() >= n0 + 2: break
+        check(pg.locator('.dc-tabs a').count() == n0 + 2, f'dropping two Word documents adds both ({n0} → {pg.locator(".dc-tabs a").count()} tabs)')
+        time.sleep(1); refused = pg.inner_text('#dcDrop') if pg.locator('#dcDrop').count() else refused
+        check('notes.txt' in refused and '.docx' in refused, 'a file that is not a Word document is refused with a message: ' + refused[:120])
+        pg.screenshot(path=os.path.join(OUT, 'docs-drop.png'))
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

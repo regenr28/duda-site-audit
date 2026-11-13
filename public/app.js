@@ -10944,7 +10944,12 @@
     body.innerHTML = `<div class="dc">
       <div class="dc-top"><div><b>📄 vs Docs</b><div class="small muted">Add the copy documents this website was built from (.docx). Each one is read, its pages are found on the website, and the SEO title, description, copy and buttons are compared.</div></div>
         ${can('site.scan') ? '<label class="btn sm primary dc-add">＋ Add documents<input type="file" id="dcFile" accept=".docx" multiple hidden></label>' : ''}</div>
-      ${docs.length ? `<div class="tabs dc-tabs">${docs.map((x) => `<a href="#" data-dcsel="${esc(x.id)}" class="${x === d ? 'on' : ''}" title="${esc(x.name)}">${esc(x.name.replace(/\.docx$/i, '').slice(0, 42))}</a>`).join('')}</div>` : '<div class="empty small">No documents yet. Add the Website Writing document (or a single-page one) to check this website against it.</div>'}
+      ${can('site.scan') ? `<label class="dc-drop${docs.length ? ' small' : ''}" id="dcDrop" for="dcFile2" tabindex="0">
+        <span class="dc-drop-ic" aria-hidden="true">📄</span>
+        <span><b>Drop Word documents here</b> <span class="muted">or click to choose</span><br><span class="small faint">One or several .docx files at once: the Website Writing document, or single-page ones. Up to 3 MB each.</span><br><span class="dc-drop-note"${state.docDropNote ? '' : ' hidden'}>${esc(state.docDropNote || '')}</span></span>
+        <input type="file" id="dcFile2" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden></label>`
+        : !docs.length ? '<div class="empty small">No documents yet.</div>' : ''}
+      ${docs.length ? `<div class="tabs dc-tabs">${docs.map((x) => `<a href="#" data-dcsel="${esc(x.id)}" class="${x === d ? 'on' : ''}" title="${esc(x.name)}">${esc(x.name.replace(/\.docx$/i, '').slice(0, 42))}</a>`).join('')}</div>` : ''}
       ${d ? `<div class="dc-doc">
         <div class="dc-meta small muted">${docPages(d).length} page${docPages(d).length === 1 ? '' : 's'} in this document${(d.parsed.requested || []).length ? ` (it lists ${d.parsed.requested.length})` : ''} · added by ${esc(d.byName || '')} ${esc(ago(d.at))}${d.parsed.site ? ` · for ${esc(d.parsed.site)}` : ''}
           · <a href="/api/store?op=docFile&id=${encodeURIComponent(s.id)}&doc=${encodeURIComponent(d.id)}" download>⬇ Download the document</a>${can('site.scan') ? ` · <button class="linkbtn danger" id="dcRm">Remove</button>` : ''}</div>
@@ -10962,6 +10967,27 @@
             <p class="small muted">Press <b>Check the website against this document</b>. The website needs to have been scanned once, so the app knows its pages.</p></section>`}
       </div>` : ''}</div>`;
     const fi = $('#dcFile', body); if (fi) fi.onchange = () => docAddFiles(s, [...fi.files]);
+    const fi2 = $('#dcFile2', body); if (fi2) fi2.onchange = () => docAddFiles(s, [...fi2.files]);
+    // Drag and drop: anywhere on the tab, one file or many. Anything that is not a .docx is said so.
+    const dz = $('#dcDrop', body);
+    if (dz && can('site.scan')) {
+      const over = (on) => dz.classList.toggle('over', on);
+      body.ondragover = (e) => { if ([...(e.dataTransfer.types || [])].includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; over(true); } };
+      body.ondragleave = (e) => { if (!body.contains(e.relatedTarget)) over(false); };
+      body.ondrop = (e) => {
+        e.preventDefault(); over(false);
+        const files = [...(e.dataTransfer.files || [])];
+        const bad = files.filter((f) => !/\.docx$/i.test(f.name));
+        // Said in the drop area itself, so it is still there after the "Reading…" messages.
+        const msg = bad.length ? `Skipped ${bad.map((f) => f.name).slice(0, 3).join(', ')}${bad.length > 3 ? ` and ${bad.length - 3} more` : ''}: only Word documents (.docx) can be read. In Google Docs: File → Download → Microsoft Word.` : '';
+        state.docDropNote = msg;
+        const note = dz.querySelector('.dc-drop-note'); if (note) { note.textContent = msg; note.hidden = !msg; }
+        const good = files.filter((f) => /\.docx$/i.test(f.name));
+        if (good.length) { dz.classList.add('busy'); dz.querySelector('b').textContent = `Reading ${good.length} document${good.length === 1 ? '' : 's'}…`; docAddFiles(s, good); }
+        else if (msg) toast(msg);
+      };
+      dz.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi2.click(); } };
+    }
     $$('[data-dcsel]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); state.docSel = a.dataset.dcsel; renderDocsTab(body, s); }));
     if (!d) return;
     if ($('#dcRun', body)) $('#dcRun', body).onclick = () => docCheck(s, d);
