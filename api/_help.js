@@ -507,6 +507,18 @@ export const HELP_SECTIONS = [
 </ol>`,
   },
   {
+    id: 'seo-websites', group: 'Live DR Sites', title: 'SEO Websites: audited again after every publish', audience: 'all',
+    html: `<p><b>DR Websites → 🔍 SEO Websites</b> lists the published websites with the Duda label <b>SEO Customer</b> (any capitals): the websites the SEO company (seo@8bitcreative.com) works on.</p>
+<ul>
+<li>Each one is audited again <b>4 hours after its last publish</b> (so several publishes in a row are audited once, when they are done), one website at a time. A website not on Audits yet is added first.</li>
+<li><b>Where it runs:</b> scans run in a browser, so a due website is audited by an open tab of someone who may scan websites, with <b>Run the auto audits in this tab</b> ticked (it is on unless you untick it). Only one tab audits a website at a time; a website published overnight is audited when the first person opens the app.</li>
+<li><b>Auto audit</b> column: <i>Due now</i>, <i>Due in 2h 10m</i>, <i>✓ Audited</i> (after the latest publish) or <i>Failed</i> (hover for why). <b>Audit now</b> runs it straight away.</li>
+<li><b>Pages by the SEO company</b>: read from Duda's activity log (pages created by seo@8bitcreative.com). The same list is attached to the scan in the audit's Dashboard ("🔍 SEO auto audit"), and the scan's <b>📋 View</b> report shows each of those pages with how many audit items it has.</li>
+<li>These scans don't ring anyone's bell; open the audit's Dashboard or Audit items to see what was found.</li>
+</ul>
+<p class="small">The label and the email can be changed by the app owner (SEO_LABEL, SEO_EMAIL, SEO_DELAY_HOURS).</p>`,
+  },
+  {
     id: 'docs', group: 'Audits', title: 'vs Docs: check a website against its copy documents', audience: 'all',
     html: `<p>The <b>📄 vs Docs</b> tab on an audit checks the website against the Word documents (.docx) it was built from: the full "Website Writing" document, or a one-page one ("PPF Page").</p>
 <ul>

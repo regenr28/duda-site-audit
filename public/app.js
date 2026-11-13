@@ -6781,7 +6781,8 @@
       const pagesMeta = {};
       ((meta && meta.pages) || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; });
       // "Scan chosen pages": only these (the home page is always read too, and left out of the save).
-      const only = ((state.scanOpts || {})[id] || {}).paths || null;
+      const opts0 = (state.scanOpts || {})[id] || {};
+      const only = opts0.paths || null;
       if (state.scanOpts) delete state.scanOpts[id];
       if (only) log.push(`Scanned ${only.length} chosen page${only.length === 1 ? '' : 's'} only: ${only.slice(0, 8).join(', ')}${only.length > 8 ? '…' : ''}`);
       const res = await A.runScan({
@@ -6832,7 +6833,7 @@
       const corrected = [...A.fixedSince((site.scan && site.scan.cv) || 1)];
       const lastDone = (site.scan && site.scan.finishedAt) || '';
       Object.values(state.fixedChecks || {}).forEach((x) => { if (x && x.code && lastDone && x.at > lastDone && !corrected.includes(x.code)) corrected.push(x.code); });
-      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, ...(only ? { partial: only } : {}), bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
+      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, ...(only ? { partial: only } : {}), bulk: !!((state.scanning[id] && state.scanning[id].bulk) || opts0.bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
         scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
       } });
@@ -7497,6 +7498,90 @@
   }
 
   /** The tab strip shared by both rosters. */
+  // =====================================================================
+  // 🔍 SEO WEBSITES (DR Websites): websites the SEO company works on, audited after each publish
+  // =====================================================================
+  const seo = { data: null, loading: false, error: '', pages: {}, busy: false, last: '' };
+  const seoRunner = () => !!(state.me && can('site.scan') && can('live.view'));
+  const seoAutoOn = () => { try { return localStorage.getItem('dsa-seo-auto') !== 'off'; } catch (e) { return true; } };
+  async function loadSeo() {
+    seo.loading = true;
+    try { seo.data = await api('/api/seo?op=list'); seo.error = ''; } catch (e) { seo.error = e.message; }
+    seo.loading = false;
+    if (route().name === 'live' && live.tab === 'seo') renderSeo();
+  }
+  const inHM = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
+  function seoStatus(x) {
+    if (!x.published) return '<span class="faint">Never published</span>';
+    if (seo.busy === x.id) return '<span class="badge v-ok"><span class="spin-dot"></span> Auditing now</span>';
+    if (x.due) return '<span class="badge sev-warning">Due now</span>';
+    const l = x.last;
+    if (l && l.pub && Date.parse(l.pub) >= Date.parse(x.published)) return l.error ? `<span class="badge sev-critical" title="${esc(l.error)}">Failed ${esc(ago(l.at))}</span>` : `<span class="badge v-ok" title="${esc('By ' + (l.byName || l.by || ''))}">✓ Audited ${esc(ago(l.at))}</span>`;
+    return `<span class="small muted">Due in ${esc(inHM(Date.parse(x.dueAt) - srvNow()))}</span>`;
+  }
+  function renderSeo() {
+    const d = seo.data;
+    if (!d && !seo.loading) loadSeo();
+    const sites = (d && d.sites) || [];
+    $('#view').innerHTML = `<div class="page-head"><div><h1>SEO Websites</h1>
+        <div class="muted">Websites with the Duda label <b>${esc((d && d.label) || 'SEO Customer')}</b>: the SEO company (${esc((d && d.email) || 'seo@8bitcreative.com')}) works on them. Each is audited again <b>${(d && d.delayH) || 4} hours after its last publish</b>, one at a time, and the audit lists the pages they created.</div></div>
+        <button class="btn" id="seoRefresh" ${seo.loading ? 'disabled' : ''}>${seo.loading ? 'Loading…' : '↻ Refresh'}</button></div>
+      ${liveTabs('seo')}
+      ${seo.error ? `<div class="note bad">${esc(seo.error)}</div>` : ''}
+      ${seoRunner() ? `<div class="note seo-run"><label class="check-row"><input type="checkbox" id="seoAuto" ${seoAutoOn() ? 'checked' : ''}><span><b>Run the auto audits in this tab.</b> Scans run in a browser, so a due website is audited while someone on the team has the app open; overnight publishes are audited the next morning. Only one tab audits a website at a time.</span></label>${seo.last ? `<div class="small muted">${esc(seo.last)}</div>` : ''}</div>` : ''}
+      <div class="panel">${!d ? `<div class="empty">${seo.loading ? 'Loading…' : 'No data yet.'}</div>` : !sites.length ? `<div class="empty">No published website has the label "${esc(d.label)}" yet. Add the label in Duda (Site → Labels), then <b>↻ Pull from Duda</b> on Live DR Sites.</div>` : `
+        <div class="table-wrap"><table class="grid seo-table"><thead><tr><th>Website</th><th>Last published</th><th>Auto audit</th><th>Audit</th><th>Pages by the SEO company</th><th></th></tr></thead><tbody>
+        ${sites.map((x) => { const pg = seo.pages[x.id]; return `<tr>
+          <td><b>${esc(x.name)}</b>${x.domain ? `<div class="small faint">${esc(x.domain)}</div>` : ''}</td>
+          <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
+          <td>${seoStatus(x)}</td>
+          <td>${x.audit ? `<a href="#/site/${esc(x.audit.id)}/dashboard">${x.audit.open} open${x.audit.critical ? ` · <b class="db-worse">${x.audit.critical} critical</b>` : ''}</a>${x.audit.scanned ? `<div class="small faint">scanned ${esc(ago(x.audit.scanned))}</div>` : ''}` : '<span class="faint">Not on Audits yet</span>'}</td>
+          <td class="small">${pg ? (pg.loading ? 'Reading Duda\'s activity log…' : pg.error ? `<span class="faint" title="${esc(pg.error)}">Could not read the activity log</span>` : pg.pages.length ? `<details><summary>${pg.pages.length} page${pg.pages.length === 1 ? '' : 's'}</summary><ul class="seo-pages">${pg.pages.slice(0, 40).map((p) => `<li>${esc(p.title || p.path || p.id || 'Page')}${p.path ? ` <span class="mono faint">${esc(p.path)}</span>` : ''} <span class="faint">${esc(p.at ? fmtFull(p.at) : '')}</span></li>`).join('')}</ul></details>` : '<span class="faint">None found</span>') : `<button class="linkbtn" data-seopg="${esc(x.id)}">Show</button>`}</td>
+          <td style="white-space:nowrap">${seoRunner() ? `<button class="btn sm" data-seorun="${esc(x.id)}" ${seo.busy ? 'disabled' : ''}>Audit now</button>` : ''}</td></tr>`; }).join('')}
+        </tbody></table></div>`}</div>`;
+    bindLiveTabs();
+    if ($('#seoRefresh')) $('#seoRefresh').onclick = () => loadSeo();
+    if ($('#seoAuto')) $('#seoAuto').onchange = (e) => { try { localStorage.setItem('dsa-seo-auto', e.target.checked ? 'on' : 'off'); } catch (er) { /* ignore */ } if (e.target.checked) seoTick(); };
+    $$('[data-seopg]').forEach((b) => (b.onclick = async () => {
+      const id = b.dataset.seopg; seo.pages[id] = { loading: true, pages: [] }; renderSeo();
+      try { seo.pages[id] = await api(`/api/seo?op=pages&site=${encodeURIComponent(id)}`); } catch (e) { seo.pages[id] = { pages: [], error: e.message }; }
+      if (route().name === 'live' && live.tab === 'seo') renderSeo();
+    }));
+    $$('[data-seorun]').forEach((b) => (b.onclick = () => { const x = sites.find((y) => y.id === b.dataset.seorun); if (x) seoAudit(x, true); }));
+  }
+  /** Audit one SEO website: claim it, make sure it is on Audits, scan it, record the run. */
+  async function seoAudit(x, byHand) {
+    if (seo.busy) return;
+    const c = await post('/api/seo', { op: 'claim', site: x.id }).catch(() => ({ ok: false }));
+    if (!c.ok) { if (byHand) toast('Someone else\'s tab is auditing this website right now.'); return; }
+    seo.busy = x.id; if (route().name === 'live' && live.tab === 'seo') renderSeo();
+    let auditId = x.audit && x.audit.id; let error = '';
+    try {
+      if (!auditId) {
+        const host = editorHostOr();
+        try { const n = await store({ op: 'create', siteId: x.id, host, editorUrl: `https://${host}/home/site/${x.id}/home`, assignee: '' }); upsertSummary(n); auditId = n.id; }
+        catch (e) { if (e.status === 409 && e.data && e.data.id) auditId = e.data.id; else throw e; }
+      }
+      state.scanOpts = state.scanOpts || {}; state.scanOpts[auditId] = { bulk: true, seo: true };
+      await scanSite(auditId);
+      const after = await api('/api/store?op=site&id=' + encodeURIComponent(auditId)).catch(() => null);
+      if (!after || !after.scan || after.scan.state !== 'complete') error = (after && after.scan && after.scan.error) || 'The scan did not finish';
+    } catch (e) { error = e.message || String(e); }
+    finally {
+      const r = await post('/api/seo', { op: 'done', site: x.id, auditId: auditId || '', pub: x.published, error }).catch(() => null);
+      seo.busy = false;
+      seo.last = `${error ? 'Could not audit' : 'Audited'} ${x.name} ${new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}${error ? ': ' + error : r && r.pages ? ` · ${r.pages} page${r.pages === 1 ? '' : 's'} by the SEO company` : ''}`;
+      if (byHand) toast(seo.last);
+      await loadSeo();
+    }
+  }
+  /** Every few minutes: is an SEO website due? This tab audits it if nothing else is being scanned here. */
+  async function seoTick() {
+    if (!seoRunner() || !seoAutoOn() || seo.busy || state.running || state.queue.length || state.verifying || clientMode() || state.viewRole || (window.DemoMode && window.DemoMode.on())) return;
+    try { const r = await api('/api/seo?op=due'); if (r && r.site) await seoAudit(r.site, false); } catch (e) { /* next time */ }
+  }
+  setTimeout(() => { seoTick(); setInterval(seoTick, 5 * 60000); }, 45000);
+
   function liveTabs(which) {
     const n = (live.un && live.un.count) || '';
     return `<div class="tabs" style="margin-bottom:14px">
@@ -7504,6 +7589,7 @@
       <a href="#/live/unpublished" data-ltab="unpublished" class="${which === 'unpublished' ? 'on' : ''}">Not published yet${n !== '' ? ` <span class="tcount">${n}</span>` : ''}</a>
       <a href="#/live/trends" data-ltab="trends" class="${which === 'trends' ? 'on' : ''}">📈 Trends</a>
       <a href="#/live/ranks" data-ltab="ranks" class="${which === 'ranks' ? 'on' : ''}">🏆 Leaderboards</a>
+      <a href="#/live/seo" data-ltab="seo" class="${which === 'seo' ? 'on' : ''}">🔍 SEO Websites</a>
     </div>`;
   }
   // =====================================================================
@@ -7657,7 +7743,7 @@
     if (!cmt.sites && !cmt.loading) loadCommentSites(true).then(() => { if (route().name === 'live' && live.tab === 'unpublished') renderDrafts(); }).catch(() => {});
   }
   function bindLiveTabs() {
-    $$('[data-ltab]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = a.dataset.ltab; live.page = 0; location.hash = a.dataset.ltab === 'unpublished' ? '#/live/unpublished' : a.dataset.ltab === 'trends' ? '#/live/trends' : a.dataset.ltab === 'ranks' ? '#/live/ranks' : '#/live'; }));
+    $$('[data-ltab]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); live.tab = a.dataset.ltab; live.page = 0; location.hash = a.dataset.ltab === 'unpublished' ? '#/live/unpublished' : a.dataset.ltab === 'trends' ? '#/live/trends' : a.dataset.ltab === 'ranks' ? '#/live/ranks' : a.dataset.ltab === 'seo' ? '#/live/seo' : '#/live'; }));
   }
 
   /** A date as an ISO string, or '' — a missing or malformed one must never take a whole page down. */
@@ -8278,6 +8364,7 @@
   }
 
   function renderLive() {
+    if (live.tab === 'seo') return renderSeo();
     const d = live.data;
     if (!d && !live.loading && !live.error) { loadLive(false); }
     else if (d && !live.bgStarted) { live.bgStarted = true; fillNames().then(() => { if (!(state.config && state.config.copy)) checkDomains(false); }); }
@@ -8530,7 +8617,7 @@
     if (parts[0] === 'tasks') return { name: 'tasks' };
     if (parts[0] === 'customers') return { name: 'customers' };
     if (parts[0] === 'project' && parts[1]) return { name: 'project', id: decodeURIComponent(parts[1]) };
-    if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : parts[1] === 'trends' ? 'trends' : parts[1] === 'ranks' ? 'ranks' : 'published',
+    if (parts[0] === 'live') return { name: 'live', tab: parts[1] === 'unpublished' ? 'unpublished' : parts[1] === 'trends' ? 'trends' : parts[1] === 'ranks' ? 'ranks' : parts[1] === 'seo' ? 'seo' : 'published',
       site: parts[1] === 'site' && parts[2] ? decodeURIComponent(parts[2]) : '', problems: parts[1] === 'problems', content: parts[1] === 'content' };
     // A website's profile addressed by its DUDA site id, so it works for one that has no record.
     if (parts[0] === 'dr' && parts[1]) return { name: 'dr', siteId: decodeURIComponent(parts[1]), sub: parts[2] || '' };
@@ -10957,6 +11044,7 @@
       <section class="db-card"><h3>By category</h3>${dbHBars(Object.values(cats).sort((a, b) => b.n - a.n), null, 'No items.')}</section>
       <div class="rep-acts"><button class="btn sm" id="repDl" type="button">⬇ Download this report</button>
         ${others.length ? `<span class="rep-cmp"><label class="small muted" for="repWith">Compare with</label><select id="repWith">${others.map((y) => `<option value="${scans.indexOf(y)}" ${y === def ? 'selected' : ''}>${esc(y.now ? 'Today (now)' : dbDate(y.at) + ' · ' + new Date(y.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</option>`).join('')}</select><button class="btn sm primary" id="repCmp" type="button">Compare</button></span>` : '<span class="small faint">Scan again to have something to compare with.</span>'}</div>
+      ${x.seo ? `<section class="db-card"><h3>🔍 Pages created by ${esc(x.seo.by)} (${(x.seo.pages || []).length})</h3>${x.seo.error ? `<div class="small faint">Duda's activity log could not be read: ${esc(x.seo.error)}</div>` : ''}${(x.seo.pages || []).length ? `<div class="rep-list">${x.seo.pages.map((p) => { const path = p.path ? A.normalizePath(String(p.path).replace(/^https?:\/\/[^/]+/i, '')) : ''; const n = path ? r.items.filter((i) => i.p === path).length : null; return `<div class="rep-row seo-pg"><span class="small faint">${esc(p.at ? dbDate(p.at) : '')}</span><span></span><div class="rep-main"><b>${esc(p.title || path || 'Page')}</b>${path ? ` <span class="mono small faint">${esc(path)}</span>` : ''}</div><span class="small ${n ? 'db-worse' : 'muted'} rep-where">${n === null ? '' : n ? `${n} item${n === 1 ? '' : 's'} on this page` : '✓ nothing found'}</span></div>`; }).join('')}</div>` : '<div class="small faint">None in Duda\'s activity log.</div>'}</section>` : ''}
       <section class="db-card"><div class="rep-filter"><h3>Every item (${r.items.length})</h3><input id="repQ" type="search" placeholder="Search items, pages, #number"><select id="repSev"><option value="">All severities</option>${DB_SEV.map((k) => `<option value="${k.k}">${k.label}</option>`).join('')}</select></div><div id="repList"></div></section></div>`;
     const draw = () => { const l = list(); $('#repList', body).innerHTML = l.length ? repRows(l, limit) : '<div class="small faint">Nothing matches.</div>'; const m = $('[data-repmore]', body); if (m) m.onclick = () => { limit = Number(m.dataset.repmore); draw(); }; };
     draw();
@@ -11084,7 +11172,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
           <div class="table-wrap"><table class="grid db-table">
             <thead><tr><th>Date</th><th>Tool</th><th title="Critical / errors">Critical</th><th>Warning</th><th title="Info / notices">Info</th><th>Total</th><th title="Against the previous result from the same tool">Change</th><th>Pages</th><th>By</th><th></th></tr></thead>
             <tbody>${scans.map((x, i) => { const p = prevSame(i); return `<tr class="${x.auto ? '' : 'db-row-other'}">
-              <td>${esc(dbDate(x.at))}</td><td>${x.auto ? 'Site Auditor' : `<b>${esc(x.tool)}</b>`}${x.note ? `<div class="small faint">${esc(x.note)}</div>` : ''}${x.cv ? `<div class="small faint" title="Version of the checks">checks v${x.cv}</div>` : ''}</td>
+              <td>${esc(dbDate(x.at))}</td><td>${x.auto ? 'Site Auditor' : `<b>${esc(x.tool)}</b>`}${x.partial ? `<div class="small faint" title="${esc(x.partial.join(', '))}">🎯 ${x.partial.length} chosen page${x.partial.length === 1 ? '' : 's'}</div>` : ''}${x.seo ? `<div class="small faint">🔍 SEO auto audit · ${(x.seo.pages || []).length} page${(x.seo.pages || []).length === 1 ? '' : 's'} by ${esc(x.seo.by)}</div>` : ''}${x.note ? `<div class="small faint">${esc(x.note)}</div>` : ''}${x.cv ? `<div class="small faint" title="Version of the checks">checks v${x.cv}</div>` : ''}</td>
               <td>${(x.counts || {}).critical || 0}${(x.counts || {}).outdated ? ` <span class="small faint">+${x.counts.outdated} outdated</span>` : ''}</td><td>${(x.counts || {}).warning || 0}</td><td>${(x.counts || {}).info || 0}</td><td><b>${tot(x)}</b></td>
               <td>${dbChange(p ? tot(p) : 0, tot(x))}${x.auto && (x.fixed || x.added) ? `<div class="small faint">${x.fixed ? `${x.fixed} fixed` : ''}${x.fixed && x.added ? ' · ' : ''}${x.added ? `${x.added} new` : ''}</div>` : ''}</td>
               <td>${x.pages || '—'}</td><td>${esc(x.byName || nameOf(x.by, '—'))}</td>

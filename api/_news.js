@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-14-seo-websites', date: '2026-11-14', audience: 'all', tag: 'DR Websites',
+    title: 'SEO Websites: the SEO company\'s websites are audited again after every publish',
+    what: 'DR Websites has a new <b>🔍 SEO Websites</b> tab: the websites labelled <b>SEO Customer</b> in Duda. Each is audited again <b>4 hours after its last publish</b>, one at a time, and the audit lists the pages <b>seo@8bitcreative.com</b> created (from Duda\'s activity log), with how many items each has.',
+    where: ['<b>Walkthrough:</b> DR Websites → <b>🔍 SEO Websites</b>. <b>Audit now</b> to run one straight away; <b>Show</b> for the SEO company\'s pages. In the audit: <b>📊 Dashboard</b> → Scan history → the "🔍 SEO auto audit" line → <b>📋 View</b>.'],
+    link: '#/help/seo-websites', linkText: 'How SEO Websites works',
+  },
+  {
     id: '2026-11-13-vs-docs', date: '2026-11-13', audience: 'all', tag: 'Audits',
     title: 'vs Docs: check a website against the documents it was built from, and scan chosen pages only',
     what: 'A new <b>📄 vs Docs</b> tab on every audit. Add the Website Writing document (or a single-page one): it is read, its pages are found on the website (renamed ones too, by the AI), and each is compared: <b>missing pages</b>, SEO title and meta description, copy that is missing or changed, <b>buttons</b> that are missing, go to different places, or open a missing page, and the client details against Business Info. <b>🎯 Scan chosen pages</b> (in the ⋯ menu) runs the full audit on just the pages you pick.',

@@ -2228,3 +2228,8 @@ html.demo-mode iframe { pointer-events: none; }
 .sp-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .sp-row .faint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) { .dc-kv { grid-template-columns: 1fr; } .dc-body { padding-left: 4px; } .sp-row { grid-template-columns: 20px 1fr; } .sp-row .faint { grid-column: 2; } }
+
+/* SEO Websites */
+.seo-run { display: grid; gap: 4px; margin-bottom: 12px; }
+.seo-pages { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+.seo-table td { vertical-align: top; }
