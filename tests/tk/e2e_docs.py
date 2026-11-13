@@ -61,7 +61,7 @@ class AI(BaseHTTPRequestHandler):
             m2 = []
             for m in re.finditer(r'^(\d+) \| ([^|]*) \|', user, re.M):
                 n = m.group(2).lower()
-                path = '/window-tint' if 'tint' in n else '/gloss-ppf' if 'paint protection' in n else ''
+                path = '/window-tint' if 'tint' in n else '/gloss-ppf' if 'paint protection' in n else '/brentwood-ceramic-coating-and-ppf' if 'brentwood' in n and '/brentwood-ceramic-coating-and-ppf' in user else ''
                 m2.append({'i': int(m.group(1)), 'path': path, 'confidence': 0.9 if path else 0.2, 'reason': 'renamed page' if path else 'no page for Brentwood'})
             out = {'matches': m2}
         elif 'You review image ALT TEXT' in system:
@@ -84,10 +84,13 @@ PAGES = {
     '/contact-us': ('Contact Us | Buff & Beyond', '<h1>Get in Touch</h1><p>Tell us about your car and what you would like done, and we will reply within one business day.</p>' + BTN('Call now', 'tel:3024217788')),
     '/blog/tint-laws': ('Tint laws | Buff & Beyond', '<h1>Tint laws</h1><p>What the law says.</p>'),
 }
-def page_html(path):
+LIVEPAGES = {}; DRAFT_ONLY = set(); EXTRA_META = []
+def page_html(path, live=False):
+    if live and path in DRAFT_ONLY: return {'status': 404, 'html': '<html><body>Not found</body></html>', 'url': ''}
+    pages = dict(PAGES, **(LIVEPAGES if live else {}))
     nav = '<div id="hcontainer" class="dmHeader">' + ' '.join(f'<a href="{L(p)}">{p}</a>' for p in PAGES) + '</div>'
-    if path not in PAGES: return {'status': 404, 'html': '<html><body data-page-alias="dmPageNotFound"></body></html>', 'url': ''}
-    t, b = PAGES[path]
+    if path not in pages: return {'status': 404, 'html': '<html><body data-page-alias="dmPageNotFound"></body></html>', 'url': ''}
+    t, b = pages[path]
     desc = {'/': 'Detailing, tint and PPF in Dover. Call now!', '/gloss-ppf': 'Clear film that stops chips. Call now!'}.get(path, 'Something else.')
     return {'status': 200, 'html': f'<html><head><title>{t}</title><meta name="description" content="{desc}"></head><body>{nav}<div id="dmcontent">{b}</div></body></html>', 'url': f'https://ed.multiscreensite.com/site/{SITE}{path}'}
 META = {'host': 'ed.multiscreensite.com', 'siteId': SITE, 'site': {'site_business_info': {'business_name': 'Buff & Beyond', 'phone_number': '(302) 421-7788', 'email': 'hello@buffandbeyond.com'}, 'site_domain': ''},
@@ -100,9 +103,9 @@ def route(r):
     u = urllib.parse.urlparse(r.request.url); q = dict(urllib.parse.parse_qsl(u.query)); p = u.path
     if p == '/api/fetch' and SLOW[0]: time.sleep(SLOW[0])
     if p == '/api/fetch' and q.get('live'): LIVEF.append((q.get('domain'), q.get('path')))
-    if p == '/api/fetch': FETCHED.append(q.get('path')); return r.fulfill(status=200, content_type='application/json', body=json.dumps(page_html(q.get('path'))))
+    if p == '/api/fetch': FETCHED.append(q.get('path')); return r.fulfill(status=200, content_type='application/json', body=json.dumps(page_html(q.get('path'), bool(q.get('live')))))
     if p == '/api/site' and q.get('light') and LIVE[0]: return r.fulfill(status=200, content_type='application/json', body=json.dumps({'siteId': SITE, 'domain': 'buffandbeyond.com', 'publishStatus': 'PUBLISHED', 'publishedAt': '2026-11-01T10:00:00Z'}))
-    if p == '/api/site': return r.fulfill(status=200, content_type='application/json', body=json.dumps(META))
+    if p == '/api/site': return r.fulfill(status=200, content_type='application/json', body=json.dumps(dict(META, pages=META['pages'] + EXTRA_META)))
     if p in ('/api/social', '/api/check'): return r.fulfill(status=200, content_type='application/json', body='[]' if p == '/api/check' else '{}')
     if p == '/api/imghash': return r.fulfill(status=200, content_type='application/json', body=json.dumps({'hashes': {}}))
     if p == '/api/capture': return r.fulfill(status=200, content_type='application/json', body=json.dumps({'items': [], 'measured': 0, 'errors': []}))
@@ -227,21 +230,31 @@ try:
         # ---- a published website: the document is checked against the LIVE website ----
         LIVE[0] = True
         PPF0 = PAGES['/gloss-ppf']
-        PAGES['/gloss-ppf'] = (PPF0[0], '<h1>Invisible Armor for Your Paint</h1><p>' + INTRO_PPF + '</p>' + BTN('Get a quote', '/contact-us') + '<p>Ask about our packages.</p>' + BTN('Get a Quote', '/window-tint')
+        LIVEPAGES['/gloss-ppf'] = (PPF0[0], '<h1>Invisible Armor for Your Paint</h1><p>' + INTRO_PPF + '</p>' + BTN('Get a quote', '/contact-us') + '<p>Ask about our packages.</p>' + BTN('Get a Quote', '/window-tint')
             + '<h2>Why Choose Us</h2><p>Certified installers with years of experience on every make and model.</p>'
             + '<h2>Our PPF Packages</h2><h3>Front End</h3><h4>Starting at $599</h4><p>Covers the hood, fenders, bumper and mirrors where chips happen most.</p>' + BTN('Book Front End', '/contact-us')
             + '<h3>Full Body</h3><h4>Starting At $1,386</h4><p>Ask us about ceramic coating over the film.</p>' + BTN('Book Full Body', '/contact-us'))
-        WT0 = PAGES['/window-tint']; PAGES['/window-tint'] = (WT0[0], WT0[1].replace('blocks the heat and the glare without', 'blocks heat and glare all summer without'))
+        WT0 = PAGES['/window-tint']; LIVEPAGES['/window-tint'] = (WT0[0], WT0[1].replace('blocks the heat and the glare without', 'blocks heat and glare all summer without'))
+        # A designer adds the Brentwood page in Duda after the last scan; it is not published yet.
+        PAGES['/brentwood-ceramic-coating-and-ppf'] = ('PPF & Ceramic Coating Brentwood, TN | Buff & Beyond', '<h1>Protection for Brentwood Drivers</h1><p>Drivers in Brentwood trust us with ceramic coating and paint protection film for their daily drivers and weekend cars.</p>')
+        DRAFT_ONLY.add('/brentwood-ceramic-coating-and-ppf'); EXTRA_META.append({'path': '/brentwood-ceramic-coating-and-ppf', 'title': 'Brentwood', 'noIndex': False})
         pg.goto(f'http://localhost:{APORT}/#/site/s1/docs'); pg.wait_for_selector('#dcRun', timeout=15000); time.sleep(0.4)
-        check(pg.locator('#dcSrc').count() == 1, 'there is a choice: the live website or the draft')
         pg.click('#dcRun')
-        for _ in range(60):
+        for _ in range(90):
             time.sleep(1)
-            if 'live website' in (pg.inner_text('.db-tiles') if pg.locator('.db-tiles').count() else ''): break
+            if 'draft and live' in (pg.inner_text('.db-tiles') if pg.locator('.db-tiles').count() else ''): break
         tiles = pg.inner_text('.db-tiles') if pg.locator('.db-tiles').count() else ''
-        check(LIVEF and all(d == 'buffandbeyond.com' for d, _ in LIVEF), f'a published website is read on its live domain ({len(LIVEF)} live pages read)')
-        check('live website' in tiles and 'buffandbeyond.com' in tiles, 'the check says it was done on the live website: ' + tiles.replace(chr(10), ' ')[-120:])
-        check('https://buffandbeyond.com/' in (pg.get_attribute('.dc-row a.dc-path', 'href') or ''), 'the page links open the live website')
+        print('  tiles:', tiles.replace(chr(10), ' | '), flush=True)
+        check(LIVEF and all(d == 'buffandbeyond.com' for d, _ in LIVEF), f'a published website is read on its live domain too ({len(LIVEF)} live pages read)')
+        check('draft and live' in tiles and 'buffandbeyond.com' in tiles, 'one check reads both the draft and the live website')
+        check('0 on the draft' in tiles and '1 live' in tiles, 'missing pages are counted for each: 0 on the draft, 1 live')
+        bw = 'details.dc-row[data-dcp="/brentwood-ceramic-coating-and-ppf"] '
+        bwt = pg.inner_text(bw + 'summary') if pg.locator(bw).count() else ''
+        check('new page' in bwt and 'Not live yet' in bwt and 'Draft' in bwt, 'a page added in Duda since the last scan is found (new page), checked on the draft, and said to be not live yet: ' + bwt.replace(chr(10), ' '))
+        pg.click(bw + 'summary'); time.sleep(0.3); pg.click(bw + '[data-dcv="live"]'); time.sleep(0.5)
+        check('not on the live website' in pg.inner_text(bw + '.dc-body') and 'publish it' in pg.inner_text(bw + '.dc-body'), 'its Live side says it is on the draft and needs publishing')
+        pg.click(bw + 'summary'); time.sleep(0.2)
+        check(pg.locator('details.dc-row[data-dcp="/gloss-ppf"] .dc-side-live').get_attribute('href').startswith('https://buffandbeyond.com/') and 'preview' in pg.locator('details.dc-row[data-dcp="/gloss-ppf"] .dc-side-draft').get_attribute('href'), 'each page has its Draft and Live result, each opening its own page')
         # ---- copy, section by section (the live check above) ----
         pg.click('details.dc-row[data-dcp="/gloss-ppf"] summary'); time.sleep(0.4)
         ppf = 'details.dc-row[data-dcp="/gloss-ppf"] '
@@ -263,17 +276,16 @@ try:
         pg.check(ppf + '[data-dcc-only]'); time.sleep(0.6)
         check(pg.locator(ppf).get_attribute('open') is not None and pg.locator(ppf + '.dcc-same').count() == 0, '"Only differences" hides what is the same, and the open pages stay open')
         pg.uncheck(ppf + '[data-dcc-only]'); time.sleep(0.4)
-        PAGES['/gloss-ppf'] = PPF0
         pg.click('details.dc-row[data-dcp="/window-tint"] summary'); time.sleep(0.3)
+        pg.click('details.dc-row[data-dcp="/window-tint"] [data-dcv="live"]'); time.sleep(0.4)
         ch = pg.locator('details.dc-row[data-dcp="/window-tint"] .dcc-changed')
         check(ch.count() == 1 and ch.locator('ins').count() >= 1 and ch.locator('del').count() >= 1, 'a reworded paragraph is "Changed", with the added words and the left-out words marked')
-        PAGES['/window-tint'] = WT0
-        n_live = len(LIVEF)
-        pg.select_option('#dcSrc', 'draft'); pg.click('#dcRun')
-        for _ in range(60):
-            time.sleep(1)
-            if 'on the draft' in (pg.inner_text('.db-tiles') if pg.locator('.db-tiles').count() else ''): break
-        check('on the draft' in pg.inner_text('.db-tiles') and len(LIVEF) == n_live, 'picking "the draft in Duda" reads the draft instead')
+        pg.click('details.dc-row[data-dcp="/window-tint"] [data-dcv="draft"]'); time.sleep(0.4)
+        check(pg.locator('details.dc-row[data-dcp="/window-tint"] .dcc-changed').count() == 0, 'the Draft side of the same page shows the draft (the rewording is only live)')
+        # Contact Us did not change since the last publish: its draft and live are the same, and it says so.
+        pg.click('details.dc-row[data-dcp="/contact-us"] summary'); time.sleep(0.3)
+        check('same as the draft' in pg.inner_text('details.dc-row[data-dcp="/contact-us"] .dc-body') or 'same as the live' in pg.inner_text('details.dc-row[data-dcp="/contact-us"] .dc-body'), 'a page that is the same on the draft and live says so')
+        LIVEPAGES.clear(); DRAFT_ONLY.clear(); EXTRA_META.clear(); del PAGES['/brentwood-ceramic-coating-and-ppf']
         LIVE[0] = False
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()

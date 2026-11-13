@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **159**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **160**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 157: styles v38, demo v2, engine v15, app v43).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 159: styles v39, demo v2, engine v15, app v44).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 155 on GitHub (`b704ce1`). **Delivered as a zip, maybe not uploaded yet:** 156 + 157 + 158 (one zip: audit tabs, scan progress everywhere, vs Docs live website, copy section by section).
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 158 on GitHub (`820839b`). **Delivered as a zip, maybe not uploaded yet:** 159 (vs Docs: draft and live in one check).
 - **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
 - **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
@@ -232,3 +232,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - engine `pageCopy` also returns buttons (`a.dmButtonLink`, tag `btn`) in their place.
 - app `docCopy(dp, site)`: `dsections` splits both sides into sections (a heading starts one; headings in a row stay together). Sections are paired by shared words (+ heading likeness), greedy; out-of-order pairs (not in the longest in-order run) are `mv` with a note. Inside a pair `align` lines blocks up (weighted LCS on `bsim`, ≥0.45); unmatched blocks in the same gap are paired as `replaced`/`changed`; left-over document blocks are `missing` (or `moved` when found elsewhere on the page, also inside a longer paragraph), website ones `added` (or `dup`). Missing notes say what they should come after. Result `{ secs: [{ k, dh, sh, rows, mv?, note? }], same, changed, missing, added, moved }`.
 - `docCopyHtml` / `docCopyCells` / `docCopyReport` (download). Document left, website right (red = left out, green = added). Old checks without `secs` show the old list.
+
+## Update 159 — vs Docs: draft and live in one check (built)
+- `docCheck`: page list = last scan's pages + Duda's current list (`/api/site`, new ones `fresh`), so new draft pages are matched without a full scan. `docMatch(s, d, pages, sitePages)`. Reads the draft, then the live domain when published (`read('draft' | 'live')`); a matched page that does not open on a side is `gone` (with `why`).
+- Result: `rows` = draft, `live` = live rows (when published), `source: { draft: true, live, domain }`. Older checks (one side) still show through `docSides(last)`.
+- UI: `docRowHtml(s, i, sides, dp)` shows a Draft and a Live pill per page (each links to its page); open a page → `[data-dcv]` picks the side (`state.dcView`), `docSideBody` draws it; "same as the draft" note when both sides compare alike. Tiles show both sides. The "against" picker (`#dcSrc`) is gone. `docBad(r)` counts a side's differences.

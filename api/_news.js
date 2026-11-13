@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-17-docs-both', date: '2026-11-17', audience: 'all', tag: 'Audits',
+    title: 'vs Docs: the draft and the live website in one check',
+    what: 'A vs Docs check now reads the <b>draft</b> and, once the website is published, the <b>live</b> website at the same time. Each page shows both results (<b>Draft 92% · 7 differences</b> · <b>Live ✗ Not live yet</b>), and the counts say which is which ("0 on the draft · 1 live"). Pages a designer has just added in Duda are found too, without scanning the whole website first.',
+    where: ['<b>Walkthrough:</b> open an audit → 🔎 Audit results → <b>📄 vs Docs</b> → <b>Check again</b> → open a page → pick <b>Draft</b> or <b>Live</b>.'],
+    link: '#/help/docs', linkText: 'How vs Docs works',
+  },
+  {
     id: '2026-11-16-docs-copy', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: 'vs Docs: the document and the website side by side, section by section',
     what: 'Open a page on <b>📄 vs Docs</b> to see its copy as the document has it (left) next to the website (right), section by section: a heading and what follows it, buttons included. Sections are found by what they say, so one the designer moved is still found and marked <b>Moved</b>. Each block is <b>Same</b>, <b>Changed</b> (the words left out and added are marked, like a price that changed), <b>Replaced</b> (something else in its place), <b>Missing</b> (with what it should come after) or <b>Not in the document</b>. <b>Only differences</b> hides the rest.',

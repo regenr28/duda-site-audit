@@ -2295,3 +2295,15 @@ html.demo-mode iframe { pointer-events: none; }
 .dcc-tag { display: inline-block; font-size: 10.5px; font-weight: 700; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
 .dcc-key { margin-top: 8px; }
 @media (max-width: 720px) { .dcc-head { display: none; } .dcc-row { grid-template-columns: 22px 1fr; } .dcc-site { grid-column: 2; } }
+
+/* vs Docs: a page's draft and live side by side in the list */
+.dc-sides { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.dc-side { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-decoration: none; white-space: nowrap; border: 1px solid transparent; }
+.dc-side b { font-weight: 800; margin-right: 2px; }
+.dc-side.ok { background: var(--ok-soft, rgba(34,160,90,.12)); color: var(--ok); }
+.dc-side.bad { background: var(--warn-soft); color: var(--warn); }
+.dc-side.gone { background: var(--crit-soft); color: var(--crit); }
+.dc-side:hover { border-color: currentColor; }
+.dc-viewsw { display: flex; gap: 6px; margin: 8px 0 10px; flex-wrap: wrap; }
+.dc-gone-note { padding: 10px 12px; border-radius: 8px; background: var(--crit-soft); color: var(--text); margin: 6px 0; }
+.dc-same-note { color: var(--ok); margin: 4px 0 8px; }

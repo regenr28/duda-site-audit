@@ -11086,8 +11086,8 @@
     return (d.parsed.pages || []).map((p, i) => Object.assign({}, p, { i, name: (ai.get(i) && ai.get(i).name) || p.name, kind: (ai.get(i) && ai.get(i).kind) || 'page', note: (ai.get(i) && ai.get(i).note) || '' })).filter((p) => p.kind !== 'not_page');
   }
   /** Find each document page on the website: exact title or address first, the AI for the rest. */
-  async function docMatch(s, d, pages) {
-    const site = (s.pages || []).filter((p) => !p.notFound && !p.error && !/\/(blog|author|tag|category)\b/i.test(p.path) && !A.isThankYouPath(p.path));
+  async function docMatch(s, d, pages, sitePages) {
+    const site = (sitePages || s.pages || []).filter((p) => !p.notFound && !p.error && !/\/(blog|author|tag|category)\b/i.test(p.path) && !A.isThankYouPath(p.path));
     const matches = {};
     pages.forEach((p) => {
       const t = site.find((x) => p.title && dnorm(x.title) === dnorm(p.title));
@@ -11112,76 +11112,102 @@
   }
   /** Check the website against one document: find its pages, read them, compare. */
   async function docCheck(s, d) {
-    if (!(s.pages || []).length) return toast('Scan the website once first, so the app knows its pages.');
     if (state.scanning[s.id]) return toast('This website is being scanned. Try again when it finishes.');
     const pages = docPages(d);
     state.scanning[s.id] = { done: 0, total: 0, message: `📄 Finding the ${pages.length} document page${pages.length === 1 ? '' : 's'} on the website…` }; renderSite();
     try {
-      const matches = await docMatch(s, d, pages);
-      const paths = [...new Set(Object.values(matches).map((m) => m.path).filter(Boolean))];
-      state.scanning[s.id] = { done: 0, total: paths.length, message: `📄 Reading ${paths.length} page${paths.length === 1 ? '' : 's'}…` }; renderProgress(s.id);
       const { sApi } = siteApi(s.id);
       const host = s.host;
-      // A published website is checked as visitors see it (its live domain); a draft through Duda's preview.
-      // "The draft in Duda" can be picked by hand, to check changes not published yet.
-      let live = '';
       const editor = s.editorUrl || (s.host && s.siteId ? `https://${s.host}/home/site/${s.siteId}` : '');
-      if ((state.docSrc || {})[s.id] !== 'draft' && editor) {
-        try {
-          const info = await sApi('/api/site?light=1&editor=' + encodeURIComponent(editor));
-          pubInfo[s.id] = { at: Date.now(), d: info };
-          if (info.domain && /PUBLISHED/i.test(info.publishStatus || '') && !/NOT_PUBLISHED|UNPUBLISHED/i.test(info.publishStatus || '')) live = info.domain;
-        } catch (e) { /* Duda unreachable: the draft is read */ }
-      }
-      const fetchQ = (path, device) => new URLSearchParams(live ? { live: '1', domain: live, site: s.siteId, path, device } : { host, site: s.siteId, path, device });
-      const res = paths.length ? await A.runScan({
-        siteId: s.siteId, allow: s.allow || [], host, truth: A.truthWithout(s.truth, s.allow), pagesMeta: {}, seedPaths: paths, keepCopy: true, maxPages: paths.length + (paths.includes('/') ? 0 : 1), concurrency: 4, devices: ['desktop'],
-        fetchPage: async (path, device) => { const q = fetchQ(path, device); for (let a = 0; a < 3; a++) { try { const r = await sApi('/api/fetch?' + q); if (r.status || a === 2) return r; } catch (e) { if (a === 2) return { status: 0, html: '', error: e.message }; } } return { status: 0, html: '' }; },
-        onProgress: (p) => { state.scanning[s.id] = Object.assign({}, p, { message: '📄 ' + p.message }); renderProgress(s.id); },
-      }) : { pages: [], prose: [], buttons: {}, fit: [] };
-      // Every page the website has (for buttons that open a missing page), and what was just read.
-      const known = new Map((s.pages || []).map((p) => [p.path, p])); (res.pages || []).forEach((p) => known.set(p.path, p));
-      const fit = new Map((res.fit || []).map((p) => [p.path, p]));
-      const proseOf = (path) => (res.prose || []).filter((b) => (b.pages || []).includes(path)).map((b) => b.text);
+      // Duda's own page list, so pages added since the last scan (a designer's new draft pages) are found too.
+      let sitePages = (s.pages || []).slice();
+      try {
+        const meta = await sApi('/api/site?editor=' + encodeURIComponent(editor));
+        const have = new Set(sitePages.map((p) => p.path));
+        (meta.pages || []).forEach((p) => { const path = A.normalizePath(p.path); if (!have.has(path)) { have.add(path); sitePages.push({ path, title: p.seoTitle || p.title || '', h1: '', fresh: true }); } });
+      } catch (e) { /* the last scan's list is used */ }
+      if (!sitePages.length) throw new Error('Duda did not give the website\'s pages. Scan the website once, then check again.');
+      const matches = await docMatch(s, d, pages, sitePages);
+      const paths = [...new Set(Object.values(matches).map((m) => m.path).filter(Boolean))];
+      // Both the draft (Duda's preview) and, once published, the live website: a page can be on one and not the other.
+      let live = '';
+      try {
+        const info = await sApi('/api/site?light=1&editor=' + encodeURIComponent(editor));
+        pubInfo[s.id] = { at: Date.now(), d: info };
+        if (info.domain && /PUBLISHED/i.test(info.publishStatus || '') && !/NOT_PUBLISHED|UNPUBLISHED/i.test(info.publishStatus || '')) live = info.domain;
+      } catch (e) { /* Duda unreachable: the draft only */ }
       const truth = s.truth || {};
-      const rows = pages.map((p) => {
-        const m = matches[p.i] || { path: '', confidence: 0, reason: '' };
-        if (!m.path) return { i: p.i, name: p.name, title: p.title, path: '', reason: m.reason, missing: true };
-        const f = fit.get(m.path) || {};
-        const sp = { title: f.title || (known.get(m.path) || {}).title || '', description: f.description || '' };
-        const r = docCompare(p, sp, proseOf(m.path), (res.buttons || {})[m.path], truth, known);
-        if ((res.copy || {})[m.path]) r.copy = docCopy(p, res.copy[m.path]);
-        return { i: p.i, name: p.name, path: m.path, how: m.how, confidence: m.confidence, reason: m.reason, ...r, score: docScore(r) };
-      });
+      const read = async (where) => {
+        const q = (path, device) => new URLSearchParams(where === 'live' ? { live: '1', domain: live, site: s.siteId, path, device } : { host, site: s.siteId, path, device });
+        const label = where === 'live' ? 'live' : 'draft';
+        state.scanning[s.id] = { done: 0, total: paths.length, message: `📄 Reading ${paths.length} page${paths.length === 1 ? '' : 's'} (${label})…` }; renderProgress(s.id);
+        const res = paths.length ? await A.runScan({
+          siteId: s.siteId, allow: s.allow || [], host: where === 'live' ? live : host, truth: A.truthWithout(s.truth, s.allow), pagesMeta: {}, seedPaths: paths, keepCopy: true, maxPages: paths.length + (paths.includes('/') ? 0 : 1), concurrency: 4, devices: ['desktop'],
+          fetchPage: async (path, device) => { const qq = q(path, device); for (let a = 0; a < 3; a++) { try { const r = await sApi('/api/fetch?' + qq); if (r.status || a === 2) return r; } catch (e) { if (a === 2) return { status: 0, html: '', error: e.message }; } } return { status: 0, html: '' }; },
+          onProgress: (p) => { state.scanning[s.id] = Object.assign({}, p, { message: `📄 ${label}: ${p.message}` }); renderProgress(s.id); },
+        }) : { pages: [], prose: [], buttons: {}, fit: [] };
+        const read1 = new Map((res.pages || []).map((p) => [p.path, p]));
+        const known = new Map(sitePages.map((p) => [p.path, p])); (res.pages || []).forEach((p) => known.set(p.path, p));
+        const fit = new Map((res.fit || []).map((p) => [p.path, p]));
+        const proseOf = (path) => (res.prose || []).filter((b) => (b.pages || []).includes(path)).map((b) => b.text);
+        const rows = pages.map((p) => {
+          const m = matches[p.i] || { path: '', confidence: 0, reason: '' };
+          if (!m.path) return { i: p.i, name: p.name, title: p.title, path: '', reason: m.reason, missing: true };
+          const pg = read1.get(m.path);
+          // Matched, but the page does not open here: not published yet (live), or deleted.
+          if (!pg || pg.notFound || pg.error) return { i: p.i, name: p.name, title: p.title, path: m.path, how: m.how, confidence: m.confidence, reason: m.reason, gone: true, why: pg && pg.error && !/404/.test(pg.error) ? pg.error : '' };
+          const f = fit.get(m.path) || {};
+          const sp = { title: f.title || (known.get(m.path) || {}).title || '', description: f.description || '' };
+          const r = docCompare(p, sp, proseOf(m.path), (res.buttons || {})[m.path], truth, known);
+          if ((res.copy || {})[m.path]) r.copy = docCopy(p, res.copy[m.path]);
+          return { i: p.i, name: p.name, path: m.path, how: m.how, confidence: m.confidence, reason: m.reason, ...sitePages.some((x) => x.path === m.path && x.fresh) ? { fresh: true } : {}, ...r, score: docScore(r) };
+        });
+        return { rows, q };
+      };
+      const draft = await read('draft');
+      const onLive = live ? await read('live') : null;
       const client = docClient(d, truth);
       // The document's colours: is each one used anywhere on the home page?
       const colors = client.filter((x) => x.label === 'Colour');
       if (colors.length) {
         try {
-          const home = await sApi('/api/fetch?' + fetchQ('/', 'desktop'));
+          const home = await sApi('/api/fetch?' + (onLive || draft).q('/', 'desktop'));
           const html = String(home.html || '').toLowerCase();
           colors.forEach((x) => { const hx = (x.doc.match(/#[0-9a-f]{6}/i) || [''])[0].toLowerCase(); x.now = html.includes(hx) ? 'used on the home page' : 'not found on the home page'; x.ok = html.includes(hx); });
         } catch (e) { /* the colour stays unjudged */ }
       }
-      const missing = rows.filter((r) => r.missing).length;
-      const issues = rows.reduce((n, r) => n + (r.missing ? 0 : (r.title && !r.title.ok ? 1 : 0) + (r.meta && !r.meta.ok ? 1 : 0) + r.blocks.missing.length + r.buttons.missing.length + r.buttons.inconsistent.length + r.buttons.broken.length + r.buttons.wrongPhone.length), 0);
-      const result = { rows, client, source: live ? { live: true, domain: live } : { live: false }, summary: `${rows.length - missing} of ${rows.length} pages found on the website${missing ? `, ${missing} missing` : ''}, ${issues} difference${issues === 1 ? '' : 's'}` };
+      const sum = (rows, where) => { const found = rows.filter((r) => !r.missing && !r.gone).length; return `${where}: ${found} of ${rows.length} pages, ${rows.reduce((n, r) => n + docBad(r), 0)} differences`; };
+      const result = { rows: draft.rows, ...(onLive ? { live: onLive.rows } : {}), client, source: { draft: true, live: !!live, domain: live },
+        summary: sum(draft.rows, 'Draft') + (onLive ? ' · ' + sum(onLive.rows, 'Live') : ' · not published yet, so the draft only') };
       const saved = await store({ op: 'docSave', id: s.id, doc: d.id, result });
       Object.assign(d, saved.doc);
       toast('Checked: ' + result.summary);
     } catch (e) { console.error(e); toast('The check could not finish: ' + e.message); }
     finally { delete state.scanning[s.id]; if (state.current && state.current.id === s.id) { await loadDocs(s, true).catch(() => {}); renderSite(); } }
   }
-  function docRowHtml(s, r, src, dp) {
-    if (r.missing) return `<details class="dc-row dc-miss"><summary><span class="dc-ic">✗</span><b>${esc(r.name)}</b><span class="dc-path faint">not on the website</span><span class="badge sev-critical">Missing page</span></summary>
-      <div class="small muted dc-body">${esc(r.reason || 'No page on the website carries this document page.')}${r.title ? `<div class="kv"><b>Its SEO title:</b> ${esc(r.title)}</div>` : ''}</div></details>`;
-    const bad = (r.title && !r.title.ok ? 1 : 0) + (r.meta && !r.meta.ok ? 1 : 0) + (r.copy && r.copy.secs ? r.copy.changed + r.copy.added + r.copy.missing + r.copy.moved : r.blocks.missing.length) + r.buttons.missing.length + r.buttons.inconsistent.length + r.buttons.broken.length + r.buttons.wrongPhone.length;
+  /** How many differences a page has (one side: draft or live). */
+  const docBad = (r) => (!r || r.missing || r.gone ? 0 : (r.title && !r.title.ok ? 1 : 0) + (r.meta && !r.meta.ok ? 1 : 0) + (r.copy && r.copy.secs ? r.copy.changed + r.copy.added + r.copy.missing + r.copy.moved : r.blocks.missing.length) + r.buttons.missing.length + r.buttons.inconsistent.length + r.buttons.broken.length + r.buttons.wrongPhone.length);
+  /** The sides a check read: draft and live (from 159 on), or the one side older checks read. */
+  function docSides(last) {
+    if (!last) return [];
+    if (last.source && last.source.draft) return [{ k: 'draft', label: 'Draft', rows: last.rows }].concat(last.live ? [{ k: 'live', label: 'Live', rows: last.live, domain: last.source.domain }] : []);
+    const lv = last.source && last.source.live;
+    return [{ k: lv ? 'live' : 'draft', label: lv ? 'Live' : 'Draft', rows: last.rows, domain: lv ? last.source.domain : '' }];
+  }
+  /** One side of a page (draft or live): its comparison with the document. */
+  function docSideBody(s, side, r, dp, sides) {
+    if (r.gone) {
+      const other = sides.find((x) => x !== side);
+      const ro = other && other.rows.find((x) => x.i === r.i);
+      const there = ro && !ro.gone && !ro.missing;
+      return `<div class="dc-gone-note"><b>${side.k === 'live' ? 'This page is not on the live website.' : 'This page does not open on the draft.'}</b>
+        ${side.k === 'live' ? (there ? ' It is on the draft: publish it in Duda, then check again.' : '') : there ? ' It is on the live website, so it was probably deleted or renamed in the editor since the last publish.' : ''}${r.why ? ` <span class="faint">(${esc(r.why)})</span>` : ''}</div>`;
+    }
     const kv = (label, x) => (x ? `<div class="dc-kv ${x.ok ? 'ok' : 'bad'}"><span>${x.ok ? '✓' : '≠'} ${label}</span>${x.ok ? `<span class="faint">${esc(x.site)}</span>` : `<span><span class="faint">Document:</span> ${esc(x.doc)}<br><span class="faint">Website:</span> ${esc(x.site || '(none)')}</span>`}</div>` : '');
-    return `<details class="dc-row" data-dcp="${esc(r.path)}"${(state.dcOpen || new Set()).has(r.path) ? ' open' : ''}><summary><span class="dc-ic ${bad ? 'bad' : 'ok'}">${bad ? '!' : '✓'}</span><b>${esc(r.name)}</b>
-        <a class="dc-path mono small" href="${esc(src && src.live ? `https://${src.domain}${r.path}` : previewUrl(s, r.path, 'desktop'))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.path)}</a>
-        <span class="dc-score" title="Share of the document's title, description, copy and buttons found on the page">${r.score}%</span>${bad ? `<span class="badge sev-warning">${bad} difference${bad === 1 ? '' : 's'}</span>` : '<span class="badge v-ok">Matches</span>'}</summary>
-      <div class="dc-body">
-        <div class="small faint">Found ${r.how === 'title' ? 'by its SEO title' : r.how === 'url' ? 'by the address in the document' : `by the AI (${Math.round((r.confidence || 0) * 100)}%): ${esc(r.reason || '')}`}</div>
+    // Live and draft can be the very same: say so, so nobody reads the same list twice.
+    const other = sides.find((x) => x !== side); const ro = other && other.rows.find((x) => x.i === r.i);
+    const same = ro && !ro.gone && !ro.missing && JSON.stringify([ro.title, ro.meta, ro.copy && ro.copy.secs, ro.buttons]) === JSON.stringify([r.title, r.meta, r.copy && r.copy.secs, r.buttons]);
+    return `${same ? `<div class="small dc-same-note">✓ The ${side.k === 'live' ? 'live page is the same as the draft' : 'draft is the same as the live page'}: nothing changed since the last publish.</div>` : ''}
         ${kv('SEO title', r.title)}${kv('Meta description', r.meta)}
         ${r.copy && r.copy.secs ? docCopyHtml(s, dp, r.copy) : `<div class="dc-sec"><b>Copy</b> <span class="faint">${r.blocks.found} of ${r.blocks.total} pieces found word for word</span>
           ${r.blocks.missing.length ? `<div class="dc-list"><div class="small">Missing from the page (${r.blocks.missing.length}):</div>${r.blocks.missing.slice(0, 40).map((b) => `<div class="dc-item bad">${b.t === 'heading' ? '<span class="badge subtle">heading</span> ' : ''}${esc(b.doc)}</div>`).join('')}</div>` : ''}
@@ -11190,7 +11216,30 @@
           ${r.buttons.missing.map((b) => `<div class="dc-item bad">Missing button: <b>${esc(b)}</b></div>`).join('')}
           ${r.buttons.inconsistent.map((b) => `<div class="dc-item bad">"${esc(b.text)}" buttons on this page go to different places: ${b.to.map((t) => `<span class="mono">${esc(t)}</span>`).join(' and ')}</div>`).join('')}
           ${r.buttons.broken.map((b) => `<div class="dc-item bad">"${esc(b.text)}" opens a page that does not exist: <span class="mono">${esc(b.to)}</span></div>`).join('')}
-          ${r.buttons.wrongPhone.map((b) => `<div class="dc-item bad">"${esc(b.text)}" dials ${esc(A.fmtPhone(b.number))}, not the number in Business Info</div>`).join('')}</div>
+          ${r.buttons.wrongPhone.map((b) => `<div class="dc-item bad">"${esc(b.text)}" dials ${esc(A.fmtPhone(b.number))}, not the number in Business Info</div>`).join('')}</div>`;
+  }
+  /** One document page: its draft and live sides next to each other in the list, either one opened below. */
+  function docRowHtml(s, i, sides, dp) {
+    const per = sides.map((side) => ({ side, r: side.rows.find((x) => x.i === i) })).filter((x) => x.r);
+    const r0 = per[0].r;
+    if (r0.missing) return `<details class="dc-row dc-miss"><summary><span class="dc-ic">✗</span><b>${esc(r0.name)}</b><span class="dc-path faint">not on the website</span><span class="dc-sides"><span class="badge sev-critical">Missing page${sides.length > 1 ? ' (draft and live)' : ''}</span></span></summary>
+      <div class="small muted dc-body">${esc(r0.reason || 'No page on the website carries this document page.')}${r0.title ? `<div class="kv"><b>Its SEO title:</b> ${esc(r0.title)}</div>` : ''}</div></details>`;
+    const anyBad = per.some((x) => x.r.gone || docBad(x.r));
+    const pill = ({ side, r }) => {
+      const href = side.k === 'live' ? `https://${side.domain}${r.path}` : previewUrl(s, r.path, 'desktop');
+      const n = docBad(r);
+      return `<a class="dc-side dc-side-${side.k}${r.gone ? ' gone' : n ? ' bad' : ' ok'}" href="${esc(href)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open the ${side.k === 'live' ? 'live page' : 'draft preview'}">
+        <b>${side.label}</b> ${r.gone ? (side.k === 'live' ? '✗ Not live yet' : '✗ Not on the draft') : `${r.score}% · ${n ? `${n} difference${n === 1 ? '' : 's'}` : '✓ matches'}`}</a>`;
+    };
+    // Which side is open: the one picked, else live when it has the page, else the draft.
+    const pick = per.find((x) => x.side.k === state.dcView) || per.find((x) => x.side.k === 'live' && !x.r.gone) || per[0];
+    return `<details class="dc-row" data-dcp="${esc(r0.path)}"${(state.dcOpen || new Set()).has(r0.path) ? ' open' : ''}><summary><span class="dc-ic ${anyBad ? 'bad' : 'ok'}">${anyBad ? '!' : '✓'}</span><b>${esc(r0.name)}</b>
+        <span class="dc-path mono small">${esc(r0.path)}</span>${r0.fresh ? '<span class="badge subtle" title="Not in the last full scan: added in Duda since">new page</span>' : ''}
+        <span class="dc-sides">${per.map(pill).join('')}</span></summary>
+      <div class="dc-body">
+        <div class="small faint">Found ${r0.how === 'title' ? 'by its SEO title' : r0.how === 'url' ? 'by the address in the document' : `by the AI (${Math.round((r0.confidence || 0) * 100)}%): ${esc(r0.reason || '')}`}</div>
+        ${per.length > 1 ? `<div class="dc-viewsw" role="tablist">${per.map((x) => `<button type="button" role="tab" class="chipbtn ${x === pick ? 'active' : ''}" data-dcv="${x.side.k}" aria-selected="${x === pick}">${x.side.label}${x.side.k === 'live' ? ` <span class="faint">${esc(x.side.domain)}</span>` : ' <span class="faint">Duda preview</span>'}${x.r.gone ? ' ✗' : docBad(x.r) ? ` · ${docBad(x.r)}` : ' ✓'}</button>`).join('')}</div>` : `<div class="small faint">${pick.side.k === 'live' ? `Read on the live website ${esc(pick.side.domain)}` : 'Read on the draft (Duda preview)'}</div>`}
+        ${docSideBody(s, pick.side, pick.r, dp, sides)}
       </div></details>`;
   }
   async function renderDocsTab(body, s) {
@@ -11199,6 +11248,7 @@
     if (state.current !== s) return;
     const d = docs.find((x) => x.id === state.docSel) || docs[0];
     const last = d && (d.results || [])[0];
+    const sides = docSides(last);
     body.innerHTML = `<div class="dc">
       <div class="dc-top"><div><b>📄 vs Docs</b><div class="small muted">Add the copy documents this website was built from (.docx). Each one is read, its pages are found on the website, and the SEO title, description, copy and buttons are compared.</div></div>
         ${can('site.scan') ? '<label class="btn sm primary dc-add">＋ Add documents<input type="file" id="dcFile" accept=".docx" multiple hidden></label>' : ''}</div>
@@ -11211,19 +11261,18 @@
       ${d ? `<div class="dc-doc">
         <div class="dc-meta small muted">${docPages(d).length} page${docPages(d).length === 1 ? '' : 's'} in this document${(d.parsed.requested || []).length ? ` (it lists ${d.parsed.requested.length})` : ''} · added by ${esc(d.byName || '')} ${esc(ago(d.at))}${d.parsed.site ? ` · for ${esc(d.parsed.site)}` : ''}
           · <a href="/api/store?op=docFile&id=${encodeURIComponent(s.id)}&doc=${encodeURIComponent(d.id)}" download>⬇ Download the document</a>${can('site.scan') ? ` · <button class="linkbtn danger" id="dcRm">Remove</button>` : ''}</div>
-        <div class="dc-acts">${can('site.scan') ? `<button class="btn primary" id="dcRun" type="button">🔎 ${last ? 'Check again' : 'Check the website against this document'}</button>
-          <label class="small muted dc-src">against <select id="dcSrc" aria-label="Check against"><option value="live"${(state.docSrc || {})[s.id] !== 'draft' ? ' selected' : ''}>the live website (once published)</option><option value="draft"${(state.docSrc || {})[s.id] === 'draft' ? ' selected' : ''}>the draft in Duda</option></select></label>` : ''}
+        <div class="dc-acts">${can('site.scan') ? `<button class="btn primary" id="dcRun" type="button">🔎 ${last ? 'Check again' : 'Check the website against this document'}</button>` : ''}
           ${last ? `<button class="btn" id="dcScan" type="button" title="Run the full audit on just these pages (spelling, contrast, links…)">Audit these pages</button><button class="btn" id="dcDl" type="button">⬇ Download this check</button>` : ''}</div>
         ${last ? `<div class="db-tiles">
-            <div class="db-tile"><span class="db-tile-n">${last.rows.filter((r) => !r.missing).length}/${last.rows.length}</span><span class="db-tile-l">Pages found</span></div>
-            <div class="db-tile"><span class="db-tile-n ${last.rows.some((r) => r.missing) ? 'db-crit' : ''}">${last.rows.filter((r) => r.missing).length}</span><span class="db-tile-l">Missing pages</span></div>
-            <div class="db-tile"><span class="db-tile-n">${Math.round(last.rows.filter((r) => !r.missing).reduce((n, r) => n + r.score, 0) / Math.max(1, last.rows.filter((r) => !r.missing).length))}%</span><span class="db-tile-l">Of the document on the website</span></div>
-            <div class="db-tile"><span class="db-tile-n">${esc(dbDate(last.at))}</span><span class="db-tile-l">Checked${last.source ? (last.source.live ? ' on the live website' : ' on the draft') : ''}</span><span class="small faint">${last.source && last.source.live ? `${esc(last.source.domain)} · ` : ''}by ${esc(last.byName || '')}${(d.results || []).length > 1 ? ` · ${d.results.length} checks kept` : ''}</span></div></div>
-          <section class="db-card"><h3>The document's pages on the website</h3>${last.rows.map((r) => docRowHtml(s, r, last.source, docPages(d).find((p) => p.i === r.i))).join('')}</section>
+            <div class="db-tile"><span class="db-tile-n">${sides.map((x) => `${x.rows.filter((r) => !r.missing && !r.gone).length}/${x.rows.length}`).join(' · ')}</span><span class="db-tile-l">Pages found</span><span class="small faint">${sides.map((x) => x.k === 'live' ? 'live' : 'draft').join(' · ')}</span></div>
+            <div class="db-tile"><span class="db-tile-n ${sides.some((x) => x.rows.some((r) => r.missing || r.gone)) ? 'db-crit' : ''}">${sides.map((x) => x.rows.filter((r) => r.missing || r.gone).length).join(' · ')}</span><span class="db-tile-l">Missing pages</span><span class="small faint">${sides.map((x) => `${x.rows.filter((r) => r.missing || r.gone).length} ${x.k === 'live' ? 'live' : 'on the draft'}`).join(' · ')}</span></div>
+            <div class="db-tile"><span class="db-tile-n">${sides.map((x) => { const ok = x.rows.filter((r) => !r.missing && !r.gone); return Math.round(ok.reduce((n, r) => n + r.score, 0) / Math.max(1, ok.length)) + '%'; }).join(' · ')}</span><span class="db-tile-l">Of the document on the website</span><span class="small faint">${sides.map((x) => (x.k === 'live' ? 'live' : 'draft')).join(' · ')}</span></div>
+            <div class="db-tile"><span class="db-tile-n">${esc(dbDate(last.at))}</span><span class="db-tile-l">Checked ${sides.length > 1 ? 'on the draft and live' : sides[0].k === 'live' ? 'on the live website' : last.source && last.source.draft ? 'on the draft (not published yet)' : 'on the draft'}</span><span class="small faint">${sides.find((x) => x.k === 'live') ? `${esc(sides.find((x) => x.k === 'live').domain)} · ` : ''}by ${esc(last.byName || '')}${(d.results || []).length > 1 ? ` · ${d.results.length} checks kept` : ''}</span></div></div>
+          <section class="db-card"><h3>The document's pages on the website</h3>${last.rows.map((r) => docRowHtml(s, r.i, sides, docPages(d).find((p) => p.i === r.i))).join('')}</section>
           <section class="db-card"><h3>Client details: document vs Business Info</h3><p class="small faint db-sub">The document was written for the build; a difference may mean the client's details have changed since.</p>
             <table class="grid db-table"><thead><tr><th></th><th>Document</th><th>Business Info / website</th><th></th></tr></thead><tbody>${last.client.map((c) => `<tr><td><b>${esc(c.label)}</b></td><td>${esc(c.doc || '—')}</td><td>${esc(c.now || '—')}</td><td>${c.ok === null ? '<span class="faint">not given</span>' : c.ok ? '<span class="db-better">✓ same</span>' : '<span class="db-worse">≠ different</span>'}</td></tr>`).join('')}</tbody></table></section>`
           : `<section class="db-card"><h3>What the document asks for</h3><ol class="dc-plan">${docPages(d).map((p) => `<li><b>${esc(p.name)}</b> <span class="small faint">${esc(p.title || '')} · ${(p.blocks || []).filter((b) => b.t === 'button').length} buttons · ${(p.blocks || []).filter((b) => b.t === 'text' || b.t === 'heading').length} pieces of copy</span>${p.note ? `<div class="small muted">${esc(p.note)}</div>` : ''}</li>`).join('')}</ol>
-            <p class="small muted">Press <b>Check the website against this document</b>. The website needs to have been scanned once, so the app knows its pages.</p></section>`}
+            <p class="small muted">Press <b>Check the website against this document</b>. The draft is read, and the live website too once it is published.</p></section>`}
       </div>` : ''}</div>`;
     const fi = $('#dcFile', body); if (fi) fi.onchange = () => docAddFiles(s, [...fi.files]);
     const fi2 = $('#dcFile2', body); if (fi2) fi2.onchange = () => docAddFiles(s, [...fi2.files]);
@@ -11253,14 +11302,14 @@
     // Which pages are open stays as it is when the list is drawn again ("Only differences").
     $$('details.dc-row[data-dcp]', body).forEach((el) => el.addEventListener('toggle', () => { state.dcOpen = state.dcOpen || new Set(); state.dcOpen[el.open ? 'add' : 'delete'](el.dataset.dcp); }));
     $$('[data-dcc-only]', body).forEach((cb) => (cb.onchange = () => { state.dcOnlyDiff = cb.checked; renderDocsTab(body, s); }));
-    if ($('#dcSrc', body)) $('#dcSrc', body).onchange = (e) => { state.docSrc = state.docSrc || {}; state.docSrc[s.id] = e.target.value; };
+    $$('[data-dcv]', body).forEach((b) => (b.onclick = (e) => { e.preventDefault(); state.dcView = b.dataset.dcv; renderDocsTab(body, s); }));
     if ($('#dcRm', body)) $('#dcRm', body).onclick = async () => { if (!confirm(`Remove "${d.name}" and its checks from this audit?`)) return; try { await store({ op: 'docRemove', id: s.id, doc: d.id }); state.docSel = ''; await loadDocs(s, true); renderSite(); } catch (e) { toast(e.message); } };
     if ($('#dcScan', body)) $('#dcScan', body).onclick = () => scanPages(s, [...new Set(last.rows.map((r) => r.path).filter(Boolean))]);
     if ($('#dcDl', body)) $('#dcDl', body).onclick = () => repDownload(`vs-docs-${slug(s.businessName || s.siteId)}-${String(last.at).slice(0, 10)}.html`, repDoc(`${s.businessName || s.siteId} vs ${d.name}`,
-      `<h1>${esc(s.businessName || s.siteId)} vs the document</h1><div class="muted">${esc(d.name)} · checked ${last.source ? (last.source.live ? `on the live website ${esc(last.source.domain)} ` : 'on the draft in Duda ') : ''}${esc(fmtFull(last.at))} by ${esc(last.byName || '')}</div>
+      `<h1>${esc(s.businessName || s.siteId)} vs the document</h1><div class="muted">${esc(d.name)} · checked ${sides.length > 1 ? `on the draft and on the live website ${esc(sides[1].domain)}` : sides[0].k === 'live' ? `on the live website ${esc(sides[0].domain)}` : 'on the draft in Duda'} · ${esc(fmtFull(last.at))} by ${esc(last.byName || '')}</div>
        <div class="db-card"><b>${esc(last.summary)}</b></div>
-       <h2>Pages</h2><table><thead><tr><th>Document page</th><th>Website page</th><th>Match</th><th>Differences</th></tr></thead><tbody>${last.rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.missing ? '<b style="color:#c62828">Missing</b>' : esc(r.path)}</td><td>${r.missing ? '' : r.score + '%'}</td><td class="small">${r.missing ? esc(r.reason || '') : [r.title && !r.title.ok ? `SEO title differs: "${esc(r.title.site)}" (document: "${esc(r.title.doc)}")` : '', r.meta && !r.meta.ok ? 'Meta description differs' : '', ...r.blocks.missing.slice(0, 12).map((b) => 'Missing copy: ' + esc(b.doc.slice(0, 160))), ...r.buttons.missing.map((b) => 'Missing button: ' + esc(b)), ...r.buttons.inconsistent.map((b) => `"${esc(b.text)}" buttons go to ${b.to.map(esc).join(' and ')}`), ...r.buttons.broken.map((b) => `"${esc(b.text)}" opens a missing page ${esc(b.to)}`)].filter(Boolean).join('<br>') || '✓'}</td></tr>`).join('')}</tbody></table>
-       ${last.rows.filter((r) => r.copy && r.copy.secs && r.copy.secs.length).map((r) => `<h2>${esc(r.name)} <span class="muted">${esc(r.path)}</span>: copy, section by section</h2>${docCopyReport(docPages(d).find((p) => p.i === r.i), r.copy)}`).join('')}
+       <h2>Pages</h2><table><thead><tr><th>Document page</th><th>Website page</th>${sides.map((x) => `<th>${x.label}</th>`).join('')}</tr></thead><tbody>${last.rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.missing ? '<b style="color:#c62828">Missing</b>' : esc(r.path)}</td>${sides.map((x) => { const q = x.rows.find((y) => y.i === r.i) || {}; return `<td>${q.missing ? esc(q.reason || 'Missing') : q.gone ? `<b style="color:#c62828">${x.k === 'live' ? 'Not live yet' : 'Not on the draft'}</b>` : `${q.score}% · ${docBad(q)} difference${docBad(q) === 1 ? '' : 's'}`}</td>`; }).join('')}</tr>`).join('')}</tbody></table>
+       ${sides.map((x) => x.rows.filter((r) => !r.gone && r.copy && r.copy.secs && r.copy.secs.length).map((r) => `<h2>${esc(r.name)} <span class="muted">${esc(r.path)} · ${x.label}</span></h2>${[r.title && !r.title.ok ? `<p>SEO title: document "${esc(r.title.doc)}", website "${esc(r.title.site)}"</p>` : '', r.meta && !r.meta.ok ? `<p>Meta description: document "${esc(r.meta.doc)}", website "${esc(r.meta.site)}"</p>` : '', ...r.buttons.missing.map((b) => `<p>Missing button: ${esc(b)}</p>`), ...r.buttons.inconsistent.map((b) => `<p>"${esc(b.text)}" buttons go to ${b.to.map(esc).join(' and ')}</p>`), ...r.buttons.broken.map((b) => `<p>"${esc(b.text)}" opens a missing page ${esc(b.to)}</p>`)].join('')}${docCopyReport(docPages(d).find((p) => p.i === r.i), r.copy)}`).join('')).join('')}
        <h2>Client details</h2><table><thead><tr><th></th><th>Document</th><th>Business Info / website</th><th></th></tr></thead><tbody>${last.client.map((c) => `<tr><td>${esc(c.label)}</td><td>${esc(c.doc || '—')}</td><td>${esc(c.now || '—')}</td><td>${c.ok === null ? 'not given' : c.ok ? 'same' : 'different'}</td></tr>`).join('')}</tbody></table>`));
   }
 
