@@ -507,6 +507,26 @@ export const HELP_SECTIONS = [
 </ol>`,
   },
   {
+    id: 'docs', group: 'Audits', title: 'vs Docs: check a website against its copy documents', audience: 'all',
+    html: `<p>The <b>📄 vs Docs</b> tab on an audit checks the website against the Word documents (.docx) it was built from: the full "Website Writing" document, or a one-page one ("PPF Page").</p>
+<ul>
+<li><b>＋ Add documents</b>: one or several .docx files (up to 3 MB each; from Google Docs, File → Download → Microsoft Word). Each gets its own tab, and <b>⬇ Download the document</b> gives the file back.</li>
+<li>The document is read the way the writers write: <b>TITLE / PAGE NAME / META TITLE</b> is the SEO title (even when it says "Page name"), <b>META DESCRIPTION</b>, <b>BUTTON&gt;</b> lines are buttons (a "CALL (xxx) xxx-xxxx" button is a phone button), <b>DEVELOPER&gt;&gt;&gt;</b> and <b>INSERT&gt;&gt;&gt;</b> lines are notes, "Website Pages To Include" is the list of pages, and the table at the top is the client's details. The AI then names each page the way the website would.</li>
+<li><b>🔎 Check the website against this document</b>: each document page is found on the website, first by its SEO title or an address in the document, then by the AI (it allows renaming: "Paint Protection Film" may be "Gloss PPF", "Window Tinting" may be "Window Tint"). Pages the website does not have are listed as <b>Missing page</b>. The website must have been scanned once, so the app knows its pages.</li>
+<li>For each page found: the <b>SEO title</b> and <b>meta description</b> (same or different, with both versions), the <b>copy</b> (how many pieces are on the page word for word, what is missing, what was changed), and the <b>buttons</b>: every button the document asks for must be there (the designer may add more), the same button words must not go to different places on one page ("Get a Quote" to Contact Us at the top and to Ceramic Coating at the bottom), a button must not open a page that does not exist, and a call button must dial the number in Business Info.</li>
+<li><b>Client details</b>: the document's business name, email, phone, address and colours against Business Info, so a client who has changed their details since the build shows up.</li>
+<li><b>Audit these pages</b> runs the full audit on just the document's pages, and <b>⬇ Download this check</b> saves the result as a report. The last 10 checks of each document are kept.</li>
+</ul>
+<p class="small">Not checked yet: whether icons and pictures suit the copy.</p>`,
+  },
+  {
+    id: 'scan-pages', group: 'Audits', title: 'Scan chosen pages only', audience: 'all',
+    html: `<p>An audit's <b>⋯</b> menu → <b>🎯 Scan chosen pages</b>: pick pages from the website's last scan and the full audit runs on just those (contact details, spelling, contrast, links, page fit…). Useful after adding or fixing one page.</p>
+<ul><li>Items on the other pages, and the checks that compare the whole website (duplicate titles, fonts, repeated photos), stay exactly as they were; a full <b>Rescan</b> updates those.</li>
+<li>The scan history marks it as a scan of chosen pages, and it has its own report like any scan.</li>
+<li>The website has to have been scanned in full once first.</li></ul>`,
+  },
+  {
     id: 'dashboard', group: 'Audits', title: 'Dashboard: what an audit found, and how it compares', audience: 'all',
     html: `<p>Every audit has a <b>📊 Dashboard</b> tab: the findings at a glance, and a record of every scan so the next scan, or another tool, can be compared with it.</p>
 <ul>

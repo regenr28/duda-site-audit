@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-13-vs-docs', date: '2026-11-13', audience: 'all', tag: 'Audits',
+    title: 'vs Docs: check a website against the documents it was built from, and scan chosen pages only',
+    what: 'A new <b>📄 vs Docs</b> tab on every audit. Add the Website Writing document (or a single-page one): it is read, its pages are found on the website (renamed ones too, by the AI), and each is compared: <b>missing pages</b>, SEO title and meta description, copy that is missing or changed, <b>buttons</b> that are missing, go to different places, or open a missing page, and the client details against Business Info. <b>🎯 Scan chosen pages</b> (in the ⋯ menu) runs the full audit on just the pages you pick.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>📄 vs Docs</b> → <b>＋ Add documents</b> → <b>🔎 Check the website against this document</b>. Open a page row for the details. <b>Audit these pages</b> or ⋯ → <b>Scan chosen pages</b> to audit just those pages.'],
+    link: '#/help/docs', linkText: 'How vs Docs works',
+  },
+  {
     id: '2026-11-13-scan-reports', date: '2026-11-13', audience: 'all', tag: 'Audits',
     title: 'Every scan keeps its own report: open it, download it, and compare any two scans',
     what: 'Each scan now saves every item it found. On the <b>📊 Dashboard</b>, <b>📋 View</b> opens a past scan with its charts and items (searchable), and <b>⬇ Download this report</b> saves it as a page that prints to PDF. <b>Compare</b> any two scans, or the first scan with today: what was <b>fixed</b>, what is <b>new</b> and what is <b>still there</b>, with before-and-after charts, and download that too.',

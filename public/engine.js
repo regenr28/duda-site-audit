@@ -1546,6 +1546,7 @@
     const device = ctx.device || 'desktop';
     const findings = [];
     const internal = new Set();
+    const btnList = [];
     const linkRows = new Map();  // label|to|section -> an internal link a visitor reads, for the "opens the page it promises" check
     const external = new Map(); // url -> {selector,...}
     const images = new Map();
@@ -1924,6 +1925,12 @@
       // Anything that looks like a button to a visitor: Duda's own, a btn class, or role="button".
       // A bare "#" on a script-driven toggle is normal, so only button-ish links are reported.
       const isButton = /\bdmButtonLink\b/.test(cls(a)) || /(^|[\s_-])(btn|button)([\s_-]|$)/i.test(cls(a)) || a.getAttribute('role') === 'button';
+      // Every button, in page order, with where it goes: the "vs Docs" check compares them with the
+      // buttons the copy document asked for.
+      const btnRow = (isButton || /^(tel|sms|mailto):/i.test(String(raw || '').trim())) && btnList.length < 120 && locationOf(a) !== 'Head / Meta'
+        ? { text: cut(text || clean(a.getAttribute('aria-label') || a.getAttribute('title') || ''), 80), to: '', href: cut(String(raw || ''), 200), where: locationOf(a), button: !!isButton, hidden: !!hiddenReason(a, device) } : null;
+      if (btnRow) btnList.push(btnRow);
+      const btnTo = (to) => { if (btnRow && !btnRow.to) btnRow.to = to; };
       const hasPopup = Array.prototype.some.call(a.attributes, (x) => /popup/i.test(x.name) || /popup/i.test(x.value) && x.name !== 'class');
       if (raw == null || raw.trim() === '' || raw.trim() === '#' || /^javascript:/i.test(raw.trim())) {
         // This check is about a button a visitor clicks expecting to GO somewhere, and finds nothing.
@@ -1947,6 +1954,7 @@
 
       if (/^tel:/i.test(href)) {
         const d = normPhone(safeDecode(href.slice(4)));
+        btnTo('tel:' + d);
         if (d.length !== 10) { add(a, { code: 'TEL_INVALID', severity: 'critical', category: 'Contact info', message: 'Phone link has an invalid number', found: href }); return; }
         PHONE_RE.lastIndex = 0;
         const shown = PHONE_RE.exec(text);
@@ -1965,6 +1973,7 @@
       }
       if (/^mailto:/i.test(href)) {
         const e = safeDecode(href.slice(7).split('?')[0]).trim().toLowerCase();
+        btnTo('mailto:' + e);
         // "Share this by email": no address, only a subject or message filled in. Each one is still an
         // email link that opens with nobody to send to, and the team fixes them — but they repeat on
         // every blog post, so they become ONE item listing every place (see oneItemPerSite), not one
@@ -2009,7 +2018,7 @@
           return;
         }
         if (isAbs && !sameHost) add(a, { code: 'LINK_EDITOR_URL', severity: 'critical', category: 'Links', message: 'Link points to the Duda editor/preview URL instead of the live site', found: href });
-        internal.add(normalizePath(siteMatch[2] || '/'));
+        internal.add(normalizePath(siteMatch[2] || '/')); btnTo(normalizePath(siteMatch[2] || '/'));
         noteLink(a, normalizePath(siteMatch[2] || '/'), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
         return;
       }
@@ -2019,7 +2028,7 @@
       }
       const hostNoWww = u.hostname.toLowerCase().replace(/^www\./, '');
       if (truth.domain && hostNoWww === truth.domain.replace(/^www\./, '')) {
-        internal.add(normalizePath(u.pathname));
+        internal.add(normalizePath(u.pathname)); btnTo(normalizePath(u.pathname));
         noteLink(a, normalizePath(u.pathname), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
         return;
       }
@@ -2204,6 +2213,7 @@
       meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon,
         // What the page says it is about, for the "does the page match its address" checks: every H1
         // (a hidden one still tells Google what the page is), and the section headings under it.
+        buttons: btnList.map((b) => (b.to ? b : Object.assign(b, { to: /^https?:/i.test(b.href) ? b.href : '' }))),
         fit: {
           h1: Array.from(doc.querySelectorAll('body h1')).map((h) => ({ text: clean(h.textContent), selector: uniqueSelector(h) })).filter((h) => h.text).slice(0, 3),
           heads: heads.filter((h) => /^H[23]$/.test(h.tagName)).map((h) => clean(h.textContent)).filter(Boolean).slice(0, 24),
@@ -2928,6 +2938,7 @@
           info.h1 = info.h1 || (r.meta.h1 || [])[0] || '';
           info.description = info.description || r.meta.description;
           if (device === devices[0] && r.meta.fit) info.fit = r.meta.fit;
+          if (device === devices[0] && r.meta.buttons) info.buttons = r.meta.buttons;
           if (r.meta.favicon) siteIcon.favicon = true;
           if (r.meta.touchIcon) siteIcon.touchIcon = true;
           info.devices = (info.devices || []).concat(device);
@@ -3101,6 +3112,8 @@
       pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', h1: p.h1 || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
       links: Array.from(linkMap.values()),
       // For the AI read of whether each page fits its address. Not saved with the audit.
+      // Buttons on each page, in order (desktop). Not saved with the audit.
+      buttons: Object.fromEntries(Object.values(pageInfo).filter((p) => p.buttons).map((p) => [p.path, p.buttons])),
       fit: fitPages.map((p) => ({ path: p.path, title: p.title, description: p.description, h1: p.h1.map((h) => h.text), h1Sel: (p.h1[0] && p.h1[0].selector) || '', heads: p.heads.slice(0, 14), excerpt: p.body.slice(0, 2400), urlServices: servicesOfPath(p.path), urlPlace: placeOfPath(p.path) })),
       externalLinks: external.size,
       images: images.size,

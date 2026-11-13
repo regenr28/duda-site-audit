@@ -517,6 +517,30 @@ async function extraCheck(req, res, b, list, owner) {
     alias: used && owner ? aliasOf(used.id) : '', ...(owner && used ? { realProvider: used.label, realModel: used.model } : {}), providers: publicStatus(await loadStatus(list).catch(() => []), owner), now: Date.now() });
 }
 
+// ---------- vs Docs: reading a copy document, and finding its pages on the website ----------
+const DOCREAD_SYSTEM = `You read the outline of a copy document a copywriter wrote for a car-care business website (one page, or a whole website). ${CONTEXT}
+The outline was cut into pages by simple rules; your job is to name each page the way the website would and spot what the rules got wrong.
+For each page give "name": the page as a visitor would call it (e.g. "Paint Protection Film", "Window Tinting", "Brentwood, TN Ceramic Coating & PPF", "Home", "Contact Us"). The writers sometimes put an SEO TITLE under "PAGE NAME:"; use the title, the first headings and the file name to work out what the page really is. Use "kind": "page", or "not_page" for anything that is not a page of the website (instructions, a footer, a list of pages).
+Also read the client details into "client": business, owner, email, phone, address, website, facebook, instagram, colors (array of hex codes or colour words), template. Use "" for anything missing, "TBD" or "NONE".
+Respond with JSON only: {"pages":[{"i":<number>,"name":"…","kind":"page|not_page","note":"<max 15 words, only if something is odd, else empty>"}],"client":{…}}`;
+const DOCMATCH_SYSTEM = `You match the pages a copy document asks for to the pages that exist on a car-care business website. ${CONTEXT}
+For each document page, find the website page that carries it. Use the website's address (path), its SEO title and its H1, in that order of trust, and allow the usual renaming: "Paint Protection Film" may be "Gloss PPF" or "/paint-protection-film"; "Window Tinting" may be "Window Tint" or "Auto Window Tint"; "Detailing" may be "/vehicle-detailing"; a location page names its town ("/brentwood-…"). A page about another town or another service is NOT a match. Blog posts are never the page. If no website page carries it, answer path "".
+Respond with JSON only: {"matches":[{"i":<doc page number>,"path":"<website path or empty>","confidence":<0..1>,"reason":"<max 15 words>"}]}`;
+async function docAI(req, res, b, list, owner) {
+  const read = b.op === 'docread';
+  const body = read
+    ? `FILE: ${String(b.file || '').slice(0, 140)}\nCLIENT LINES:\n${Object.entries(b.client || {}).slice(0, 40).map(([k, v]) => `${String(k).slice(0, 60)}: ${String(v).slice(0, 160)}`).join('\n')}\nPAGES:\n${[].concat(b.pages || []).slice(0, 60).map((p) => `[${p.i}] name="${String(p.name || '').slice(0, 80)}" title="${String(p.title || '').slice(0, 140)}" meta="${String(p.meta || '').slice(0, 160)}" first: ${[].concat(p.first || []).slice(0, 4).map((x) => String(x).slice(0, 120)).join(' / ')}`).join('\n')}`
+    : `DOCUMENT PAGES (i | name | SEO title | first heading)\n${[].concat(b.pages || []).slice(0, 60).map((p) => `${p.i} | ${String(p.name || '').slice(0, 80)} | ${String(p.title || '').slice(0, 140)} | ${String(p.head || '').slice(0, 120)}`).join('\n')}\n\nWEBSITE PAGES (path | SEO title | H1)\n${[].concat(b.site || []).slice(0, 300).map((p) => `${String(p.path || '/').slice(0, 120)} | ${String(p.title || '').slice(0, 120)} | ${String(p.h1 || '').slice(0, 120)}`).join('\n')}`;
+  const cacheKey = P + 'aic:docs';
+  const k = (read ? 'dr1' : 'dm1') + sha(body).slice(0, 24);
+  const [hit] = await redis(['HGET', cacheKey, k]);
+  if (hit) { const c = jparse(hit); if (c) return res.status(200).json(Object.assign({ cached: true }, c)); }
+  const { parsed, p } = await callChain(list, read ? DOCREAD_SYSTEM : DOCMATCH_SYSTEM, body);
+  const out = read ? { pages: [].concat(parsed.pages || []).slice(0, 60), client: parsed.client || {} } : { matches: [].concat(parsed.matches || []).slice(0, 60) };
+  await redis(['HSET', cacheKey, k, JSON.stringify(out)], ['EXPIRE', cacheKey, 45 * 86400]);
+  return res.status(200).json(Object.assign(out, { alias: p && owner ? aliasOf(p.id) : '', providers: publicStatus(await loadStatus(list).catch(() => []), owner) }));
+}
+
 function businessHeader(b) {
   b = b || {};
   return `THIS BUSINESS
@@ -661,6 +685,7 @@ async function handler(req, res) {
     let pvUsed = null;
     const b = readBody(req);
     if (b.op === 'proof' || b.op === 'links' || b.op === 'pagefit') return await extraCheck(req, res, b, list, owner);
+    if (b.op === 'docread' || b.op === 'docmatch') return await docAI(req, res, b, list, owner);
     if (!['alt', 'text'].includes(b.op)) return res.status(400).json({ error: 'Unknown op' });
     const business = b.business || {};
     const field = b.op === 'alt' ? 'alt' : 'text';

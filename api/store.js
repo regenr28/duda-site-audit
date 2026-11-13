@@ -9,10 +9,13 @@ import { metered, redis, P, readBody, requireUser, jparse, packJSON, unpackJSON,
 import { enqueue } from './_queue.js';
 import { biRecord, biHistory, biShape, retiredFrom, isCurrentValue, markOutdated, BI_FIELDS } from './_bi.js';
 import { createBackup } from './_backup.js';
+import { readDocx } from './_docx.js';
 import { cleanRichHtml, richToText } from './_rich.js';
 import { crossCheck, rememberFalseAlarm, forgetFalseAlarm } from './_crosscheck.js';
 import '../public/engine.js';
 const isPolish = (f) => globalThis.DudaAudit.isPolish(f);
+const DOCS = (id) => P + 'docs:' + id;            // an audit's copy documents (list, packed)
+const DOCF = (doc, i) => P + 'docf:' + doc + ':' + i;  // one document's file, in pieces
 const isLength = (f) => globalThis.DudaAudit.isLength(f);
 
 const FSTATUS = ['open', 'clarification', 'done', 'hold', 'false'];
@@ -292,6 +295,23 @@ async function handler(req, res) {
         }
         return res.status(200).json({ mode: 'kv', sites, scoped: !seeAll, ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true), build: buildId() });
       }
+      // Copy documents (vs Docs): the list, and a document itself to download.
+      if (op === 'docs' || op === 'docFile') {
+        const [raw] = await redis(['GET', P + 'site:' + req.query.id]);
+        const site = unpackJSON(raw);
+        if (!site || !(await canSeeSite(me, site))) return res.status(404).json({ error: 'Not found' });
+        const [lr] = await redis(['GET', DOCS(req.query.id)]);
+        const list = unpackJSON(lr) || [];
+        if (op === 'docs') return res.status(200).json({ docs: list });
+        const d = list.find((x) => x.id === req.query.doc);
+        if (!d) return res.status(404).json({ error: 'That document is not on this audit any more.' });
+        const parts = await redis(...Array.from({ length: d.chunks }, (_, i) => ['GET', DOCF(d.id, i)]));
+        if (parts.some((x) => !x)) return res.status(404).json({ error: 'The file could not be read back.' });
+        const buf = Buffer.concat(parts.map((x) => Buffer.from(x, 'base64')));
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.setHeader('Content-Disposition', `attachment; filename="${String(d.name).replace(/[^\w .()&-]+/g, '_')}"`);
+        return res.status(200).end(buf);
+      }
       // One scan's report (see saveScan): every item that scan found.
       if (op === 'scanReport') {
         const l = await loadSite(req.query.id);
@@ -509,6 +529,21 @@ async function handler(req, res) {
         const [raw, fnum, seqRaw] = await redis(['GET', P + 'site:' + b.id], ['HGETALL', P + 'fnum:' + b.id], ['GET', P + 'seq:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
         const r = b.result || {};
+        // A scan of chosen pages only: what it says about THOSE pages replaces what was known about
+        // them; everything else on the website (other pages, and the checks that compare the whole
+        // website) is kept exactly as it was.
+        const normQ = (x) => '/' + String(x || '/').replace(/^https?:\/\/[^/]+/i, '').replace(/[?#].*$/, '').replace(/^\/+|\/+$/g, '').toLowerCase();
+        const partial = Array.isArray(b.partial) && b.partial.length ? new Set(b.partial.map(normQ)) : null;
+        const SITE_WIDE = /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR|PAGE_WRONG_CITY)/;
+        const inPartial = (f) => partial && !SITE_WIDE.test(String(f.code)) && (f.pages && f.pages.length ? f.pages : [f.path || '/']).every((pg) => partial.has(normQ(pg)));
+        if (partial) {
+          const old = new Map((site.pages || []).map((pg) => [normQ(pg.path), pg]));
+          (r.pages || []).forEach((pg) => old.set(normQ(pg.path), pg));
+          r.pages = [...old.values()];
+          r.findings = (r.findings || []).filter(inPartial);
+          if (r.scan) r.scan.partial = [...partial];
+          delete r.fonts; delete r.photos;
+        }
         ['host', 'editorUrl', 'businessName', 'truth', 'profiles', 'pages', 'scan', 'fonts', 'photos'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
         if (site.scan && Array.isArray(site.scan.log)) site.scan.log = site.scan.log.slice(0, 40).map((l) => String(l).slice(0, 300));
         // A rescan replaces what the SCANNER found. An item a person typed in is not the scanner's
@@ -563,11 +598,13 @@ async function handler(req, res) {
         // Checks that could not run this time (the contrast check needs a page browser, which can be
         // busy or switched off): their items stay exactly as they were, never closed as fixed.
         const notChecked = [].concat(b.notChecked || []).filter((x) => x && x.prefix);
-        const carried = new Set();
-        const skipped = (f) => notChecked.some((x) => String(f.code).startsWith(x.prefix) && (x.pages === '*' || (f.pages && f.pages.length ? f.pages : [f.path || '/']).some((pg) => [].concat(x.pages || []).includes(pg))));
+        // A scan of chosen pages leaves everything outside them alone.
+        if (partial) notChecked.push({ prefix: '', pages: '*', unless: true });
+        const keptAsIs = new Set();
+        const skipped = (f) => (partial && !inPartial(f)) || notChecked.some((x) => !x.unless && String(f.code).startsWith(x.prefix) && (x.pages === '*' || (f.pages && f.pages.length ? f.pages : [f.path || '/']).some((pg) => [].concat(x.pages || []).includes(pg))));
         before.forEach((f) => {
           if (nowIds.has(f.id) || taken.has(f.id)) return;
-          if (!f.gone && skipped(f)) { site.findings.push(f); nowIds.add(f.id); carried.add(f.id); return; }
+          if (!f.gone && skipped(f)) { site.findings.push(f); nowIds.add(f.id); keptAsIs.add(f.id); return; }
           // Already closed by this mechanism on an earlier scan: carried along until it ages out.
           if (f.gone) { if (Date.now() - Date.parse(f.gone.at) < KEEP_GONE_MS) site.findings.push(f); return; }
           const where = (f.pages && f.pages.length ? f.pages : [f.path || '/']).map(normP);
@@ -593,7 +630,7 @@ async function handler(req, res) {
         // "AI check pending" items checked by hand are carried back by the browser, not found again.
         let backN = 0; const stillBy = {};
         site.findings.forEach((f) => {
-          if (f.gone || f.manual || carried.has(f.id)) return;
+          if (f.gone || f.manual || keptAsIs.has(f.id)) return;
           const from = movedFrom[f.id];
           const cur = from ? prevSt[from.id] : prevSt[f.id];
           if (autoClosed(cur)) {
@@ -679,7 +716,7 @@ async function handler(req, res) {
           const live = site.findings.filter((f) => !f.gone);
           const cats = {}; const groups = { must: 0, polish: 0, length: 0 };
           live.forEach((f) => { const k = f.category || 'Other'; cats[k] = (cats[k] || 0) + 1; const g = globalThis.DudaAudit.groupOf(f); groups[g] = (groups[g] || 0) + 1; });
-          const snap = { at: now(), by: me.email, byName: me.name, tool: 'Site Auditor', auto: true, cv: Number((site.scan && site.scan.cv) || 0),
+          const snap = { at: now(), by: me.email, byName: me.name, tool: 'Site Auditor', auto: true, ...(partial ? { partial: [...partial].slice(0, 30) } : {}), cv: Number((site.scan && site.scan.cv) || 0),
             pages: (r.pages || []).length, counts: Object.assign({}, c), total: activeN, cats, groups,
             fixed: fixedN, added: Math.max(0, seq - Number(seqRaw || 0)), reopened: backN + stillN };
           const list = Array.isArray(site.scans) ? site.scans : [];
@@ -748,6 +785,53 @@ async function handler(req, res) {
             text: `${wasComplete ? `This audit was completed${site.completedAt ? ' on ' + new Date(site.completedAt).toDateString() : ''} and has been scanned again. ` : ''}${activeN} audit item${activeN === 1 ? '' : 's'}${fixedN ? ` (${fixedN} fixed since last time)` : ''}, ${c.critical || 0} critical · ${(r.pages || []).length} page${(r.pages || []).length === 1 ? '' : 's'}` });
         }
         return res.status(200).json(await saveIndex(b.id));
+      }
+      // ---- vs Docs: the copy documents a website was built from ----
+      // The .docx is kept (in pieces, so any database can hold it) for downloading again; what it says
+      // is read once here (see _docx.js) and kept with it. The check itself runs in the browser.
+      case 'docUpload': {
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow adding documents.')) return;
+        const [raw] = await redis(['GET', P + 'site:' + b.id]);
+        const site = unpackJSON(raw); if (!site || !(await canSeeSite(me, site))) return res.status(404).json({ error: 'Not found' });
+        const name = String(b.name || 'document.docx').slice(0, 140);
+        if (!/\.docx$/i.test(name)) return res.status(400).json({ error: 'Only Word documents (.docx) can be read. In Google Docs: File → Download → Microsoft Word.' });
+        const buf = Buffer.from(String(b.data || ''), 'base64');
+        if (buf.length < 200) return res.status(400).json({ error: 'That file is empty.' });
+        if (buf.length > 3.2 * 1024 * 1024) return res.status(400).json({ error: 'That document is over 3 MB. Save a copy without the pictures and add that one.' });
+        let parsed; try { parsed = readDocx(buf, name); } catch (e) { return res.status(400).json({ error: e.message || 'That document could not be read.' }); }
+        const [lr] = await redis(['GET', DOCS(b.id)]);
+        const list = unpackJSON(lr) || [];
+        if (list.length >= 12) return res.status(400).json({ error: 'This audit already has 12 documents. Remove one first.' });
+        const id = newId(10); const b64 = buf.toString('base64'); const CH = 700000; const chunks = Math.ceil(b64.length / CH);
+        const doc = { id, name, size: buf.length, at: now(), by: me.email, byName: me.name, chunks, parsed, results: [] };
+        await redis(...Array.from({ length: chunks }, (_, i) => ['SET', DOCF(id, i), b64.slice(i * CH, (i + 1) * CH)]), ['SET', DOCS(b.id), packJSON(list.concat(doc))]);
+        await log(b.id, me, 'docs', `added the document "${name}" (${parsed.pages.length} page${parsed.pages.length === 1 ? '' : 's'}) to check the website against`);
+        return res.status(200).json({ doc });
+      }
+      case 'docSave': {
+        // What the AI made of the document (page names, client details), or a check's result.
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow changing documents.')) return;
+        const [raw, lr] = await redis(['GET', P + 'site:' + b.id], ['GET', DOCS(b.id)]);
+        const site = unpackJSON(raw); if (!site || !(await canSeeSite(me, site))) return res.status(404).json({ error: 'Not found' });
+        const list = unpackJSON(lr) || [];
+        const d = list.find((x) => x.id === b.doc); if (!d) return res.status(404).json({ error: 'That document is not on this audit any more.' });
+        if (b.ai && typeof b.ai === 'object') d.ai = b.ai;
+        if (b.result && typeof b.result === 'object') {
+          d.results = [Object.assign({}, b.result, { at: now(), by: me.email, byName: me.name })].concat(d.results || []).slice(0, 10);
+          await log(b.id, me, 'docs', `checked the website against "${d.name}": ${b.result.summary || ''}`);
+        }
+        await redis(['SET', DOCS(b.id), packJSON(list)]);
+        return res.status(200).json({ doc: d });
+      }
+      case 'docRemove': {
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow removing documents.')) return;
+        const [raw, lr] = await redis(['GET', P + 'site:' + b.id], ['GET', DOCS(b.id)]);
+        const site = unpackJSON(raw); if (!site || !(await canSeeSite(me, site))) return res.status(404).json({ error: 'Not found' });
+        const list = unpackJSON(lr) || [];
+        const d = list.find((x) => x.id === b.doc); if (!d) return res.status(404).json({ error: 'That document is not on this audit any more.' });
+        await redis(['SET', DOCS(b.id), packJSON(list.filter((x) => x !== d))], ...Array.from({ length: d.chunks }, (_, i) => ['DEL', DOCF(d.id, i)]));
+        await log(b.id, me, 'docs', `removed the document "${d.name}"`);
+        return res.status(200).json({ ok: true });
       }
       // A result from another tool (Semrush, Ahrefs, a manual QA pass…) typed in by hand, so the
       // Dashboard can put it next to our own scans. Errors / warnings / notices map to critical / warning / info.

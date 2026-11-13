@@ -6780,8 +6780,12 @@
       const scanTruth = A.truthWithout(truth, site.allow);
       const pagesMeta = {};
       ((meta && meta.pages) || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; });
+      // "Scan chosen pages": only these (the home page is always read too, and left out of the save).
+      const only = ((state.scanOpts || {})[id] || {}).paths || null;
+      if (state.scanOpts) delete state.scanOpts[id];
+      if (only) log.push(`Scanned ${only.length} chosen page${only.length === 1 ? '' : 's'} only: ${only.slice(0, 8).join(', ')}${only.length > 8 ? '…' : ''}`);
       const res = await A.runScan({
-        siteId: site.siteId, allow: site.allow || [], host, truth: scanTruth, pagesMeta, seedPaths: Object.keys(pagesMeta), concurrency: 4,
+        siteId: site.siteId, allow: site.allow || [], host, truth: scanTruth, pagesMeta, seedPaths: only || Object.keys(pagesMeta), ...(only ? { maxPages: only.length + (only.includes('/') ? 0 : 1) } : {}), concurrency: 4,
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ host, site: site.siteId, path, device });
           for (let attempt = 0; attempt < 3; attempt++) {
@@ -6828,7 +6832,7 @@
       const corrected = [...A.fixedSince((site.scan && site.scan.cv) || 1)];
       const lastDone = (site.scan && site.scan.finishedAt) || '';
       Object.values(state.fixedChecks || {}).forEach((x) => { if (x && x.code && lastDone && x.at > lastDone && !corrected.includes(x.code)) corrected.push(x.code); });
-      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
+      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, ...(only ? { partial: only } : {}), bulk: !!(state.scanning[id] && state.scanning[id].bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
         scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
       } });
@@ -8508,7 +8512,7 @@
   function route() {
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
-    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : parts[2] === 'length' ? 'length' : parts[2] === 'exceptions' ? 'exceptions' : parts[2] === 'dashboard' ? 'dashboard' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
+    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : parts[2] === 'length' ? 'length' : parts[2] === 'exceptions' ? 'exceptions' : parts[2] === 'dashboard' ? 'dashboard' : parts[2] === 'docs' ? 'docs' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
       sub: parts[2] === 'profile' ? (parts[3] || '') : parts[2] === 'leads' ? 'submissions' : '' };
     if (parts[0] === 'home') return { name: 'home' };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
@@ -9365,6 +9369,7 @@
         <a href="#/site/${esc(s.id)}" class="${ftab === 'findings' ? 'on' : ''}" title="Contact details, links, spelling, SEO: what affects the business">Audit items ${tabN('must')}</a>
         <a href="#/site/${esc(s.id)}/polish" class="${ftab === 'polish' ? 'on' : ''}" title="Inconsistent fonts and duplicate photos: fix after the audit items">🎨 Design polish ${tabN('polish')}</a>
         <a href="#/site/${esc(s.id)}/length" class="${ftab === 'length' ? 'on' : ''}" title="SEO titles, meta descriptions and alt text that are longer or shorter than ideal: tidy after the audit items">📏 SEO Lengths ${tabN('length')}</a>
+        <a href="#/site/${esc(s.id)}/docs" class="${r.tab === 'docs' ? 'on' : ''}" title="Check the website against the copy documents it was built from">📄 vs Docs</a>
         <a href="#/site/${esc(s.id)}/exceptions" class="${r.tab === 'exceptions' ? 'on' : ''}" title="What is not checked on this website, and why">🚫 Audit exceptions${(s.findings || []).some((f) => f.status === 'exempt') ? ` <span class="tcount">${(s.findings || []).filter((f) => f.status === 'exempt').length}</span>` : ''}</a>
         <a href="#/site/${esc(s.id)}/comments" class="${r.tab === 'comments' ? 'on' : ''}">Comments <span class="tcount">${generalComments}</span></a>
         <a href="#/site/${esc(s.id)}/activity" class="${r.tab === 'activity' ? 'on' : ''}">Activity log</a>
@@ -9425,12 +9430,13 @@
       popMenu(e.currentTarget, [
         mi({ ic: '📋', label: 'Summary', desc: 'Checked, fixed and left: ready to paste in the group chat', id: 'sSum', off: !findings.length }),
         mi({ ic: '⬇️', label: 'Export CSV', desc: 'Every audit item as a spreadsheet', id: 'sCsv', off: !findings.length }),
+        can('site.scan') && mi({ ic: '🎯', label: 'Scan chosen pages', desc: 'The full audit on just the pages you pick', id: 'sPages', off: !(s.pages || []).length }),
         can('site.scan') && s.siteId && mi({ ic: '💾', label: 'Back up now', desc: 'A restore point in Duda (Site History)', id: 'sBackup' }),
         mi({ ic: '🚫', label: 'Audit exceptions', desc: nEx ? `${nEx} item${nEx === 1 ? '' : 's'} Exempt on this audit` : 'What is not checked here, and why', href: `#/site/${s.id}/exceptions`, id: 'sExempt' }),
         can('jags.lead') && (onBoard ? mi({ ic: '🐆', label: 'On the Jaguars board', desc: 'Open Tasks', href: '#/tasks' }) : mi({ ic: '🐆', label: 'Send to Jaguars', desc: 'Into their queue, or straight to one of them', id: 'sJag' })),
       ], (m) => {
         const on = (id, fn) => { const b = $('#' + id, m); if (b && b.tagName === 'BUTTON') b.onclick = () => { closePop(); fn(); }; };
-        on('sSum', () => openSummary(s)); on('sCsv', () => exportCsv(s)); on('sBackup', backupNow); on('sJag', sendToJags);
+        on('sSum', () => openSummary(s)); on('sCsv', () => exportCsv(s)); on('sPages', () => openScanPages(s)); on('sBackup', backupNow); on('sJag', sendToJags);
       });
     };
     const body = $('#tabBody');
@@ -9440,6 +9446,7 @@
     else if (r.tab === 'activity') renderActivityTab(body, s);
     else if (r.tab === 'exceptions') renderExceptionsTab(body, s);
     else if (r.tab === 'dashboard') renderDashboardTab(body, s);
+    else if (r.tab === 'docs') renderDocsTab(body, s);
     else if (r.tab === 'profile' || r.tab === 'leads') renderProfileTab(body, s, { cnt, generalComments, sub: r.sub });
     else renderFindingsTab(body, s, { cnt, sc, live, grp: state.ff.grp });
     // Changing tab while scrolled down: bring the tabs to the top, so the new tab is what is seen.
@@ -10620,6 +10627,279 @@
     const d = b - a;
     return d === 0 ? '<span class="faint">no change</span>' : `<span class="${d < 0 ? 'db-better' : 'db-worse'}">${d < 0 ? '▼' : '▲'} ${Math.abs(d)}</span>`;
   }
+  // =====================================================================
+  // VS DOCS: the copy documents a website was built from, checked against the website
+  // =====================================================================
+  // A .docx is uploaded and read on the server (api/_docx.js), the AI names its pages and reads the
+  // client details, then "Check the website" finds each document page on the website (address, SEO
+  // title and H1 first, the AI for the rest), reads those pages, and compares: SEO title, meta
+  // description, every piece of copy, every button and where it goes. The website's own Business
+  // Info is set against the document's client details, so a changed phone or email shows up too.
+  const dnorm = (t) => String(t || '').toLowerCase().replace(/[’']/g, '').replace(/&/g, ' and ').replace(/\(?x{3}\)?[\s.-]*x{3}[\s.-]*x{3,4}/gi, ' phone ').replace(/\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}/g, ' phone ').replace(/[^a-z0-9]+/g, ' ').trim();
+  const dwords = (t) => dnorm(t).split(' ').filter(Boolean);
+  const grams = (w) => { const g = new Set(); for (let i = 0; i + 2 < w.length; i++) g.add(w[i] + ' ' + w[i + 1] + ' ' + w[i + 2]); if (w.length < 3 && w.length) g.add(w.join(' ')); return g; };
+  /** How much of `doc` text appears, in order of words, in the page: 0..1, and the closest paragraph. */
+  function dfind(docText, pageGrams, paras) {
+    const w = dwords(docText); if (!w.length) return { score: 1, near: '' };
+    if (w.length <= 6) { const phrase = w.join(' '); const hit = paras.find((p) => p.n.includes(phrase)); return { score: hit ? 1 : 0, near: hit ? '' : (paras.map((p) => ({ p, s: [...grams(w)].filter((g) => p.g.has(g)).length })).sort((a, b) => b.s - a.s)[0] || {}).p?.t || '' }; }
+    const g = grams(w); let hit = 0; g.forEach((x) => { if (pageGrams.has(x)) hit++; });
+    const score = hit / g.size;
+    let near = '';
+    if (score < 0.9) { let best = 0; paras.forEach((p) => { let k = 0; g.forEach((x) => { if (p.g.has(x)) k++; }); if (k > best) { best = k; near = p.t; } }); }
+    return { score, near };
+  }
+  const BTN_STOP = new Set(['button', 'now', 'today', 'our', 'the', 'a', 'us', 'to']);
+  const bwords = (t) => dwords(t).filter((x) => !BTN_STOP.has(x));
+  const isCallBtn = (t) => /\b(call|phone|ring)\b/i.test(t) || /x{3}|\d{3}\D{0,3}\d{3}\D?\d{4}/i.test(t);
+  /** Compare one document page with the website page it was put on. */
+  function docCompare(dp, sp, prose, buttons, truth, pagesByPath) {
+    const out = { title: null, meta: null, blocks: { total: 0, found: 0, missing: [], changed: [] }, buttons: { asked: 0, found: 0, missing: [], inconsistent: [], broken: [], wrongPhone: [] } };
+    const same = (a, b) => dnorm(a) === dnorm(b);
+    if (dp.title) out.title = { doc: dp.title, site: sp.title || '', ok: same(dp.title, sp.title) };
+    if (dp.meta) out.meta = { doc: dp.meta, site: sp.description || '', ok: same(dp.meta, sp.description) };
+    const paras = prose.map((t) => ({ t, n: dwords(t).join(' '), g: grams(dwords(t)) }));
+    const all = new Set(); paras.forEach((p) => p.g.forEach((x) => all.add(x)));
+    (dp.blocks || []).filter((b) => b.t === 'text' || b.t === 'heading').forEach((b) => {
+      if (dwords(b.text).length < 2) return;
+      out.blocks.total++;
+      const r = dfind(b.text, all, paras);
+      if (r.score >= 0.85) out.blocks.found++;
+      else if (r.score >= 0.4) out.blocks.changed.push({ doc: b.text, site: r.near, score: Math.round(r.score * 100) });
+      else out.blocks.missing.push({ doc: b.text, t: b.t, near: r.near });
+    });
+    // Buttons: every button the document asks for has to be there; the designer may add more.
+    const sb = (buttons || []).filter((b) => !b.hidden && b.text);
+    const used = new Set();
+    (dp.blocks || []).filter((b) => b.t === 'button').forEach((b) => {
+      out.buttons.asked++;
+      const call = isCallBtn(b.text);
+      const want = bwords(b.text.replace(/\(?x{3}\)?[\s.-]*x{3}[\s.-]*x{3,4}|\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}/gi, ''));
+      const cand = sb.map((x, i) => ({ x, i, s: call ? (/^tel:/.test(x.to || x.href) ? 2 : 0) + (isCallBtn(x.text) ? 1 : 0) : (() => { const have = new Set(bwords(x.text)); const k = want.filter((w) => have.has(w)).length; return want.length ? k / want.length : 0; })() }))
+        .filter((c) => !used.has(c.i) && (call ? c.s >= 2 : c.s >= 0.6)).sort((a, b) => b.s - a.s);
+      if (!cand.length) { out.buttons.missing.push(b.text); return; }
+      used.add(cand[0].i); out.buttons.found++;
+      const x = cand[0].x;
+      if (call) { const d = String(x.to || x.href).replace(/\D/g, '').slice(-10); if (d && (truth.phones || []).length && !(truth.phones || []).includes(d)) out.buttons.wrongPhone.push({ text: x.text, number: d }); }
+    });
+    // The same button words going to different places on one page: "Get a Quote" at the top opens
+    // Contact Us, "Get a Quote" at the bottom opens Ceramic Coating.
+    const byLabel = {};
+    sb.filter((x) => x.to && !/^(tel|mailto|sms):/.test(x.to)).forEach((x) => { const k = bwords(x.text).join(' '); if (k) (byLabel[k] = byLabel[k] || []).push(x); });
+    Object.values(byLabel).forEach((list) => { const to = [...new Set(list.map((x) => x.to))]; if (to.length > 1) out.buttons.inconsistent.push({ text: list[0].text, to }); });
+    sb.forEach((x) => { const pg = pagesByPath.get(x.to); if (pg && pg.notFound) out.buttons.broken.push({ text: x.text, to: x.to }); });
+    return out;
+  }
+  const docScore = (r) => (r ? Math.round(((r.blocks.found + r.buttons.found + (r.title && r.title.ok ? 1 : 0) + (r.meta && r.meta.ok ? 1 : 0)) / Math.max(1, r.blocks.total + r.buttons.asked + (r.title ? 1 : 0) + (r.meta ? 1 : 0))) * 100) : 0);
+  /** The document's client details against Business Info. */
+  function docClient(d, truth) {
+    const c = Object.assign({}, (d.ai && d.ai.client) || {});
+    const raw = (d.parsed && d.parsed.client) || {};
+    const pick = (re) => { const k = Object.keys(raw).find((x) => re.test(x)); return k ? raw[k] : ''; };
+    c.business = c.business || pick(/business\s*name|company|detailing business/i); c.email = c.email || pick(/email/i); c.phone = c.phone || pick(/phone/i); c.address = c.address || pick(/address/i);
+    if (!c.colors || !c.colors.length) c.colors = Object.entries(raw).filter(([k]) => /colou?r/i.test(k)).map(([, v]) => v);
+    const empty = (v) => !v || /^(tbd|none|n\/a|-)$/i.test(String(v).trim());
+    const rows = [];
+    const add = (label, doc, now, ok) => rows.push({ label, doc: empty(doc) ? '' : doc, now: now || '', ok: empty(doc) ? null : ok });
+    add('Business name', c.business, truth.businessName, !!truth.businessName && A.matchesBusiness(String(c.business || ''), truth));
+    const em = String(c.email || '').toLowerCase().match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/g) || [];
+    add('Email', c.email, (truth.emails || []).join(', '), em.length > 0 && em.some((e) => (truth.emails || []).includes(e)));
+    const ph = A.normPhone(c.phone || '').slice(-10);
+    add('Phone', c.phone, (truth.phones || []).map(A.fmtPhone).join(', '), ph.length === 10 && (truth.phones || []).includes(ph));
+    const zip = (String(c.address || '').match(/\b\d{5}\b/) || [])[0];
+    add('Address', c.address, (truth.addresses || []).map((a) => [a.street, a.city, a.zip].filter(Boolean).join(', ')).join(' | '), !!zip && (truth.addresses || []).some((a) => a.zip === zip));
+    [].concat(c.colors || []).filter((x) => /#[0-9a-f]{6}\b/i.test(x)).forEach((x) => add('Colour', x, '', null));
+    return rows;
+  }
+  async function loadDocs(s, force) {
+    state.docs = state.docs || {};
+    if (!force && state.docs[s.id]) return state.docs[s.id];
+    const r = await api(`/api/store?op=docs&id=${encodeURIComponent(s.id)}`);
+    state.docs[s.id] = r.docs || []; return state.docs[s.id];
+  }
+  async function docAddFiles(s, files) {
+    for (const f of files) {
+      if (!/\.docx$/i.test(f.name)) { toast(`${f.name}: only Word documents (.docx) can be read`); continue; }
+      toast(`Reading ${f.name}…`);
+      try {
+        const data = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = () => no(new Error('The file could not be read')); r.readAsDataURL(f); });
+        const up = await store({ op: 'docUpload', id: s.id, name: f.name, data });
+        const d = up.doc;
+        // The AI names the pages and reads the client details. Without it, the rules' names stand.
+        try {
+          const ai = await aiPost(s.id, { op: 'docread', file: d.name, client: d.parsed.client, pages: d.parsed.pages.map((p, i) => ({ i, name: p.name, title: p.title, meta: p.meta, first: (p.blocks || []).filter((b) => b.t !== 'note').slice(0, 4).map((b) => b.text) })) });
+          await store({ op: 'docSave', id: s.id, doc: d.id, ai: { pages: ai.pages || [], client: ai.client || {} } });
+        } catch (e) { toast('The AI could not read the page names right now; the document\'s own names are used.'); }
+        state.docSel = d.id;
+      } catch (e) { toast(`${f.name}: ${e.message}`); }
+    }
+    await loadDocs(s, true); renderSite();
+  }
+  /** The document's pages with the AI's names, pages that are not pages left out. */
+  function docPages(d) {
+    const ai = new Map(((d.ai && d.ai.pages) || []).map((x) => [Number(x.i), x]));
+    return (d.parsed.pages || []).map((p, i) => Object.assign({}, p, { i, name: (ai.get(i) && ai.get(i).name) || p.name, kind: (ai.get(i) && ai.get(i).kind) || 'page', note: (ai.get(i) && ai.get(i).note) || '' })).filter((p) => p.kind !== 'not_page');
+  }
+  /** Find each document page on the website: exact title or address first, the AI for the rest. */
+  async function docMatch(s, d, pages) {
+    const site = (s.pages || []).filter((p) => !p.notFound && !p.error && !/\/(blog|author|tag|category)\b/i.test(p.path) && !A.isThankYouPath(p.path));
+    const matches = {};
+    pages.forEach((p) => {
+      const t = site.find((x) => p.title && dnorm(x.title) === dnorm(p.title));
+      if (t) matches[p.i] = { path: t.path, confidence: 1, reason: 'Same SEO title', how: 'title' };
+      else if (p.url) { const u = A.normalizePath(String(p.url).replace(/^https?:\/\/[^/]+/i, '')); const x = site.find((y) => y.path === u); if (x) matches[p.i] = { path: x.path, confidence: 1, reason: 'Address given in the document', how: 'url' }; }
+    });
+    const rest = pages.filter((p) => !matches[p.i]);
+    if (rest.length) {
+      try {
+        const r = await aiPost(s.id, { op: 'docmatch', pages: rest.map((p) => ({ i: p.i, name: p.name, title: p.title, head: ((p.blocks || []).find((b) => b.t === 'heading') || {}).text || '' })), site: site.map((x) => ({ path: x.path, title: x.title, h1: x.h1 })) });
+        (r.matches || []).forEach((m) => { const x = site.find((y) => y.path === m.path); if (x && Number(m.confidence) >= 0.55) matches[Number(m.i)] = { path: x.path, confidence: Number(m.confidence), reason: m.reason || '', how: 'ai' }; else if (!matches[Number(m.i)]) matches[Number(m.i)] = { path: '', confidence: Number(m.confidence) || 0, reason: m.reason || 'Not found on the website', how: 'ai' }; });
+      } catch (e) {
+        // Without the AI: the closest address and title by shared words.
+        rest.forEach((p) => {
+          const w = new Set(dwords(p.name + ' ' + p.title).filter((x) => x.length > 2 && !/^(auto|lab|tn|the|and)$/.test(x)));
+          const best = site.map((x) => ({ x, k: dwords(x.path + ' ' + x.title + ' ' + x.h1).filter((y) => w.has(y)).length })).sort((a, b) => b.k - a.k)[0];
+          matches[p.i] = best && best.k >= 2 ? { path: best.x.path, confidence: 0.5, reason: 'Closest address and title (AI unavailable)', how: 'words' } : { path: '', confidence: 0, reason: 'Not found (AI unavailable)', how: 'words' };
+        });
+      }
+    }
+    return matches;
+  }
+  /** Check the website against one document: find its pages, read them, compare. */
+  async function docCheck(s, d) {
+    if (!(s.pages || []).length) return toast('Scan the website once first, so the app knows its pages.');
+    if (state.scanning[s.id]) return toast('This website is being scanned. Try again when it finishes.');
+    const pages = docPages(d);
+    state.scanning[s.id] = { done: 0, total: 0, message: `📄 Finding the ${pages.length} document page${pages.length === 1 ? '' : 's'} on the website…` }; renderSite();
+    try {
+      const matches = await docMatch(s, d, pages);
+      const paths = [...new Set(Object.values(matches).map((m) => m.path).filter(Boolean))];
+      state.scanning[s.id] = { done: 0, total: paths.length, message: `📄 Reading ${paths.length} page${paths.length === 1 ? '' : 's'}…` }; renderProgress(s.id);
+      const { sApi } = siteApi(s.id);
+      const host = s.host;
+      const res = paths.length ? await A.runScan({
+        siteId: s.siteId, allow: s.allow || [], host, truth: A.truthWithout(s.truth, s.allow), pagesMeta: {}, seedPaths: paths, maxPages: paths.length + (paths.includes('/') ? 0 : 1), concurrency: 4, devices: ['desktop'],
+        fetchPage: async (path, device) => { const q = new URLSearchParams({ host, site: s.siteId, path, device }); for (let a = 0; a < 3; a++) { try { const r = await sApi('/api/fetch?' + q); if (r.status || a === 2) return r; } catch (e) { if (a === 2) return { status: 0, html: '', error: e.message }; } } return { status: 0, html: '' }; },
+        onProgress: (p) => { state.scanning[s.id] = Object.assign({}, p, { message: '📄 ' + p.message }); renderProgress(s.id); },
+      }) : { pages: [], prose: [], buttons: {}, fit: [] };
+      // Every page the website has (for buttons that open a missing page), and what was just read.
+      const known = new Map((s.pages || []).map((p) => [p.path, p])); (res.pages || []).forEach((p) => known.set(p.path, p));
+      const fit = new Map((res.fit || []).map((p) => [p.path, p]));
+      const proseOf = (path) => (res.prose || []).filter((b) => (b.pages || []).includes(path)).map((b) => b.text);
+      const truth = s.truth || {};
+      const rows = pages.map((p) => {
+        const m = matches[p.i] || { path: '', confidence: 0, reason: '' };
+        if (!m.path) return { i: p.i, name: p.name, title: p.title, path: '', reason: m.reason, missing: true };
+        const f = fit.get(m.path) || {};
+        const sp = { title: f.title || (known.get(m.path) || {}).title || '', description: f.description || '' };
+        const r = docCompare(p, sp, proseOf(m.path), (res.buttons || {})[m.path], truth, known);
+        return { i: p.i, name: p.name, path: m.path, how: m.how, confidence: m.confidence, reason: m.reason, ...r, score: docScore(r) };
+      });
+      const client = docClient(d, truth);
+      // The document's colours: is each one used anywhere on the home page?
+      const colors = client.filter((x) => x.label === 'Colour');
+      if (colors.length) {
+        try {
+          const home = await sApi('/api/fetch?' + new URLSearchParams({ host, site: s.siteId, path: '/', device: 'desktop' }));
+          const html = String(home.html || '').toLowerCase();
+          colors.forEach((x) => { const hx = (x.doc.match(/#[0-9a-f]{6}/i) || [''])[0].toLowerCase(); x.now = html.includes(hx) ? 'used on the home page' : 'not found on the home page'; x.ok = html.includes(hx); });
+        } catch (e) { /* the colour stays unjudged */ }
+      }
+      const missing = rows.filter((r) => r.missing).length;
+      const issues = rows.reduce((n, r) => n + (r.missing ? 0 : (r.title && !r.title.ok ? 1 : 0) + (r.meta && !r.meta.ok ? 1 : 0) + r.blocks.missing.length + r.buttons.missing.length + r.buttons.inconsistent.length + r.buttons.broken.length + r.buttons.wrongPhone.length), 0);
+      const result = { rows, client, summary: `${rows.length - missing} of ${rows.length} pages found on the website${missing ? `, ${missing} missing` : ''}, ${issues} difference${issues === 1 ? '' : 's'}` };
+      const saved = await store({ op: 'docSave', id: s.id, doc: d.id, result });
+      Object.assign(d, saved.doc);
+      toast('Checked: ' + result.summary);
+    } catch (e) { console.error(e); toast('The check could not finish: ' + e.message); }
+    finally { delete state.scanning[s.id]; if (state.current && state.current.id === s.id) { await loadDocs(s, true).catch(() => {}); renderSite(); } }
+  }
+  function docRowHtml(s, r) {
+    if (r.missing) return `<details class="dc-row dc-miss"><summary><span class="dc-ic">✗</span><b>${esc(r.name)}</b><span class="dc-path faint">not on the website</span><span class="badge sev-critical">Missing page</span></summary>
+      <div class="small muted dc-body">${esc(r.reason || 'No page on the website carries this document page.')}${r.title ? `<div class="kv"><b>Its SEO title:</b> ${esc(r.title)}</div>` : ''}</div></details>`;
+    const bad = (r.title && !r.title.ok ? 1 : 0) + (r.meta && !r.meta.ok ? 1 : 0) + r.blocks.missing.length + r.buttons.missing.length + r.buttons.inconsistent.length + r.buttons.broken.length + r.buttons.wrongPhone.length;
+    const kv = (label, x) => (x ? `<div class="dc-kv ${x.ok ? 'ok' : 'bad'}"><span>${x.ok ? '✓' : '≠'} ${label}</span>${x.ok ? `<span class="faint">${esc(x.site)}</span>` : `<span><span class="faint">Document:</span> ${esc(x.doc)}<br><span class="faint">Website:</span> ${esc(x.site || '(none)')}</span>`}</div>` : '');
+    return `<details class="dc-row"><summary><span class="dc-ic ${bad ? 'bad' : 'ok'}">${bad ? '!' : '✓'}</span><b>${esc(r.name)}</b>
+        <a class="dc-path mono small" href="${esc(previewUrl(s, r.path, 'desktop'))}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.path)}</a>
+        <span class="dc-score" title="Share of the document's title, description, copy and buttons found on the page">${r.score}%</span>${bad ? `<span class="badge sev-warning">${bad} difference${bad === 1 ? '' : 's'}</span>` : '<span class="badge v-ok">Matches</span>'}</summary>
+      <div class="dc-body">
+        <div class="small faint">Found ${r.how === 'title' ? 'by its SEO title' : r.how === 'url' ? 'by the address in the document' : `by the AI (${Math.round((r.confidence || 0) * 100)}%): ${esc(r.reason || '')}`}</div>
+        ${kv('SEO title', r.title)}${kv('Meta description', r.meta)}
+        <div class="dc-sec"><b>Copy</b> <span class="faint">${r.blocks.found} of ${r.blocks.total} pieces found word for word</span>
+          ${r.blocks.missing.length ? `<div class="dc-list"><div class="small">Missing from the page (${r.blocks.missing.length}):</div>${r.blocks.missing.slice(0, 40).map((b) => `<div class="dc-item bad">${b.t === 'heading' ? '<span class="badge subtle">heading</span> ' : ''}${esc(b.doc)}</div>`).join('')}</div>` : ''}
+          ${r.blocks.changed.length ? `<div class="dc-list"><div class="small">Changed (${r.blocks.changed.length}):</div>${r.blocks.changed.slice(0, 30).map((b) => `<div class="dc-item"><div><span class="faint">Document:</span> ${esc(b.doc)}</div><div><span class="faint">Website (${b.score}% the same):</span> ${esc(b.site || '—')}</div></div>`).join('')}</div>` : ''}</div>
+        <div class="dc-sec"><b>Buttons</b> <span class="faint">${r.buttons.found} of ${r.buttons.asked} the document asks for are on the page (more are fine)</span>
+          ${r.buttons.missing.map((b) => `<div class="dc-item bad">Missing button: <b>${esc(b)}</b></div>`).join('')}
+          ${r.buttons.inconsistent.map((b) => `<div class="dc-item bad">"${esc(b.text)}" buttons on this page go to different places: ${b.to.map((t) => `<span class="mono">${esc(t)}</span>`).join(' and ')}</div>`).join('')}
+          ${r.buttons.broken.map((b) => `<div class="dc-item bad">"${esc(b.text)}" opens a page that does not exist: <span class="mono">${esc(b.to)}</span></div>`).join('')}
+          ${r.buttons.wrongPhone.map((b) => `<div class="dc-item bad">"${esc(b.text)}" dials ${esc(A.fmtPhone(b.number))}, not the number in Business Info</div>`).join('')}</div>
+      </div></details>`;
+  }
+  async function renderDocsTab(body, s) {
+    body.innerHTML = '<div class="empty small">Loading documents…</div>';
+    let docs; try { docs = await loadDocs(s); } catch (e) { body.innerHTML = `<div class="empty small">${esc(e.message)}</div>`; return; }
+    if (state.current !== s) return;
+    const d = docs.find((x) => x.id === state.docSel) || docs[0];
+    const last = d && (d.results || [])[0];
+    body.innerHTML = `<div class="dc">
+      <div class="dc-top"><div><b>📄 vs Docs</b><div class="small muted">Add the copy documents this website was built from (.docx). Each one is read, its pages are found on the website, and the SEO title, description, copy and buttons are compared.</div></div>
+        ${can('site.scan') ? '<label class="btn sm primary dc-add">＋ Add documents<input type="file" id="dcFile" accept=".docx" multiple hidden></label>' : ''}</div>
+      ${docs.length ? `<div class="tabs dc-tabs">${docs.map((x) => `<a href="#" data-dcsel="${esc(x.id)}" class="${x === d ? 'on' : ''}" title="${esc(x.name)}">${esc(x.name.replace(/\.docx$/i, '').slice(0, 42))}</a>`).join('')}</div>` : '<div class="empty small">No documents yet. Add the Website Writing document (or a single-page one) to check this website against it.</div>'}
+      ${d ? `<div class="dc-doc">
+        <div class="dc-meta small muted">${docPages(d).length} page${docPages(d).length === 1 ? '' : 's'} in this document${(d.parsed.requested || []).length ? ` (it lists ${d.parsed.requested.length})` : ''} · added by ${esc(d.byName || '')} ${esc(ago(d.at))}${d.parsed.site ? ` · for ${esc(d.parsed.site)}` : ''}
+          · <a href="/api/store?op=docFile&id=${encodeURIComponent(s.id)}&doc=${encodeURIComponent(d.id)}" download>⬇ Download the document</a>${can('site.scan') ? ` · <button class="linkbtn danger" id="dcRm">Remove</button>` : ''}</div>
+        <div class="dc-acts">${can('site.scan') ? `<button class="btn primary" id="dcRun" type="button">🔎 ${last ? 'Check again' : 'Check the website against this document'}</button>` : ''}
+          ${last ? `<button class="btn" id="dcScan" type="button" title="Run the full audit on just these pages (spelling, contrast, links…)">Audit these pages</button><button class="btn" id="dcDl" type="button">⬇ Download this check</button>` : ''}</div>
+        ${last ? `<div class="db-tiles">
+            <div class="db-tile"><span class="db-tile-n">${last.rows.filter((r) => !r.missing).length}/${last.rows.length}</span><span class="db-tile-l">Pages found</span></div>
+            <div class="db-tile"><span class="db-tile-n ${last.rows.some((r) => r.missing) ? 'db-crit' : ''}">${last.rows.filter((r) => r.missing).length}</span><span class="db-tile-l">Missing pages</span></div>
+            <div class="db-tile"><span class="db-tile-n">${Math.round(last.rows.filter((r) => !r.missing).reduce((n, r) => n + r.score, 0) / Math.max(1, last.rows.filter((r) => !r.missing).length))}%</span><span class="db-tile-l">Of the document on the website</span></div>
+            <div class="db-tile"><span class="db-tile-n">${esc(dbDate(last.at))}</span><span class="db-tile-l">Checked</span><span class="small faint">by ${esc(last.byName || '')}${(d.results || []).length > 1 ? ` · ${d.results.length} checks kept` : ''}</span></div></div>
+          <section class="db-card"><h3>The document's pages on the website</h3>${last.rows.map((r) => docRowHtml(s, r)).join('')}</section>
+          <section class="db-card"><h3>Client details: document vs Business Info</h3><p class="small faint db-sub">The document was written for the build; a difference may mean the client's details have changed since.</p>
+            <table class="grid db-table"><thead><tr><th></th><th>Document</th><th>Business Info / website</th><th></th></tr></thead><tbody>${last.client.map((c) => `<tr><td><b>${esc(c.label)}</b></td><td>${esc(c.doc || '—')}</td><td>${esc(c.now || '—')}</td><td>${c.ok === null ? '<span class="faint">not given</span>' : c.ok ? '<span class="db-better">✓ same</span>' : '<span class="db-worse">≠ different</span>'}</td></tr>`).join('')}</tbody></table></section>`
+          : `<section class="db-card"><h3>What the document asks for</h3><ol class="dc-plan">${docPages(d).map((p) => `<li><b>${esc(p.name)}</b> <span class="small faint">${esc(p.title || '')} · ${(p.blocks || []).filter((b) => b.t === 'button').length} buttons · ${(p.blocks || []).filter((b) => b.t === 'text' || b.t === 'heading').length} pieces of copy</span>${p.note ? `<div class="small muted">${esc(p.note)}</div>` : ''}</li>`).join('')}</ol>
+            <p class="small muted">Press <b>Check the website against this document</b>. The website needs to have been scanned once, so the app knows its pages.</p></section>`}
+      </div>` : ''}</div>`;
+    const fi = $('#dcFile', body); if (fi) fi.onchange = () => docAddFiles(s, [...fi.files]);
+    $$('[data-dcsel]', body).forEach((a) => (a.onclick = (e) => { e.preventDefault(); state.docSel = a.dataset.dcsel; renderDocsTab(body, s); }));
+    if (!d) return;
+    if ($('#dcRun', body)) $('#dcRun', body).onclick = () => docCheck(s, d);
+    if ($('#dcRm', body)) $('#dcRm', body).onclick = async () => { if (!confirm(`Remove "${d.name}" and its checks from this audit?`)) return; try { await store({ op: 'docRemove', id: s.id, doc: d.id }); state.docSel = ''; await loadDocs(s, true); renderSite(); } catch (e) { toast(e.message); } };
+    if ($('#dcScan', body)) $('#dcScan', body).onclick = () => scanPages(s, [...new Set(last.rows.map((r) => r.path).filter(Boolean))]);
+    if ($('#dcDl', body)) $('#dcDl', body).onclick = () => repDownload(`vs-docs-${slug(s.businessName || s.siteId)}-${String(last.at).slice(0, 10)}.html`, repDoc(`${s.businessName || s.siteId} vs ${d.name}`,
+      `<h1>${esc(s.businessName || s.siteId)} vs the document</h1><div class="muted">${esc(d.name)} · checked ${esc(fmtFull(last.at))} by ${esc(last.byName || '')}</div>
+       <div class="db-card"><b>${esc(last.summary)}</b></div>
+       <h2>Pages</h2><table><thead><tr><th>Document page</th><th>Website page</th><th>Match</th><th>Differences</th></tr></thead><tbody>${last.rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.missing ? '<b style="color:#c62828">Missing</b>' : esc(r.path)}</td><td>${r.missing ? '' : r.score + '%'}</td><td class="small">${r.missing ? esc(r.reason || '') : [r.title && !r.title.ok ? `SEO title differs: "${esc(r.title.site)}" (document: "${esc(r.title.doc)}")` : '', r.meta && !r.meta.ok ? 'Meta description differs' : '', ...r.blocks.missing.slice(0, 12).map((b) => 'Missing copy: ' + esc(b.doc.slice(0, 160))), ...r.buttons.missing.map((b) => 'Missing button: ' + esc(b)), ...r.buttons.inconsistent.map((b) => `"${esc(b.text)}" buttons go to ${b.to.map(esc).join(' and ')}`), ...r.buttons.broken.map((b) => `"${esc(b.text)}" opens a missing page ${esc(b.to)}`)].filter(Boolean).join('<br>') || '✓'}</td></tr>`).join('')}</tbody></table>
+       <h2>Client details</h2><table><thead><tr><th></th><th>Document</th><th>Business Info / website</th><th></th></tr></thead><tbody>${last.client.map((c) => `<tr><td>${esc(c.label)}</td><td>${esc(c.doc || '—')}</td><td>${esc(c.now || '—')}</td><td>${c.ok === null ? 'not given' : c.ok ? 'same' : 'different'}</td></tr>`).join('')}</tbody></table>`));
+  }
+
+  // ---------- scanning chosen pages only ----------
+  /** Pick pages from the last scan and run the full audit on just those (the rest of the audit is kept as it is). */
+  function openScanPages(s) {
+    const pages = (s.pages || []).filter((p) => !p.notFound).map((p) => p.path).sort();
+    if (!pages.length) return toast('Scan the whole website once first; then you can pick pages from it.');
+    let q = '';
+    modal(`<header><h2>Scan chosen pages</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body"><p class="small muted">The full audit (spelling, contact details, contrast, links…) on just these pages. Items on other pages, and the checks that compare the whole website, stay as they are.</p>
+        <input id="spQ" type="search" placeholder="Filter pages" style="width:100%;margin-bottom:8px"><div class="sp-list" id="spList"></div></div>
+      <footer><span class="small muted" id="spN">0 chosen</span><span class="spacer"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="spGo" disabled>Scan these pages</button></footer>`, { wide: true });
+    const chosen = new Set();
+    const draw = () => {
+      $('#spList').innerHTML = pages.filter((p) => !q || p.includes(q)).slice(0, 300).map((p) => { const pg = s.pages.find((x) => x.path === p) || {}; return `<label class="sp-row"><input type="checkbox" value="${esc(p)}" ${chosen.has(p) ? 'checked' : ''}><span class="mono small">${esc(p)}</span><span class="small faint">${esc(pg.title || '')}</span></label>`; }).join('');
+      $$('#spList input').forEach((c) => (c.onchange = () => { if (c.checked) chosen.add(c.value); else chosen.delete(c.value); $('#spN').textContent = `${chosen.size} chosen`; $('#spGo').disabled = !chosen.size; }));
+    };
+    draw();
+    $('#spQ').oninput = (e) => { q = e.target.value.trim().toLowerCase(); draw(); };
+    $('#spGo').onclick = () => { closeModal(); scanPages(s, [...chosen]); };
+  }
+  function scanPages(s, paths) {
+    paths = [...new Set(paths.map((p) => A.normalizePath(p)))].filter(Boolean);
+    if (!paths.length) return toast('No pages to scan.');
+    state.scanOpts = state.scanOpts || {}; state.scanOpts[s.id] = { paths };
+    toast(`Scanning ${paths.length} page${paths.length === 1 ? '' : 's'}…`);
+    enqueue(s.id); render();
+  }
+
   // ---------- one scan's report, and two scans compared ----------
   const SEV_RANK = { critical: 0, outdated: 1, warning: 2, info: 3 };
   const repCache = new Map();

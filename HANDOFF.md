@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **152**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **153**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 151: styles v32, demo v2, engine v13, app v36).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 152: styles v33, demo v2, engine v14, app v37).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 150 on GitHub (`e71e717`). **Delivered as a zip, maybe not uploaded yet:** 151 (scan reports).
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 151 on GitHub (`f08b14b`). **Delivered as a zip, maybe not uploaded yet:** 152 (vs Docs, chosen pages, and a fix for saving when contrast could not run).
 - **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
 - **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
@@ -178,9 +178,20 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - App (`public/app.js`, before `renderDashboardTab`): `dbReport` (saved, or `now` from today's findings), `openScanReport` (tiles, severity bar, category bars, searchable item list, download, compare-with select), `compareReports` (match by id, then code+found+path), `openCompare` (fixed / new / still there, before-after bars, category table; notes a checks-version change), downloads as standalone HTML (`reportHtml`, `compareDoc`, `REP_CSS`, print-to-PDF friendly). Dashboard table: 📋 View per scan with a report, "numbers only" for older ones; buttons 📋 Today's report and ⇄ First scan vs today.
 - Help `dashboard`, What's New `2026-11-13-scan-reports`. Test: third scan + report/compare section in `tests/tk/e2e_pagefit.py`.
 
-## Next: update 152 (agreed, NOT started)
+## Update 152 — vs Docs and scanning chosen pages (built)
 
-- Forms gone quiet per form (not only per website), and forms that never received anything (from the auto audit's list of forms).
+- **Fix:** `saveScan` crashed ("Cannot access 'carried' before initialization") whenever an item had to be kept as it was (150's contrast "not checked" path): the Set was renamed `keptAsIs` (an inner `const carried` shadowed it).
+- **Docs:** `api/_docx.js` reads a .docx without a library (zip via zlib, XML walked tag by tag) into `{client, requested, site, pages:[{name, title, meta, url, blocks:[{t:text|heading|button|note, text}]}], footer}` using the writers' conventions (TITLE/PAGE NAME/META TITLE, META DESCRIPTION, BUTTON>, DEVELOPER>>>, "Website Pages To Include", top table). Store ops `docUpload` (≤3.2 MB, ≤12 per audit, file kept in 700 KB base64 pieces `dsa:docf:<doc>:<i>`, list packed in `dsa:docs:<auditId>`), `docSave` ({ai} or {result}, 10 results kept), `docRemove`; GET `op=docs`, `op=docFile` (download). AI ops `docread` (page names, client details) and `docmatch` (document page → website path) in `api/ai.js` (`docAI`, cached in `aic:docs`).
+- **App:** tab `#/site/<id>/docs` (`renderDocsTab`): upload, one sub-tab per document, `docCheck` = match (exact SEO title / document URL first, then AI, word overlap without AI) → `runScan` of the matched pages only (desktop) → `docCompare` per page (title/meta equality, copy by word trigrams: ≥85% found, ≥40% changed, else missing; buttons by words, call buttons by tel:, same words → different targets, targets that are 404, call buttons not dialling Business Info) + `docClient` (business name, email, phone, address, colours vs Business Info; a colour is looked for on the home page). Report download (`repDoc`).
+- Engine: `auditDocument` returns `meta.buttons` (every button and tel/mailto link in page order: text, `to` path or tel:/mailto:, href, where, hidden); `runScan` returns `buttons` per path (desktop; not saved).
+- **Scan chosen pages:** ⋯ → 🎯 Scan chosen pages (`openScanPages`, `scanPages`) → `state.scanOpts[id].paths` → `scanSiteRun` scans only those (+ home, which is left out of the save) and calls `saveScan` with `partial`: new items only for those pages (whole-site checks excluded), everything else kept as it was, page list merged, fonts/photos untouched, snapshot `partial`.
+- Help `docs`, `scan-pages`; What's New `2026-11-13-vs-docs`. Test: `tests/tk/e2e_docs.py` (builds a .docx in the test).
+
+## Next (agreed, NOT started)
+
+- **153: SEO Websites.** DR Websites → new sub-tab "SEO Websites" = Duda sites with the label "SEO Customer". Each is audited automatically 4 hours after its last publish, one at a time (the scan runs in an open team browser, since scans run in the browser; the server only says which website is due). Its report lists the pages created by seo@8bitcreative.com from Duda's Activity Log API: `GET /api/sites/multiscreen/{site_name}/activities?limit=100&offset=&activities=page_created&from=&to=` (response shape to be confirmed with a test call).
+- **154: Proof pictures.** A cropped picture (20–40 KB, red box) of the element for critical items at scan time (max ~25 per scan), on demand ("📸 Capture proof"), and automatically when an item is marked False alarm; kept 6 months; shown on the item and in downloaded reports. Reuse `_shoot.js` `cropRegion`/`DRAW_MARK`.
+- Forms gone quiet per form (not only per website), and forms that never received anything.
 
 - Technical SEO checks (no API): copy-paste/thin town pages, service + town in title/H1, robots.txt, sitemap, orphan pages, redirects, per-page canonical, schema by page type, image weight, Googlebot's 2 MB HTML limit, content hidden on mobile, invalid tags in `<head>`, non-`<a>` links, mobile pop-ups on load, text in background images. Then Search Console URL Inspection (free API).
 - Then (was 146/147):
