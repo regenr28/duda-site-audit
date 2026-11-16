@@ -143,7 +143,7 @@ try:
 
         # ---- 3) bulk False alarm with one reason for both ----
         pg.goto(f'http://localhost:{APORT}/#/site/{sid}/findings'); pg.wait_for_timeout(1500)
-        if pg.locator('#bulkBar').count() == 0:
+        if pg.locator('#bulkBar.bulkbar').count() == 0:
             pg.check(f'[data-pick="{phone_about["id"]}"]'); pg.check(f'[data-pick="{email_terms["id"]}"]'); pg.wait_for_timeout(300)
         pg.select_option('#bulkSt', 'false'); pg.wait_for_timeout(600)
         check(pg.locator('#faReason').count() == 1, 'False alarm asks for the reason once')
@@ -155,7 +155,7 @@ try:
         check(all(f.get('status') == 'false' for f in both), 'both items now False alarm')
         cm = [c for c in (s.get('comments') if False else (site(pg, sid).get('comments') or [])) if 'Old test copy' in (c.get('text') or '')]
         check(len(cm) == 2, 'the one reason was posted on both items')
-        check(pg.locator('#bulkBar').count() == 0, 'selection cleared once the items left the default list')
+        check(pg.locator('#bulkBar.bulkbar').count() == 0, 'selection cleared once the items left the default list')
 
         # ---- 4) drawer has the Recheck button; a False alarm explains why it can't ----
         pg.goto(f'http://localhost:{APORT}/#/site/{sid}/item/{fc["num"]}'); pg.wait_for_timeout(1500)

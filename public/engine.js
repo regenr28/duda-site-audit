@@ -400,6 +400,16 @@
         'A visible "Button", and every other default label ("Heading", "Caption"…), is still critical',
       ],
     },
+    {
+      v: 33,
+      date: '2026-11-17',
+      title: 'A page for a town is about that town, wherever the shop is',
+      items: [
+        'A page whose address names a town (/brentwood-window-tinting) is no longer told by the AI that its heading should name the town the shop is in ("…in Brentwood, TN" is right on that page, even for a shop in Franklin)',
+        'The AI is told which town each page\u2019s address is for, also when the address has no state (/brentwood-window-tinting, not only /locations/brentwood-tn)',
+        'A page that names a DIFFERENT town from its address is still reported',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -3213,7 +3223,7 @@
       buttons: Object.fromEntries(Object.values(pageInfo).filter((p) => p.buttons).map((p) => [p.path, p.buttons])),
       // keepCopy: each page's own copy, in reading order (headings and paragraphs). Not saved with the audit.
       ...(opts.keepCopy ? { copy: Object.fromEntries(Object.values(pageInfo).filter((p) => p.copy).map((p) => [p.path, p.copy])) } : {}),
-      fit: fitPages.map((p) => ({ path: p.path, title: p.title, description: p.description, h1: p.h1.map((h) => h.text), h1Sel: (p.h1[0] && p.h1[0].selector) || '', heads: p.heads.slice(0, 14), excerpt: p.body.slice(0, 2400), urlServices: servicesOfPath(p.path), urlPlace: placeOfPath(p.path) })),
+      fit: fitPages.map((p) => ({ path: p.path, title: p.title, description: p.description, h1: p.h1.map((h) => h.text), h1Sel: (p.h1[0] && p.h1[0].selector) || '', heads: p.heads.slice(0, 14), excerpt: p.body.slice(0, 2400), urlServices: servicesOfPath(p.path), urlPlace: placeOfPath(p.path) || slugTown(p) })),
       externalLinks: external.size,
       images: images.size,
       alts: Array.from(altMap.values()),
@@ -3246,6 +3256,14 @@
   function placeWordsInPath(path) {
     return String(path || '').toLowerCase().split(/[^a-z0-9]+/)
       .filter((w) => w.length >= 4 && !GENERIC.has(w) && !PLACE_STOP.has(w));
+  }
+  /** "brentwood" from /brentwood-window-tinting: the words of the address that are not a service and
+   *  that the page's own title or H1 also says. Used to tell the AI which town the page is for. */
+  function slugTown(p) {
+    const said = compact([p.title || '', ...(p.h1 || []).map((h) => h.text || h)].join(' '));
+    const seg = String(p.path || '').toLowerCase().split('/').filter(Boolean).pop() || '';
+    const w = seg.split('-').filter((x) => x.length >= 4 && !GENERIC.has(x) && !PLACE_STOP.has(x) && !SLUG_FILLER.has(x) && !/\d/.test(x));
+    return w.length && w.length <= 3 && said.includes(compact(w.join(' '))) ? w.join(' ') : '';
   }
   function pathNamesPlace(paths, text, truth) {
     const hay = compact(text);
@@ -3367,6 +3385,10 @@
       const pg = fit[v.i];
       const rule = RULES[v.type];
       if (!pg || !rule || Number(v.confidence) < 0.7) return;
+      // "Wrong town" about words that name the town in the page's OWN address is backwards: a
+      // /brentwood-window-tinting page saying "…in Brentwood, TN" is right even though the shop is in
+      // Franklin. Kept only when the AI's fix keeps the address's town too (another town named beside it).
+      if (v.type === 'wrong_city' && pathNamesPlace([pg.path], v.quote || '', truth) && !(v.suggestion && pathNamesPlace([pg.path], v.suggestion, truth))) return;
       const [code, category, sameRe, message] = rule;
       const part = PART[v.part] ? v.part : 'body';
       const ai = { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote };

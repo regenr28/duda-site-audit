@@ -4,6 +4,18 @@
 
 export const NEWS = [
   {
+    id: '2026-11-17-town-pages', date: '2026-11-17', audience: 'all', tag: 'Audits',
+    title: 'Town pages: their own town is right',
+    what: 'A page built for a town, like <b>/brentwood-window-tinting</b>, was sometimes told by the AI that its heading should name the town the shop is in ("…in Franklin, TN"). A page whose address names a town is now accepted for naming that town, wherever the shop is. A page that names a different town from its address is still reported. Rescan to clear the old items.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⟳ Rescan</b>.'],
+  },
+  {
+    id: '2026-11-17-fast-ticks', date: '2026-11-17', audience: 'all', tag: 'Audits',
+    title: 'Ticking audit items is instant',
+    what: 'Ticking an item\'s box in Audit items used to rebuild the whole page, so each tick froze for a second or two on a big website. Now only that row and the selection bar change, so you can tick ten (or a hundred) in a row without waiting.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>Audit items</b> → tick the boxes on the left → use the bar that appears.'],
+  },
+  {
     id: '2026-11-17-hidden-labels', date: '2026-11-17', audience: 'all', tag: 'Audits',
     title: 'Fewer false alarms: hidden "Button" labels',
     what: 'A photo gallery with captions switched off keeps a hidden "Button" for each picture in the page code. Those were reported as "Duda\'s default label left on the page". A "Button" hidden with display:none is no longer reported; a visible one, and every other default label ("Heading", "Caption"…), still is. Rescan to clear the old ones.',

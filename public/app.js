@@ -8963,7 +8963,7 @@
     if (!f.ai) return '';
     const ok = ['describes_image', 'this_business', 'partner_logo'].includes(f.ai.verdict);
     return `<div class="ai-note ${ok ? 'ok' : 'bad'}"><span class="badge ai-badge">✨ AI</span> <b>${esc(AI_LABEL[f.ai.verdict] || f.ai.verdict)}</b>${f.ai.reason ? ' · ' + esc(f.ai.reason) : ''} <span class="faint">(${Math.round((f.ai.confidence || 0) * 100)}% sure)</span>
-      ${full && f.ai.suggestion ? `<div class="ai-sugg">${/^TEXT_(SPELLING|GRAMMAR|INCOMPLETE)$/.test(f.code) ? 'Suggested correction' : f.code === 'LINK_WRONG_PAGE' ? 'Should open' : /^AI_TEXT/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
+      ${full && f.ai.suggestion ? `<div class="ai-sugg">${/^TEXT_(SPELLING|GRAMMAR|INCOMPLETE)$/.test(f.code) ? 'Suggested correction' : f.code === 'LINK_WRONG_PAGE' ? 'Should open' : /^AI_(TEXT|PAGE)/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
   }
 
   async function checkProfiles(truth) {
@@ -11079,6 +11079,17 @@
     const picked = shown.filter((f) => pick.ids.has(f.id));
     const pickedRe = picked.filter(canRecheck);
     const allPicked = shown.length > 0 && picked.length === shown.length;
+    // The selection bar on its own, so ticking a box redraws only the bar (not the whole page).
+    const bulkHtml = () => {
+      const picked = shown.filter((f) => pick.ids.has(f.id)); const pickedRe = picked.filter(canRecheck);
+      return picked.length ? `<div class="bulkbar" id="bulkBar">
+          <b>${picked.length} selected</b>
+          ${can('item.status') ? `<select id="bulkSt" title="Set the status of every selected item"><option value="">Set status…</option>${FSTATUS.map((x) => `<option value="${x.v}">${x.label}</option>`).join('')}</select>` : ''}
+          ${can('item.assign') ? `<select id="bulkWho" title="Assign every selected item" data-people><option value="__">Assign to…</option>${userOptions('__none', 'Unassigned')}</select>` : ''}
+          ${can('item.status') ? `<button class="btn sm" id="bulkRe" ${pickedRe.length ? '' : 'disabled'} title="${pickedRe.length ? 'Rescan only the pages these items are on, and check whether they are still there' : 'None of the selected items can be rechecked on their own'}">⟳ Recheck ${pickedRe.length}${pickedRe.length < picked.length ? ` of ${picked.length}` : ''}</button>` : ''}
+          <span class="spacer"></span><button class="linkbtn" id="bulkClear">Clear selection</button>
+        </div>` : '<div id="bulkBar" hidden></div>';
+    };
     // Where the selection bar should stop when it sticks: just below the top bar, whatever its height.
     { const tb = $('.topbar'); if (tb) document.documentElement.style.setProperty('--topbar-h', tb.offsetHeight + 'px'); }
     const socials = Object.entries(t.socials || {}).map(([k, v]) => {
@@ -11196,13 +11207,7 @@
           <div><b>No audit items match these filters.</b></div>
           <div class="small muted" style="margin:6px 0 10px">This website has ${findings.length} audit item${findings.length === 1 ? '' : 's'}${activeFilters(ff).length ? `, hidden by: <b>${esc(activeFilters(ff).join(', '))}</b>` : ''}.</div>
           <button class="btn sm primary" id="ffClear">Clear filters</button></div>` : `
-        ${picked.length ? `<div class="bulkbar" id="bulkBar">
-          <b>${picked.length} selected</b>
-          ${can('item.status') ? `<select id="bulkSt" title="Set the status of every selected item"><option value="">Set status…</option>${FSTATUS.map((x) => `<option value="${x.v}">${x.label}</option>`).join('')}</select>` : ''}
-          ${can('item.assign') ? `<select id="bulkWho" title="Assign every selected item" data-people><option value="__">Assign to…</option>${userOptions('__none', 'Unassigned')}</select>` : ''}
-          ${can('item.status') ? `<button class="btn sm" id="bulkRe" ${pickedRe.length ? '' : 'disabled'} title="${pickedRe.length ? 'Rescan only the pages these items are on, and check whether they are still there' : 'None of the selected items can be rechecked on their own'}">⟳ Recheck ${pickedRe.length}${pickedRe.length < picked.length ? ` of ${picked.length}` : ''}</button>` : ''}
-          <span class="spacer"></span><button class="linkbtn" id="bulkClear">Clear selection</button>
-        </div>` : ''}
+        ${bulkHtml()}
         <div class="table-wrap"><table class="grid findings">
           <thead><tr><th class="pick-col"><input type="checkbox" id="pickAll" ${allPicked ? 'checked' : ''} title="Select every item shown"></th><th>ID</th><th>Status</th><th>Severity</th><th>Page / path</th><th>Where</th><th>Unique CSS selector</th><th>Finding</th><th title="Comments">💬</th><th>Assignee</th></tr></thead>
           <tbody>${shown.map((f) => {
@@ -11299,10 +11304,20 @@
     $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
     // Several at once. Each goes through setFinding like a single change, so False alarm still asks for
     // one reason (applied to every selected item) and For clarification still asks its one question.
-    $$('[data-pick]', body).forEach((cb) => (cb.onchange = () => { if (cb.checked) pick.ids.add(cb.dataset.pick); else pick.ids.delete(cb.dataset.pick); renderSite(); }));
-    if ($('#pickAll', body)) $('#pickAll', body).onchange = (e) => { if (e.target.checked) shown.forEach((f) => pick.ids.add(f.id)); else pick.ids.clear(); renderSite(); };
-    if ($('#bulkClear', body)) $('#bulkClear', body).onclick = () => { pick.ids.clear(); renderSite(); };
+    // Ticking a box changes only that row, the "select all" box and the bar: redrawing the whole page
+    // on every tick took about 2 seconds on a website with many items.
+    const pickedNow = () => shown.filter((f) => pick.ids.has(f.id));
+    const syncPick = () => {
+      $$('[data-pick]', body).forEach((cb) => { const on = pick.ids.has(cb.dataset.pick); cb.checked = on; const tr = cb.closest('tr'); if (tr) tr.classList.toggle('picked', on); });
+      const all = $('#pickAll', body); if (all) all.checked = shown.length > 0 && pickedNow().length === shown.length;
+      const bar = $('#bulkBar', body); if (bar) { bar.outerHTML = bulkHtml(); bindBulk(); }
+    };
+    $$('[data-pick]', body).forEach((cb) => (cb.onchange = () => { if (cb.checked) pick.ids.add(cb.dataset.pick); else pick.ids.delete(cb.dataset.pick); syncPick(); }));
+    if ($('#pickAll', body)) $('#pickAll', body).onchange = (e) => { if (e.target.checked) shown.forEach((f) => pick.ids.add(f.id)); else pick.ids.clear(); syncPick(); };
+    function bindBulk() {
+    if ($('#bulkClear', body)) $('#bulkClear', body).onclick = () => { pick.ids.clear(); syncPick(); };
     if ($('#bulkSt', body)) $('#bulkSt', body).onchange = async (e) => {
+      const picked = pickedNow();
       const v = e.target.value; if (!v) return;
       const ids = picked.filter((f) => f.status !== v).map((f) => f.id);
       if (!ids.length) { toast(`Already ${FLABEL[v]}`); e.target.value = ''; return; }
@@ -11311,13 +11326,16 @@
       await setFinding(s, ids, { status: v });
     };
     if ($('#bulkWho', body)) $('#bulkWho', body).onchange = async (e) => {
+      const picked = pickedNow();
       const v = e.target.value; if (v === '__') return;
       const ids = picked.filter((f) => (f.assignee || '') !== v).map((f) => f.id);
       if (!ids.length) { toast('Already assigned'); e.target.value = '__'; return; }
       pick.ids.clear();
       await setFinding(s, ids, { assignee: v });
     };
-    if ($('#bulkRe', body)) $('#bulkRe', body).onclick = () => recheckItems(s, picked.map((f) => f.id));
+    if ($('#bulkRe', body)) $('#bulkRe', body).onclick = () => recheckItems(s, pickedNow().map((f) => f.id));
+    }
+    bindBulk();
     $$('[data-recheck]', body).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); recheckItems(s, [b.dataset.recheck]); }));
     if ($('#ffAdd', body)) $('#ffAdd', body).onclick = () => openAddItem(s);
     if ($('#ffClear', body)) $('#ffClear', body).onclick = () => { clearFilters(); renderSite(); };

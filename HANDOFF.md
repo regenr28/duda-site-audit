@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **175**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **177**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 174: styles v47, demo v2, engine v18, app v55).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 176: styles v47, demo v2, engine v19, app v56).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -314,3 +314,13 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 ## 174 — A hidden "Button" (display:none) is not reported
 - `engine.js`: a default label that is exactly "Button" and hidden by display:none (`hiddenReason` contains `display: none`) is skipped. Every other `DEFAULT_LABEL` ("Heading", "Caption"…) and a "Button" hidden another way are still reported (asked for "just the Button for now"). A Duda photo gallery with captions switched off keeps `.caption-container` (display:none) with a "Button" per picture; that was reported as critical. Other placeholders (notes like "[Matthew: confirm…]", "insert … here") are still reported when hidden. CHECK_RELEASES v32 (no `fixes`: PLACEHOLDER covers real notes too, so it is not declared corrected; the old items close on rescan).
 - Test: `tests/tk/engine_textai.py` (gallery caption "Button" hidden → nothing; a visible "Button" → still critical).
+
+## 175 — Ticking audit items no longer redraws the page
+- Audit items list: ticking a box (or select all, or Clear selection) used to call `renderSite()`, rebuilding the whole audit page (every row, the filters, the people pickers) on each tick: about 2 seconds on a big website. Now `syncPick()` only updates the ticked rows' `picked` class, the select-all box and the selection bar (`bulkHtml()` + `bindBulk()`; `#bulkBar` is always in the page, hidden when nothing is ticked). The bar's actions read the selection when used (`pickedNow()`).
+- Test: `tests/tk/e2e_pick.py` (400 items: 10 ticks, untick, Set status on 9, select all, clear).
+
+## 176 — A town page is about its town (AI page check)
+- `applyPageFit` (engine.js) drops a `wrong_city` verdict whose quote names the town in the page's own address (`pathNamesPlace`) unless the AI's suggestion keeps that town too. The AI had told /brentwood-window-tinting that "…in Brentwood, TN" should say Franklin (where the shop is).
+- `slugTown(p)`: the address words that are not a service and that the title/H1 also says ("brentwood"), sent as `urlPlace` when `placeOfPath` finds none (it only knows /…-tn and /locations/…). PAGEFIT_SYSTEM now says the town comes from the address, never from where the business is. Cache key `f1` → `f2`. CHECK_RELEASES v33.
+- The AI box said "Suggested alt text" on page checks; `AI_PAGE_*` now says "Suggested wording".
+- Test: `tests/tk/engine_textai.py`.

@@ -68,5 +68,17 @@ with sync_playwright() as p:
     }""")
     print('  default labels:', g, flush=True)
     check(len(g) == 2 and any('vis1' in x for x in g) and any('hid2' in x for x in g), 'a "Button" hidden with display:none (a gallery caption switched off) is not reported; a visible "Button" and a hidden "Heading" still are')
+    w = pg.evaluate("""() => {
+      const A = window.DudaAudit;
+      const truth = A.buildTruth({ site: { site_business_info: { business_name: '86 Auto Lab' } }, content: { location_data: { address: { streetAddress: '1552 Columbia Avenue', city: 'Franklin', region: 'TN' } } } }, null, null);
+      const fit = [{ path: '/brentwood-window-tinting', title: 'Window Tinting in Brentwood, TN | 86 Auto Lab', h1: ['Vehicle Window Tinting Experts in Brentwood, TN'], h1Sel: '[id="1890273695"] > h1' },
+                   { path: '/locations/temple-tx', title: 'Ceramic Coating in Temple, TX', h1: ["Copperas Cove's top provider"], h1Sel: 'h1' }];
+      const issues = [{ i: 0, type: 'wrong_city', part: 'h1', quote: 'Vehicle Window Tinting Experts in Brentwood, TN', confidence: 0.95, reason: 'Address is /brentwood-window-tinting but business is located in Franklin, TN.', suggestion: 'Vehicle Window Tinting Experts in Franklin, TN' },
+                      { i: 1, type: 'wrong_city', part: 'h1', quote: "Copperas Cove's top provider", confidence: 0.9, reason: 'Temple page names Copperas Cove', suggestion: "Temple's top provider" }];
+      return A.applyPageFit([], fit, issues, truth).map((f) => f.path + ' ' + f.found);
+    }""")
+    print('  page fit:', w, flush=True)
+    check(not any('brentwood' in x for x in w), 'a /brentwood-window-tinting page whose H1 says Brentwood is not "a different town" (even with the shop in Franklin)')
+    check(any('temple' in x and 'Copperas Cove' in x for x in w), 'a town page whose H1 names another town is still reported')
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED')
