@@ -38,5 +38,19 @@ with sync_playwright() as p:
       return res.findings.filter((f) => f.category === 'Social').map((f) => f.code + ' ' + f.found);
     }""")
     check(v == ['SOCIAL_OTHER_BUSINESS https://www.youtube.com/@someoneelse'], 'a YouTube video link is not judged as an account; a link to another channel still is: ' + str(v))
+    m = pg.evaluate("""async () => {
+      const A = window.DudaAudit;
+      const emb = (label) => `<iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3231.6!2d-86.87!3d35.90!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x88643071a625fb8d%3A0xb65fed8c464b2d5!2s${encodeURIComponent(label)}!5e0!3m2!1sen!2sus!4v1760556978778!5m2!1sen!2sus"></iframe>`;
+      const html = `<html><head><title>Home | 86 Auto Lab</title></head><body><div id="dmcontent"><h1>86 Auto Lab</h1><p>Hello there friends.</p></div>
+        <div id="fcontainer">${emb('86 Auto Lab Franklin : PPF Paint Protection Film | Ceramic Coating | Window Tint | Color Change Wrap')}</div>
+        <div>${emb('4821 Elm Ridge Rd, Plano, TX 75023')}</div></body></html>`;
+      const truth = A.buildTruth({ site: { site_business_info: { business_name: '86 Auto Lab' } }, content: { location_data: { address: { streetAddress: '1552 Columbia Avenue', city: 'Franklin', region: 'TN', postalCode: '37064' } } } }, null, null);
+      const res = await A.runScan({ siteId: 'abc', host: 'x', truth, pagesMeta: {}, seedPaths: ['/'], maxPages: 1, devices: ['desktop'], concurrency: 1,
+        fetchPage: async () => ({ status: 200, html, url: 'https://x/site/abc' }), checkUrls: async () => [], imageHashes: async () => ({}), saveImageHashes: async () => {} });
+      return { streets: truth.addresses.map((a) => a.street), maps: res.findings.filter((f) => /^MAP_/.test(f.code)).map((f) => f.code + ' ' + f.found) };
+    }""")
+    print('  map findings:', m, flush=True)
+    check(not any('86 Auto Lab Franklin' in x for x in m['maps']), 'a map labelled with the business name that starts with a number ("86 Auto Lab Franklin…") is not "a different address"')
+    check(any('4821 Elm Ridge' in x for x in m['maps']) or not m['streets'], 'a map showing another street address is still flagged')
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED')

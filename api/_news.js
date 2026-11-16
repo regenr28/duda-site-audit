@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-map-number', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: 'Map embeds of businesses whose name starts with a number are no longer "a different address"',
+    what: 'A Google Map labelled "86 Auto Lab Franklin…" was read as the street address "86 …" and flagged as critical. A map label now counts as an address only when it reads like one (a street word, or ", TN"), and one that names the business is fine. A rescan closes the wrong items.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>Rescan</b>.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-16-queued-why', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: '"Queued" now says why, and can be cancelled',
     what: 'A website waiting to be scanned says why at the top of the audit: your tab scans 2 websites at a time, so it names the two it is busy with and how far they are. <b>Take it out of the line</b> cancels it. When somebody else is scanning a website, everyone sees who and how far their scan has got (on the audit and in the Audits list), and that the hold runs out by itself if their tab was closed.',

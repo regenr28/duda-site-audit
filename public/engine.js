@@ -383,6 +383,14 @@
         'The auto audit asks YouTube whose channel each video is on: their own channel (Business Info\'s YouTube, or their business name) is fine; another channel is a warning that names it',
       ],
     },
+    {
+      v: 31,
+      date: '2026-11-16',
+      title: 'Google Map embeds of a business whose name starts with a number',
+      items: [
+        'A map labelled "86 Auto Lab Franklin…" was read as the street address "86 …" and called "Google Map embed shows a different address". A label is only an address when it reads like one (a street word, or ", TN"), and one that names the business is fine',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -2216,7 +2224,10 @@
       if (/google\.[a-z.]+\/maps|maps\.google/i.test(src)) {
         const place = placeNameFromUrl(src);
         if (place && truth.businessName) {
-          const addrLike = /^\d+\s/.test(place) || /,\s*[A-Z]{2}\b/.test(place);
+          // A label that starts with a number is an address only when it reads like one ("1552 Columbia
+          // Ave", "…, TN"): a business whose name starts with a number ("86 Auto Lab Franklin") is a name.
+          const STREET_WORD = /\b(st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|way|hwy|highway|pkwy|parkway|ct|court|cir|circle|pl|place|pike|trl|trail|suite|ste|unit|bldg|building)\b\.?/i;
+          const addrLike = !matchesBusiness(place, truth) && ((/^\d+\s/.test(place) && STREET_WORD.test(place)) || /,\s*[A-Z]{2}\b/.test(place));
           if (addrLike) {
             const num = (place.match(/^\d+/) || [''])[0];
             const streets = truth.addresses.filter((x) => x.street);
