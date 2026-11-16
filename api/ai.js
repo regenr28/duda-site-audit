@@ -365,6 +365,8 @@ Report these problem types:
 - "other_business": the text names a different business as if it were this one ("here at Smith's Detailing", "call Joe's Auto Spa today", "© 2023 Shine Pros LLC"). Usually leftover from a previous client.
 - "wrong_location": the text says this business is in, or serves, a city/state that conflicts with its location. Its own city, nearby towns in the same metro/state, and places that have their own service-area page on this site are fine, EXCEPT on a page whose URL names a different town: on /locations/temple-tx/..., a title or heading presenting the shop as "Copperas Cove's top provider" is wrong_location (left over from the Copperas Cove page). A page whose own URL names a town (e.g. /auto-detailing-located-in-aberdeen) IS a location page for that town, so its title, headings and copy are SUPPOSED to name it — never report that. Be conservative; mentions of where a customer or car came from are fine.
 - "name_variant": this business's own name written in a clearly different way (different or missing words, e.g. "Upscale Detailing Co" vs "Upscale Detail Co."). Ignore capitalization, punctuation, "&" vs "and", and adding/removing LLC/Inc/Co.
+A block can be only PART of a paragraph: the words up to a link or a bold word. Then "in" gives the whole paragraph. Read the block inside it: a block that stops before a link ("our team at" + the link "86 Auto Lab") is not cut off and does not name another business. Report only what the block itself says.
+"other_business" needs another business's NAME in the quote. A missing name, an unfinished sentence or generic words ("our team", "the shop") are never "other_business".
 Do not report spelling, grammar, style or anything else. Most blocks have no problem: return nothing for them.
 Respond with JSON only: {"results":[{"i":<block number>,"type":"<type>","quote":"<the exact words from the block, max 15 words>","confidence":<0..1>,"reason":"<max 20 words>","suggestion":"<corrected wording>"}]}. Use {"results":[]} if there are no problems.`;
 
@@ -555,8 +557,8 @@ const altPrompt = (b, items) => `${businessHeader(b)}
 ALT TEXTS (i | page | where | logo type | alt text | image file)
 ${items.map((x) => `${x.i} | ${String((x.pages && x.pages[0]) || x.page || '/').slice(0, 80)} | ${x.location || 'Body'} | ${x.isLogo ? 'site-logo' : x.brandLogo ? `brand-logo${x.logoRow >= 3 ? ` (in a row of ${x.logoRow} logos)` : ''}` : '-'} | ${String(x.alt).replace(/\s+/g, ' ').slice(0, 300)} | ${String(x.file || '').slice(0, 80)}`).join('\n')}`;
 const textPrompt = (b, items) => `${businessHeader(b)}
-TEXT BLOCKS (each starts with [i] then where it appears)
-${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n')}`;
+TEXT BLOCKS (each starts with [i] then where it appears; "in:" is the whole paragraph when the block is only part of it)
+${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}${x.in ? `\n    in: ${String(x.in).replace(/\s+/g, ' ').slice(0, 1500)}` : ''}`).join('\n')}`;
 
 // ---------- look at the actual image (Gemini can see images; used only for alts flagged as another business) ----------
 const IMG_HOSTS = /(^|\.)(cdn-website\.com|multiscreensite\.com|dudamobile\.com|cdn\.dudaone\.com|irp\.cdn-website\.com)$/i;
@@ -695,7 +697,8 @@ async function handler(req, res) {
     // Cache per business + item, so the same alt text / paragraph is never paid for twice
     // One small hash per business holds every cached answer for it (much lighter than one key per item)
     const cacheKey = P + 'aic:' + sha([business.name, business.city, business.region, (business.areaPages || []).length].join('|')).slice(0, 20);
-    const keyOf = (x) => (b.op === 'alt' ? 'a2' : 't') + sha([x[field], x.isLogo ? 1 : 0, b.op === 'alt' ? (x.brandLogo ? 'b' : '') + (x.logoRow || 0) : ''].join('|')).slice(0, 18);
+    // A piece of text sent with its whole paragraph ("in") is a different question from the piece alone.
+    const keyOf = (x) => (b.op === 'alt' ? 'a2' : x.in ? 't2' : 't') + sha([x[field], x.isLogo ? 1 : 0, b.op === 'alt' ? (x.brandLogo ? 'b' : '') + (x.logoRow || 0) : '', x.in || ''].join('|')).slice(0, 18);
     const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
     const cached = cachedRaw || [];
     const results = []; const todo = [];

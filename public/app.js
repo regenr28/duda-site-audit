@@ -6946,7 +6946,7 @@
     res.texts.forEach((b, i) => {
       if (skip.has('text|' + ((b.pages || [])[0] || '/'))) return;
       if (!worth(b)) { skipped++; return; }
-      if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, CUT), location: b.location, page: b.pages[0] }); total += Math.min(CUT, b.text.length); }
+      if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, CUT), location: b.location, page: b.pages[0], ...(b.para ? { in: b.para.slice(0, 1500) } : {}) }); total += Math.min(CUT, b.text.length) + (b.para ? Math.min(1500, b.para.length) / 3 : 0); }
     });
     const batches = []; let cur = [], size = 0;
     blocks.forEach((b) => { if (cur.length && (size + b.text.length > BATCH_CHARS || cur.length >= BATCH_ITEMS)) { batches.push(cur); cur = []; size = 0; } cur.push(b); size += b.text.length; });

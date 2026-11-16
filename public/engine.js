@@ -376,8 +376,9 @@
     {
       v: 30,
       date: '2026-11-16',
-      title: 'Video and post links are no longer read as somebody else\'s account',
+      title: 'Fewer false "not theirs": video links, and text cut where a link starts',
       items: [
+        'The AI business-name check reads each piece of text with its whole paragraph: "our team at" followed by the link "86 Auto Lab" is not another business, and a quote with no name in it is never "names a different business"',
         'A link to a YouTube video (watch, youtu.be, Shorts, embed, live), a Facebook video or an Instagram post names no account, so it is not called "a link to an account that is not theirs" any more',
         'The auto audit asks YouTube whose channel each video is on: their own channel (Business Info\'s YouTube, or their business name) is fine; another channel is a warning that names it',
       ],
@@ -2271,7 +2272,14 @@
       external: Array.from(external.keys()).map((url) => ({ url, selector: uniqueSelector(external.get(url).el), location: locationOf(external.get(url).el), hiddenBy: hiddenReason(external.get(url).el, device) || '' })),
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
       alts: altList,
-      textIndex: textIndex.map((x) => { const hd = x.el.closest && x.el.closest('h1, h2, h3, h4, h5, h6'); return { text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '', ...(hd ? { heading: hd.tagName } : {}) }; }),
+      textIndex: textIndex.map((x) => {
+        const hd = x.el.closest && x.el.closest('h1, h2, h3, h4, h5, h6');
+        // The whole paragraph a piece of text sits in, when the piece is only part of it: "our team at"
+        // is cut where the link "86 Auto Lab" starts, and read alone it looks unfinished or nameless.
+        const box = x.el.closest && x.el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, .dmNewParagraph, [data-element-type="paragraph"]');
+        const para = box ? clean(box.textContent) : '';
+        return { text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '', ...(hd ? { heading: hd.tagName } : {}), ...(para && para.length > x.text.length + 2 && para.length < 3000 ? { para } : {}) };
+      }),
       prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       ...(ctx.copy ? { copy: pageCopy(body, device) } : {}),
       fonts,
@@ -3140,7 +3148,7 @@
       (rows || textIdx).forEach((x) => {
         if (x.text.length < (rows ? 12 : 25)) return;
         let m = map.get(x.text);
-        if (!m) { if (map.size >= 2500) return; m = { text: x.text, selector: x.selector, location: x.location, pages: [], devices: [], visibleOn: [], hiddenOn: [] }; map.set(x.text, m); }
+        if (!m) { if (map.size >= 2500) return; m = { text: x.text, selector: x.selector, location: x.location, pages: [], devices: [], visibleOn: [], hiddenOn: [], ...(x.para ? { para: x.para } : {}) }; map.set(x.text, m); }
         if (!m.pages.includes(x.path)) m.pages.push(x.path);
         if (!m.devices.includes(x.device)) m.devices.push(x.device);
         if (!x.hiddenBy) { if (!m.visibleOn.includes(x.device)) m.visibleOn.push(x.device); } else if (m.hiddenOn.length < 6) m.hiddenOn.push(`${DEVICE_LABEL[x.device]} (${x.hiddenBy})`);
@@ -3276,6 +3284,15 @@
     issues.forEach((v) => {
       const blk = texts[v.i];
       if (!blk || !RULES[v.type] || Number(v.confidence) < 0.6) return;
+      // "Names another business" has to quote a name. Words with no name in them ("our team at") are a
+      // piece of a sentence that goes on in a link (often the business's own name), not another business.
+      if (v.type === 'other_business') {
+        const q = String(v.quote || '').trim(); const words = q.split(/\s+/).filter(Boolean);
+        const named = words.length <= 2 ? /[A-Z0-9]/.test(q) : /[A-Z0-9]/.test(words.slice(1).join(' ')) || /\b(llc|inc|co)\b/i.test(q);
+        if (!q || !named) return;
+        // The quote followed, in its paragraph, by this business's own name: it is theirs.
+        if (blk.para) { const at2 = blk.para.toLowerCase().indexOf(q.toLowerCase()); if (at2 >= 0 && matchesBusiness(blk.para.slice(at2, at2 + q.length + 60), truth)) return; }
+      }
       // Matched against the flagged WORDS only — not the model's commentary, and not the whole page.
       // A location page can still wrongly claim a different town somewhere in its copy, and that
       // has to keep coming through.

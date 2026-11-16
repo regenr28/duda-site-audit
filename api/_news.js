@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-ai-fragments', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: '"AI: text names a different business" no longer fires on text cut by a link',
+    what: 'A sentence like "our team at <b>86 Auto Lab</b>", where the business name is a link, reached the AI as "our team at" on its own, and it was flagged as naming a different business. The AI now reads each piece of text with its whole paragraph, and an item has to quote a real name to count as another business. A rescan closes the wrong items.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>Rescan</b>.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-16-yt-videos', date: '2026-11-16', audience: 'all', tag: 'Auto audit',
     title: 'YouTube video links are no longer "an account that is not theirs"',
     what: 'A link to a YouTube video (youtube.com/watch?v=…) was read as a channel called "watch" and flagged as super critical. Now the app asks YouTube whose channel the video is on: their own channel (Business Info\'s YouTube, or their business name) is fine; a video on another channel is a warning that names the channel. Facebook videos and Instagram posts are no longer judged as accounts either. The wrong items go away at the next auto audit or rescan.',
