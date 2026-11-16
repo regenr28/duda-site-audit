@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-timezone', date: '2026-11-16', audience: 'all', tag: 'Account',
+    title: 'Your own time zone, and dragging another tab\'s line that sticks',
+    what: 'Set <b>Time zone</b> in your account (your picture, top right): every date and time in the app is shown in it, and each person sees their own. The activity log also shows the time for the person who did it when their zone is different. Dragging another tab\'s scan line now keeps the new order on screen while that tab takes it; a tab on an older version of the app is marked, with what to do (reload it).',
+    where: ['<b>Walkthrough:</b> your picture (top right) → <b>Time zone</b> → Save.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-16-scan-line-3', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: 'Scan line: drag any line, and every row says auto audit or by hand, and why',
     what: 'Every row in the scan line now says <b>🤖 Auto audit</b> or <b>👤 By hand</b> (and which kind), and <b>Why</b> it was added. Any line can be dragged into a new order, another person\'s tab included (it changes there within 15 seconds and notes who moved it). A tab still on an older version of the app says it cannot tell: reload that tab.',

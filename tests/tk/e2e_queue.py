@@ -119,6 +119,7 @@ try:
         pg2.click('#btnScans'); pg2.wait_for_selector('#slBody'); time.sleep(16)
         old = pg2.inner_text('#slBody')
         check('kind not known' in old and 'not recorded' in old and 'reload it' in old, 'a scan from a tab on an older version says the kind and reason are not known, and to reload that tab')
+        check('This tab runs an older version of the app' in old and 'reload it' in old, 'a whole tab on an older version is called out, with what to do')
         pg2.click('[data-close]')
         # Other tabs' scans are refreshed every 15 seconds, so they don't vanish here while still running.
         asked = []; pg2.on('request', lambda r: asked.append(r.url) if 'op=claims' in r.url else None)
@@ -141,6 +142,12 @@ try:
         for r in HELD:
             try: r.abort()
             except Exception: pass
+        # Time zone: everyone sees the app's dates in their own zone.
+        st = pg2.evaluate("async () => (await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'profile', name: 'Reymark R', tz: 'America/Chicago' }) })).status")
+        pg2.reload(); pg2.wait_for_selector('#btnMe', timeout=20000); time.sleep(1)
+        shown = pg2.evaluate("() => new Date('2026-11-16T12:00:00Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })")
+        check(st == 200 and shown.startswith('6:00'), f'a time zone chosen in the account is used for every date in the app (noon UTC shows {shown} in Chicago)')
+        pg2.click('#btnMe'); pg2.wait_for_selector('#meTz'); check(pg2.input_value('#meTz') == 'America/Chicago', 'the account shows the chosen time zone'); pg2.click('[data-close]')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

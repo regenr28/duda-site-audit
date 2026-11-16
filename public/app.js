@@ -39,6 +39,23 @@
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z]+/g, '-');
+  // Everyone's own time zone (Your account → Time zone). Every date the app writes goes through the
+  // browser's toLocale…String, so they are pointed at it here once; empty = this computer's zone.
+  const userTz = () => (state && state.me && state.me.tz) || '';
+  ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString'].forEach((fn) => {
+    const orig = Date.prototype[fn];
+    Date.prototype[fn] = function (loc, opts) {
+      const tz = userTz();
+      if (!tz || (opts && opts.timeZone)) return orig.call(this, loc, opts);
+      try { return orig.call(this, loc, Object.assign({}, opts || {}, { timeZone: tz })); } catch (e) { return orig.call(this, loc, opts); }
+    };
+  });
+  /** The time as the person who did something saw it, when their zone differs from yours: "9:38 AM for them". */
+  function theirTime(who, iso) {
+    const u = (state.users || []).find((x) => x.email === who); const tz = u && u.tz;
+    if (!tz || tz === (userTz() || Intl.DateTimeFormat().resolvedOptions().timeZone) || !iso) return '';
+    try { const t = new Date(iso).toLocaleString(undefined, { timeZone: tz, weekday: 'short', hour: 'numeric', minute: '2-digit' }); return `${t} for ${(u.name || '').split(' ')[0] || 'them'}`; } catch (e) { return ''; }
+  }
   const fmtDate = (d) => d ? new Date(d).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
   const ago = (d) => {
     if (!d) return ''; const s = (Date.now() - new Date(d).getTime()) / 1000;
@@ -1382,6 +1399,11 @@
       <label class="field">Display name <span class="small muted">your real full name</span><input type="text" id="meName" value="${esc(state.me.name)}"></label>
       <label class="field">Initials for backups <span class="small muted">the letters in the backups you make in Duda</span><input type="text" id="meIni" maxlength="4" placeholder="${esc(myInitials(state.me.name))}" value="${esc(state.me.backupInitials || '')}" style="max-width:120px;text-transform:uppercase">
         <span class="small muted" id="meIniEg">Your backups are named <span class="mono">R8${esc(state.me.backupInitials || myInitials(state.me.name))}_b4_audit_${esc(backupStamp())}</span>. Leave it empty to use the first letters of your name.</span></label>
+      <label class="field">Time zone <span class="small muted">every date and time in the app is shown in it; others see theirs</span>
+        <select id="meTz">${(() => { const here = Intl.DateTimeFormat().resolvedOptions().timeZone; let zones = []; try { zones = Intl.supportedValuesOf('timeZone'); } catch (e) { zones = [here, 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Europe/London', 'Australia/Sydney', 'UTC']; }
+          const cur = state.me.tz || ''; const nowD = new Date();
+          const lbl = (z) => { try { return `${z.replace(/_/g, ' ')} (${nowD.toLocaleTimeString([], { timeZone: z, hour: 'numeric', minute: '2-digit' })})`; } catch (e) { return z; } };
+          return `<option value="" ${!cur ? 'selected' : ''}>This computer's (${esc(here.replace(/_/g, ' '))})</option>` + zones.map((z) => `<option value="${esc(z)}" ${z === cur ? 'selected' : ''}>${esc(lbl(z))}</option>`).join(''); })()}</select></label>
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <button class="btn sm" id="meTest" type="button" style="justify-self:start">Show a test notification</button>
@@ -1425,7 +1447,7 @@
       // Read the grid BEFORE the modal closes, and keep any switch the master Slack toggle disabled.
       const shown = new Set($$('[data-ng]').map((i) => i.dataset.ng));
       const notifyOff = [...new Set(readNotifyGrid().concat((state.me.notifyOff || []).filter((k) => !shown.has(k))))];
-      try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, backupInitials: $('#meIni') ? $('#meIni').value : undefined, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value, notifyOff }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); }
+      try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, backupInitials: $('#meIni') ? $('#meIni').value : undefined, tz: $('#meTz') ? $('#meTz').value : undefined, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value, notifyOff }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); }
     };
   }
 
@@ -6778,7 +6800,21 @@
       const row = { id, name: siteName(id), k: c.k || '', p: c.p || null, pos: c.pos || 0, at: c.qat || c.at, why: c.why || '', mv: c.mv || null, by: c.by, byName: c.byName };
       if (c.state === 'queued') g.queued.push(row); else g.scanning.push(row);
     });
-    const others = Object.values(groups).map((g) => Object.assign(g, { queued: g.queued.sort((a, b) => (a.pos || 1e9) - (b.pos || 1e9) || String(a.at).localeCompare(String(b.at))).map((x, i) => Object.assign(x, { pos: x.pos || i + 1 })) }));
+    const others = Object.values(groups).map((g) => {
+      let q = g.queued.sort((a, b) => (a.pos || 1e9) - (b.pos || 1e9) || String(a.at).localeCompare(String(b.at)));
+      // A tab on an older version sends no kind, no reason and no time it was added: it cannot take changes either.
+      const all = [...g.queued, ...g.scanning];
+      g.old = all.length > 0 && all.every((x) => !x.k && !x.why && !(state.claims[x.id] || {}).qat);
+      // An order somebody here dragged: kept on screen until that tab reports it (or a minute passes).
+      const want = (state.pendingOrder || {})[g.cid];
+      if (want && Date.now() - want.at < 60000) {
+        const now = q.map((x) => x.id).filter((x) => want.ids.includes(x)).join('|');
+        const asked = want.ids.filter((x) => q.some((y) => y.id === x)).join('|');
+        if (now !== asked) { const byId = new Map(q.map((x) => [x.id, x])); q = want.ids.filter((x) => byId.has(x)).map((x) => byId.get(x)).concat(q.filter((x) => !want.ids.includes(x.id))); g.pending = true; }
+        else delete state.pendingOrder[g.cid];
+      } else if (want) { g.stuck = true; delete state.pendingOrder[g.cid]; }
+      return Object.assign(g, { queued: q.map((x, i) => Object.assign(x, { pos: i + 1 })) });
+    });
     const n = { scanning: scanning.length + others.reduce((x, g) => x + g.scanning.length, 0), queued: queued.length + others.reduce((x, g) => x + g.queued.length, 0) };
     return { mine: { scanning, queued }, others, n };
   }
@@ -6882,8 +6918,10 @@
       <div class="small" style="margin-top:8px"><b>In line (${m.mine.queued.length})</b>${m.mine.queued.length > 1 ? ' <button class="linkbtn danger" data-lnclear="1">Take them all out of the line</button>' : ''}</div>
       ${m.mine.queued.length ? `<ol class="ln-list" id="lnMine">${m.mine.queued.map((x) => lineRowHtml(x, { mine: true })).join('')}</ol>` : '<div class="small faint">Nothing waiting.</div>'}
       ${m.others.length ? m.others.map((g) => `<h3>${esc(whoOf(g) === 'Your other tab' ? 'Your other tab' : whoOf(g) + '’s tab')}</h3>
+        ${g.old ? `<div class="note bad small ln-old">⚠ <b>This tab runs an older version of the app</b> (it was opened before an update). It cannot say why or what kind each scan is, and it cannot take changes from here, so its order cannot be changed from this screen. <b>${whoOf(g) === 'Your other tab' ? 'Find that tab of yours (maybe on another computer) and reload it' : 'Ask ' + esc(g.byName || 'its owner') + ' to reload that tab'}</b>: its scans start again in the new version, and then the line can be dragged.</div>` : ''}
+        ${g.pending ? '<div class="small ln-pending">↕ New order sent. That tab takes it within 15 seconds.</div>' : ''}${g.stuck ? '<div class="note bad small">That tab did not take the new order. It is probably on an older version: reload it.</div>' : ''}
         ${g.scanning.length ? `<ol class="ln-list">${g.scanning.map((x) => lineRowHtml(x, { now: true })).join('')}</ol>` : '<div class="small faint">Scanning nothing now.</div>'}
-        ${g.queued.length ? `<div class="small" style="margin-top:8px"><b>In line (${g.queued.length})</b> <span class="faint">drag to change the order; changes are asked of that tab and happen within 15 seconds</span></div><ol class="ln-list ln-other" data-cid="${esc(g.cid)}" data-owner="${esc(whoOf(g) === 'Your other tab' ? 'your other' : g.byName)}">${g.queued.map((x) => lineRowHtml(x, { cid: g.cid, owner: whoOf(g) === 'Your other tab' ? 'your other' : g.byName })).join('')}</ol>` : ''}`).join('') : '<h3>Other tabs</h3><div class="small faint">Nobody else is scanning.</div>'}
+        ${g.queued.length ? `<div class="small" style="margin-top:8px"><b>In line (${g.queued.length})</b> <span class="faint">drag to change the order; changes are asked of that tab and happen within 15 seconds</span></div><ol class="ln-list${g.old ? '' : ' ln-other'}" data-cid="${esc(g.cid)}" data-owner="${esc(whoOf(g) === 'Your other tab' ? 'your other' : g.byName)}">${g.queued.map((x) => lineRowHtml(x, g.old ? {} : { cid: g.cid, owner: whoOf(g) === 'Your other tab' ? 'your other' : g.byName })).join('')}</ol>` : ''}`).join('') : '<h3>Other tabs</h3><div class="small faint">Nobody else is scanning.</div>'}
       <p class="small faint">News from other tabs comes every 20 seconds. If a tab is closed, what it held is let go within a few minutes.</p>`;
     $$('[data-lnlink]', box).forEach((a) => (a.onclick = () => closeModal()));
     $$('[data-lnfront]', box).forEach((b) => (b.onclick = () => { moveToFront(b.dataset.lnfront); drawScanLine(); }));
@@ -6891,10 +6929,8 @@
     if ($('[data-lnclear]', box)) $('[data-lnclear]', box).onclick = () => { if (confirm(`Take all ${state.queue.length} waiting websites out of the line? The ones scanning now carry on.`)) { clearLine(); drawScanLine(); } };
     // Drag to reorder: this tab's line directly, another tab's by asking it.
     $$('ol.ln-other', box).forEach((ol) => bindLineDrag(ol, (id, ids, to) => {
-      $$('li[data-lnid]', ol).forEach((li) => ol.appendChild(li));
-      const byId = new Map($$('li[data-lnid]', ol).map((li) => [li.dataset.lnid, li])); ids.forEach((x) => ol.appendChild(byId.get(x)));
-      $$('li[data-lnid] .ln-n', ol).forEach((n, i) => { n.textContent = i + 1; });
-      askLine(ol.dataset.cid, id, 'order', ol.dataset.owner, ids, to);
+      state.pendingOrder = state.pendingOrder || {}; state.pendingOrder[ol.dataset.cid] = { ids, at: Date.now() };
+      askLine(ol.dataset.cid, id, 'order', ol.dataset.owner, ids, to); drawScanLine();
     }));
     const list = $('#lnMine', box);
     if (list) bindLineDrag(list, (id, ids, to) => { moveInLine(id, to); drawScanLine(); toast(`${siteName(id)} moved to number ${to + 1}.`); });
@@ -12304,7 +12340,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
     body.innerHTML = `<div class="panel panel-pad"><h2>Activity log</h2>${act.length ? `<ul class="activity">${act.map((e) => {
       let text = esc(e.text).replace(/#(\d+)/g, (m, n) => `<a class="item-ref" href="#/site/${esc(s.id)}/item/${n}">#${n}</a>`);
       if (e.commentId && !e.findingNum) text += ` <a href="#/site/${esc(s.id)}/comments" class="small" data-goc="${esc(e.commentId)}">view</a>`;
-      return `<li><span class="a-ic">${ACT_ICON[e.type] || '•'}</span>${avatar(e.by, 24)}<div class="grow"><b>${esc(e.byName || nameOf(e.by))}</b> ${text}</div><div class="a-time"><div>${esc(fmtFull(e.at))}</div><div class="faint">${esc(ago(e.at))}</div></div></li>`;
+      return `<li><span class="a-ic">${ACT_ICON[e.type] || '•'}</span>${avatar(e.by, 24)}<div class="grow"><b>${esc(e.byName || nameOf(e.by))}</b> ${text}</div><div class="a-time"><div>${esc(fmtFull(e.at))}</div>${theirTime(e.by, e.at) ? `<div class="faint" title="Their own time zone">${esc(theirTime(e.by, e.at))}</div>` : ''}<div class="faint">${esc(ago(e.at))}</div></div></li>`;
     }).join('')}</ul>` : '<div class="empty small">No activity yet.</div>'}</div>`;
     $$('[data-goc]', body).forEach((a) => (a.onclick = () => setTimeout(() => { const t = document.getElementById('c-' + a.dataset.goc); if (t) { t.scrollIntoView({ block: 'center' }); t.classList.add('flash'); } }, 300)));
   }

@@ -2360,3 +2360,6 @@ ol.ln-list { list-style: none; }
 
 .ln-auto-chip { background: var(--warn-soft); color: var(--warn); font-size: 11px; }
 .ln-hand-chip { background: var(--accent-soft); color: var(--accent); font-size: 11px; }
+
+.ln-old { margin: 4px 0 8px; }
+.ln-pending { color: var(--accent); margin: 2px 0 6px; }

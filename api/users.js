@@ -50,6 +50,11 @@ async function handler(req, res) {
       // How long pop-up notifications stay on screen (seconds; 0 = until closed)
       if (b.notifySecs !== undefined) { const n = Number(b.notifySecs); if (Number.isFinite(n) && n >= 0 && n <= 600) me.notifySecs = Math.round(n); }
       if (b.slackDM !== undefined) me.slackDM = !!b.slackDM;
+      // The person's time zone: every date in the app is shown in it. Empty = their computer's.
+      if (b.tz !== undefined) {
+        const z = String(b.tz || '').slice(0, 64);
+        if (z) { try { new Intl.DateTimeFormat('en-US', { timeZone: z }); me.tz = z; } catch (e) { return res.status(400).json({ error: 'Unknown time zone.' }); } } else delete me.tz;
+      }
       // The letters in this person's Duda backup names (R8<letters>_b4_audit_…). Empty: worked out from the name.
       if (b.backupInitials !== undefined) { const v = String(b.backupInitials || '').trim().toUpperCase(); if (v && !/^[A-Z]{1,4}$/.test(v)) return res.status(400).json({ error: 'Initials for backups: 1 to 4 letters, no numbers or spaces.' }); if (v) me.backupInitials = v; else delete me.backupInitials; }
       // Which notifications this person has switched off, as "group:channel". Only the switches the
