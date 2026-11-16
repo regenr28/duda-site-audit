@@ -37,7 +37,11 @@ async function handler(req, res) {
     const presence = {};
     for (let i = 0; pres && i < pres.length; i += 2) presence[pres[i]] = jparse(pres[i + 1], {});
     const items = (list || []).map((x) => jparse(x)).filter(Boolean);
-    return res.status(200).json({ presence, serverTime: now(), cmtVer: String(cmtVer || 0), accessVer: String(accessVer || 0),
+    // Every scan running or waiting anywhere (who, which website, how far), for the scan line.
+    const [cl] = await redis(['HGETALL', P + 'scanclaims']);
+    const claims = {};
+    for (let i = 0; cl && i < cl.length; i += 2) { const c = jparse(cl[i + 1]); if (c && c.until > Date.now()) claims[cl[i]] = c; }
+    return res.status(200).json({ presence, serverTime: now(), claims, cmtVer: String(cmtVer || 0), accessVer: String(accessVer || 0),
       lq: isCopy() ? { pending: 0, tidyDone: true } : { pending: Number(lqLen || 0), tidyDone: tidyV === TIDY_VERSION }, wq: isCopy() ? 0 : Number(wDue || 0) + Number(pDue || 0), notifs: wantNotifs ? { items, unread: items.filter((n) => !seen || n.at > seen).length } : null });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });

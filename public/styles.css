@@ -2326,3 +2326,21 @@ html.demo-mode iframe { pointer-events: none; }
 
 .scan-why { margin-top: 6px; line-height: 1.5; }
 .scan-why a { font-weight: 600; }
+
+/* The scan line: chip in the top bar, bar on Audits, the pop-up list */
+.scan-chip { font-size: 13px; font-weight: 600; gap: 4px; }
+.scan-chip .sc-spin { display: inline-block; animation: sc-spin 2.4s linear infinite; }
+@keyframes sc-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .scan-chip .sc-spin { animation: none; } }
+.scan-bar { padding: 10px 14px; margin: 0 0 14px; border-color: var(--accent); background: var(--accent-soft); }
+.scan-bar a { font-weight: 600; }
+.ln-kind { font-size: 11px; vertical-align: 1px; }
+.ln-list { list-style: none; padding: 0; margin: 6px 0 4px; }
+.ln-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.ln-n { min-width: 26px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ln-row a { font-weight: 600; }
+.ln-prog { display: inline-flex; align-items: center; gap: 6px; }
+.ln-prog .progress { width: 90px; margin: 0; }
+.ln-acts { margin-left: auto; }
+#slBody h3 { margin: 16px 0 6px; font-size: 14px; }
+.scan-why-acts { margin-top: 4px; }

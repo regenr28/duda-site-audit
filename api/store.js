@@ -1115,7 +1115,15 @@ async function handler(req, res) {
           const until = Date.now() + ttl;
           // How far the scan has got, so whoever else opens the website sees it (sent with each heartbeat).
           const prog = b.p && typeof b.p === 'object' ? { done: Number(b.p.done) || 0, total: Number(b.p.total) || 0, msg: String(b.p.msg || '').slice(0, 120), at: now() } : null;
-          ok.forEach((id) => { claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}) }; });
+          // What kind of scan (rescan by hand, rescan all, SEO auto audit, chosen pages) and, for a tab's
+          // whole line sent in order, each website's place in it.
+          const kinds = b.k && typeof b.k === 'object' ? b.k : {};
+          const KIND = /^(manual|bulk|seo|pages)$/;
+          ok.forEach((id) => {
+            const k = String(kinds[id] || (typeof b.k === 'string' ? b.k : '') || '');
+            const pos = b.line ? ids.indexOf(id) + 1 : 0;
+            claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}), ...(KIND.test(k) ? { k } : {}), ...(pos ? { pos, of: ids.length } : {}) };
+          });
           await redis(['HSET', P + 'scanclaims', ...ok.flatMap((id) => [id, JSON.stringify(claims[id])])]);
         }
         return res.status(200).json({ ok, taken, claims });

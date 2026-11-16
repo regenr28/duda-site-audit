@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-scan-line', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: 'The scan line: what is scanning now, what is waiting, and your place in it',
+    what: 'A <b>🔄 2 · ⏳ 10</b> chip in the top bar (and a bar at the top of Audits) shows what is scanning and how many are waiting. Click it for the <b>scan line</b>: what each browser is scanning (with progress and the kind of scan: Rescan, Rescan all, SEO auto audit), and each line numbered, with <b>Move to the front</b> and <b>Remove</b>. A queued website says <b>Number 3 of 10</b> and what is scanning now. A Rescan you click goes ahead of Rescan all in your line, and SEO auto audits wait until your tab is free.',
+    where: ['<b>Walkthrough:</b> the 🔄 chip in the top bar, or Audits → <b>See the line</b>.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-16-map-number', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: 'Map embeds of businesses whose name starts with a number are no longer "a different address"',
     what: 'A Google Map labelled "86 Auto Lab Franklin…" was read as the street address "86 …" and flagged as critical. A map label now counts as an address only when it reads like one (a street word, or ", TN"), and one that names the business is fine. A rescan closes the wrong items.',
