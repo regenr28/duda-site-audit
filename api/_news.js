@@ -4,6 +4,20 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-auto-pause', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: 'Auto audits wait for the team, and can be paused',
+    what: 'SEO auto audits now wait while anybody on the team has a Rescan, Rescan all or chosen-pages scan going or waiting, and carry on by themselves afterwards. <b>⏸ Pause all auto audits</b> stops them for everyone until somebody resumes them. Also fixed: scans in another tab vanished from the scan line after a few minutes while they were still running, and came back on a reload.',
+    where: ['<b>Walkthrough:</b> the 🔄 chip in the top bar → <b>Scan line</b> → <b>Pause all auto audits</b>; or DR Websites → SEO Websites.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
+    id: '2026-11-16-scan-line-2', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: 'The scan line says what each scan is doing, who added it and why, and can be dragged',
+    what: 'Every scan in the line now says what it is doing ("Reading pages 45/113", "✨ AI checking alt text", "Every page read; finishing up") and how fresh that is, who added it and why (Rescan, "Rescan all shown: scanned before the newest checks", "SEO Customer website published …"), and who moved it. The line is numbered; drag your own to reorder it, or ask another tab to move or remove one. A queued website says its number even when another tab holds it.',
+    where: ['<b>Walkthrough:</b> the 🔄 chip in the top bar → <b>Scan line</b>.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-16-scan-line', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: 'The scan line: what is scanning now, what is waiting, and your place in it',
     what: 'A <b>🔄 2 · ⏳ 10</b> chip in the top bar (and a bar at the top of Audits) shows what is scanning and how many are waiting. Click it for the <b>scan line</b>: what each browser is scanning (with progress and the kind of scan: Rescan, Rescan all, SEO auto audit), and each line numbered, with <b>Move to the front</b> and <b>Remove</b>. A queued website says <b>Number 3 of 10</b> and what is scanning now. A Rescan you click goes ahead of Rescan all in your line, and SEO auto audits wait until your tab is free.',

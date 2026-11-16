@@ -2344,3 +2344,16 @@ html.demo-mode iframe { pointer-events: none; }
 .ln-acts { margin-left: auto; }
 #slBody h3 { margin: 16px 0 6px; font-size: 14px; }
 .scan-why-acts { margin-top: 4px; }
+
+.ln-row { align-items: flex-start; }
+.ln-n { padding-top: 1px; }
+.ln-n.now { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
+.ln-main { flex: 1; min-width: 220px; }
+.ln-step { color: var(--text); margin-top: 2px; }
+.ln-meta { margin-top: 2px; }
+.ln-grip { cursor: grab; color: var(--muted); user-select: none; padding: 0 2px; }
+.ln-drag { cursor: grab; }
+.ln-drag.dragging { opacity: .5; }
+.ln-row.drop-before { box-shadow: inset 0 3px 0 var(--accent); }
+.ln-row.drop-after { box-shadow: inset 0 -3px 0 var(--accent); }
+ol.ln-list { list-style: none; }

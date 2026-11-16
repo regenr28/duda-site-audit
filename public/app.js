@@ -414,6 +414,7 @@
       ids = saved.ids;
       if (saved.opts) { state.scanOpts = state.scanOpts || {}; Object.assign(state.scanOpts, saved.opts); }
       if (saved.kinds) { state.kind = Object.assign(state.kind || {}, saved.kinds); }
+      if (saved.metas) { state.qmeta = Object.assign(state.qmeta || {}, saved.metas); Object.values(saved.metas).forEach((m) => { if (m) m.why = (m.why ? m.why + ' · ' : '') + 'started again after a reload'; }); }
       if (saved.stopped && ids.length) setTimeout(() => toast(`The page was reloaded in the middle of a scan, so ${ids.length === 1 ? 'it has' : `${ids.length} scans have`} started again.`), 900);
     }
     if (ids.length) setTimeout(() => requestScan(ids), 400);
@@ -964,6 +965,7 @@
       // say so plainly — a page that quietly starts refusing things is worse than one that explains.
       if (r.accessVer && state.accessVer && r.accessVer !== state.accessVer) { state.accessVer = r.accessVer; accessChanged(); }
       else if (r.accessVer) state.accessVer = r.accessVer;
+      if (r.autoPause !== undefined) state.autoPause = r.autoPause;
       if (r.claims) {
         const cur = state.current && route().name === 'site' ? state.current : null;
         const before = cur ? JSON.stringify(otherClaim(cur.id) || null) : '';
@@ -6705,51 +6707,103 @@
   // =====================================================================
   // Scans run in browsers: each tab has its own line and scans 2 websites at a time. A Rescan
   // somebody clicks goes ahead of "Rescan all" and SEO auto audits in that tab's line. Other
-  // browsers' scans come from the claims (sent with every heartbeat): who, which website, how far.
+  // browsers' scans come from the claims (sent with every heartbeat): who, which website, how far,
+  // why it was added and who moved it. Another tab's line can be changed by asking it (lineAsk):
+  // that tab reads the request within 15 seconds and does it, noting who asked.
   const KIND_LABEL = { manual: 'Rescan', bulk: 'Rescan all', seo: '🔍 SEO auto audit', pages: 'Chosen pages' };
   const kindOf = (id) => (state.kind || {})[id] || '';
   const kindPri = (k) => (k === 'manual' || k === 'pages' ? 0 : 1);
   const siteName = (id) => (state.sites.find((y) => y.id === id) || {}).businessName || (state.current && state.current.id === id ? state.current.businessName : '') || 'A website';
+  /** Why and when a website joined this tab's line, and the last time somebody moved it. */
+  const qmeta = (id) => { state.qmeta = state.qmeta || {}; return (state.qmeta[id] = state.qmeta[id] || {}); };
+  function noteQueued(ids, why) { ids.forEach((id) => { const m = qmeta(id); m.why = String(why || m.why || '').slice(0, 140); m.at = m.at || new Date().toISOString(); delete m.mv; }); }
+  const metaOut = (id) => { const m = (state.qmeta || {})[id] || {}; return { why: m.why || '', at: m.at || '', ...(m.mv ? { mv: m.mv } : {}) }; };
   let lineTimer = null;
   /** Tell everyone this tab's line, in order (debounced). */
   function syncLine() {
     clearTimeout(lineTimer);
     lineTimer = setTimeout(() => {
       if (!state.queue.length) return;
-      const k = {}; state.queue.forEach((id) => { if (kindOf(id)) k[id] = kindOf(id); });
-      store({ op: 'scanClaim', ids: state.queue.slice(), cid: CID, state: 'queued', line: true, k }).then((r) => { Object.assign(state.claims, (r && r.claims) || {}); }).catch(() => {});
+      const k = {}; const m = {};
+      state.queue.forEach((id) => { if (kindOf(id)) k[id] = kindOf(id); m[id] = metaOut(id); });
+      store({ op: 'scanClaim', ids: state.queue.slice(), cid: CID, state: 'queued', line: true, k, m }).then((r) => { Object.assign(state.claims, (r && r.claims) || {}); }).catch(() => {});
     }, 800);
   }
   setInterval(() => { if (state.queue.length) syncLine(); }, 5 * 60000);
-  function moveToFront(id) {
+  /** Put a website somewhere in this tab's line, noting who moved it. */
+  function moveInLine(id, to, who) {
     if (!state.queue.includes(id)) return;
-    state.queue = [id].concat(state.queue.filter((x) => x !== id));
-    syncLine(); render(); toast(`${siteName(id)} is next in line.`);
+    const rest = state.queue.filter((x) => x !== id);
+    const at = Math.max(0, Math.min(rest.length, to));
+    rest.splice(at, 0, id); state.queue = rest;
+    qmeta(id).mv = { n: (who && who.name) || state.me.name, at: new Date().toISOString(), to: at + 1 };
+    syncLine(); render();
   }
+  function moveToFront(id, who) { if (!state.queue.includes(id)) return; moveInLine(id, 0, who); toast(`${siteName(id)} is next in line${who && who.email !== state.me.email ? ` (asked by ${who.name})` : ''}.`); }
   function clearLine() {
     const ids = state.queue.slice(); if (!ids.length) return;
     state.queue = []; ids.forEach((id) => delete state.scanning[id]);
     releaseScan(ids); render(); toast(`${ids.length} website${ids.length === 1 ? '' : 's'} taken out of the line. The ones scanning now carry on.`);
   }
-  /** Everything scanning or waiting: this browser first, then everyone else's, grouped by browser. */
+  // Requests from other people to change this tab's line: read every 15 seconds while it has one.
+  setInterval(async () => {
+    if (!state.me || (!state.queue.length && !state.running)) return;
+    let r; try { r = await api('/api/store?op=lineask&cid=' + encodeURIComponent(CID)); } catch (e) { return; }
+    (r.asks || []).forEach((a) => {
+      if (a.act === 'front' && state.queue.includes(a.id)) moveToFront(a.id, { name: a.byName, email: a.by });
+      if (a.act === 'remove' && state.queue.includes(a.id)) { cancelQueued(a.id); toast(`${a.byName} took ${siteName(a.id)} out of this tab's line.`); }
+    });
+  }, 15000);
+  async function askLine(cid, id, act, ownerName) {
+    try { await store({ op: 'lineAsk', cid, id, act }); toast(`Asked ${ownerName}'s tab to ${act === 'front' ? 'move it to the front' : 'take it out of the line'}. It happens within 15 seconds while that tab is open.`); }
+    catch (e) { toast(e.message); }
+  }
+  /** Everything scanning or waiting: this tab first, then everyone else's, grouped by tab. */
   function lineModel() {
-    const scanning = Object.keys(state.scanning).filter((id) => !state.scanning[id].queued).map((id) => ({ id, name: siteName(id), k: kindOf(id), l: state.scanning[id] }));
-    const starting = Object.keys(state.scanning).filter((id) => state.scanning[id].queued && !state.queue.includes(id)).map((id) => ({ id, name: siteName(id), k: kindOf(id), starting: true }));
-    const queued = starting.concat(state.queue.map((id, i) => ({ id, name: siteName(id), k: kindOf(id), pos: i + 1 })));
+    const mine0 = { by: state.me.email, byName: state.me.name };
+    const scanning = Object.keys(state.scanning).filter((id) => !state.scanning[id].queued).map((id) => Object.assign({ id, name: siteName(id), k: kindOf(id), l: state.scanning[id] }, metaOut(id), mine0));
+    const starting = Object.keys(state.scanning).filter((id) => state.scanning[id].queued && !state.queue.includes(id)).map((id) => Object.assign({ id, name: siteName(id), k: kindOf(id), starting: true }, metaOut(id), mine0));
+    const queued = starting.concat(state.queue.map((id, i) => Object.assign({ id, name: siteName(id), k: kindOf(id), pos: i + 1 }, metaOut(id), mine0)));
     const groups = {};
     Object.entries(state.claims || {}).forEach(([id, c]) => {
       if (!c || c.cid === CID || !(c.until > srvNow())) return;
       const g = groups[c.cid] = groups[c.cid] || { cid: c.cid, by: c.by, byName: c.byName, scanning: [], queued: [] };
-      const row = { id, name: siteName(id), k: c.k || '', p: c.p || null, pos: c.pos || 0, at: c.at };
+      const row = { id, name: siteName(id), k: c.k || '', p: c.p || null, pos: c.pos || 0, at: c.qat || c.at, why: c.why || '', mv: c.mv || null, by: c.by, byName: c.byName };
       if (c.state === 'queued') g.queued.push(row); else g.scanning.push(row);
     });
-    const others = Object.values(groups).map((g) => Object.assign(g, { queued: g.queued.sort((a, b) => (a.pos || 1e9) - (b.pos || 1e9) || String(a.at).localeCompare(String(b.at))) }));
+    const others = Object.values(groups).map((g) => Object.assign(g, { queued: g.queued.sort((a, b) => (a.pos || 1e9) - (b.pos || 1e9) || String(a.at).localeCompare(String(b.at))).map((x, i) => Object.assign(x, { pos: x.pos || i + 1 })) }));
     const n = { scanning: scanning.length + others.reduce((x, g) => x + g.scanning.length, 0), queued: queued.length + others.reduce((x, g) => x + g.queued.length, 0) };
     return { mine: { scanning, queued }, others, n };
   }
   const whoOf = (g) => (g.by === state.me.email ? 'Your other tab' : g.byName || 'Another member');
+  const tabOf = (g) => (g.by === state.me.email ? 'your other tab' : `${g.byName || 'another member'}’s tab`);
   const progTxt = (l) => (l && l.total ? `${l.done}/${l.total}` : l && (l.message || l.msg) ? String(l.message || l.msg).slice(0, 40) : 'starting');
   const kindChip = (k) => (k ? `<span class="badge subtle ln-kind">${esc(KIND_LABEL[k] || k)}</span>` : '');
+  /** What a scan is doing right now, in words: the step, and how fresh that news is. */
+  function stepTxt(x) {
+    if (x.l) {
+      const l = x.l;
+      if (l.total && l.done >= l.total && !/✨|🎨|📸|AI|contrast|proof|Saving|Checking/i.test(l.message || '')) return 'Every page read; finishing up (checks, AI, saving)';
+      return l.message || (l.total ? `Reading pages ${l.done}/${l.total}` : 'Starting…');
+    }
+    if (x.p) {
+      const p = x.p; const mins = p.at ? Math.max(0, Math.round((srvNow() - Date.parse(p.at)) / 60000)) : null;
+      const step = p.msg || (p.total ? `Reading pages ${p.done}/${p.total}` : 'Starting…');
+      const fresh = mins === null ? '' : mins < 1 ? ' · updated just now' : ` · updated ${mins} min ago`;
+      const stale = mins !== null && mins >= 3 ? ' (no news for a while: that tab may be busy or closed)' : '';
+      return step + fresh + stale;
+    }
+    return 'Waiting for news from that tab';
+  }
+  const shortTime = (iso) => { const t = Date.parse(iso || ''); return isNaN(t) ? '' : new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+  /** Who put it in line, why, and who moved it last. */
+  function metaTxt(x) {
+    const bits = [];
+    bits.push(`added by ${x.by === state.me.email ? 'you' : esc(x.byName || 'someone')}${x.at ? ' at ' + esc(shortTime(x.at)) : ''}`);
+    if (x.why) bits.push(esc(x.why));
+    if (x.mv && x.mv.n) bits.push(`↕ moved to ${x.mv.to} by ${esc(x.mv.n)}${x.mv.at ? ' at ' + esc(shortTime(x.mv.at)) : ''}`);
+    return bits.join(' · ');
+  }
   /** The small chip in the top bar, on every page: 🔄 scanning · ⏳ waiting. */
   function renderScanChip() {
     const b = $('#btnScans'); if (!b) return;
@@ -6758,44 +6812,108 @@
     b.innerHTML = `<span class="sc-spin" aria-hidden="true">🔄</span> ${m.n.scanning}${m.n.queued ? ` <span class="faint">·</span> ⏳ ${m.n.queued}` : ''}`;
     b.title = `${m.n.scanning} scanning, ${m.n.queued} waiting. Click to see the scan line.`;
   }
-  /** The bar at the top of Audits: what is scanning now (with links), and how many are waiting. */
+  /** The bar at the top of Audits: what is scanning now (with links and what it is doing), and how many are waiting. */
   function scanBarHtml() {
     const m = lineModel();
     if (!m.n.scanning && !m.n.queued) return '';
-    const now = m.mine.scanning.map((x) => `<a href="#/site/${esc(x.id)}">${esc(x.name)}</a> ${kindChip(x.k)} <span class="faint">${esc(progTxt(x.l))} · you</span>`)
-      .concat(...m.others.map((g) => g.scanning.map((x) => `<a href="#/site/${esc(x.id)}">${esc(x.name)}</a> ${kindChip(x.k)} <span class="faint">${esc(progTxt(x.p))} · ${esc(whoOf(g))}</span>`)));
+    const now = m.mine.scanning.map((x) => `<a href="#/site/${esc(x.id)}">${esc(x.name)}</a> ${kindChip(x.k)} <span class="faint">${esc(stepTxt(x))} · you</span>`)
+      .concat(...m.others.map((g) => g.scanning.map((x) => `<a href="#/site/${esc(x.id)}">${esc(x.name)}</a> ${kindChip(x.k)} <span class="faint">${esc(stepTxt(x))} · ${esc(whoOf(g))}</span>`)));
     const waits = [m.mine.queued.length ? `${m.mine.queued.length} in this tab (next: <a href="#/site/${esc(m.mine.queued[0].id)}">${esc(m.mine.queued[0].name)}</a>)` : '']
-      .concat(m.others.filter((g) => g.queued.length).map((g) => `${g.queued.length} in ${esc(whoOf(g) === 'Your other tab' ? 'your other tab' : whoOf(g) + '’s browser')}`)).filter(Boolean);
+      .concat(m.others.filter((g) => g.queued.length).map((g) => `${g.queued.length} in ${esc(tabOf(g))}`)).filter(Boolean);
     return `<div class="panel scan-bar" id="scanBar"><div class="row-between" style="gap:12px;align-items:flex-start">
       <div class="grow"><div><b>🔄 Scanning now (${m.n.scanning})</b>${now.length ? ': ' + now.join(' <span class="faint">·</span> ') : ': nothing'}</div>
         ${m.n.queued ? `<div class="small" style="margin-top:4px"><b>⏳ ${m.n.queued} waiting:</b> ${waits.join(' · ')}</div>` : ''}</div>
       <button class="btn sm" type="button" data-scanline="1">See the line</button></div></div>`;
   }
-  function lineRowsHtml(list, mine) {
-    return list.map((x) => `<li class="ln-row"><span class="ln-n">${x.pos ? x.pos : x.starting ? '…' : '•'}</span><a href="#/site/${esc(x.id)}" data-lnlink="1">${esc(x.name)}</a> ${kindChip(x.k)}
-      ${x.l || x.p ? `<span class="ln-prog">${(x.l || x.p).total ? `<span class="progress"><i style="width:${Math.round(((x.l || x.p).done / (x.l || x.p).total) * 100)}%"></i></span>` : ''}<span class="small faint">${esc(progTxt(x.l || x.p))}</span></span>` : ''}
-      ${mine && x.pos ? `<span class="ln-acts">${x.pos > 1 ? `<button class="linkbtn" data-lnfront="${esc(x.id)}">Move to the front</button>` : '<span class="small faint">next</span>'} <button class="linkbtn" data-cancelq="${esc(x.id)}">Remove</button></span>` : ''}</li>`).join('');
+  /** One row of the line: its number (or "Now"), the website, the kind, what it is doing or why it waits, and actions. */
+  function lineRowHtml(x, opts) {
+    const pr = x.l || x.p;
+    const num = opts.now ? '<span class="ln-n now">Now</span>' : `<span class="ln-n">${x.pos || '…'}</span>`;
+    const acts = opts.mine && x.pos
+      ? `<span class="ln-acts">${x.pos > 1 ? `<button class="linkbtn" data-lnfront="${esc(x.id)}">Move to the front</button>` : '<span class="small faint">next</span>'} <button class="linkbtn" data-cancelq="${esc(x.id)}">Remove</button></span>`
+      : opts.cid && x.pos ? `<span class="ln-acts">${x.pos > 1 ? `<button class="linkbtn" data-lnask="front" data-cid="${esc(opts.cid)}" data-id="${esc(x.id)}" data-owner="${esc(opts.owner)}">Ask to move it to the front</button>` : '<span class="small faint">next</span>'} <button class="linkbtn" data-lnask="remove" data-cid="${esc(opts.cid)}" data-id="${esc(x.id)}" data-owner="${esc(opts.owner)}">Ask to remove</button></span>` : '';
+    return `<li class="ln-row${opts.mine && x.pos ? ' ln-drag' : ''}"${opts.mine && x.pos ? ` draggable="true" data-lnid="${esc(x.id)}"` : ''}>${opts.mine && x.pos ? '<span class="ln-grip" aria-hidden="true" title="Drag to change the order">⋮⋮</span>' : ''}${num}
+      <div class="ln-main"><div><a href="#/site/${esc(x.id)}" data-lnlink="1">${esc(x.name)}</a> ${kindChip(x.k)}
+        ${pr && pr.total ? `<span class="ln-prog"><span class="progress"><i style="width:${Math.round((pr.done / pr.total) * 100)}%"></i></span><span class="small faint">${pr.done}/${pr.total}</span></span>` : ''}</div>
+        ${opts.now ? `<div class="small ln-step">${esc(stepTxt(x))}</div>` : ''}
+        <div class="small faint ln-meta">${metaTxt(x)}</div></div>${acts}</li>`;
   }
+  let lnDragging = false;
   function drawScanLine() {
-    const box = $('#slBody'); if (!box) return;
+    const box = $('#slBody'); if (!box || lnDragging) return;
     const m = lineModel();
-    box.innerHTML = `<p class="small muted">Scans run in the browser tab that started them. Each tab scans <b>${SCAN_CONCURRENCY_SITES} websites at a time</b> and keeps its own line, so somebody else's scans never hold yours up. A <b>Rescan</b> you click goes ahead of <b>Rescan all</b> in your line, and <b>SEO auto audits</b> only start when your tab has nothing else to scan.</p>
+    box.innerHTML = `<p class="small muted">Scans run in the browser tab that started them. Each tab scans <b>${SCAN_CONCURRENCY_SITES} websites at a time</b> and keeps its own line, so somebody else's scans never hold yours up. A <b>Rescan</b> you click goes ahead of <b>Rescan all</b> in your line, and <b>SEO auto audits</b> only start when your tab has nothing else to scan. Drag your own line to change its order.</p>
+      ${autoPauseHtml()}
       <h3>This tab</h3>
-      <div class="small"><b>Scanning now (${m.mine.scanning.length})</b></div>
-      ${m.mine.scanning.length ? `<ul class="ln-list">${lineRowsHtml(m.mine.scanning, false)}</ul>` : '<div class="small faint">Nothing.</div>'}
+      ${m.mine.scanning.length ? `<ol class="ln-list">${m.mine.scanning.map((x) => lineRowHtml(x, { now: true })).join('')}</ol>` : '<div class="small faint">Scanning nothing now.</div>'}
       <div class="small" style="margin-top:8px"><b>In line (${m.mine.queued.length})</b>${m.mine.queued.length > 1 ? ' <button class="linkbtn danger" data-lnclear="1">Take them all out of the line</button>' : ''}</div>
-      ${m.mine.queued.length ? `<ol class="ln-list">${lineRowsHtml(m.mine.queued, true)}</ol>` : '<div class="small faint">Nothing waiting.</div>'}
-      ${m.others.length ? m.others.map((g) => `<h3>${esc(whoOf(g) === 'Your other tab' ? 'Your other tab' : whoOf(g) + '’s browser')}</h3>
-        <div class="small"><b>Scanning now (${g.scanning.length})</b></div>${g.scanning.length ? `<ul class="ln-list">${lineRowsHtml(g.scanning, false)}</ul>` : '<div class="small faint">Nothing.</div>'}
-        ${g.queued.length ? `<div class="small" style="margin-top:8px"><b>In line (${g.queued.length})</b></div><ol class="ln-list">${lineRowsHtml(g.queued, false)}</ol>` : ''}`).join('') : '<h3>Other browsers</h3><div class="small faint">Nobody else is scanning.</div>'}
-      <p class="small faint">Progress from other browsers is updated every 30 seconds. If a tab is closed, what it held is let go within a few minutes.</p>`;
+      ${m.mine.queued.length ? `<ol class="ln-list" id="lnMine">${m.mine.queued.map((x) => lineRowHtml(x, { mine: true })).join('')}</ol>` : '<div class="small faint">Nothing waiting.</div>'}
+      ${m.others.length ? m.others.map((g) => `<h3>${esc(whoOf(g) === 'Your other tab' ? 'Your other tab' : whoOf(g) + '’s tab')}</h3>
+        ${g.scanning.length ? `<ol class="ln-list">${g.scanning.map((x) => lineRowHtml(x, { now: true })).join('')}</ol>` : '<div class="small faint">Scanning nothing now.</div>'}
+        ${g.queued.length ? `<div class="small" style="margin-top:8px"><b>In line (${g.queued.length})</b> <span class="faint">changes are asked of that tab and happen within 15 seconds</span></div><ol class="ln-list">${g.queued.map((x) => lineRowHtml(x, { cid: g.cid, owner: whoOf(g) === 'Your other tab' ? 'your other' : g.byName })).join('')}</ol>` : ''}`).join('') : '<h3>Other tabs</h3><div class="small faint">Nobody else is scanning.</div>'}
+      <p class="small faint">News from other tabs comes every 20 seconds. If a tab is closed, what it held is let go within a few minutes.</p>`;
     $$('[data-lnlink]', box).forEach((a) => (a.onclick = () => closeModal()));
     $$('[data-lnfront]', box).forEach((b) => (b.onclick = () => { moveToFront(b.dataset.lnfront); drawScanLine(); }));
+    $$('[data-lnask]', box).forEach((b) => (b.onclick = () => askLine(b.dataset.cid, b.dataset.id, b.dataset.lnask, b.dataset.owner)));
     if ($('[data-lnclear]', box)) $('[data-lnclear]', box).onclick = () => { if (confirm(`Take all ${state.queue.length} waiting websites out of the line? The ones scanning now carry on.`)) { clearLine(); drawScanLine(); } };
+    // Drag to reorder this tab's line.
+    const list = $('#lnMine', box);
+    if (list) {
+      let dragId = '';
+      $$('li[data-lnid]', list).forEach((li) => {
+        li.addEventListener('dragstart', (e) => { dragId = li.dataset.lnid; lnDragging = true; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', dragId); e.dataTransfer.effectAllowed = 'move'; } catch (er) { /* ignore */ } });
+        li.addEventListener('dragend', () => { lnDragging = false; li.classList.remove('dragging'); $$('.drop-before, .drop-after', list).forEach((x) => x.classList.remove('drop-before', 'drop-after')); });
+        li.addEventListener('dragover', (e) => { e.preventDefault(); const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2; li.classList.toggle('drop-after', after); li.classList.toggle('drop-before', !after); });
+        li.addEventListener('dragleave', () => li.classList.remove('drop-before', 'drop-after'));
+        li.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const id = dragId || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+          const target = li.dataset.lnid; lnDragging = false;
+          if (!id || id === target) { drawScanLine(); return; }
+          const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+          const rest = state.queue.filter((x) => x !== id);
+          const to = rest.indexOf(target) + (after ? 1 : 0);
+          moveInLine(id, to); drawScanLine(); toast(`${siteName(id)} moved to number ${to + 1}.`);
+        });
+      });
+    }
   }
+  // Other tabs' scans are kept fresh here every 15 seconds while anything is scanning or waiting
+  // anywhere (or the scan line is open). Their holds run 3 minutes and are renewed every 20 seconds, so
+  // waiting for the slower page heartbeat let them run out on this screen while they were still going.
+  async function refreshClaims() {
+    try {
+      const r = await api('/api/store?op=claims');
+      state.autoPause = r.autoPause || null;
+      if (setClaims(r.claims || {})) { renderScanChip(); const bar = $('#scanBar'); if (bar) { const h = scanBarHtml(); if (h) bar.outerHTML = h; else bar.remove(); } drawScanLine(); }
+    } catch (e) { /* next time */ }
+  }
+  setInterval(() => {
+    if (!state.me || document.hidden) return;
+    if (Object.keys(state.claims || {}).length || Object.keys(state.scanning).length || $('#slBody')) refreshClaims();
+  }, 15000);
+  /** Why auto audits are not starting now ('' when they may). */
+  function autoHeld() {
+    const ap = state.autoPause;
+    if (ap && ap.on) return `paused by ${ap.byName || 'someone'}`;
+    const team = Object.values(state.claims || {}).filter((c) => c && c.until > srvNow() && c.k && c.k !== 'seo').length
+      + Object.keys(state.scanning).filter((id) => kindOf(id) && kindOf(id) !== 'seo').length;
+    return team ? `waiting for ${team} scan${team === 1 ? '' : 's'} by the team to finish` : '';
+  }
+  async function setAutoPause(on) {
+    try { const r = await store({ op: 'autoPause', on }); state.autoPause = r.autoPause || null; toast(on ? 'Auto audits paused for everyone. The team\'s scans and rescans go first.' : 'Auto audits back on.'); drawScanLine(); render(); }
+    catch (e) { toast(e.message); }
+  }
+  function autoPauseHtml() {
+    const ap = state.autoPause; const held = autoHeld();
+    return `<div class="note ln-auto"><div class="row-between" style="gap:10px;align-items:center"><div class="grow small">
+      <b>🔍 SEO auto audits:</b> ${ap && ap.on ? `<b>paused</b> by ${esc(ap.byName || 'someone')} at ${esc(shortTime(ap.at))}. They stay paused until somebody resumes them (or for 12 hours).` : held ? `on, but ${esc(held)}: they start again by themselves once nothing from the team is scanning or waiting.` : 'on. They only start when nothing from the team is scanning or waiting.'}</div>
+      ${can('site.scan') ? (ap && ap.on ? '<button class="btn sm primary" type="button" data-autopause="0">Resume auto audits</button>' : '<button class="btn sm" type="button" data-autopause="1">⏸ Pause all auto audits</button>') : ''}</div></div>`;
+  }
+  document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-autopause]'); if (b) { e.preventDefault(); setAutoPause(b.dataset.autopause === '1'); } });
   function openScanLine() {
     modal(`<header><h2>Scan line</h2><button class="btn ghost" data-close>✕</button></header><div class="body" id="slBody"></div>`);
-    drawScanLine();
+    drawScanLine(); refreshClaims();
   }
   // Keep the chip, the bar and the open line fresh while scans move on.
   setInterval(() => {
@@ -6807,13 +6925,14 @@
   document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-scanline]'); if (b) { e.preventDefault(); openScanLine(); } });
   /** Asks the server to reserve the websites for this tab, then queues the ones it got. Anything someone else has queued
    *  or is scanning is skipped, so two browsers never scan the same website at the same time. */
-  async function requestScan(ids, kind) {
+  async function requestScan(ids, kind, why) {
     ids = [...new Set(ids)].filter((id) => !state.scanning[id] && !state.queue.includes(id));
     if (!ids.length) return;
     const batch0 = ids.length > 1;
     // What kind of scan: one website by hand goes ahead of "Rescan all" and auto audits.
     state.kind = state.kind || {};
     ids.forEach((id) => { state.kind[id] = kind || (batch0 ? 'bulk' : 'manual'); });
+    noteQueued(ids, why || (batch0 ? `Rescan of ${ids.length} websites` : 'Rescan clicked'));
     // Show the click landing BEFORE anything is awaited: the previous "Scan complete" has to leave
     // the screen the moment the button is pressed, or the page looks like it ignored you.
     ids.forEach((id) => { state.scanning[id] = { done: 0, total: 0, message: 'Queued', queued: true, bulk: batch0, stage: 'update' }; });
@@ -6836,7 +6955,7 @@
     const batch = batch0;
     let r;
     ids.forEach((id) => { if (state.scanning[id]) state.scanning[id].stage = 'reserve'; });
-    try { r = await store({ op: 'scanClaim', ids, cid: CID, state: 'queued', k: Object.fromEntries(ids.map((id) => [id, kindOf(id)])) }); }
+    try { r = await store({ op: 'scanClaim', ids, cid: CID, state: 'queued', k: Object.fromEntries(ids.map((id) => [id, kindOf(id)])), m: Object.fromEntries(ids.map((id) => [id, metaOut(id)])) }); }
     catch (e) { ids.forEach((id) => delete state.scanning[id]); render(); toast("Couldn't start the scan: " + e.message); return; }
     Object.assign(state.claims, r.claims || {});
     (r.taken || []).forEach((t) => { delete state.scanning[t.id]; state.claims[t.id] = Object.assign({ until: srvNow() + 60000 }, t); });
@@ -6862,7 +6981,8 @@
     // back (the same chosen pages too). Closing the tab forgets this, as it should.
     const opts = {}; ids.forEach((id) => { const o = (state.runOpts || {})[id] || (state.scanOpts || {})[id]; if (o) opts[id] = o; });
     const kinds = {}; ids.forEach((id) => { if (kindOf(id)) kinds[id] = kindOf(id); });
-    try { sessionStorage.setItem('dsa:scanAfterReload', JSON.stringify({ ids, opts, kinds, stopped: true })); } catch (e) { /* private window */ }
+    const metas = {}; ids.forEach((id) => { metas[id] = metaOut(id); });
+    try { sessionStorage.setItem('dsa:scanAfterReload', JSON.stringify({ ids, opts, kinds, metas, stopped: true })); } catch (e) { /* private window */ }
   });
   function enqueue(id) {
     if (!state.queue.includes(id) && !(state.scanning[id] && !state.scanning[id].queued)) {
@@ -6905,7 +7025,7 @@
       const id = state.queue.shift();
       state.running++;
       syncLine();
-      scanSite(id).catch((e) => console.error(e)).finally(() => { state.running--; delete state.scanning[id]; if (state.runOpts) delete state.runOpts[id]; if (state.kind) delete state.kind[id]; render(); pump(); });
+      scanSite(id).catch((e) => console.error(e)).finally(() => { state.running--; delete state.scanning[id]; if (state.runOpts) delete state.runOpts[id]; if (state.kind) delete state.kind[id]; if (state.qmeta) delete state.qmeta[id]; render(); pump(); });
     }
   }
   window.addEventListener('beforeunload', (e) => { if (state.running || state.queue.length) { e.preventDefault(); e.returnValue = ''; } });
@@ -6913,7 +7033,7 @@
   async function scanSite(id) {
     // Take the website for this tab. If another member got to it first, skip it here.
     let got;
-    try { got = await store({ op: 'scanClaim', ids: [id], cid: CID, state: 'scanning', k: kindOf(id) }); } catch (e) { toast("Couldn't start the scan: " + e.message); return; }
+    try { got = await store({ op: 'scanClaim', ids: [id], cid: CID, state: 'scanning', k: kindOf(id), m: { [id]: metaOut(id) }, p: { done: 0, total: 0, msg: 'Starting the scan' } }); } catch (e) { toast("Couldn't start the scan: " + e.message); return; }
     if (!(got.ok || []).includes(id)) {
       const t = (got.taken || [])[0] || {};
       state.claims[id] = Object.assign({ until: srvNow() + 60000 }, t);
@@ -6924,7 +7044,7 @@
     Object.assign(state.claims, got.claims || {});
     // The heartbeat keeps the website reserved and tells everyone else how far the scan has got.
     const prog = () => { const l = state.scanning[id] || {}; return { done: l.done || 0, total: l.total || 0, msg: String(l.message || '').slice(0, 120) }; };
-    const beat = setInterval(() => store({ op: 'scanClaim', ids: [id], cid: CID, state: 'scanning', p: prog(), k: kindOf(id) }).catch(() => {}), 30000);
+    const beat = setInterval(() => store({ op: 'scanClaim', ids: [id], cid: CID, state: 'scanning', p: prog(), k: kindOf(id), m: { [id]: metaOut(id) } }).catch(() => {}), 20000);
     try { await scanSiteRun(id); } finally { clearInterval(beat); releaseScan([id]); }
   }
   async function scanSiteRun(id) {
@@ -7720,6 +7840,7 @@
         <button class="btn" id="seoRefresh" ${seo.loading ? 'disabled' : ''}>${seo.loading ? 'Loading…' : '↻ Refresh'}</button></div>
       ${liveTabs('seo')}
       ${seo.error ? `<div class="note bad">${esc(seo.error)}</div>` : ''}
+      ${autoPauseHtml()}
       ${seoRunner() ? `<div class="note seo-run"><label class="check-row"><input type="checkbox" id="seoAuto" ${seoAutoOn() ? 'checked' : ''}><span><b>Run the auto audits in this tab.</b> Scans run in a browser, so a due website is audited while someone on the team has the app open; overnight publishes are audited the next morning. Only one tab audits a website at a time.</span></label>${seo.last ? `<div class="small muted">${esc(seo.last)}</div>` : ''}</div>` : ''}
       <div class="panel">${!d ? `<div class="empty">${seo.loading ? 'Loading…' : 'No data yet.'}</div>` : !sites.length ? `<div class="empty">No published website has the label "${esc(d.label)}" yet. Add the label in Duda (Site → Labels), then <b>↻ Pull from Duda</b> on Live DR Sites.</div>` : `
         <div class="table-wrap"><table class="grid seo-table"><thead><tr><th>Website</th><th>Last published</th><th>Auto audit</th><th>Audit</th><th>Pages by the SEO company</th><th></th></tr></thead><tbody>
@@ -7756,6 +7877,7 @@
       }
       state.scanOpts = state.scanOpts || {}; state.scanOpts[auditId] = { bulk: true, seo: true, ...(byHand ? {} : { auto: true }) };
       state.kind = state.kind || {}; state.kind[auditId] = byHand ? 'manual' : 'seo';
+      noteQueued([auditId], byHand ? 'Audit now on SEO Websites' : `SEO Customer website published ${x.published ? fmtFull(x.published) : 'recently'}: audited again ${(seo.data && seo.data.delayH) || 4} hours after a publish`);
       await scanSite(auditId);
       const after = await api('/api/store?op=site&id=' + encodeURIComponent(auditId)).catch(() => null);
       if (!after || !after.scan || after.scan.state !== 'complete') error = (after && after.scan && after.scan.error) || 'The scan did not finish';
@@ -7771,6 +7893,9 @@
   /** Every few minutes: is an SEO website due? This tab audits it if nothing else is being scanned here. */
   async function seoTick() {
     if (!seoRunner() || !seoAutoOn() || seo.busy || state.running || state.queue.length || state.verifying || clientMode() || state.viewRole || (window.DemoMode && window.DemoMode.on())) return;
+    // The team's own scans first: auto audits wait while auto audits are paused, or while anybody's
+    // Rescan / Rescan all / chosen pages is scanning or waiting in any tab.
+    if (autoHeld()) return;
     try { const r = await api('/api/seo?op=due'); if (r && r.site) await seoAudit(r.site, false); } catch (e) { /* next time */ }
   }
   setTimeout(() => { seoTick(); setInterval(seoTick, 5 * 60000); }, 45000);
@@ -9032,7 +9157,14 @@
     let other = '';
     if (!live && oc) {
       const p = oc.p; const mins = p && p.at ? Math.max(0, Math.round((srvNow() - Date.parse(p.at)) / 60000)) : null;
-      other = `<div class="small scan-why">${oc.state === 'queued' ? `⏳ Waiting in ${esc(oc.by === state.me.email ? 'your other tab' : (oc.byName || 'another member') + '\u2019s browser')} for its turn.` : `🔄 ${esc(oc.by === state.me.email ? 'Your other tab is scanning it' : (oc.byName || 'Another member') + ' is scanning it in their browser')}${p ? `: <b>${p.total ? `${p.done}/${p.total}` : ''}</b> ${esc(p.msg || '')} <span class="faint">(updated ${mins ? mins + ' min ago' : 'just now'})</span>` : '.'}`}
+      // Its place in that tab's line, what that tab is scanning now, and a way to ask for it sooner.
+      const tabName = oc.by === state.me.email ? 'your other tab' : `${oc.byName || 'another member'}\u2019s tab`;
+      const busyThere = Object.entries(state.claims || {}).filter(([id2, c2]) => c2 && c2.cid === oc.cid && c2.state !== 'queued' && c2.until > srvNow()).map(([id2, c2]) => `<a href="#/site/${esc(id2)}">${esc(siteName(id2))}</a> <span class="faint">(${esc(stepTxt({ p: c2.p }))})</span>`);
+      const placeTxt = oc.pos ? `<b>Number ${oc.pos}${oc.of ? ` of ${oc.of}` : ''}</b> in ${esc(tabName)}\u2019s line${oc.pos > 1 ? ` (${oc.pos - 1} ahead of it)` : ' (it is next)'}` : `Waiting in ${esc(tabName)}\u2019s line`;
+      other = `<div class="small scan-why">${oc.state === 'queued' ? `⏳ ${placeTxt}. ${busyThere.length ? `That tab is scanning ${busyThere.join(' and ')} now.` : ''}
+          <div class="faint">${metaTxt({ by: oc.by, byName: oc.byName, at: oc.qat || oc.at, why: oc.why, mv: oc.mv })}</div>
+          <div class="scan-why-acts">${oc.pos > 1 ? `<button class="linkbtn" data-lnask="front" data-cid="${esc(oc.cid)}" data-id="${esc(s.id)}" data-owner="${esc(oc.by === state.me.email ? 'your other' : oc.byName || 'another member')}">Ask to move it to the front</button> · ` : ''}<button class="linkbtn" data-scanline="1">See the whole line</button></div>` : `🔄 ${esc(oc.by === state.me.email ? 'Your other tab is scanning it' : (oc.byName || 'Another member') + ' is scanning it in their browser')}${p ? `: <b>${p.total ? `${p.done}/${p.total}` : ''}</b> ${esc(p.msg || '')} <span class="faint">(updated ${mins ? mins + ' min ago' : 'just now'})</span>` : '.'}`}
+        ${oc.state !== 'queued' && (oc.why || oc.k) ? `<div class="faint">${KIND_LABEL[oc.k] ? esc(KIND_LABEL[oc.k]) + ' · ' : ''}${metaTxt({ by: oc.by, byName: oc.byName, at: oc.qat || oc.at, why: oc.why, mv: null })}</div>` : ''}
         <div class="faint">Only one browser scans a website at a time. If that tab was closed, the hold runs out by itself within ${oc.state === 'queued' ? '15' : '3'} minutes and Rescan comes back.</div></div>`;
     }
     const mineElsewhere = live && live.queued ? [] : Object.keys(state.scanning).filter((x) => x !== s.id);
@@ -9067,6 +9199,7 @@
       el.textContent = t; el.classList.toggle('slow', (ai && sec >= 130) || (!ai && sec >= 45));
     });
   }, 1000);
+  document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-lnask]'); if (b && !b.closest('#slBody')) { e.preventDefault(); askLine(b.dataset.cid, b.dataset.id, b.dataset.lnask, b.dataset.owner); } });
   document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-lnfront2]'); if (b) { e.preventDefault(); moveToFront(b.dataset.lnfront2); } });
   document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-cancelq]'); if (b) { e.preventDefault(); e.stopPropagation(); cancelQueued(b.dataset.cancelq); } });
   document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-skipai]'); if (b) { e.preventDefault(); e.stopPropagation(); skipAI(b.dataset.skipai); b.remove(); } });
@@ -9473,6 +9606,14 @@
       try { await store({ op: 'viewRemove', id: v.id }); await loadViews(true); pickView(list, 'all'); closeModal(); rerender(); toast('Deleted'); } catch (e) { toast(e.message); }
     };
   }
+  /** Why "Rescan all shown" picked these websites: the tab and the filters that were on. */
+  function rescanAllWhy(n) {
+    const f = state.filters || {}; const bits = [];
+    const v = currentView('audits'); if (v && v.id !== 'all') bits.push(`tab "${v.name}"`);
+    if (f.oldChecks) bits.push('scanned before the newest checks'); if (f.repub) bits.push('republished since scan');
+    if (f.status) bits.push(f.status); if (f.q) bits.push(`search "${f.q}"`); if (f.must) bits.push('must-fix: ' + f.must); if (f.live) bits.push(f.live);
+    return `Rescan all shown (${n})${bits.length ? ': ' + bits.join(', ') : ''}`;
+  }
   function renderSites() {
     // Websites on the Jaguars board are worked from Tasks, so others don't see them here until they
     // are complete. Whoever holds one does: it is their work, and this is where they look for it.
@@ -9567,7 +9708,7 @@
     $('#rescanAll').onclick = () => {
       const todo = list.filter((s) => !state.scanning[s.id] && !otherClaim(s.id)), busy = list.length - todo.length;
       if (!todo.length) { toast('Every website shown is already queued or scanning.'); return; }
-      if (confirm(`Rescan ${todo.length} website(s)?${busy ? `\n\n${busy} already queued or scanning will be skipped.` : ''}`)) requestScan(todo.map((s) => s.id), 'bulk');
+      if (confirm(`Rescan ${todo.length} website(s)?${busy ? `\n\n${busy} already queued or scanning will be skipped.` : ''}`)) requestScan(todo.map((s) => s.id), 'bulk', rescanAllWhy(todo.length));
     };
     // The comment count opens the discussion it counts, with item comments included — otherwise a
     // count of 3 can lead to a page showing none of them.
@@ -11824,7 +11965,7 @@
     paths = [...new Set(paths.map((p) => A.normalizePath(p)))].filter(Boolean);
     if (!paths.length) return toast('No pages to scan.');
     state.scanOpts = state.scanOpts || {}; state.scanOpts[s.id] = { paths };
-    state.kind = state.kind || {}; state.kind[s.id] = 'pages';
+    state.kind = state.kind || {}; state.kind[s.id] = 'pages'; noteQueued([s.id], `Scan chosen pages (${paths.length})`);
     toast(`Scanning ${paths.length} page${paths.length === 1 ? '' : 's'}…`);
     enqueue(s.id); render();
   }

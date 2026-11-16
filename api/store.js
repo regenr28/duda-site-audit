@@ -300,6 +300,19 @@ async function handler(req, res) {
         }
         return res.status(200).json({ mode: 'kv', sites, scoped: !seeAll, ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true), build: buildId() });
       }
+      // Who is scanning or waiting where, and whether auto audits are paused: polled while scans are on.
+      if (op === 'claims') {
+        const [cl, ap] = await redis(['HGETALL', P + 'scanclaims'], ['GET', P + 'autopause']);
+        return res.status(200).json({ claims: await freshClaims(cl), autoPause: jparse(ap) || null });
+      }
+      // Requests from other people to change this tab's scan line (move to the front, remove): read once.
+      if (op === 'lineask') {
+        const cid = String(req.query.cid || '').slice(0, 40); if (!cid) return res.status(200).json({ asks: [] });
+        const [raw] = await redis(['HGETALL', P + 'lineask:' + cid]);
+        const asks = Object.entries(pairs(raw, true)).map(([id, a]) => Object.assign({ id }, a));
+        if (asks.length) await redis(['DEL', P + 'lineask:' + cid]);
+        return res.status(200).json({ asks });
+      }
       // Saved filters ("views"): the person's own, and the ones shared with the team.
       if (op === 'views') {
         const [raw] = await redis(['HGETALL', P + 'views']);
@@ -845,6 +858,22 @@ async function handler(req, res) {
         await redis(['SET', DOCS(b.id), packJSON(list)]);
         return res.status(200).json({ doc: d });
       }
+      case 'autoPause': {
+        // "Pause all auto audits": SEO auto audits start nowhere until somebody resumes them (or 12 hours pass).
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
+        if (b.on) { const v = { on: true, by: me.email, byName: me.name, at: now() }; await redis(['SET', P + 'autopause', JSON.stringify(v), 'EX', 12 * 3600]); return res.status(200).json({ autoPause: v }); }
+        await redis(['DEL', P + 'autopause']);
+        return res.status(200).json({ autoPause: null });
+      }
+      case 'lineAsk': {
+        // Ask another browser tab to move a website in its scan line or take it out. That tab reads
+        // it within 15 seconds and says who asked.
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
+        const cid = String(b.cid || '').slice(0, 40); const id = String(b.id || '').slice(0, 40);
+        if (!cid || !id || !['front', 'remove'].includes(b.act)) return res.status(400).json({ error: 'Unknown request' });
+        await redis(['HSET', P + 'lineask:' + cid, id, JSON.stringify({ act: b.act, by: me.email, byName: me.name, at: now() })], ['EXPIRE', P + 'lineask:' + cid, 3600]);
+        return res.status(200).json({ ok: true });
+      }
       case 'viewSave': {
         // A saved filter: a name, a query ("label = SEO Customer AND published < 7d"), a sort, for the
         // Audits list or DR Websites. Private unless shared; only its owner (or an admin) changes it.
@@ -1122,7 +1151,11 @@ async function handler(req, res) {
           ok.forEach((id) => {
             const k = String(kinds[id] || (typeof b.k === 'string' ? b.k : '') || '');
             const pos = b.line ? ids.indexOf(id) + 1 : 0;
-            claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}), ...(KIND.test(k) ? { k } : {}), ...(pos ? { pos, of: ids.length } : {}) };
+            // Why it joined the line, when, and the last time somebody moved it (kept short).
+            const m0 = b.m && typeof b.m === 'object' && b.m[id] && typeof b.m[id] === 'object' ? b.m[id] : null;
+            const meta = m0 ? { ...(m0.why ? { why: String(m0.why).slice(0, 160) } : {}), ...(m0.at && !isNaN(Date.parse(m0.at)) ? { qat: String(m0.at) } : {}),
+              ...(m0.mv && m0.mv.n ? { mv: { n: String(m0.mv.n).slice(0, 60), at: String(m0.mv.at || '').slice(0, 40), to: Number(m0.mv.to) || 0 } } : {}) } : {};
+            claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}), ...(KIND.test(k) ? { k } : {}), ...(pos ? { pos, of: ids.length } : {}), ...meta };
           });
           await redis(['HSET', P + 'scanclaims', ...ok.flatMap((id) => [id, JSON.stringify(claims[id])])]);
         }

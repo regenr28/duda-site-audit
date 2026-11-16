@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **168**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **169**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 167: styles v42, demo v2, engine v17, app v50).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 168: styles v43, demo v2, engine v17, app v51).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 159 on GitHub (`16b9708`). Up to 166 on GitHub (`b1fb859`). **Delivered as a zip, maybe not uploaded yet:** 167 (the scan line).
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 159 on GitHub (`16b9708`). Up to 167 on GitHub (`09dbc76`). **Delivered as a zip, maybe not uploaded yet:** 168 (scan line: status, who and why, drag).
 - **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
 - **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
@@ -275,3 +275,9 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `/api/pulse` returns live `claims`, so every tab knows every scan within a heartbeat (`setClaims` signature now includes progress and position; the open site's strip refreshes).
 - UI: `#btnScans` chip in the top bar (`renderScanChip`), `scanBarHtml()` on Audits, `openScanLine()` / `drawScanLine()` modal (this tab + other browsers grouped by `cid`; Move to the front, Remove, clear the line), refreshed every 2.5 s. Queued strip: "Number N of M", links, Move it to the front.
 - Test: `tests/tk/e2e_queue.py`.
+
+## Update 168 — scan line: status, who and why, drag, asking other tabs (built)
+- `state.qmeta[id] = { why, at, mv: { n, at, to } }` (`noteQueued`, `metaOut`); requestScan(ids, kind, why) (`rescanAllWhy` names the tab and filters; seoAudit says the publish). Sent as `m` with every scanClaim; claims carry `why`, `qat`, `mv`. First scanning claim carries progress; heartbeat every 20 s.
+- Line rows (`lineRowHtml`): Now / numbers, kind, step text (`stepTxt`, with "updated N min ago" for other tabs), who added it and why, who moved it (`metaTxt`). Own line: drag to reorder (`moveInLine`), Move to the front, Remove. Other tabs: `lineAsk` (store POST) → `dsa:lineask:<cid>` hash → that tab reads `GET op=lineask&cid` every 15 s and applies it, noting who asked.
+- A website queued in another tab shows "Number N of M in <tab>'s line" with Ask to move it to the front.
+- Also in 168: `autoHeld()`: seoTick does not start while auto audits are paused (KV `dsa:autopause`, store POST `autoPause`, 12 h) or while any claim/local scan has a kind other than seo. `autoPauseHtml()` in the scan line and on SEO Websites. Bug fixed: other tabs' claims (3-minute holds, renewed every 20 s) were only refreshed by the page heartbeat (up to 4 min with realtime), so they expired on screen; `refreshClaims()` (GET `op=claims`, which also returns the pause) runs every 15 s while anything is scanning or the line is open.
