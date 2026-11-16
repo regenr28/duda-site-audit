@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **177**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **179**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 176: styles v47, demo v2, engine v19, app v56).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 178: styles v48, demo v2, engine v20, app v57).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -324,3 +324,17 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `slugTown(p)`: the address words that are not a service and that the title/H1 also says ("brentwood"), sent as `urlPlace` when `placeOfPath` finds none (it only knows /…-tn and /locations/…). PAGEFIT_SYSTEM now says the town comes from the address, never from where the business is. Cache key `f1` → `f2`. CHECK_RELEASES v33.
 - The AI box said "Suggested alt text" on page checks; `AI_PAGE_*` now says "Suggested wording".
 - Test: `tests/tk/engine_textai.py`.
+
+## 177 — Show in editor / Show on preview reuse one tab per website
+- `openInTab(kind, site, url)` (app.js): opens `window.open('', 'dsa-<kind>-<siteId>')` and navigates it, keeping the window in `dudaTabs` too; the next item loads in the same tab and focuses it. Falls back to a plain new tab when pop-ups are blocked. The tab keeps `opener` on purpose: nulling it made Chrome put the cross-site page in a new browsing context group, and the next click opened a new tab again. The clipboard copy's promise rejection is now caught.
+- If Duda's editor ever sends Cross-Origin-Opener-Policy, the name is lost and each click opens a new tab (the old behaviour); nothing breaks.
+- Test: `tests/tk/e2e_pick.py` (two items → one editor tab; preview the same).
+
+## 178 — Speed (status, Audit items tab) + town rule for pages with no town
+- `setFinding` (plain statuses/assignee): changes the items in memory, lights the pressed button (`#drawer [data-set]`) on this frame, re-renders on the next, and saves in the background. No `loadSite` after the save: `patchFinding` now returns `siteVer`, adopted when it is exactly one more than before (so the 90 s poll does not reload for our own change). A failed save restores the old values and says so. Sets `statusBy/statusAt/updatedBy/updatedAt` locally like the server does.
+- Audit items list: `rowHtml(f)`; the first 60 rows are drawn with the page (`#itemRows`), the rest 100 at a time after each paint (stops if the page is redrawn). Row handlers are in `bindRows(root)`, run on the page and on each batch. Switching to the tab went from ~650 ms to ~65 ms with 700 items in the test.
+- `applyPageFit`: on a page with no town in its address (`urlPlace` empty), a `wrong_city` whose quote names a Business Info town is dropped. PAGEFIT_SYSTEM says the same. Cache key `f3`. CHECK_RELEASES v34. (176 told the AI the town comes from the address; with no town there it started flagging the shop's own town.)
+- **Lag while scans run:** the always-on animations (`.sc-spin`, `.pulse-dot`, `.spin-dot`, the What's New bulb `bulbGlow`, `mkGlow`/`mkDotGlow`/`acPulse`) animated filter/box-shadow or had no layer, so the browser repainted the page every frame: ~1.8 s of every 10 s busy in the test, worse on a big Audits list. Now they only fade or move, with `will-change` (≈0.15 s per 10 s). Don't add `contain` to `.topbar` (it would trap its fixed-position menus).
+- The scan bar, the scan chip and the open scan line are only redrawn when their HTML changed (`syncScanBar`, `_h`); the Audits list is redrawn for line changes at most every 8 s; the 2.5 s refresh skips hidden tabs.
+- `applyLinkVerdicts`: drops "should open <a page the link is already on>", and a link whose words name a service (`SERVICES`) opening that service's page (`servicesOfPath`). LINK_SYSTEM says so; cache key `l2`. CHECK_RELEASES v35.
+- Tests: `tests/tk/e2e_pick.py` (tab speed, all rows arrive, Done instant + saved, failed save reverts), `tests/tk/engine_textai.py`.

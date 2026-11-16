@@ -6798,9 +6798,19 @@
     const ch2 = setClaims(r.claims || {});
     if (ch || ch2) refreshLineViews(ch || before !== memb(state.claims));
   }
+  /** Redraw the scan bar on Audits only when what it says changed: replacing it makes the browser
+   *  lay out the whole page again, which every 2.5 seconds made every click feel stuck. */
+  function syncScanBar() {
+    const bar = $('#scanBar'); if (!bar) return;
+    const h = scanBarHtml();
+    if (!h) { bar.remove(); return; }
+    if (bar._h === h) return;
+    const t = document.createElement('div'); t.innerHTML = h; const nb = t.firstElementChild; nb._h = h;
+    bar.replaceWith(nb);
+  }
   function refreshLineViews(members) {
     renderScanChip();
-    const bar = $('#scanBar'); if (bar) { const h = scanBarHtml(); if (h) bar.outerHTML = h; else bar.remove(); }
+    syncScanBar();
     drawScanLine();
     const cur = state.current && route().name === 'site' ? state.current : null;
     if (cur && !state.scanning[cur.id]) {
@@ -6808,7 +6818,13 @@
       const st = $('#scanStrip'); const h = scanStrip(cur);
       if (st && h) st.outerHTML = h; else if (!!st !== !!h) renderSite();
     }
-    if (members && route().name === 'sites' && !lnDragging && !(document.activeElement && document.activeElement.matches('input, textarea, select'))) render();
+    if (members && route().name === 'sites' && !lnDragging && !(document.activeElement && document.activeElement.matches('input, textarea, select'))) {
+      // A busy line changes often; the Audits list is redrawn at most every 8 seconds for it.
+      if (!refreshLineViews.t) {
+        const wait = Math.max(0, 8000 - (Date.now() - (refreshLineViews.at || 0)));
+        refreshLineViews.t = setTimeout(() => { refreshLineViews.t = 0; refreshLineViews.at = Date.now(); if (route().name === 'sites' && !$('.modal')) renderSites(); }, wait);
+      }
+    }
   }
   // ---- this tab as a worker: take the next websites when there is room ----
   let workBusy = false, workAt = 0;
@@ -6855,7 +6871,11 @@
   // line straight away and another open tab starts them again (or this one, once it is back).
   window.addEventListener('pagehide', () => {
     if (!state.running) return;
-    try { fetch('/api/store', { method: 'POST', body: JSON.stringify({ op: 'lineGiveBack', cid: CID }), keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }); } catch (e) { /* the hold runs out by itself */ }
+    // sendBeacon is the one request a closing page reliably gets out; a keepalive fetch is the fallback.
+    const body = JSON.stringify({ op: 'lineGiveBack', cid: CID });
+    let sent = false;
+    try { sent = navigator.sendBeacon && navigator.sendBeacon('/api/store', new Blob([body], { type: 'application/json' })); } catch (e) { sent = false; }
+    if (!sent) { try { fetch('/api/store', { method: 'POST', body, keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }); } catch (e) { /* the hold runs out by itself */ } }
   });
   /** Put websites in the team's line: [{ id, k, why, paths?, seo? }]. Returns the server's answer. */
   async function addToLine(items, quiet) {
@@ -6992,9 +7012,10 @@
   function renderScanChip() {
     const b = $('#btnScans'); if (!b) return;
     const m = lineModel();
-    b.hidden = !(m.n.scanning || m.n.queued);
-    b.innerHTML = `<span class="sc-spin" aria-hidden="true">🔄</span> ${m.n.scanning}${m.n.queued ? ` <span class="faint">·</span> ⏳ ${m.n.queued}` : ''}`;
-    b.title = `${m.n.scanning} scanning, ${m.n.queued} waiting in the team's scan line. Click to see it.`;
+    const hide = !(m.n.scanning || m.n.queued);
+    if (b.hidden !== hide) b.hidden = hide;
+    const h = `<span class="sc-spin" aria-hidden="true">🔄</span> ${m.n.scanning}${m.n.queued ? ` <span class="faint">·</span> ⏳ ${m.n.queued}` : ''}`;
+    if (b._h !== h) { b._h = h; b.innerHTML = h; b.title = `${m.n.scanning} scanning, ${m.n.queued} waiting in the team's scan line. Click to see it.`; }
   }
   /** The bar at the top of Audits: what is scanning now (where), and what is next. */
   function scanBarHtml() {
@@ -7045,7 +7066,7 @@
   function drawScanLine() {
     const box = $('#slBody'); if (!box || lnDragging) return;
     const m = lineModel(); const edit = can('site.scan');
-    box.innerHTML = `<p class="small muted"><b>One line for the whole team.</b> Every open tab of the app (yours and everyone's, even in the background) takes the next website from the top and scans it, ${SCAN_CONCURRENCY_SITES} at a time per tab and at most ${state.lineCap || 6} at once for the team. <b>Closing or reloading a tab loses nothing:</b> what it was scanning goes back to the front and another open tab starts it again. A <b>Rescan</b> goes ahead of <b>Rescan all</b> and <b>SEO auto audits</b>. ${edit ? 'Drag to change the order: everyone sees the new order at once.' : ''}</p>
+    const html = `<p class="small muted"><b>One line for the whole team.</b> Every open tab of the app (yours and everyone's, even in the background) takes the next website from the top and scans it, ${SCAN_CONCURRENCY_SITES} at a time per tab and at most ${state.lineCap || 6} at once for the team. <b>Closing or reloading a tab loses nothing:</b> what it was scanning goes back to the front and another open tab starts it again. A <b>Rescan</b> goes ahead of <b>Rescan all</b> and <b>SEO auto audits</b>. ${edit ? 'Drag to change the order: everyone sees the new order at once.' : ''}</p>
       ${workersHtml()}
       ${autoPauseHtml()}
       <h3>🔄 Scanning now (${m.scanning.length})</h3>
@@ -7057,6 +7078,8 @@
         <div class="note bad small ln-old">⚠ <b>This tab was opened before an update</b> and still keeps its own line instead of using the team's. <b>${g.by === state.me.email ? 'Find that tab of yours (maybe on another computer) and reload it' : 'Ask ' + esc(g.byName || 'its owner') + ' to reload it'}</b>: its websites then move into the team's line.</div>
         <ol class="ln-list">${g.queued.map((x) => lineRowHtml(x, {})).join('')}</ol>`).join('')}
       <p class="small faint">The line is kept on the server, so everybody sees the same one. News comes every 15 seconds.</p>`;
+    if (box._h === html) return; // nothing new: leave it (and the reader's scroll) alone
+    box._h = html; box.innerHTML = html;
     $$('[data-lnlink]', box).forEach((a) => (a.onclick = () => closeModal()));
     $$('[data-lnfront]', box).forEach((b) => (b.onclick = () => moveToFront(b.dataset.lnfront)));
     if ($('#lnReload', box)) $('#lnReload', box).onclick = () => location.reload();
@@ -7089,9 +7112,9 @@
   }
   // Keep the chip, the bar and the open line fresh while scans move on (this tab's progress is live).
   setInterval(() => {
-    if (!state.me) return;
+    if (!state.me || document.hidden) return;
     renderScanChip();
-    const bar = $('#scanBar'); if (bar) { const h = scanBarHtml(); if (h) bar.outerHTML = h; else bar.remove(); }
+    syncScanBar();
     drawScanLine();
   }, 2500);
   document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-scanline]'); if (b) { e.preventDefault(); openScanLine(); } });
@@ -10078,15 +10101,33 @@
     let n = 0; try { n = Number(localStorage.getItem('dsaHlHint') || 0); localStorage.setItem('dsaHlHint', String(n + 1)); } catch (e) { /* ignore */ }
     toast(n < 3 ? msg + ' (Set up ⌖ DSA Highlight once: click "?" next to the links.)' : msg);
   }
+  /**
+   * Open a Duda page in the SAME tab every time for one website ("Show in editor" on the next item
+   * reuses the editor tab instead of opening another). The tab is found by its name; a reference is
+   * kept too, in case Duda's page clears the name. (The tab keeps its link back to this one: cutting it
+   * makes the browser treat every later click as a brand-new tab, which is the thing this avoids.)
+   */
+  const dudaTabs = {};
+  function openInTab(kind, site, url) {
+    const name = `dsa-${kind}-${site.siteId}`;
+    let w = dudaTabs[name];
+    try {
+      if (!w || w.closed) {
+        w = window.open('', name);
+        if (!w) { window.open(url, '_blank', 'noopener'); return; } // pop-ups blocked: a plain new tab
+      }
+      w.location.href = url; w.focus(); dudaTabs[name] = w;
+    } catch (e) { window.open(url, '_blank', 'noopener'); }
+  }
   function openItemPreview(site, f) {
-    window.open(previewAtItem(site, f), '_blank', 'noopener');
+    openInTab('preview', site, previewAtItem(site, f));
     hlHintOnce('Preview opened. Click ⌖ DSA Highlight to outline the element.');
   }
   function openItemEditor(site, f) {
     const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
-    try { navigator.clipboard.writeText(f.selector || ''); } catch (e) { /* ignore */ }
-    window.open(editorUrl(site, f.path), '_blank', 'noopener');
-    hlHintOnce(`Selector copied, editor opening on ${f.path}. Switch to ${A.DEVICE_LABEL[dev]} if needed, then click ⌖ DSA Highlight.`);
+    try { navigator.clipboard.writeText(f.selector || '').catch(() => {}); } catch (e) { /* ignore */ }
+    openInTab('editor', site, editorUrl(site, f.path));
+    hlHintOnce(`Selector copied, editor opening on ${f.path} (in the same editor tab each time). Switch to ${A.DEVICE_LABEL[dev]} if needed, then click ⌖ DSA Highlight.`);
   }
   const selLinks = (f) => `<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Show on preview</button><button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Show in editor</button><button class="linkbtn faint" data-hlhelp title="How to outline the element on the preview or in the editor">?</button>`;
   function bindSelLinks(root, site, list) {
@@ -11177,6 +11218,30 @@
         : findings.length && !mineOpen && sc.state === 'complete' ? `<div class="note good grp-note"><b>✓ Every audit item that affects the business is closed.</b>${otherOpen ? ` What's left can follow: <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a> and <a href="#/site/${esc(s.id)}/length">📏 SEO Lengths</a> (${otherOpen} open).` : ''}</div>`
         : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a>, and title, description and alt-text lengths on <a href="#/site/${esc(s.id)}/length">📏 SEO Lengths</a> (${otherOpen} open), so this list is what affects the business and SEO.</div>` : ''}
 `;
+    // One row of the list. The first rows are drawn with the page; the rest follow straight after in
+    // batches (see below), so opening this tab no longer waits for hundreds of rows to be laid out.
+    const FIRST_ROWS = 60;
+    const rowHtml = (f) => {
+            const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
+            const closed = f.status === 'done' || f.status === 'false' || f.status === 'exempt';
+            return `<tr class="row-link ${closed ? 'done' : ''} ${pick.ids.has(f.id) ? 'picked' : ''}" data-item="${f.num}">
+              <td class="pick-col" data-stop><input type="checkbox" data-pick="${esc(f.id)}" ${pick.ids.has(f.id) ? 'checked' : ''} aria-label="Select #${f.num}"></td>
+              <td><a class="item-id" href="#/site/${esc(s.id)}/item/${f.num}">#${f.num}</a></td>
+              <td data-stop>${statusSelect(f, 'data-fst')}${can('item.status') && canRecheck(f) ? `<div><button class="linkbtn recheck-btn" data-recheck="${esc(f.id)}" title="Rescan only ${recheckPages(f).length === 1 ? 'this page' : 'these ' + recheckPages(f).length + ' pages'} and check whether this item is still there">⟳ Recheck</button></div>` : ''}</td>
+              <td><span class="badge sev-${f.severity}">${esc(f.severity)}</span><div class="small faint" style="margin-top:4px">${esc(f.category)}</div></td>
+              <td style="max-width:200px" data-stop><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small" title="Open ${esc(A.DEVICE_LABEL[dev])} preview">${esc(f.path)}</a>
+                ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more pages</div>` : ''}</td>
+              <td><div class="loc">${esc(f.location)}</div>${devChips(f)}</td>
+              <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
+                <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
+                <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
+              <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>${gbpIdNote(s, f)}${f.hiddenLive ? `<div><span class="badge subtle" title="Hidden by the page's own styles (${esc(f.hiddenLive)}): visitors don't see it, but it is in the page's code, which Google and SEO tools read">👁 Hidden on the page</span></div>` : ''}
+                ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}${proofHtml(s, f)}
+                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}</td>
+              <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
+              <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
+            </tr>`;
+    };
     body.innerHTML = `
       ${topHtml}
       <div class="panel">
@@ -11210,27 +11275,7 @@
         ${bulkHtml()}
         <div class="table-wrap"><table class="grid findings">
           <thead><tr><th class="pick-col"><input type="checkbox" id="pickAll" ${allPicked ? 'checked' : ''} title="Select every item shown"></th><th>ID</th><th>Status</th><th>Severity</th><th>Page / path</th><th>Where</th><th>Unique CSS selector</th><th>Finding</th><th title="Comments">💬</th><th>Assignee</th></tr></thead>
-          <tbody>${shown.map((f) => {
-            const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
-            const closed = f.status === 'done' || f.status === 'false' || f.status === 'exempt';
-            return `<tr class="row-link ${closed ? 'done' : ''} ${pick.ids.has(f.id) ? 'picked' : ''}" data-item="${f.num}">
-              <td class="pick-col" data-stop><input type="checkbox" data-pick="${esc(f.id)}" ${pick.ids.has(f.id) ? 'checked' : ''} aria-label="Select #${f.num}"></td>
-              <td><a class="item-id" href="#/site/${esc(s.id)}/item/${f.num}">#${f.num}</a></td>
-              <td data-stop>${statusSelect(f, 'data-fst')}${can('item.status') && canRecheck(f) ? `<div><button class="linkbtn recheck-btn" data-recheck="${esc(f.id)}" title="Rescan only ${recheckPages(f).length === 1 ? 'this page' : 'these ' + recheckPages(f).length + ' pages'} and check whether this item is still there">⟳ Recheck</button></div>` : ''}</td>
-              <td><span class="badge sev-${f.severity}">${esc(f.severity)}</span><div class="small faint" style="margin-top:4px">${esc(f.category)}</div></td>
-              <td style="max-width:200px" data-stop><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small" title="Open ${esc(A.DEVICE_LABEL[dev])} preview">${esc(f.path)}</a>
-                ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more pages</div>` : ''}</td>
-              <td><div class="loc">${esc(f.location)}</div>${devChips(f)}</td>
-              <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
-                <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
-                <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
-              <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>${gbpIdNote(s, f)}${f.hiddenLive ? `<div><span class="badge subtle" title="Hidden by the page's own styles (${esc(f.hiddenLive)}): visitors don't see it, but it is in the page's code, which Google and SEO tools read">👁 Hidden on the page</span></div>` : ''}
-                ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}${proofHtml(s, f)}
-                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}</td>
-              <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
-              <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
-            </tr>`;
-          }).join('')}</tbody></table></div>`}
+          <tbody id="itemRows">${shown.slice(0, FIRST_ROWS).map(rowHtml).join('')}</tbody></table></div>`}
       </div>
       ${polish && !lengths ? `      <details class="ref-details polish-ref" style="margin-top:16px">
         <summary class="small muted">Reference: the website\'s fonts and pictures</summary>
@@ -11276,16 +11321,35 @@
     runHint();
     $('#ffq') && ($('#ffq').oninput = (e) => { ff.q = e.target.value; const p = e.target.selectionStart; renderSite(); const i = $('#ffq'); i.focus(); i.setSelectionRange(p, p); });
     [['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
-    $$('[data-copy]', body).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
-    $$('[data-inspect]', body).forEach((c) => (c.onclick = () => { const f = s.findings.find((x) => x.id === c.dataset.inspect); if (f) openInspector(s, f); }));
+    // Everything a row's buttons do, for the rows drawn with the page and for each batch drawn after.
+    function bindRows(root) {
+    $$('[data-copy]', root).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
+    $$('[data-inspect]', root).forEach((c) => (c.onclick = () => { const f = s.findings.find((x) => x.id === c.dataset.inspect); if (f) openInspector(s, f); }));
     // Each place a repeated photo turns up opens on its own element and its own page, from the row.
-    $$('[data-dupsel]', body).forEach((b) => (b.onclick = (e) => {
+    $$('[data-dupsel]', root).forEach((b) => (b.onclick = (e) => {
       e.stopPropagation();
       const f = s.findings.find((x) => x.id === b.dataset.dupfid); if (!f) return;
       const place = (f.dupPlaces || []).find((x) => x.selector === b.dataset.dupsel) || {};
       openInspector(s, Object.assign({}, f, { selector: b.dataset.dupsel, path: b.dataset.duppath, pages: f.placesKind === 'link' ? [b.dataset.duppath] : (place.paths || [b.dataset.duppath]), location: place.location || f.location }, place.devices && place.devices.length ? { visibleOn: place.devices } : {}));
     }));
-    bindSelLinks(body, s);
+    bindSelLinks(root, s);
+    $$('tr[data-item]', root).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
+    $$('[data-fst]', root).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
+    $$('[data-fwho]', root).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
+    $$('[data-pick]', root).forEach((cb) => (cb.onchange = () => { if (cb.checked) pick.ids.add(cb.dataset.pick); else pick.ids.delete(cb.dataset.pick); syncPick(); }));
+    $$('[data-recheck]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); recheckItems(s, [b.dataset.recheck]); }));
+    }
+    bindRows(body);
+    // The rest of the rows, 100 at a time, each batch after the browser has drawn the last: the page
+    // can be used (and scrolled) while they arrive. A newer drawing of the page stops this one.
+    { const tb = $('#itemRows', body); let at = FIRST_ROWS;
+      const more = () => {
+        if (!tb || !document.body.contains(tb) || at >= shown.length) return;
+        const tmp = document.createElement('tbody'); tmp.innerHTML = shown.slice(at, at + 100).map(rowHtml).join(''); at += 100;
+        bindRows(tmp); while (tmp.firstChild) tb.appendChild(tmp.firstChild);
+        setTimeout(() => requestAnimationFrame(more), 0);
+      };
+      if (shown.length > FIRST_ROWS) setTimeout(() => requestAnimationFrame(more), 0); }
     bindVerify(body, s);
     bindNewChecks(body, s);
     state.refTab = refWas;
@@ -11299,9 +11363,6 @@
     }));
     $$('[data-allow-edit]', body).forEach((b) => (b.onclick = () => openAllowEditor(s, (s.allow || []).find((x) => x.key === b.dataset.allowEdit))));
     if ($('#allowAdd', body)) $('#allowAdd', body).onclick = () => openAllowEditor(s, null);
-    $$('tr[data-item]', body).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
-    $$('[data-fst]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
-    $$('[data-fwho]', body).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
     // Several at once. Each goes through setFinding like a single change, so False alarm still asks for
     // one reason (applied to every selected item) and For clarification still asks its one question.
     // Ticking a box changes only that row, the "select all" box and the bar: redrawing the whole page
@@ -11312,7 +11373,6 @@
       const all = $('#pickAll', body); if (all) all.checked = shown.length > 0 && pickedNow().length === shown.length;
       const bar = $('#bulkBar', body); if (bar) { bar.outerHTML = bulkHtml(); bindBulk(); }
     };
-    $$('[data-pick]', body).forEach((cb) => (cb.onchange = () => { if (cb.checked) pick.ids.add(cb.dataset.pick); else pick.ids.delete(cb.dataset.pick); syncPick(); }));
     if ($('#pickAll', body)) $('#pickAll', body).onchange = (e) => { if (e.target.checked) shown.forEach((f) => pick.ids.add(f.id)); else pick.ids.clear(); syncPick(); };
     function bindBulk() {
     if ($('#bulkClear', body)) $('#bulkClear', body).onclick = () => { pick.ids.clear(); syncPick(); };
@@ -11336,7 +11396,6 @@
     if ($('#bulkRe', body)) $('#bulkRe', body).onclick = () => recheckItems(s, pickedNow().map((f) => f.id));
     }
     bindBulk();
-    $$('[data-recheck]', body).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); recheckItems(s, [b.dataset.recheck]); }));
     if ($('#ffAdd', body)) $('#ffAdd', body).onclick = () => openAddItem(s);
     if ($('#ffClear', body)) $('#ffClear', body).onclick = () => { clearFilters(); renderSite(); };
     // A filtered list that doesn't say it is filtered is how "critical is empty, but there's 5"
@@ -11410,8 +11469,32 @@
     const send = Object.assign({}, changes); delete send.asked;
     // Marked False alarm: a picture of it first-hand, while it is still on the page, in case it turns out to be real.
     if (changes.status === 'false') { const items = (s.findings || []).filter((x) => ids.includes(x.id) && !x.proof).slice(0, 10); if (items.length) proofTake(s, items, 'false').catch(() => {}); }
-    try { upsertSummary(await store({ op: 'patchFinding', siteId: s.id, findingIds: ids, changes: send })); await loadSite(s.id); renderSite(); if (changes.status && !changes.asked) toast(`Marked ${FLABEL[changes.status]}`); }
-    catch (e) { toast('Save failed: ' + e.message); }
+    // Shown at once, saved behind it. Waiting for the save AND a reload of the whole website before
+    // drawing anything took about 2 seconds, long enough to look like the click was missed.
+    const before = new Map(); const at = new Date().toISOString();
+    (s.findings || []).filter((x) => ids.includes(x.id)).forEach((f) => {
+      before.set(f.id, { status: f.status, assignee: f.assignee, updatedAt: f.updatedAt, updatedBy: f.updatedBy, statusBy: f.statusBy, statusAt: f.statusAt });
+      if (send.status && FLABEL[send.status]) f.status = send.status;
+      if ('assignee' in send) f.assignee = send.assignee;
+      // As the server records it: whoever changed the item last, and when.
+      f.updatedAt = at; f.updatedBy = state.me.email; f.statusAt = at; f.statusBy = state.me.email;
+    });
+    // The button pressed lights up on this frame; the rest of the page follows on the next.
+    if (send.status) $$('#drawer [data-set]').forEach((b) => b.classList.toggle('on', b.dataset.set === send.status));
+    if (changes.status && !changes.asked) toast(`Marked ${FLABEL[changes.status]}`);
+    const verWas = Number((state.current && state.current.id === s.id && state.current.ver) || 0);
+    requestAnimationFrame(() => setTimeout(() => { if (state.current === s) renderSite(); }, 0));
+    try {
+      const r = await store({ op: 'patchFinding', siteId: s.id, findingIds: ids, changes: send });
+      upsertSummary(r);
+      // Our own save moved the website's version on by one: no need to reload it for that.
+      if (r && r.siteVer && state.current === s && Number(r.siteVer) === verWas + 1) s.ver = String(r.siteVer);
+    } catch (e) {
+      // Put it back as it was, and say so.
+      (s.findings || []).forEach((f) => { const b = before.get(f.id); if (b) Object.assign(f, b); });
+      if (state.current === s) renderSite();
+      toast('Save failed, nothing was changed: ' + e.message);
+    }
   }
 
   function renderCommentsTab(body, s) {

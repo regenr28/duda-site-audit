@@ -1572,7 +1572,7 @@ async function handler(req, res) {
           }
         }
         { const to = touched.filter((t) => t.kind === 'assign' && t.to).map((t) => t.to); if (to.length) await bringIn(b.siteId, me, to, 'assigned'); }
-        return res.status(200).json(await saveIndex(b.siteId));
+        { const sum = await saveIndex(b.siteId); const [sv] = await redis(['GET', P + 'ver:s:' + b.siteId]); return res.status(200).json(Object.assign({}, sum, { siteVer: String(sv || 0) })); }
       }
       case 'recheck': {
         // The result of rechecking a few selected items, from the browser that rescanned just their

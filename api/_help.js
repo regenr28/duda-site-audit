@@ -337,7 +337,7 @@ export const HELP_SECTIONS = [
 <li><b>The one exception</b>: Duda's newer widgets are sent with a hidden blank template inside them (the accordion's "Title or Question", which it copies when somebody clicks Add Item). Duda's scripts replace it as the page loads, it is not in the editor, and it is not content, so wording checks leave it out. Compare <b>View Page Source</b> (Ctrl+U, the page as first sent) with <b>Inspect</b> (the page after its scripts ran) to see the difference</li>
 <li><b>Copy</b>: copies the CSS selector.</li>
 <li><b>▶ Show on preview</b>: opens the Duda preview of that page on the item's device. When the item has visible text, the browser scrolls to it and highlights it.</li>
-<li><b>✎ Show in editor</b>: opens that page in the Duda editor and copies the selector for you.</li>
+<li><b>✎ Show in editor</b>: opens that page in the Duda editor and copies the selector for you. Each website has one editor tab: on the next item it loads in the same tab instead of opening another (<b>▶ Show on preview</b> does the same with its own preview tab). Closed it? The next click opens a new one.</li>
 <li><b>⌖ DSA Highlight</b> (one-time setup, click <b>?</b> next to the links): a bookmark you drag to your bookmarks bar. On the preview or in the editor, click it to scroll to the element and flash a red outline. In the editor it reads the copied selector (allow clipboard access the first time) or lets you paste it. If it says "hidden on this view", switch to the item's device or open the side panel and click it again.</li>
 <li><b>⌖ Console snippet</b> (in the item panel): copies a small snippet you can paste in the browser console on the preview to outline the element.</li>
 </ul>

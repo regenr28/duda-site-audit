@@ -410,6 +410,24 @@
         'A page that names a DIFFERENT town from its address is still reported',
       ],
     },
+    {
+      v: 34,
+      date: '2026-11-17',
+      title: 'Pages with no town in their address may name the shop\u2019s town',
+      items: [
+        'A page whose address names no town (/paint-protection-film) may name the town in Business Info ("Franklin, TN\u2019s top choice for PPF"): the AI page check no longer calls that "a different town"',
+        'A page whose address names a town is still checked against that town: a /brentwood-window-tinting page that says Franklin is still reported',
+      ],
+    },
+    {
+      v: 35,
+      date: '2026-11-17',
+      title: 'A link on a service word that opens that service\u2019s page is right',
+      items: [
+        'A link on "PPF" (or "ceramic coating", "window tint"…) inside a paragraph, opening that service\u2019s page, is no longer called "Link opens the wrong page", whatever page it sits on',
+        'The AI\u2019s answer "should open the page it is already on" is never used: that is not a fix for a link',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -3389,6 +3407,13 @@
       // /brentwood-window-tinting page saying "…in Brentwood, TN" is right even though the shop is in
       // Franklin. Kept only when the AI's fix keeps the address's town too (another town named beside it).
       if (v.type === 'wrong_city' && pathNamesPlace([pg.path], v.quote || '', truth) && !(v.suggestion && pathNamesPlace([pg.path], v.suggestion, truth))) return;
+      // A page whose address names no town (/paint-protection-film) may name the business's own town
+      // from Business Info ("Franklin, TN's top choice"): that is where the shop is, not a mistake.
+      if (v.type === 'wrong_city' && !pg.urlPlace) {
+        const towns = ((truth && truth.addresses) || []).map((x) => compact(x.city || '')).filter((x) => x.length >= 3);
+        const q = compact(v.quote || '');
+        if (towns.some((t) => q.includes(t))) return;
+      }
       const [code, category, sameRe, message] = rule;
       const part = PART[v.part] ? v.part : 'body';
       const ai = { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote };
@@ -3465,6 +3490,12 @@
     verdicts.forEach((v) => {
       const l = links[v.i];
       if (!l || v.verdict !== 'wrong_page' || Number(v.confidence) < 0.75) return;
+      // "Should open the page it is already on" is never the fix for a link.
+      const exp = normalizePath(String(v.expected || '').replace(/^https?:\/\/[^/]+/i, '').split(/[?#\s]/)[0] || '');
+      if (exp && (l.pages || []).map((p) => normalizePath(p)).includes(exp)) return;
+      // A link whose words name a service ("PPF", "ceramic coating") and that opens that service's page is right.
+      const named = SERVICES.filter((sv) => { sv.re.lastIndex = 0; return sv.re.test(String(l.text || '')); }).map((sv) => sv.key);
+      if (named.length && servicesOfPath(l.to).some((k) => named.includes(k))) return;
       const dest = byPath.get(l.to) || {};
       const lead = LEAD_WORDS.test(l.text);
       const where = (l.pages || []).slice().sort();

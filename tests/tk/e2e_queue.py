@@ -106,10 +106,13 @@ try:
         pg2.screenshot(path=os.path.join(OUT, 'queue-line.png'))
         pg2.click('[data-close]')
         # Close the first tab in the middle of its two scans: they go straight back to the front of the line.
-        pg.close(); time.sleep(1.5)
-        L2 = J(pg2, '/api/store?op=line')
+        pg.close()
+        for _ in range(16):
+            time.sleep(0.5)
+            L2 = J(pg2, '/api/store?op=line')
+            if sum(1 for x in L2['line'] if x.get('back')) >= 2: break
         back = [x for x in L2['line'] if x.get('back')]
-        print('  after close:', [(x['name'], (x.get('back') or {}).get('why')) for x in L2['line']], flush=True)
+        print('  after close:', [(x['name'], (x.get('back') or {}).get('why')) for x in L2['line']], {k: (c['cid'][-4:], c['state']) for k, c in L2['claims'].items()}, flush=True)
         check(len(back) == 2 and L2['line'][0].get('back') and L2['line'][1].get('back') and len(L2['claims']) == 2, 'closing a tab mid-scan puts its 2 scans back at the front of the line at once')
         # The second tab finishes its own two, then takes the two that came back.
         backIds = [x['id'] for x in back]

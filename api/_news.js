@@ -4,6 +4,30 @@
 
 export const NEWS = [
   {
+    id: '2026-11-17-faster-audit', date: '2026-11-17', audience: 'all', tag: 'Audits',
+    title: 'Faster: status changes and the Audit items tab',
+    what: 'Clicking <b>Done</b> (or any status) changes it at once and saves in the background, instead of freezing for a couple of seconds first. If a save fails, it goes back and says so. Opening <b>Audit items</b> shows the first rows straight away and the rest arrive a moment later. And while scans are running, the app no longer keeps the browser busy redrawing the page (the spinning scan icon, the glowing bulb and the scan bar were redrawing everything several times a second), so clicks respond straight away again.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>Audit items</b> → click a status.'],
+  },
+  {
+    id: '2026-11-17-service-links', date: '2026-11-17', audience: 'all', tag: 'Audits',
+    title: 'A link on "PPF" that opens the PPF page is fine',
+    what: 'A link inside a paragraph on a service word ("PPF", "ceramic coating") that opens that service\'s page is no longer called "Link opens the wrong page", whatever page it sits on. The AI saying a link "should open the page it is already on" is never used either. Rescan to clear the old items.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⟳ Rescan</b>.'],
+  },
+  {
+    id: '2026-11-17-town-rules', date: '2026-11-17', audience: 'all', tag: 'Audits',
+    title: 'Town checks: the page\'s address decides',
+    what: 'A page whose address names a town (/brentwood-window-tinting) is checked against that town. A page whose address names no town (/paint-protection-film) may name the shop\'s own town from Business Info ("Franklin, TN\'s top choice"); it is no longer called "a different town". Rescan to clear the old items.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⟳ Rescan</b>.'],
+  },
+  {
+    id: '2026-11-17-one-editor-tab', date: '2026-11-17', audience: 'all', tag: 'Audits',
+    title: 'Show in editor uses the same tab',
+    what: '<b>✎ Show in editor</b> opens the Duda editor in a tab, and on the next item it loads that page in the <b>same tab</b> instead of opening another one. <b>▶ Show on preview</b> works the same way with its own tab. Each website has its own editor tab.',
+    where: ['<b>Walkthrough:</b> open an audit item → <b>✎ Show in editor</b> → go to the next item (↓) → <b>✎ Show in editor</b> again.'],
+  },
+  {
     id: '2026-11-17-town-pages', date: '2026-11-17', audience: 'all', tag: 'Audits',
     title: 'Town pages: their own town is right',
     what: 'A page built for a town, like <b>/brentwood-window-tinting</b>, was sometimes told by the AI that its heading should name the town the shop is in ("…in Franklin, TN"). A page whose address names a town is now accepted for naming that town, wherever the shop is. A page that names a different town from its address is still reported. Rescan to clear the old items.',

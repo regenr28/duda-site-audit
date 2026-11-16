@@ -72,13 +72,31 @@ with sync_playwright() as p:
       const A = window.DudaAudit;
       const truth = A.buildTruth({ site: { site_business_info: { business_name: '86 Auto Lab' } }, content: { location_data: { address: { streetAddress: '1552 Columbia Avenue', city: 'Franklin', region: 'TN' } } } }, null, null);
       const fit = [{ path: '/brentwood-window-tinting', title: 'Window Tinting in Brentwood, TN | 86 Auto Lab', h1: ['Vehicle Window Tinting Experts in Brentwood, TN'], h1Sel: '[id="1890273695"] > h1' },
-                   { path: '/locations/temple-tx', title: 'Ceramic Coating in Temple, TX', h1: ["Copperas Cove's top provider"], h1Sel: 'h1' }];
+                   { path: '/locations/temple-tx', title: 'Ceramic Coating in Temple, TX', h1: ["Copperas Cove's top provider"], h1Sel: 'h1', urlPlace: 'temple' },
+                   { path: '/paint-protection-film', title: 'Paint Protection Film | 86 Auto Lab', h1: ["Franklin, tn's top choice for Paint Protection Film"], h1Sel: 'h1', urlPlace: '' },
+                   { path: '/brentwood-window-tinting', title: 'Window Tinting in Brentwood, TN', h1: ['Franklin window tint experts'], h1Sel: 'h1x', urlPlace: 'brentwood' }];
       const issues = [{ i: 0, type: 'wrong_city', part: 'h1', quote: 'Vehicle Window Tinting Experts in Brentwood, TN', confidence: 0.95, reason: 'Address is /brentwood-window-tinting but business is located in Franklin, TN.', suggestion: 'Vehicle Window Tinting Experts in Franklin, TN' },
-                      { i: 1, type: 'wrong_city', part: 'h1', quote: "Copperas Cove's top provider", confidence: 0.9, reason: 'Temple page names Copperas Cove', suggestion: "Temple's top provider" }];
+                      { i: 1, type: 'wrong_city', part: 'h1', quote: "Copperas Cove's top provider", confidence: 0.9, reason: 'Temple page names Copperas Cove', suggestion: "Temple's top provider" },
+                      { i: 2, type: 'wrong_city', part: 'h1', quote: "Franklin, tn's top choice for Paint Protection Film", confidence: 0.9, reason: 'Page URL has no town', suggestion: 'Top choice for Paint Protection Film' },
+                      { i: 3, type: 'wrong_city', part: 'h1', quote: 'Franklin window tint experts', confidence: 0.9, reason: 'Brentwood page names Franklin', suggestion: 'Brentwood window tint experts' }];
       return A.applyPageFit([], fit, issues, truth).map((f) => f.path + ' ' + f.found);
     }""")
     print('  page fit:', w, flush=True)
-    check(not any('brentwood' in x for x in w), 'a /brentwood-window-tinting page whose H1 says Brentwood is not "a different town" (even with the shop in Franklin)')
+    check(not any('Experts in Brentwood' in x for x in w), 'a /brentwood-window-tinting page whose H1 says Brentwood is not "a different town" (even with the shop in Franklin)')
     check(any('temple' in x and 'Copperas Cove' in x for x in w), 'a town page whose H1 names another town is still reported')
+    check(not any('/paint-protection-film' in x for x in w), 'a page with no town in its address may name the shop\'s own town ("Franklin, TN\'s top choice")')
+    check(any('/brentwood-window-tinting' in x and 'Franklin' in x for x in w), 'but a Brentwood page that names Franklin (the shop\'s town) is still reported')
+    lk = pg.evaluate("""() => {
+      const A = window.DudaAudit;
+      const links = [{ text: 'PPF', to: '/paint-protection-film', pages: ['/dealership'], selector: 'a1', location: 'Body', context: 'Dealership-Quality PPF Packages' },
+                     { text: 'Read more', to: '/window-tint', pages: ['/ceramic-coating'], selector: 'a2', location: 'Body', context: 'Ceramic Coating' },
+                     { text: 'Our packages', to: '/about', pages: ['/dealership'], selector: 'a3', location: 'Body', context: 'Packages' }];
+      const v = [{ i: 0, verdict: 'wrong_page', confidence: 0.92, reason: 'should stay on dealership page', expected: '/dealership' },
+                 { i: 1, verdict: 'wrong_page', confidence: 0.9, reason: 'ceramic section opens tint', expected: '/ceramic-coating-details' },
+                 { i: 2, verdict: 'wrong_page', confidence: 0.9, reason: 'opens about', expected: '/dealership' }];
+      return A.applyLinkVerdicts([], links, v, []).map((f) => f.selector);
+    }""")
+    print('  links:', lk, flush=True)
+    check(lk == ['a2'], 'a "PPF" link to the PPF page is fine on any page, and "should open the page it is on" is dropped; a real wrong link is kept: ' + str(lk))
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED')

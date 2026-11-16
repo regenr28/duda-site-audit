@@ -615,7 +615,7 @@ span.pill { display: inline-block; padding: 5px 10px; border-radius: 999px; font
 /* v47: What's New */
 .menu-btn.glow { color: #f59e0b; animation: bulbGlow 2.2s ease-in-out infinite; }
 .menu-btn.glow::after { content: ''; position: absolute; margin: -22px 0 0 14px; width: 7px; height: 7px; border-radius: 99px; background: #f59e0b; }
-@keyframes bulbGlow { 0%, 100% { filter: drop-shadow(0 0 0 rgba(245,158,11,0)); } 50% { filter: drop-shadow(0 0 6px rgba(245,158,11,.9)); } }
+@keyframes bulbGlow { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 .news-body { gap: 10px; }
 .news-item { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; justify-items: start; }
 .news-item.fresh { border-color: var(--accent); }
@@ -2378,3 +2378,10 @@ ol.ln-list { list-style: none; }
 .np-wl { margin-top: 6px; }
 .np-wl .wl { gap: 6px; }
 .np-wl .wl-q { -webkit-line-clamp: 1; }
+
+/* v48: animations that run all the time (scanning, the What's New bulb) only move or fade, on their
+   own layer, so the browser never repaints the page for them. Animating a glow (filter / shadow)
+   repainted it every frame, and on a big Audits list that made every click feel stuck. */
+.scan-chip .sc-spin, .pulse-dot, .spin-dot, .menu-btn.glow, .spin { will-change: transform, opacity; }
+.mk-m.st-sending { animation-name: mkFade; } .mk-dot.st-sending { animation-name: mkFade; } .ac-dot.run { animation-name: mkFade; }
+@keyframes mkFade { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
