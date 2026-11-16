@@ -107,6 +107,22 @@ ok(JSON.stringify(order) === JSON.stringify(['repub', 'never', 'old']), 'due ord
 const sums2 = { a: { at: now - 86400000, pubAt: Date.parse('2026-01-01T00:00:00Z'), t: { name: 2 } }, b: { at: now - 86400000, pubAt: Date.parse('2026-01-01T00:00:00Z'), rv: 3, t: { name: 1 } }, c: { at: now - 86400000, pubAt: Date.parse('2026-01-01T00:00:00Z'), t: { phone: 1 } } };
 const o2 = W.dueOrder([{ id: 'a', pub: '2026-01-01T00:00:00Z' }, { id: 'b', pub: '2026-01-01T00:00:00Z' }, { id: 'c', pub: '2026-01-01T00:00:00Z' }], sums2, now).map((x) => x.id);
 ok(JSON.stringify(o2) === '["a"]', 'only websites with an old-rules business name are read again: ' + o2.join(','));
+// YouTube video links name no channel: whose channel is asked of YouTube (oEmbed), not read from "watch".
+{
+  const t86 = { businessName: '86 Auto Lab', names: ['86 Auto Lab'], phones: [], emails: [], addresses: [], socials: { youtube: ['@86AutoLabNashville'] }, socialLinks: {} };
+  const page = `<html><body><a href="https://www.youtube.com/watch?v=vlQsGNZ5t2Q">Watch</a> <a href="https://youtu.be/OTHER123">Other</a>
+    <a href="https://www.youtube.com/shorts/NAMEONLY1">Short</a> <a href="https://www.youtube.com/watch?v=GONE0000">Gone</a> <a href="https://www.youtube.com/@86AutoLabNashville">Channel</a></body></html>`;
+  const raw = W.checkPage(page, t86, '/').filter((x) => x.type === 'social');
+  ok(raw.length === 4 && raw.every((x) => x.video), 'video links are noted by their ID, not judged as a channel called "watch" (' + raw.map((x) => x.value).join(', ') + ')');
+  const answers = { vlQsGNZ5t2Q: { n: '86 Auto Lab Nashville', u: 'https://www.youtube.com/@86AutoLabNashville' }, OTHER123: { n: 'Glossy Garage TV', u: 'https://www.youtube.com/@glossygaragetv' },
+    NAMEONLY1: { n: '86 Auto Lab', u: 'https://www.youtube.com/channel/UC1234567890' }, GONE0000: { gone: true } };
+  const vc = await W.videoChannels(raw, t86, async (id) => answers[id]);
+  ok(!vc.some((x) => x.video === 'vlQsGNZ5t2Q'), 'a video on their own channel (Business Info @86AutoLabNashville) is fine');
+  ok(!vc.some((x) => x.video === 'NAMEONLY1'), 'a video on a channel with their business name is fine');
+  ok(!vc.some((x) => x.video === 'GONE0000'), 'a video YouTube cannot tell us about is left alone');
+  const o = vc.find((x) => x.video === 'OTHER123');
+  ok(o && o.sev === 'warning' && /another channel: Glossy Garage TV/.test(o.label), 'a video on another channel is a warning that names it: ' + (o && o.label));
+}
 console.log(fail ? 'SOME FAILED' : 'ALL PASS', out.length, 'findings on the blog page');
 if (fail || process.env.SHOW) console.log(JSON.stringify(out, null, 1));
 process.exit(fail ? 1 : 0);

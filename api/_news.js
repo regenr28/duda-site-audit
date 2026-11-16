@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-yt-videos', date: '2026-11-16', audience: 'all', tag: 'Auto audit',
+    title: 'YouTube video links are no longer "an account that is not theirs"',
+    what: 'A link to a YouTube video (youtube.com/watch?v=…) was read as a channel called "watch" and flagged as super critical. Now the app asks YouTube whose channel the video is on: their own channel (Business Info\'s YouTube, or their business name) is fine; a video on another channel is a warning that names the channel. Facebook videos and Instagram posts are no longer judged as accounts either. The wrong items go away at the next auto audit or rescan.',
+    where: ['<b>Walkthrough:</b> a website\'s Profile → Auto audit → <b>Check now</b>, or <b>Rescan</b> the audit.'],
+    link: '#/help/live', linkText: 'How the auto audit works',
+  },
+  {
     id: '2026-11-16-filters', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: 'Saved filters: your own tabs on Audits and DR Websites',
     what: 'Both lists now have tabs: <b>All open websites</b>, <b>Assigned to me</b> and <b>SEO Websites</b> are built in, and <b>＋ New filter</b> makes your own, written in plain words like <span class="mono">label = "SEO Customer" AND published &lt; 7d</span> or <span class="mono">commented = me</span>. Share it with the team or keep it to yourself. The lists also sort by label, name, last scanned, last published and most critical.',

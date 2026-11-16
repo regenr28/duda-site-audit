@@ -373,6 +373,15 @@
         'Checked on desktop and mobile; each item shows both colours and the ratio',
       ],
     },
+    {
+      v: 30,
+      date: '2026-11-16',
+      title: 'Video and post links are no longer read as somebody else\'s account',
+      items: [
+        'A link to a YouTube video (watch, youtu.be, Shorts, embed, live), a Facebook video or an Instagram post names no account, so it is not called "a link to an account that is not theirs" any more',
+        'The auto audit asks YouTube whose channel each video is on: their own channel (Business Info\'s YouTube, or their business name) is fine; another channel is a warning that names it',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -543,6 +552,26 @@
     // Partial paths saved in Business Info, e.g. "in/nathan-acito-749a0b254" or "company/acme"
     if (net !== 'google_my_business' && v.includes('/')) return handleFromSegs(net, v.split('/'));
     return v;
+  }
+  /**
+   * A link to one post or video rather than to an account: a YouTube video (watch, youtu.be, shorts,
+   * embed, live, a playlist), a Facebook watch / reel / photo, an Instagram post or reel. Its address
+   * names no account ("watch" is not a channel), so it cannot be judged by its handle.
+   * Returns the YouTube video ID when there is one (whose channel it is can be asked of YouTube).
+   */
+  function postLink(net, href) {
+    let u; try { u = new URL(href); } catch (e) { return null; }
+    const segs = u.pathname.split('/').filter(Boolean); const s0 = (segs[0] || '').toLowerCase();
+    if (net === 'youtube') {
+      if (/(^|\.)youtu\.be$/i.test(u.hostname)) return { video: segs[0] || '' };
+      if (s0 === 'watch') return { video: u.searchParams.get('v') || '' };
+      if (['shorts', 'embed', 'live', 'v', 'e'].includes(s0)) return { video: segs[1] || '' };
+      if (s0 === 'playlist' || s0 === 'results' || s0 === 'feed') return { video: '' };
+      return null;
+    }
+    if (net === 'facebook') return ['watch', 'reel', 'story.php', 'photo.php', 'permalink.php', 'photo', 'events', 'groups', 'share'].includes(s0) ? { video: '' } : null;
+    if (net === 'instagram') return ['p', 'reel', 'reels', 'tv', 'stories', 'explore'].includes(s0) ? { video: '' } : null;
+    return null;
   }
   /** "Share this page" buttons (LinkedIn shareArticle, Facebook sharer, X intent, Pinterest pin/create…) aren't profile links. */
   function isShareLink(u) {
@@ -2085,6 +2114,9 @@
       if (!net) return;
       let u; try { u = new URL(href); } catch (e) { return; }
       if (isShareLink(u)) return; // share buttons on blog posts, not the business's profile
+      // A video or a post is not an account: whose channel a YouTube video is on is checked on the
+      // live website by the auto audit, which can ask YouTube. Here it is left alone.
+      if (postLink(net, u.href)) return;
       const handle = socialHandle(net, u.href);
       const label = net === 'google_my_business' ? 'Google Business/Maps' : net[0].toUpperCase() + net.slice(1);
       // A Google Maps link with only a place ID can't be judged by its address. Compare IDs with Business Info when we can;
@@ -3508,6 +3540,6 @@
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

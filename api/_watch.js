@@ -179,6 +179,13 @@ export function checkPage(html, truth, path) {
   hrefs.forEach((h) => {
     let u; try { u = new URL(h); } catch (e) { return; }
     const net = netOf(u); if (!net || A2.isShareLink(u)) return;
+    // A video or a post names no account ("watch" is not a channel). A YouTube video is noted with its
+    // ID, and whose channel it is on is asked of YouTube afterwards (videoChannels); other posts are left alone.
+    const post = A2.postLink ? A2.postLink(net, u.href) : null;
+    if (post) {
+      if (net === 'youtube' && post.video && !seenS.has('ytv' + post.video)) { seenS.add('ytv' + post.video); add('social', u.href, 'warning', 'YouTube video: whose channel is it on?', u.href, { video: post.video }); }
+      return;
+    }
     const handle = A2.socialHandle(net, u.href); if (!handle || seenS.has(net + handle)) return;
     seenS.add(net + handle);
     const mine = (truth.socials && truth.socials[net]) || [];
@@ -244,6 +251,46 @@ export async function truthFor(dudaId, allow) {
   const [site, content] = await Promise.all([duda(`/sites/multiscreen/${encodeURIComponent(dudaId)}`), duda(`/sites/multiscreen/${encodeURIComponent(dudaId)}/content`).catch(() => null)]);
   const t = A().buildTruth({ site, content: content || {} });
   return A().truthWithout(t, allow);
+}
+/**
+ * YouTube video links: whose channel is each one on? YouTube's public oEmbed answer names the channel
+ * (author_name, author_url such as https://www.youtube.com/@86AutoLabNashville). A video on their own
+ * channel (Business Info's YouTube, or the business's name) is fine and dropped; one on another channel
+ * stays as a warning that names it; one YouTube cannot tell us about (private, deleted) is dropped.
+ * Answers are kept 30 days (a day for videos that could not be read).
+ */
+export async function videoChannels(found, truth, fetcher) {
+  const vids = [...new Set(found.filter((x) => x.video).map((x) => x.video))].slice(0, 40);
+  if (!vids.length) return found;
+  const get = fetcher || (async (id) => {
+    const r = await fetchWithTimeout(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent('https://www.youtube.com/watch?v=' + id)}`, { headers: { Accept: 'application/json' } }, 8000);
+    if (!r.ok) return { gone: true };
+    const j = await r.json(); return { n: String(j.author_name || ''), u: String(j.author_url || '') };
+  });
+  const keys = vids.map((v) => P + 'ytch:' + v);
+  let cached = [];
+  try { [cached] = await redis(['MGET', ...keys]); } catch (e) { cached = []; }
+  const info = {}; const save = [];
+  await Promise.all(vids.map(async (v, i) => {
+    const c = jparse((cached || [])[i]);
+    if (c) { info[v] = c; return; }
+    let a; try { a = await get(v); } catch (e) { a = null; }
+    if (!a) return;
+    info[v] = a; save.push(['SET', keys[i], JSON.stringify(a), 'EX', a.gone ? 86400 : 30 * 86400]);
+  }));
+  if (save.length) { try { await redis(...save); } catch (e) { /* asked again next time */ } }
+  const A2 = A(); const c = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const mine = ((truth.socials && truth.socials.youtube) || []).map((x) => c(A2.socialHandle('youtube', x) || x));
+  return found.filter((x) => {
+    if (!x.video) return true;
+    const ch = info[x.video];
+    if (!ch || ch.gone || !(ch.u || ch.n)) return false;
+    const handle = c(A2.socialHandle('youtube', ch.u) || '');
+    if ((handle && mine.includes(handle)) || (truth.businessName && (A2.matchesBusiness(ch.n, truth) || (handle && A2.matchesBusiness(handle, truth))))) return false;
+    x.label = `YouTube video from another channel: ${ch.n || handle}`;
+    x.ctx = (ch.u || '').slice(0, 160);
+    return true;
+  });
 }
 async function pagesFor(domain) {
   const base = `${PROTO()}://${domain}`;
@@ -454,7 +501,8 @@ async function readSite(s, recId, timeLeft) {
     await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found, forms }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
     return { done: false };
   }
-  const issues = merge(exRules.length ? found.filter((x) => !A().exemptIssueRule(x, exRules)) : found, okKeys);
+  const seen = await videoChannels(found, truth);
+  const issues = merge(exRules.length ? seen.filter((x) => !A().exemptIssueRule(x, exRules)) : seen, okKeys);
   const prev = jparse(prevRaw);
   const before = new Set(((prev && prev.issues) || []).map((x) => x.k));
   const fresh = issues.filter((x) => !before.has(x.k));
