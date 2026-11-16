@@ -1,6 +1,7 @@
 // GET /api/site?editor=<editor link>
 // Returns the Business Info "truth" source data from the Duda API (site details, Content Library, pages list).
 import { metered, requireUser, parseEditorLink, allowedHost, fetchWithTimeout, redis, P, learnEditorHost } from './_lib.js';
+import { alertOwner } from './_queue.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 
@@ -12,6 +13,10 @@ async function duda(path) {
     headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'), Accept: 'application/json' },
   }, 15000);
   const text = await r.text();
+  if (r.status === 401 || r.status === 403) {
+    // The app's Duda API login stopped working: every scan fails until somebody fixes it.
+    await alertOwner('duda-auth', `The Duda API refused the app's login (error ${r.status}). Scans cannot read Business Info or pages until it is fixed. Check DUDA_API_USERNAME and DUDA_API_PASSWORD in Vercel → Settings → Environment Variables (and that the API user still exists in Duda), then redeploy.`, { cooldownMs: 6 * 3600000 }).catch(() => {});
+  }
   if (!r.ok) throw new Error(`Duda API ${r.status} on ${path}: ${text.slice(0, 200)}`);
   try { return JSON.parse(text); } catch (e) { return text; }
 }

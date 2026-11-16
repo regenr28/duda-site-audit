@@ -52,5 +52,21 @@ with sync_playwright() as p:
     print('  map findings:', m, flush=True)
     check(not any('86 Auto Lab Franklin' in x for x in m['maps']), 'a map labelled with the business name that starts with a number ("86 Auto Lab Franklin…") is not "a different address"')
     check(any('4821 Elm Ridge' in x for x in m['maps']) or not m['streets'], 'a map showing another street address is still flagged')
+    g = pg.evaluate("""async () => {
+      const A = window.DudaAudit;
+      const cap = (n) => `<li class="photoGalleryThumbs" id="li${n}"><div class="image-container"><a><img alt="PPF installation in Brentwood" src="https://irp.cdn-website.com/x/p${n}.png"></a></div>
+        <div class="caption-container" style="display:none" id="cc${n}"><span class="caption-inner"><h3 class="caption-title"></h3><div class="caption-text"></div>
+        <a class="caption-button dmWidget clearfix"><span class="iconBg"><span class="icon hasFontIcon icon-star"></span></span><span class="text" id="t${n}">Button</span></a></span></div></li>`;
+      const html = `<html><head><title>PPF | 86 Auto Lab</title></head><body><div id="dmcontent"><h1>Understanding paint protection film</h1><p>Vehicles face a variety of risks on the road.</p>
+        <div class="dmPhotoGallery newPhotoGallery dmPhotoGalleryResp" id="1419817667"><ul class="dmPhotoGalleryHolder clearfix gallery" id="1314957297">${cap(1)}${cap(2)}</ul></div>
+        <a class="dmButtonLink dmWidget" href="/contact"><span class="text" id="vis1">Button</span></a>
+        <div style="display:none"><h3 id="hid2">Heading</h3></div></div></body></html>`;
+      const truth = A.buildTruth({ site: { site_business_info: { business_name: '86 Auto Lab' } }, content: {} }, null, null);
+      const res = await A.runScan({ siteId: 'abc', host: 'x', truth, pagesMeta: {}, seedPaths: ['/'], maxPages: 1, devices: ['desktop'], concurrency: 1,
+        fetchPage: async () => ({ status: 200, html, url: 'https://x/site/abc' }), checkUrls: async () => [], imageHashes: async () => ({}), saveImageHashes: async () => {} });
+      return res.findings.filter((f) => /default label/.test(f.message)).map((f) => f.selector);
+    }""")
+    print('  default labels:', g, flush=True)
+    check(len(g) == 2 and any('vis1' in x for x in g) and any('hid2' in x for x in g), 'a "Button" hidden with display:none (a gallery caption switched off) is not reported; a visible "Button" and a hidden "Heading" still are')
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED')

@@ -29,6 +29,7 @@
 // For the paid ones that cap is the spending limit: one request checks up to about 45 text blocks or 50 image alt texts.
 // Results are cached for 60 days so rescans don't use any quota.
 import { aiUsage } from './_meter.js';
+import { alertOwner } from './_queue.js';
 import { metered, redis, P, readBody, requireUser, sha, fetchWithTimeout, jparse, OWNER_EMAIL, can } from './_lib.js';
 import { helpFor, helpText } from './_help.js';
 import { newsFor, latestNewsId } from './_news.js';
@@ -150,7 +151,16 @@ async function loadStatusRaw(list) {
 async function park(p, reason, until, note) {
   statusMemo.val = null;
   await redis(['SET', stateKey(p.id), JSON.stringify({ reason, until, note: String(note || '').slice(0, 300), at: Date.now() }), 'PX', Math.max(1000, until - Date.now() + 60000)]);
+  // A key that was rejected or has run out of credit needs a person: tell the app owner (once in 12 hours
+  // per AI and problem). Daily limits and per-minute rests fix themselves, so they stay quiet.
+  if (reason === 'error' || reason === 'credits') {
+    const what = reason === 'credits' ? 'is out of credits' : /rejected/i.test(note || '') ? 'has a key problem' : 'has a setup problem';
+    const fix = reason === 'credits' ? 'Add credit to that account, or wait: it is checked again by itself.'
+      : /rejected/i.test(note || '') ? `Make a new key with that AI company, put it in Vercel → Settings → Environment Variables (${KEY_NAME[p.id] || 'its key'}), then redeploy.` : 'See System health for details.';
+    await alertOwner(`ai-${p.id}-${reason}`, `AI *${aliasOf(p.id)}* (${p.id} · ${p.model}) ${what}. ${String(note || '').slice(0, 220)}\n${fix} The other AIs carry on meanwhile.`, { cooldownMs: (reason === 'credits' ? 24 : 12) * 3600000 }).catch(() => {});
+  }
 }
+const KEY_NAME = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', gateway: 'AI_GATEWAY_API_KEY', gemini: 'GEMINI_API_KEY', groq: 'GROQ_API_KEY', openrouter: 'OPENROUTER_API_KEY', cerebras: 'CEREBRAS_API_KEY', mistral: 'MISTRAL_API_KEY', cloudflare: 'CLOUDFLARE_API_TOKEN' };
 
 // Work out why a call failed and for how long the provider should rest
 function classify(p, r, j) {
@@ -775,5 +785,5 @@ export async function askAI(system, user) {
   return (r && r.parsed) || {};
 }
 
-export const _test = { aliasOf, discoverModel, visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };
+export const _test = { aliasOf, park, discoverModel, visionCheck, fetchImage, applySavedModels, classify, nextMidnight, parseDuration, callChain, providers, loadStatus, dayKey };
 export default metered('ai', handler);

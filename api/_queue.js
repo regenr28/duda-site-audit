@@ -11,7 +11,7 @@
 // So it is drained a few websites at a time, by whoever has the app open, under a lock. Nothing is
 // scheduled: there is no timer to misfire, nothing runs while nobody is using the app, and the work
 // finishes itself over a few hours of ordinary use and then stays finished.
-import { redis, P, jparse, now, slack, slackEnabled, OWNER_EMAIL, notifyUser } from './_lib.js';
+import { redis, P, jparse, now, slackDM, OWNER_EMAIL, notifyUser } from './_lib.js';
 
 const Q = () => P + 'leadq';            // siteId -> {at, why, tries}
 const DONE = () => P + 'leadq:done';    // siteId -> ISO of the last successful pull
@@ -136,9 +136,11 @@ export async function alertOwner(kind, text, { cooldownMs = 6 * 3600 * 1000, lin
   await redis(['LPUSH', P + 'alertlog', JSON.stringify(out)], ['LTRIM', P + 'alertlog', 0, 49]).catch(() => {});
   // The bell always gets it; Slack only when it is set up. Neither failing may break the caller —
   // an alert is a courtesy on top of the work, never a reason the work did not happen.
+  // Technical problems go to the app owner only: the bell, and a direct Slack message to them (never
+  // the team channel). OWNER_EMAIL is the SUGGESTIONS_OWNER setting.
   await notifyUser(OWNER_EMAIL, { kind: 'system', text: String(text).slice(0, 300), by: 'system', byName: 'Site Auditor' }).catch(() => {});
-  if (slackEnabled()) await slack(body).catch(() => {});
-  return { sent: true };
+  const dm = await slackDM(OWNER_EMAIL, { kind: 'system', headline: body, linkText: 'Open System health', link: link || '' }).catch(() => ({ sent: false, reason: 'error' }));
+  return { sent: true, slack: dm.sent, slackReason: dm.reason || '' };
 }
 
 /** The last few alerts, for the health page. */

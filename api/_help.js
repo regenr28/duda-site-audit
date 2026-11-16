@@ -636,7 +636,7 @@ export const HELP_SECTIONS = [
 <p>Everything lands in one list, which gets hard to read once there's a lot in it. The bell is split into tabs, and a tab only appears when there's something in it:</p>
 <ul>
 <li><b>All</b> — everything, newest first.</li>
-<li><b>Duda comments</b> — a client has been waiting for an answer. The one to check first.</li>
+<li><b>Duda comments</b> — a client has been waiting for an answer. The one to check first. The pop-up lists each comment on its own line (its number, how long it has waited and the device, then the comment in quotes), with how many are waiting and the oldest at the top.</li>
 <li><b>Mentions & replies</b> — someone tagged you, replied to you, or assigned you an item.</li>
 <li><b>Scans</b> — a scan or rescan finished.</li>
 <li><b>Audits</b> — a website assigned to you, taken off you, reopened or removed, False alarms, and what an admin decided about a false alarm you reported.</li>
@@ -1250,6 +1250,8 @@ export const HELP_SECTIONS = [
     // Owner only. Nobody else is shown this page, and the Help assistant is not given it either.
     id: 'health', group: 'More', title: 'System health', audience: 'owner',
     html: `<p><b>Your account → ⚑ System health</b> answers three questions before any of them becomes a problem: is anything about to run out, is anything that should be arriving not arriving, and how long have you got.</p>
+<h3>Technical problems come to you only</h3>
+<p>When something needs the app owner, you get a <b>direct Slack message</b> (and a bell notification). Nothing goes to the team channel, and it is sent even if you switched Slack messages off for yourself. It covers: an <b>AI key rejected or expired</b>, or an AI <b>out of credits</b> (with which key to replace in Vercel); the <b>Duda API refusing the app's login</b>; the database filling up or running through its monthly allowance; Duda's webhook going quiet; and enquiry imports failing. Each problem is sent at most once every few hours, not on every failure. The owner is the email in the <code>SUGGESTIONS_OWNER</code> setting, and Slack has to know that email.</p>
 <h3>Storage and allowances</h3>
 <p>Four meters, each a figure against its ceiling, with a word as well as a colour:</p>
 <ul>

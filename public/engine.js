@@ -391,6 +391,15 @@
         'A map labelled "86 Auto Lab Franklin…" was read as the street address "86 …" and called "Google Map embed shows a different address". A label is only an address when it reads like one (a street word, or ", TN"), and one that names the business is fine',
       ],
     },
+    {
+      v: 32,
+      date: '2026-11-17',
+      title: 'A hidden "Button" is not a default label left on the page',
+      items: [
+        'A "Button" hidden with display:none is no longer reported as Duda\u2019s default label left on the page. A photo gallery with captions switched off keeps one for each picture in its code, and visitors never see it',
+        'A visible "Button", and every other default label ("Heading", "Caption"…), is still critical',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1917,7 +1926,10 @@
         const m = t.match(re);
         if (m) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: label, found: cut(t, 160) });
       }
-      if (DEFAULT_LABEL.test(t)) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: `Duda's default label left on the page ("${t}")`, found: t, expected: 'Real wording, or remove the element' });
+      // A "Button" hidden with display:none is part of Duda's widget kept in the code (a gallery with
+      // captions switched off keeps one per picture), not something left on the page. Every other
+      // default label, and a "Button" hidden any other way, is still reported.
+      if (DEFAULT_LABEL.test(t) && !(t === 'Button' && /display:\s*none/i.test(hiddenReason(el, device) || ''))) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: `Duda's default label left on the page ("${t}")`, found: t, expected: 'Real wording, or remove the element' });
       const cm = t.match(/(?:©|\(c\)|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})\s*(.{0,70})/i);
       if (cm) {
         const yr = parseInt(cm[1], 10);

@@ -712,6 +712,7 @@ function notifLink(n) {
   const base = appUrl();
   if (!base) return '';
   if (n.kind === 'signup') return base + '/#/?members=1';
+  if (n.kind === 'system') return base + '/#/health';
   if (n.kind === 'approved') return base + (n.start || '/#/');
   if (n.kind === 'false-alarm') return base + '/#/suggestions/false-alarms' + (n.faKey ? '/' + encodeURIComponent(n.faKey) : '');
   if (/^fa-/.test(n.kind)) return n.siteId && n.findingNum ? `${base}/#/site/${encodeURIComponent(n.siteId)}/item/${n.findingNum}` : base + '/#/suggestions/false-alarms';
@@ -731,13 +732,14 @@ export async function slackDM(email, n, known) {
   if (!slackBotEnabled()) return { sent: false, reason: 'not_configured' };
   try {
     const user = known || await getUser(email);
-    if (user && user.slackDM === false && n.kind !== 'test') return { sent: false, reason: 'turned_off' };
+    // Technical alerts to the app owner always go: they are the whole reason to have Slack for them.
+    if (user && user.slackDM === false && n.kind !== 'test' && n.kind !== 'system') return { sent: false, reason: 'turned_off' };
     const id = await slackUserId(email);
     if (!id) return { sent: false, reason: 'not_in_slack' };
     // A message about your own scan should not read as though somebody else sent it.
     const who = n.self ? `*Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished*` : `*${n.byName || 'Someone'}* ${KIND[n.kind] || 'sent you an update'}`;
     const head = n.headline || `${who}${n.siteName ? ` on *${n.siteName}*` : ''}${n.findingNum ? ` · item #${n.findingNum}` : ''}`;
-    const link = notifLink(n);
+    const link = n.link || notifLink(n);
     // A digest arrives as lines, and lines have to stay lines: a list of five overdue comments
     // squashed onto one row is the thing this was built to stop.
     const body = Array.isArray(n.lines) && n.lines.length

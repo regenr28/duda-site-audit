@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **172**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **175**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 171: styles v46, demo v2, engine v17, app v54).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 174: styles v47, demo v2, engine v18, app v55).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -300,3 +300,17 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - **Client (`public/app.js`, "THE SCAN LINE"):** `state.line`, `applyLine` (ignores answers older than the last local change: `lineEpoch`), `workTick` (15 s while anything is going, 60 s idle; pulse's `lineN` wakes it), `runItem` → `scanSite(id, true)`, `seoDone` after SEO items, `addToLine`/`requestScan`, `moveLine`, `moveToFront`, `removeFromLine`, `lineClaim` (a waiting website looks like a claim to `otherClaim`, so every Rescan button knows). `seoTick`/`seoAudit` only add to the line. `state.queue`, `enqueue`, `pump`, asks between tabs are gone (server `lineAsk` kept for old tabs).
 - **Limit:** scans still run in browsers. With no app open anywhere, the line waits. A server-side scanner (headless Chrome, chunked) would be a later step.
 - Test: `tests/tk/e2e_queue.py` (two tabs, close one mid-scan, crash put-back, old-tab adoption, drag kept on the server).
+
+## 172 — Readable "client comments waiting" notices
+- The pop-up and the bell no longer show the Slack text (`1. *#2* · 855h · desktop — …`). `waitLine` (app.js) takes each line apart; `waitLinesHtml` shows a summary ("7 client comments waiting · oldest 36 days"), then up to 3 comments (5 in the bell), each "#2 waiting 36 days · Desktop" over the quoted comment (2 lines max), then "…and N more" and "Open the comments →". `waitTxt`: hours under 48, days after. The desktop notification gets the same as short plain lines. The Slack message is unchanged.
+- Test: `tests/tk/e2e_notifpop.py`.
+
+## 173 — Technical problems: Slack DM to the app owner only
+- `alertOwner` (`api/_queue.js`) now sends the bell + a **direct Slack message** to `OWNER_EMAIL` (the `SUGGESTIONS_OWNER` setting) through `slackDM`, never the team webhook channel. `slackDM` lets `kind: 'system'` through even when the owner switched Slack DMs off, and takes `n.link`; `notifLink` sends `system` to `#/health`.
+- New alerts: `api/ai.js` `park()` → an AI key rejected/expired or a setup problem (`ai-<id>-error`, every 12 h at most) or out of credits (`ai-<id>-credits`, 24 h), saying which env var to replace and to redeploy. Daily limits and per-minute rests stay quiet. `api/site.js` → Duda API login refused (401/403, `duda-auth`, 6 h).
+- Existing alerts (database full, monthly commands, Duda webhook quiet, enquiry imports failing) now arrive the same way.
+- Test: `tests/tk/owner_alert.mjs` (fake Slack + fake Redis).
+
+## 174 — A hidden "Button" (display:none) is not reported
+- `engine.js`: a default label that is exactly "Button" and hidden by display:none (`hiddenReason` contains `display: none`) is skipped. Every other `DEFAULT_LABEL` ("Heading", "Caption"…) and a "Button" hidden another way are still reported (asked for "just the Button for now"). A Duda photo gallery with captions switched off keeps `.caption-container` (display:none) with a "Button" per picture; that was reported as critical. Other placeholders (notes like "[Matthew: confirm…]", "insert … here") are still reported when hidden. CHECK_RELEASES v32 (no `fixes`: PLACEHOLDER covers real notes too, so it is not declared corrected; the old items close on rescan).
+- Test: `tests/tk/engine_textai.py` (gallery caption "Button" hidden → nothing; a visible "Button" → still critical).

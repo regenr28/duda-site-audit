@@ -930,9 +930,9 @@
     const body = $('.np-body', p);
     body.innerHTML = items.length ? items.map((n) => `
       <a class="np-item" href="${esc(notifLink(n))}">${avatar(n.by, 26)}
-        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.count ? ` <span class="badge ${n.oldestHours >= 48 ? 'sev-critical' : 'sev-warning'}">${n.count} waiting · longest ${n.oldestHours}h</span>` : ''}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : n.ticketNum ? ' · ticket #' + n.ticketNum : ''}</div>
+        <div><div>${n.self ? `<b>Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished</b>` : `<b>${esc(n.byName)}</b> ${esc(NOTIF_TEXT[n.kind] || 'notified you')}`}${n.count ? ` <span class="badge ${n.oldestHours >= 48 ? 'sev-critical' : 'sev-warning'}">${n.count} waiting · oldest ${esc(waitTxt(n.oldestHours))}</span>` : ''}${n.siteName ? ' · ' + esc(n.siteName) : ''}${n.findingNum ? ' #' + n.findingNum : n.ticketNum ? ' · ticket #' + n.ticketNum : ''}</div>
         ${Array.isArray(n.lines) && n.lines.length
-          ? `<ul class="np-lines">${n.lines.map((l) => `<li>${esc(String(l).replace(/^\d+\.\s*/, '').replace(/\*/g, ''))}</li>`).join('')}</ul>`
+          ? (n.kind === 'comment-waiting' ? `<div class="np-wl">${waitLinesHtml(n.lines, 5)}</div>` : `<ul class="np-lines">${n.lines.map((l) => `<li>${esc(String(l).replace(/^\d+\.\s*/, '').replace(/\*/g, ''))}</li>`).join('')}</ul>`)
           : `<div class="small muted np-text">${esc(n.text || '')}</div>`}
         <div class="small faint">${esc(fmtFull(n.at))}</div></div></a>`).join('')
       : `<div class="empty small">${notifTab === 'all' ? 'No notifications yet.' : 'Nothing here. Try <b>All</b>.'}</div>`;
@@ -1079,6 +1079,30 @@
     if (document.hidden && desktopNotify({ title: opts.title, body: opts.deskBody || opts.body, tag: opts.tag, link: opts.link })) return;
     popNotify(opts);
   }
+  /** "855h" is hard to read: hours up to two days, then days. */
+  const waitTxt = (h) => { h = Number(h) || 0; return h < 48 ? `${h}h` : `${Math.round(h / 24)} days`; };
+  /** One line of a "comments waiting" notice, taken apart: "1. *#2* · 855h · desktop — the comment". */
+  function waitLine(l) {
+    const t = String(l || '');
+    let m = t.match(/^\d+\.\s*\*?#([\w?]+)\*?\s*·\s*(\d+)h(?:\s*·\s*([\w-]+))?\s*—\s*([\s\S]*)$/);
+    if (m) return { num: m[1], hours: Number(m[2]), device: m[3] ? m[3][0].toUpperCase() + m[3].slice(1) : '', text: m[4].trim() };
+    m = t.match(/^\d+\.\s*\*([^*]+)\*\s*—\s*(\d+) waiting, longest (\d+)h/);
+    if (m) return { site: m[1], n: Number(m[2]), hours: Number(m[3]) };
+    return { plain: t.replace(/^\d+\.\s*/, '').replace(/\*/g, '') };
+  }
+  /** The lines of a "comments waiting" notice as a short, readable list (HTML). */
+  function waitLinesHtml(lines, max) {
+    const all = (lines || []).map(waitLine); const more = all.filter((x) => x.plain && /^…and \d+ more/.test(x.plain));
+    const rows = all.filter((x) => !more.includes(x));
+    const extra = rows.length - max + (more.length ? Number((more[0].plain.match(/\d+/) || [0])[0]) : 0);
+    const cut = (x, n) => (x.length > n ? x.slice(0, n).replace(/\s+\S*$/, '') + '…' : x);
+    return `<ol class="wl">${rows.slice(0, max).map((x) => x.site ? `<li><b>${esc(x.site)}</b> <span class="wl-meta">${x.n} waiting · oldest ${esc(waitTxt(x.hours))}</span></li>`
+      : x.num ? `<li><span class="wl-head"><b>#${esc(x.num)}</b> <span class="wl-meta">waiting ${esc(waitTxt(x.hours))}${x.device ? ' · ' + esc(x.device) : ''}</span></span><span class="wl-q">“${esc(cut(x.text, 110))}”</span></li>`
+      : `<li>${esc(cut(x.plain, 120))}</li>`).join('')}</ol>${extra > 0 ? `<div class="wl-more">…and ${extra} more</div>` : ''}`;
+  }
+  /** The same as plain text for a desktop notification (a few short lines). */
+  const waitLinesText = (lines, max) => (lines || []).map(waitLine).filter((x) => !x.plain || !/^…and/.test(x.plain)).slice(0, max)
+    .map((x) => (x.site ? `${x.site}: ${x.n} waiting, oldest ${waitTxt(x.hours)}` : x.num ? `#${x.num} (${waitTxt(x.hours)}): ${x.text.slice(0, 60)}` : x.plain.slice(0, 70))).join('\n');
   /** New bell notifications since the last check (signups for admins, mentions, replies, assignments…). */
   function announceNotifs(items) {
     if (!state.notifKnown) { state.notifKnown = new Set(items.map((n) => n.id)); return; } // first load: don't replay old ones
@@ -1087,6 +1111,12 @@
     // The bell still carries it; this is only whether it jumps onto the screen as well.
     fresh.filter((n) => !popupMuted(n.kind)).slice(0, 3).reverse().forEach((n) => {
       const title = n.self ? `Your ${n.kind === 'rescan-done' ? 'rescan' : 'scan'} finished` : `${n.byName || 'Someone'} ${NOTIF_TEXT[n.kind] || 'notified you'}`;
+      if (n.kind === 'comment-waiting' && Array.isArray(n.lines) && n.lines.length) {
+        // A list of client comments: a summary line, then each comment on its own line, quoted and shortened.
+        const sum = n.count ? `${n.count} client comment${n.count === 1 ? '' : 's'} waiting${n.sites ? ` on ${n.sites} websites` : ''} · oldest ${waitTxt(n.oldestHours)}` : '';
+        alertUser({ email: n.by, title, deskBody: (sum ? sum + '\n' : '') + waitLinesText(n.lines, 3), body: `${sum ? `<div class="wl-sum">${esc(sum)}</div>` : ''}${waitLinesHtml(n.lines, 3)}<a class="wl-open" href="${esc(notifLink(n))}">Open the comments →</a>`, tag: n.id, link: notifLink(n), at: n.at });
+        return;
+      }
       const body = [n.siteName, n.findingNum ? '#' + n.findingNum : '', n.text].filter(Boolean).join(' · ');
       alertUser({ email: n.by, title, deskBody: body || 'Open the app to see details.', body: esc(body || 'Open the bell to see details.') + ` <a href="${esc(notifLink(n))}">Open</a>`, tag: n.id, link: notifLink(n), at: n.at });
     });

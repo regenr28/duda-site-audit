@@ -4,6 +4,25 @@
 
 export const NEWS = [
   {
+    id: '2026-11-17-hidden-labels', date: '2026-11-17', audience: 'all', tag: 'Audits',
+    title: 'Fewer false alarms: hidden "Button" labels',
+    what: 'A photo gallery with captions switched off keeps a hidden "Button" for each picture in the page code. Those were reported as "Duda\'s default label left on the page". A "Button" hidden with display:none is no longer reported; a visible one, and every other default label ("Heading", "Caption"…), still is. Rescan to clear the old ones.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⟳ Rescan</b>.'],
+  },
+  {
+    id: '2026-11-17-owner-alerts', date: '2026-11-17', audience: 'owner', tag: 'System',
+    title: 'Technical problems now come to you by Slack DM',
+    what: 'When an AI key is rejected or expires, an AI runs out of credits, the Duda API refuses the app\'s login, the database is filling up, or another technical problem needs fixing, you get a direct Slack message saying what happened and how to fix it (plus the bell). Nothing goes to the team channel. Each problem is sent at most once every few hours.',
+    where: ['<b>Walkthrough:</b> your picture → <b>⚑ System health</b> shows the last alerts.'],
+    link: '#/help/health', linkText: 'System health',
+  },
+  {
+    id: '2026-11-17-comment-notice', date: '2026-11-17', audience: 'all', tag: 'Comments',
+    title: 'Easier to read: client comments waiting',
+    what: 'The pop-up and the bell now list each waiting client comment on its own line: its number, how long it has waited (in days once it is over two days) and the device, then the comment itself in quotes, shortened. A line at the top says how many are waiting and the oldest, and <b>Open the comments →</b> takes you to them.',
+    where: ['<b>Walkthrough:</b> the bell (top right) → <b>Duda comments</b>.'],
+  },
+  {
     id: '2026-11-16-team-line', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: 'One scan line for the whole team: scans keep going when you close your tab',
     what: 'Every Rescan, Rescan all, chosen-pages scan and SEO auto audit now joins <b>one line, kept on the server</b>. Everybody sees the same line in the same order, and dragging it changes it for everyone at once (no more snapping back). <b>Every open tab of the app scans for the line</b>, so you can close yours: a website it was scanning goes back to the front and another open tab starts it again. Tabs opened before an update have their waiting websites moved into the team\'s line by themselves. If nobody has the app open, the line waits safely until someone does.',
