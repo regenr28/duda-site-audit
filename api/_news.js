@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-queued-why', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: '"Queued" now says why, and can be cancelled',
+    what: 'A website waiting to be scanned says why at the top of the audit: your tab scans 2 websites at a time, so it names the two it is busy with and how far they are. <b>Take it out of the line</b> cancels it. When somebody else is scanning a website, everyone sees who and how far their scan has got (on the audit and in the Audits list), and that the hold runs out by itself if their tab was closed.',
+    where: ['<b>Walkthrough:</b> Rescan a few websites at once → open one still marked Queued → the box at the top.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-16-ai-fragments', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: '"AI: text names a different business" no longer fires on text cut by a link',
     what: 'A sentence like "our team at <b>86 Auto Lab</b>", where the business name is a link, reached the AI as "our team at" on its own, and it was flagged as naming a different business. The AI now reads each piece of text with its whole paragraph, and an item has to quote a real name to count as another business. A rescan closes the wrong items.',

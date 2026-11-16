@@ -2323,3 +2323,6 @@ html.demo-mode iframe { pointer-events: none; }
 .vf-res { margin: 2px 0 8px; }
 .vf-fields { margin-top: 8px; }
 .vf-fields td { padding: 4px 8px; }
+
+.scan-why { margin-top: 6px; line-height: 1.5; }
+.scan-why a { font-weight: 600; }

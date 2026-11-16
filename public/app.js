@@ -6693,7 +6693,7 @@
     const batch0 = ids.length > 1;
     // Show the click landing BEFORE anything is awaited: the previous "Scan complete" has to leave
     // the screen the moment the button is pressed, or the page looks like it ignored you.
-    ids.forEach((id) => { state.scanning[id] = { done: 0, total: 0, message: 'Queued', queued: true, bulk: batch0 }; });
+    ids.forEach((id) => { state.scanning[id] = { done: 0, total: 0, message: 'Queued', queued: true, bulk: batch0, stage: 'update' }; });
     render();
     // Asked right here rather than waiting for the next poll: this is the one moment where running
     // the old checks actually costs something, and the question is one tiny read.
@@ -6712,6 +6712,7 @@
     }
     const batch = batch0;
     let r;
+    ids.forEach((id) => { if (state.scanning[id]) state.scanning[id].stage = 'reserve'; });
     try { r = await store({ op: 'scanClaim', ids, cid: CID, state: 'queued' }); }
     catch (e) { ids.forEach((id) => delete state.scanning[id]); render(); toast("Couldn't start the scan: " + e.message); return; }
     Object.assign(state.claims, r.claims || {});
@@ -6743,7 +6744,33 @@
   function enqueue(id) {
     if (!state.queue.includes(id) && !(state.scanning[id] && !state.scanning[id].queued)) state.queue.push(id);
     state.scanning[id] = state.scanning[id] || { done: 0, total: 0, message: 'Queued', queued: true };
+    state.scanning[id].stage = 'line';
     pump();
+  }
+  /** Take a website out of this tab's line before it starts, and give it back to everyone. */
+  function cancelQueued(id) {
+    const live = state.scanning[id];
+    if (!live || !live.queued) return;
+    state.queue = state.queue.filter((x) => x !== id);
+    delete state.scanning[id];
+    releaseScan([id]);
+    render(); toast('Taken out of the line: it will not be scanned now.');
+  }
+  /** Why a website is still "Queued" in this tab, in words, with what the tab is doing instead. */
+  function queueWhy(id) {
+    const live = state.scanning[id] || {};
+    const nm = (x) => (state.sites.find((y) => y.id === x) || {}).businessName || 'a website';
+    if (live.stage === 'update') return 'Checking the app is up to date before scanning (a second or two)…';
+    if (live.stage === 'reserve') return 'Reserving the website so nobody else scans it at the same time…';
+    const busy = Object.keys(state.scanning).filter((x) => x !== id && state.scanning[x] && !state.scanning[x].queued);
+    const pos = state.queue.indexOf(id) + 1;
+    if (busy.length) {
+      const what = busy.map((x) => { const l = state.scanning[x]; return `<a href="#/site/${esc(x)}">${esc(nm(x))}</a> (${l.total ? `${l.done}/${l.total}` : esc(String(l.message || 'starting').slice(0, 40))})`; }).join(' and ');
+      return `Waiting its turn: this tab scans ${SCAN_CONCURRENCY_SITES} websites at a time and is busy with ${what}.${pos > 1 ? ` ${pos - 1} more ${pos === 2 ? 'is' : 'are'} ahead of it.` : ' It is next.'}`;
+    }
+    if (seo.busy) return 'Waiting for the SEO auto audit this tab is running to finish.';
+    if (state.verifying) return 'Waiting for the live-site check this tab is running to finish.';
+    return 'Starting…';
   }
   function pump() {
     while (state.running < SCAN_CONCURRENCY_SITES && state.queue.length) {
@@ -6766,7 +6793,9 @@
       return;
     }
     Object.assign(state.claims, got.claims || {});
-    const beat = setInterval(() => store({ op: 'scanClaim', ids: [id], cid: CID, state: 'scanning' }).catch(() => {}), 60000);
+    // The heartbeat keeps the website reserved and tells everyone else how far the scan has got.
+    const prog = () => { const l = state.scanning[id] || {}; return { done: l.done || 0, total: l.total || 0, msg: String(l.message || '').slice(0, 120) }; };
+    const beat = setInterval(() => store({ op: 'scanClaim', ids: [id], cid: CID, state: 'scanning', p: prog() }).catch(() => {}), 30000);
     try { await scanSiteRun(id); } finally { clearInterval(beat); releaseScan([id]); }
   }
   async function scanSiteRun(id) {
@@ -8850,7 +8879,7 @@
       return `<span class="badge scan-scanning" id="pb-${esc(s.id)}">${live.ai && !live.total ? 'AI check' : `Scanning ${live.total ? `${live.done}/${live.total}` : '…'}`}</span><div class="progress"><i id="pg-${esc(s.id)}" style="width:${pct}%"></i></div><div class="small faint" id="pm-${esc(s.id)}">${esc(live.message || '')}</div><div class="live-line small" id="pl-${esc(s.id)}">${liveLine(s.id, live)}</div>`;
     }
     const oc = otherClaim(s.id);
-    if (oc) return `<span class="badge ${oc.state === 'queued' ? 'scan-queued' : 'scan-scanning'}" title="Only one scan of a website runs at a time">${oc.state === 'queued' ? 'Queued' : 'Scanning'}</span><div class="small faint">${esc(claimText(oc).replace(/^Queued |^Being scanned /, ''))}</div>`;
+    if (oc) return `<span class="badge ${oc.state === 'queued' ? 'scan-queued' : 'scan-scanning'}" title="Only one scan of a website runs at a time">${oc.state === 'queued' ? 'Queued' : 'Scanning'}${oc.p && oc.p.total ? ` ${oc.p.done}/${oc.p.total}` : ''}</span>${oc.p && oc.p.total ? `<div class="progress"><i style="width:${Math.round((oc.p.done / oc.p.total) * 100)}%"></i></div>` : ''}<div class="small faint">${esc(claimText(oc).replace(/^Queued |^Being scanned /, ''))}${oc.p && oc.p.msg ? ' · ' + esc(oc.p.msg) : ''}</div>`;
     const sc = s.scan || {};
     if (sc.state === 'complete') return `<span class="badge scan-complete">✓ Scan complete</span><div class="small faint">${esc(fmtDate(sc.finishedAt))} · ${sc.pages || 0} pages</div>`;
     if (sc.state === 'failed') return `<span class="badge scan-failed" title="${esc(sc.error)}">Scan failed</span>`;
@@ -8867,9 +8896,18 @@
   function scanStrip(s) {
     const live = state.scanning[s.id], oc = otherClaim(s.id);
     if (!live && !oc) return '';
+    const why = live && live.queued ? `<div class="small scan-why">⏳ ${queueWhy(s.id)} <button class="linkbtn" data-cancelq="${esc(s.id)}">Take it out of the line</button></div>` : '';
+    let other = '';
+    if (!live && oc) {
+      const p = oc.p; const mins = p && p.at ? Math.max(0, Math.round((srvNow() - Date.parse(p.at)) / 60000)) : null;
+      other = `<div class="small scan-why">${oc.state === 'queued' ? `⏳ Waiting in ${esc(oc.by === state.me.email ? 'your other tab' : (oc.byName || 'another member') + '\u2019s browser')} for its turn.` : `🔄 ${esc(oc.by === state.me.email ? 'Your other tab is scanning it' : (oc.byName || 'Another member') + ' is scanning it in their browser')}${p ? `: <b>${p.total ? `${p.done}/${p.total}` : ''}</b> ${esc(p.msg || '')} <span class="faint">(updated ${mins ? mins + ' min ago' : 'just now'})</span>` : '.'}`}
+        <div class="faint">Only one browser scans a website at a time. If that tab was closed, the hold runs out by itself within ${oc.state === 'queued' ? '15' : '3'} minutes and Rescan comes back.</div></div>`;
+    }
+    const mineElsewhere = live && live.queued ? [] : Object.keys(state.scanning).filter((x) => x !== s.id);
+    const elsewhere = mineElsewhere.length ? `<div class="small faint" style="margin-top:4px">This tab is also working on: ${mineElsewhere.map((x) => { const l = state.scanning[x]; return `<a href="#/site/${esc(x)}">${esc((state.sites.find((y) => y.id === x) || {}).businessName || 'a website')}</a> ${l.queued ? '(queued)' : l.total ? `(${l.done}/${l.total})` : ''}`; }).join(' · ')}</div>` : '';
     return `<div class="scan-strip panel panel-pad" id="scanStrip"><div class="row-between" style="align-items:flex-start;gap:16px">
-      <div class="grow">${scanBadge(s)}
-        <div class="small muted" style="margin-top:6px">${live ? `${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to. Keep this browser tab open: you can use other tabs and pages meanwhile. Reloading starts the scan again from the beginning; closing the tab stops it.` : 'Another team member’s browser is scanning this website. The results show here when it finishes.'}</div></div>
+      <div class="grow">${scanBadge(s)}${why}${other}${elsewhere}
+        <div class="small muted" style="margin-top:6px">${live ? `${esc(doneNote())} It's sent to whoever added this website and whoever it's assigned to. Keep this browser tab open: you can use other tabs and pages meanwhile. Reloading starts the scan again from the beginning; closing the tab stops it.` : 'The results show here when it finishes.'}</div></div>
       <div id="aiCredits">${aiCreditsHtml()}</div></div></div>`;
   }
   function renderProgress(id) {
@@ -8897,6 +8935,7 @@
       el.textContent = t; el.classList.toggle('slow', (ai && sec >= 130) || (!ai && sec >= 45));
     });
   }, 1000);
+  document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-cancelq]'); if (b) { e.preventDefault(); e.stopPropagation(); cancelQueued(b.dataset.cancelq); } });
   document.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('[data-skipai]'); if (b) { e.preventDefault(); e.stopPropagation(); skipAI(b.dataset.skipai); b.remove(); } });
   /**
    * The counts on an Audits row, each one a way into exactly what it counts.
@@ -9783,7 +9822,7 @@
         <div class="sh-title"><h1>${esc(s.businessName || s.siteId)}</h1><div id="roomBar">${roomBarHtml()}</div></div>
         <div class="sh-meta small muted">
           <span class="mono" title="Duda site ID">${esc(s.siteId)}</span><span id="sitePub">${sitePubHtml(s)}</span>
-          <span title="${sc.finishedAt ? esc('Last scan ' + fmtFull(sc.finishedAt) + (sc.by || sc.startedBy ? ' by ' + nameOf(sc.by || sc.startedBy) : '')) : 'Not scanned yet'}">🕑 ${sc.finishedAt ? `Scanned ${esc(ago(sc.finishedAt))}${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}` : 'Not scanned yet'}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}${live ? ' <span class="badge scan-scanning">Scanning now</span>' : ''}</span>
+          <span title="${sc.finishedAt ? esc('Last scan ' + fmtFull(sc.finishedAt) + (sc.by || sc.startedBy ? ' by ' + nameOf(sc.by || sc.startedBy) : '')) : 'Not scanned yet'}">🕑 ${sc.finishedAt ? `Scanned ${esc(ago(sc.finishedAt))}${sc.by || sc.startedBy ? ' by ' + esc(nameOf(sc.by || sc.startedBy)) : ''}` : 'Not scanned yet'}${sc.state === 'failed' ? ' <span class="badge scan-failed">last attempt failed</span>' : ''}${live ? (live.queued ? ' <span class="badge scan-queued" title="Waiting for its turn in this tab: see the top of the page">Queued</span>' : ' <span class="badge scan-scanning">Scanning now</span>') : ''}</span>
           ${backupShort(s)}
           <span title="${esc('Added by ' + (s.addedByName || nameOf(s.addedBy, '—')) + (s.createdAt ? ' · ' + fmtFull(s.createdAt) : ''))}">Added by ${esc(s.addedByName || nameOf(s.addedBy, '—'))}</span>
           ${(s.watchers || []).length ? `<span title="${esc(s.watchers.map((w) => `${w.name || nameOf(w.email)}: ${w.how === 'peek' ? 'peeked (read-only)' : w.how === 'assigned' ? 'assigned an item' : 'mentioned'}`).join('\n'))}">👀 ${s.watchers.length} watching</span>` : ''}

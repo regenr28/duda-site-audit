@@ -1113,7 +1113,9 @@ async function handler(req, res) {
         const claims = {};
         if (ok.length) {
           const until = Date.now() + ttl;
-          ok.forEach((id) => { claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until }; });
+          // How far the scan has got, so whoever else opens the website sees it (sent with each heartbeat).
+          const prog = b.p && typeof b.p === 'object' ? { done: Number(b.p.done) || 0, total: Number(b.p.total) || 0, msg: String(b.p.msg || '').slice(0, 120), at: now() } : null;
+          ok.forEach((id) => { claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}) }; });
           await redis(['HSET', P + 'scanclaims', ...ok.flatMap((id) => [id, JSON.stringify(claims[id])])]);
         }
         return res.status(200).json({ ok, taken, claims });

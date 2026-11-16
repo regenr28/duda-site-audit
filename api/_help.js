@@ -183,6 +183,7 @@ export const HELP_SECTIONS = [
     id: 'scan', group: 'Audits', title: 'Scanning and rescanning', audience: 'all',
     html: `<ul>
 <li>The scan runs in <b>your browser tab</b>, 2 websites at a time. <b>Keep the tab open</b> until it finishes (the browser asks first if you try to close or reload it). You can use any other page of the app meanwhile: the progress shows at the top of the audit, whichever of its tabs is open, and on its row in Audits.</li>
+<li><b>Queued?</b> The top of the audit says why: a tab scans 2 websites at a time, so it names the ones it is busy with and how far they are, and how many are ahead in the line. <b>Take it out of the line</b> drops it (nothing is scanned). If somebody else (or your other tab) is scanning it, you see who, and how far their scan has got (updated every 30 seconds); if their tab was closed, the hold runs out by itself within 3 minutes.</li>
 <li><b>Reloaded by accident?</b> The scan starts again by itself from the beginning once the page is back (the same chosen pages too). Closing the tab stops it; press <b>⟳ Rescan</b> later.</li>
 <li>An audit's tabs: <b>Profile</b>, <b>📊 Audit Report</b> (the findings at a glance and every scan, to compare), <b>🔎 Audit results</b> (everything the scan found, in its own row of tabs: Audit items, 🎨 Design polish, 📏 SEO Lengths, 📄 vs Docs and 🚫 Audit exceptions), <b>Comments</b> and <b>Activity log</b>.</li>
 <li>It reads the Duda <b>preview</b> (what's in the editor now, published or not) on Desktop, Tablet and Mobile.</li>

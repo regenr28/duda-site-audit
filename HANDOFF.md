@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **165**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **166**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 164: styles v40, demo v2, engine v16, app v48).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 165: styles v41, demo v2, engine v16, app v49).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -40,7 +40,7 @@ The test suite is in `tests/` (end-to-end tests with Playwright + a fake Redis a
 
 ## Where things stand (10 Nov 2026)
 
-- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 159 on GitHub (`16b9708`). Up to 162 on GitHub (`892e784`). **Delivered as a zip, maybe not uploaded yet:** 163 + 164 (one zip: YouTube video links; AI name check with the whole paragraph).
+- **On GitHub:** up to 146 (commit `bbbdf84`, "145 + 146 - …"). Up to 159 on GitHub (`16b9708`). Up to 164 on GitHub (`d7fc02e`). **Delivered as a zip, maybe not uploaded yet:** 165 (why Queued).
 - **Vercel didn't build 145 + 146 on its own** (Git connection had dropped on both projects; the company project was reconnected 10 Nov). If a commit doesn't deploy: Settings → Git (reconnect), then Deployments → ⋯ → Create Deployment with `main`.
 - **Custom domain:** `audits.8bitcreative.com` added to the company project (10 Nov); needs the CNAME at 8bitcreative.com's DNS, the Google sign-in origin and `APP_URL`. Check `git log origin/main` and ask Reymark if unsure.
 - **Deploy hiccup (15 Oct):** Vercel didn't build the 137 commit on its own (no deployment, no GitHub status, in either project). The copy was deployed by hand (Vercel → Create Deployment from `main`). If it happens again, that's the fix; the company project needs it done from 8bitcreative's Vercel.
@@ -261,3 +261,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 ## Update 164 — AI business-name check reads the whole paragraph (built)
 - Text blocks for the AI name check (`res.texts`, from `textIndex`) are split where a link or styled span starts, so "our team at" + link "86 Auto Lab" reached the AI as "our team at" and came back as other_business. `textIndex` entries now carry `para` (the whole paragraph, when longer); `buildTextBlocks` keeps it; `aiTextCheck` sends it as `in`; `api/ai.js` textPrompt shows it and TEXT_SYSTEM says how to use it (cache key `t2…` when `in` is sent, so these are asked again once).
 - `applyTextIssues`: other_business must quote a name (capital or digit after the first word, or LLC/Inc/Co), and is dropped when the paragraph goes on with this business's own name. Test: `tests/tk/engine_textai.py` (also covers 163's video links).
+
+## Update 165 — why a website is Queued (built)
+- `state.scanning[id].stage`: 'update' (checking for a newer app), 'reserve' (scanClaim), 'line' (in `state.queue`). `queueWhy(id)` words it (names the websites the tab is busy with, place in line); `cancelQueued(id)` (`[data-cancelq]`) takes it out and releases the claim. The header badge says Queued while waiting.
+- Scan heartbeat every 30 s (was 60) sends `p: { done, total, msg }`; store `scanClaim` keeps it on the claim (`p.at`). Others see it in the scan strip ("<name> is scanning it in their browser: 7/18 …", with "the hold runs out within 3 minutes") and in the Audits list badge.
+- Test: `tests/tk/e2e_queue.py` (holds the page reads so two scans stay busy).
