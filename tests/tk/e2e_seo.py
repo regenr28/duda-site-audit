@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from playwright.sync_api import sync_playwright
 APP, TESTS = sys.argv[1], sys.argv[2]
 OUT = os.path.join(TESTS, 'tk'); APORT, RPORT, DPORT = 3998, 8078, 8114
-CALLS = []
+CALLS = []; BACKUPS = []; SCANSTATE = []
 class Duda(BaseHTTPRequestHandler):
     """Duda's Activity Log for the test website: two pages by the SEO company, one by someone else."""
     def do_GET(self):
@@ -13,10 +13,18 @@ class Duda(BaseHTTPRequestHandler):
         if '/activities' in self.path:
             out = [{'activity': 'page_created', 'date': '2026-11-12T10:00:00Z', 'user': 'seo@8bitcreative.com', 'page_title': 'Brentwood PPF', 'page_url': '/brentwood-ppf'},
                    {'activity': 'page_created', 'date': '2026-11-12T11:00:00Z', 'user': 'SEO@8bitcreative.com', 'page_title': 'Tint Laws', 'page_url': '/blog/tint-laws'},
-                   {'activity': 'page_created', 'date': '2026-10-01T09:00:00Z', 'user': 'reymark@8bitcreative.com', 'page_title': 'About', 'page_url': '/about'}]
+                   {'activity': 'page_created', 'date': '2026-10-01T09:00:00Z', 'user': 'reymark@8bitcreative.com', 'page_title': 'About', 'page_url': '/about'},
+                   # Another shape: the person and the page nested, the page only by its id (named from the pages list).
+                   {'activity': 'page_created', 'date': '2026-11-11T08:00:00Z', 'user': {'email': 'seo@8bitcreative.com', 'name': 'SEO Team'}, 'data': {'page_uuid': 'u-77'}}]
             body = json.dumps({'results': out}).encode()
+        elif self.path.split('?')[0].endswith('/pages'):
+            body = json.dumps([{'uuid': 'u-77', 'path': 'ceramic-coating-franklin', 'title': 'Ceramic Coating Franklin'}, {'uuid': 'u-1', 'path': 'home', 'title': 'Home'}]).encode()
         else: body = b'{}'
         self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(body)
+    def do_POST(self):
+        n = int(self.headers.get('content-length') or 0); data = json.loads(self.rfile.read(n) or b'{}')
+        if '/backups/' in self.path: BACKUPS.append(data.get('name'))
+        self.send_response(204); self.end_headers()
     def log_message(self, *a): pass
 threading.Thread(target=HTTPServer(('127.0.0.1', DPORT), Duda).serve_forever, daemon=True).start()
 env = dict(os.environ, DUDA_API_BASE=f'http://127.0.0.1:{DPORT}/api', DUDA_API_USERNAME='u', DUDA_API_PASSWORD='p')
@@ -45,6 +53,11 @@ META = {'host': 'ed.multiscreensite.com', 'siteId': SITE, 'site': {'site_busines
         'pages': [{'path': p, 'title': p, 'noIndex': False} for p in PAGES], 'errors': []}
 def route(r):
     u = urllib.parse.urlparse(r.request.url); q = dict(urllib.parse.parse_qsl(u.query)); p = u.path
+    if p == '/api/store' and r.request.method == 'POST':
+        try:
+            b = json.loads(r.request.post_data or '{}')
+            if b.get('op') == 'scanState' and (b.get('scan') or {}).get('state') == 'scanning': SCANSTATE.append(b.get('backup'))
+        except Exception: pass
     if p == '/api/fetch': return r.fulfill(status=200, content_type='application/json', body=json.dumps(page_html(q.get('path'))))
     if p == '/api/site': return r.fulfill(status=200, content_type='application/json', body=json.dumps(META))
     if p in ('/api/social', '/api/check'): return r.fulfill(status=200, content_type='application/json', body='[]' if p == '/api/check' else '{}')
@@ -80,24 +93,52 @@ try:
         S = pg.evaluate("async () => (await fetch('/api/store?op=site&id=s1')).json()")
         last = (S.get('scans') or [{}])[-1]
         seo = last.get('seo') or {}
-        check(len(seo.get('pages') or []) == 2 and all('seo@' in x['by'] for x in seo['pages']), f'the scan records the pages the SEO company created, from the activity log ({len(seo.get("pages") or [])}; another person\'s page left out)')
+        check(len(seo.get('pages') or []) == 3 and all('seo@' in x['by'] for x in seo['pages']), f'the scan records the pages the SEO company created, from the activity log ({len(seo.get("pages") or [])}; another person\'s page left out)')
         check(any('activities' in c and 'page_created' in c for c in CALLS), 'the activity log is asked for page_created activities')
         check(any(f['code'] == 'PLACEHOLDER' and f['path'] == '/brentwood-ppf' for f in S['findings']), 'the audit finds problems on the SEO company\'s page (an editor note left in)')
         due2 = pg.evaluate("async () => (await fetch('/api/seo?op=due')).json()")
         check(not due2.get('site'), 'once audited, it is not due again until the next publish')
         pg.click('.seo-table tbody tr:has-text("Buff & Beyond") [data-seopg]'); time.sleep(1.5)
-        check('2 pages' in pg.inner_text('.seo-table tbody tr:has-text("Buff & Beyond")'), 'the tab shows the pages the SEO company created')
+        check('3 pages' in pg.inner_text('.seo-table tbody tr:has-text("Buff & Beyond")'), 'the tab shows the pages the SEO company created')
+        pg.click('.seo-table tbody tr:has-text("Buff & Beyond") details summary'); time.sleep(0.3)
+        lst = pg.inner_text('.seo-table tbody tr:has-text("Buff & Beyond") .seo-pages')
+        check('Brentwood PPF' in lst and 'Ceramic Coating Franklin' in lst and '/ceramic-coating-franklin' in lst, 'each page is listed by its name and address, also when Duda gives only the page\'s id: ' + lst.replace(chr(10), ' | '))
         pg.screenshot(path=os.path.join(OUT, 'seo.png'))
         pg.goto(f'http://localhost:{APORT}/#/site/s1/dashboard'); pg.wait_for_selector('.db-table', timeout=15000); time.sleep(0.5)
-        check('SEO auto audit · 2 pages by seo@8bitcreative.com' in pg.inner_text('.db-table'), 'the scan history marks it as an SEO auto audit with the pages')
+        check('SEO auto audit · 3 pages by seo@8bitcreative.com' in pg.inner_text('.db-table'), 'the scan history marks it as an SEO auto audit with the pages')
         pg.click('[data-dbview] >> nth=-1'); pg.wait_for_selector('#repList', timeout=15000); time.sleep(0.4)
         rb = pg.inner_text('#repBody')
-        check('Pages created by seo@8bitcreative.com (2)' in rb and 'Brentwood PPF' in rb and re.search(r'/brentwood-ppf\s+\d+ items? on this page', rb), 'its report lists the SEO company\'s pages with how many items each has')
+        check('Pages created by seo@8bitcreative.com (3)' in rb and 'Brentwood PPF' in rb and re.search(r'/brentwood-ppf\s+\d+ items? on this page', rb), 'its report lists the SEO company\'s pages with how many items each has')
         # Published again later: due again
         redis(['SET', 'dsa:dudasites', json.dumps({'at': int(time.time() * 1000), 'sites': [{'id': 'abc123', 'name': 'Buff & Beyond', 'domain': 'buffandbeyond.com', 'published': iso(4.2), 'labels': ['SEO Customer']}]})])
         redis(['HSET', 'dsa:seoauto', 'abc123', json.dumps({'at': iso(5), 'pub': iso(6), 'auditId': 's1'})])
         due3 = pg.evaluate("async () => (await fetch('/api/seo?op=due')).json()")
         check((due3.get('site') or {}).get('id') == 'abc123', 'a new publish makes it due again 4 hours later')
+        # ---- backups: before a scan somebody starts, not before the automatic ones ----
+        print('  backups:', BACKUPS, 'scanState backup flags:', SCANSTATE, flush=True)
+        check(SCANSTATE[:1] == [True] and len(BACKUPS) == 1 and re.match(r'^R8[A-Z]{1,4}_b4_audit_\d{8}_\d{4}$', BACKUPS[0] or ''), 'Audit now (by hand) backs the website up in Duda first')
+        post = lambda body: pg.evaluate("async (b) => { const r = await fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return r.json(); }", body)
+        nb = len(BACKUPS)
+        post({'op': 'scanState', 'id': 's1', 'stamp': '20261114_1000', 'backup': False, 'scan': {'state': 'scanning', 'startedAt': iso(0)}})
+        check(len(BACKUPS) == nb, 'an automatic scan (backup: false) makes no backup')
+        post({'op': 'scanState', 'id': 's1', 'stamp': '20261114_1001', 'backup': True, 'scan': {'state': 'scanning', 'startedAt': iso(0)}})
+        check(len(BACKUPS) == nb, 'a rescan by hand within 30 minutes of the last backup makes no second one')
+        # The last backup an hour old: a rescan by hand backs up again.
+        import zlib, base64
+        raw = redis(['GET', 'dsa:site:s1'])[0]; site = json.loads(zlib.decompress(base64.b64decode(raw[3:]), -15))
+        for x in site.get('backups') or []: x['at'] = iso(1)
+        c = zlib.compressobj(9, zlib.DEFLATED, -15); redis(['SET', 'dsa:site:s1', 'z1:' + base64.b64encode(c.compress(json.dumps(site).encode()) + c.flush()).decode()])
+        post({'op': 'scanState', 'id': 's1', 'stamp': '20261114_1002', 'backup': True, 'scan': {'state': 'scanning', 'startedAt': iso(0)}})
+        check(len(BACKUPS) == nb + 1 and BACKUPS[-1].endswith('_20261114_1002'), 'a rescan by hand backs the website up again when the last backup is older than 30 minutes')
+        S = pg.evaluate("async () => (await fetch('/api/store?op=site&id=s1')).json()")
+        check(len(S.get('backups') or []) == 2, 'the audit lists both backups')
+        post({'op': 'scanState', 'id': 's1', 'scan': {'state': 'complete', 'finishedAt': iso(0)}})
+        r = pg.evaluate("async () => (await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'profile', name: 'Reymark R', backupInitials: 'xyz' }) })).json()")
+        check((r.get('user') or {}).get('backupInitials') == 'XYZ', 'everyone can set their own initials for backups')
+        bad = pg.evaluate("async () => (await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'profile', name: 'Reymark R', backupInitials: 'R8' }) })).status")
+        check(bad == 400, 'initials with a number are refused')
+        b2 = pg.evaluate("async () => (await fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'backup', id: 's1', stamp: '20261114_0930' }) })).json()")
+        check(b2.get('name') == 'R8XYZ_b4_audit_20261114_0930' and BACKUPS[-1] == 'R8XYZ_b4_audit_20261114_0930', 'Back up now uses them: ' + str(b2.get('name')))
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

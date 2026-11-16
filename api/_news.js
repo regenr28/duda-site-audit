@@ -4,6 +4,27 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-filters', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: 'Saved filters: your own tabs on Audits and DR Websites',
+    what: 'Both lists now have tabs: <b>All open websites</b>, <b>Assigned to me</b> and <b>SEO Websites</b> are built in, and <b>＋ New filter</b> makes your own, written in plain words like <span class="mono">label = "SEO Customer" AND published &lt; 7d</span> or <span class="mono">commented = me</span>. Share it with the team or keep it to yourself. The lists also sort by label, name, last scanned, last published and most critical.',
+    where: ['<b>Walkthrough:</b> Audits (or DR Websites) → the tabs above the search box → <b>＋ New filter</b>.'],
+    link: '#/help/filters', linkText: 'How to write a filter',
+  },
+  {
+    id: '2026-11-14-backups', date: '2026-11-14', audience: 'all', tag: 'Audits',
+    title: 'Backups before every scan you start, and your own initials in their names',
+    what: 'The app now backs the website up in Duda before <b>every</b> scan somebody starts (Rescan, Scan chosen pages, Audit now), not only the first one. One made in the last 30 minutes is enough, and the automatic SEO audits make none (Duda keeps only 50 per website). The initials in the name skip words with a number, so "Reymark 8bit" is no longer "RB"; set your own under <b>Initials for backups</b> in your account.',
+    where: ['<b>Walkthrough:</b> your picture (top right) → <b>Initials for backups</b> → Save. The name it will use is shown underneath.'],
+    link: '#/help/scan', linkText: 'How backups work',
+  },
+  {
+    id: '2026-11-17-seo-page-names', date: '2026-11-17', audience: 'all', tag: 'DR Websites',
+    title: 'SEO Websites: the SEO company\'s pages are listed by name',
+    what: 'The pages the SEO company created were listed as just "Page" with a date. Each one now shows its name and address, read from Duda (also when the activity log only gives the page\'s id). A page deleted since says so.',
+    where: ['<b>Walkthrough:</b> DR Websites → <b>🔍 SEO Websites</b> → <b>Show</b> on a website → open the list of pages.'],
+    link: '#/help/seo-websites', linkText: 'How SEO Websites works',
+  },
+  {
     id: '2026-11-17-docs-both', date: '2026-11-17', audience: 'all', tag: 'Audits',
     title: 'vs Docs: the draft and the live website in one check',
     what: 'A vs Docs check now reads the <b>draft</b> and, once the website is published, the <b>live</b> website at the same time. Each page shows both results (<b>Draft 92% · 7 differences</b> · <b>Live ✗ Not live yet</b>), and the counts say which is which ("0 on the draft · 1 live"). Pages a designer has just added in Duda are found too, without scanning the whole website first.',

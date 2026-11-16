@@ -84,10 +84,15 @@ function summary(site, comments) {
     else { c[f.severity]++; if (f.status === 'clarification') c.clarification++; }
   });
   c.comments = (comments || []).filter((x) => !x.deleted).length;
+  // Who did what, for "my comments / my false alarms / fixed by me" filters (emails, deduplicated).
+  const uniq = (a) => [...new Set(a.filter(Boolean).map((e) => String(e).toLowerCase()))].slice(0, 30);
+  const cmBy = uniq((comments || []).filter((x) => !x.deleted).map((x) => x.by));
+  const faBy = uniq((site.findings || []).filter((f) => f.status === 'false').map((f) => f.statusBy));
+  const doneBy = uniq((site.findings || []).filter((f) => f.status === 'done').map((f) => f.statusBy));
   return {
     id: site.id, siteId: site.siteId, host: site.host, editorUrl: site.editorUrl, businessName: site.businessName || '',
     assignee: site.assignee || '', status: site.status || 'Not started', scan: slimScan(site.scan), addedBy: site.addedBy || '', addedByName: site.addedByName || '',
-    createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c, exv: site._exv || 0,
+    createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c, exv: site._exv || 0, sv: 2, cmBy, faBy, doneBy,
     // Everyone this website has passed through, so the list can be narrowed to a person's own work
     // without reading every full record.
     people: site.people || [site.addedBy, site.assignee].filter(Boolean),
@@ -277,7 +282,7 @@ async function handler(req, res) {
         // Summaries written before must-fix and design polish were counted apart are brought up to
         // date a few at a time (each is one website read), so the list is right within a load or two.
         // …and so are those counted before the exception sets last changed.
-        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined || (x.exv || 0) !== exv)).slice(0, 30);
+        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined || (x.exv || 0) !== exv || x.sv !== 2)).slice(0, 40);
         if (old.length) {
           const fresh = await Promise.all(old.map((x) => saveIndex(x.id).catch(() => null)));
           const byId = new Map(fresh.filter(Boolean).map((x) => [x.id, x]));
@@ -294,6 +299,13 @@ async function handler(req, res) {
           sites = sites.filter((x) => [].concat(x.people || [], x.assignee || [], x.addedBy || [], (x.watch || []).map((w) => w.e)).some((e) => normEmail(e) === mine));
         }
         return res.status(200).json({ mode: 'kv', sites, scoped: !seeAll, ver: String(v || 0), claims: await freshClaims(cl), fixedChecks: pairs(fx, true), build: buildId() });
+      }
+      // Saved filters ("views"): the person's own, and the ones shared with the team.
+      if (op === 'views') {
+        const [raw] = await redis(['HGETALL', P + 'views']);
+        const mine = normEmail(me.email);
+        const views = Object.values(pairs(raw, true)).filter((v) => v && v.id && (v.shared || normEmail(v.owner) === mine)).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+        return res.status(200).json({ views });
       }
       // Copy documents (vs Docs): the list, and a document itself to download.
       if (op === 'docs' || op === 'docFile') {
@@ -495,18 +507,22 @@ async function handler(req, res) {
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
         const wasScanned = !!(site.scan && site.scan.finishedAt);
-        // Before the first scan of an audit, a backup of the website in Duda — so whatever the fixes
-        // that follow do, the website as it was handed over can be restored from Site History.
-        // A failed backup is reported, never a reason not to scan.
+        // Before every scan somebody starts (first scan and rescans; not the automatic ones), a backup of
+        // the website in Duda, so the website as it was can be restored from Site History. One made in
+        // the last 30 minutes is enough (Duda keeps only 50 per website). A failed backup is reported,
+        // never a reason not to scan. Older tabs that do not say `backup` keep the old rule: first scan only.
         let backup = null;
-        if (b.scan && b.scan.state === 'scanning' && !wasScanned && !(site.backups || []).some((x) => x.auto) && site.siteId) {
-          backup = await createBackup(site.siteId, me, b.stamp);
+        const recent = (site.backups || []).some((x) => x.ok && Date.now() - Date.parse(x.at) < 30 * 60000);
+        const wanted = b.backup === undefined ? !wasScanned && !(site.backups || []).some((x) => x.auto) : !!b.backup;
+        if (b.scan && b.scan.state === 'scanning' && wanted && !recent && site.siteId) {
+          const taken = new Set((site.backups || []).map((x) => x.name));
+          backup = await createBackup(site.siteId, me, b.stamp, taken);
           site.backups = [{ name: backup.name, at: now(), by: me.email, byName: me.name, auto: true, ok: backup.ok, error: backup.error || '' }].concat(site.backups || []).slice(0, 20);
         }
         site.scan = Object.assign({}, site.scan, b.scan || {}); site.updatedAt = now();
         if (b.scan && b.scan.state === 'scanning') { site.scan.startedBy = me.email; site.scan.startedByName = me.name; }
         await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
-        if (backup) await log(b.id, me, 'backup', backup.ok ? `backed up the website in Duda before the audit: ${backup.name}` : `tried to back up the website in Duda before the audit, but it failed — ${backup.error}`);
+        if (backup) await log(b.id, me, 'backup', backup.ok ? `backed up the website in Duda before the ${wasScanned ? 'rescan' : 'audit'}: ${backup.name}` : `tried to back up the website in Duda before the ${wasScanned ? 'rescan' : 'audit'}, but it failed — ${backup.error}`);
         if (b.scan && b.scan.state === 'scanning') await log(b.id, me, 'scan-start', wasScanned ? 'clicked Rescan (started a rescan)' : 'started the first scan');
         if (b.scan && b.scan.state === 'failed') await log(b.id, me, 'scan', 'scan failed: ' + String(b.scan.error || '').slice(0, 120));
         return res.status(200).json(Object.assign(await saveIndex(b.id), backup ? { backup } : {}));
@@ -828,6 +844,33 @@ async function handler(req, res) {
         }
         await redis(['SET', DOCS(b.id), packJSON(list)]);
         return res.status(200).json({ doc: d });
+      }
+      case 'viewSave': {
+        // A saved filter: a name, a query ("label = SEO Customer AND published < 7d"), a sort, for the
+        // Audits list or DR Websites. Private unless shared; only its owner (or an admin) changes it.
+        const v = b.view || {};
+        const list = v.list === 'dr' ? 'dr' : 'audits';
+        const name = String(v.name || '').trim().slice(0, 40);
+        if (!name) return res.status(400).json({ error: 'Give the filter a name.' });
+        const q = String(v.q || '').slice(0, 1000);
+        const [raw] = await redis(['HGET', P + 'views', String(v.id || '')]);
+        const old = jparse(raw);
+        const admin = me.role === 'admin' || (await can(me, 'members.manage'));
+        if (old && normEmail(old.owner) !== normEmail(me.email) && !admin) return res.status(403).json({ error: `Only ${old.ownerName || 'its owner'} can change this filter.` });
+        const [all] = await redis(['HGETALL', P + 'views']);
+        if (!old && Object.values(pairs(all, true)).filter((x) => x && normEmail(x.owner) === normEmail(me.email)).length >= 30) return res.status(400).json({ error: 'You have 30 saved filters already. Delete one first.' });
+        const view = { id: old ? old.id : newId(8), list, name, q, sort: String(v.sort || '').slice(0, 40), shared: !!v.shared,
+          owner: old ? old.owner : me.email, ownerName: old ? old.ownerName : me.name, at: old ? old.at : now(), updatedAt: now() };
+        await redis(['HSET', P + 'views', view.id, JSON.stringify(view)]);
+        return res.status(200).json({ view });
+      }
+      case 'viewRemove': {
+        const [raw] = await redis(['HGET', P + 'views', String(b.id || '')]);
+        const old = jparse(raw); if (!old) return res.status(200).json({ ok: true });
+        const admin = me.role === 'admin' || (await can(me, 'members.manage'));
+        if (normEmail(old.owner) !== normEmail(me.email) && !admin) return res.status(403).json({ error: `Only ${old.ownerName || 'its owner'} can delete this filter.` });
+        await redis(['HDEL', P + 'views', old.id]);
+        return res.status(200).json({ ok: true });
       }
       case 'docRemove': {
         if (await denyUnless(res, me, 'site.scan', 'Your role does not allow removing documents.')) return;

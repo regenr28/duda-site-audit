@@ -8,9 +8,14 @@ import { fetchWithTimeout } from './_lib.js';
 
 const DUDA = process.env.DUDA_API_BASE || 'https://api.duda.co/api';
 
-/** "Reymark Regencia" → "RR", "Ana" → "A", nothing usable → "X". */
-export function initialsOf(name, email) {
-  const words = String(name || '').replace(/[^A-Za-z\s-]/g, ' ').split(/[\s-]+/).filter(Boolean);
+/**
+ * "Reymark Regencia" → "RR", "Ana" → "A", nothing usable → "X". A word with a number in it ("8bit")
+ * is a company tag, not a name, and is left out. Whoever wants other letters sets them in their
+ * account ("Initials for backups").
+ */
+export function initialsOf(name, email, own) {
+  if (/^[A-Za-z]{1,4}$/.test(String(own || ''))) return String(own).toUpperCase();
+  const words = String(name || '').split(/[\s-]+/).filter((w) => w && !/\d/.test(w)).map((w) => w.replace(/[^A-Za-z]/g, '')).filter(Boolean);
   let ini = words.map((w) => w[0]).join('').toUpperCase().slice(0, 4);
   if (!ini) ini = String(email || '').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase();
   return ini || 'X';
@@ -24,7 +29,7 @@ export function stampOf(stamp) {
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}_${p(d.getUTCHours())}${p(d.getUTCMinutes())}`;
 }
 
-export const backupName = (me, stamp) => `R8${initialsOf(me && me.name, me && me.email)}_b4_audit_${stampOf(stamp)}`;
+export const backupName = (me, stamp) => `R8${initialsOf(me && me.name, me && me.email, me && me.backupInitials)}_b4_audit_${stampOf(stamp)}`;
 
 /** Ask Duda for the backup. Resolves { ok, name } or { ok:false, error } — never throws. */
 export async function createBackup(dudaSiteId, me, stamp, taken) {

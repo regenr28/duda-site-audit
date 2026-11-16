@@ -1363,6 +1363,8 @@
       <div class="me-sec"><button class="btn sm" id="mePhoto" type="button">📷 ${state.me.photo ? 'Change photo' : 'Add a profile photo'}</button>${state.me.photo ? '<button class="btn sm ghost" id="mePhotoOff" type="button">Remove photo</button>' : ''}<input type="file" id="mePhotoIn" accept="image/*" hidden></div>
       <div class="me-sec"><button class="btn sm" id="mePw" type="button">Change password</button><button class="btn sm" id="meLog" type="button">🛡 My security log</button></div>
       <label class="field">Display name <span class="small muted">your real full name</span><input type="text" id="meName" value="${esc(state.me.name)}"></label>
+      <label class="field">Initials for backups <span class="small muted">the letters in the backups you make in Duda</span><input type="text" id="meIni" maxlength="4" placeholder="${esc(myInitials(state.me.name))}" value="${esc(state.me.backupInitials || '')}" style="max-width:120px;text-transform:uppercase">
+        <span class="small muted" id="meIniEg">Your backups are named <span class="mono">R8${esc(state.me.backupInitials || myInitials(state.me.name))}_b4_audit_${esc(backupStamp())}</span>. Leave it empty to use the first letters of your name.</span></label>
       <label class="field">Pop-up notifications stay on screen for
         <select id="meSecs">${[[4, '4 seconds'], [8, '8 seconds (default)'], [12, '12 seconds'], [20, '20 seconds'], [30, '30 seconds'], [60, '1 minute'], [0, 'Until I close them']].map(([v, l]) => `<option value="${v}" ${Number(state.me.notifySecs === undefined ? 8 : state.me.notifySecs) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <button class="btn sm" id="meTest" type="button" style="justify-self:start">Show a test notification</button>
@@ -1393,6 +1395,7 @@
     $('#meLog').onclick = () => { closeModal(); location.hash = '#/settings/security'; };
     if ($('#meHealth')) $('#meHealth').onclick = () => { closeModal(); location.hash = '#/health'; };
     // The test shows the pop-up and, when Slack messages are switched on here, also sends a Slack test message
+    if ($('#meIni')) $('#meIni').oninput = () => { const v = $('#meIni').value.replace(/[^A-Za-z]/g, '').toUpperCase().slice(0, 4); $('#meIni').value = v; $('#meIniEg .mono').textContent = `R8${v || myInitials($('#meName').value)}_b4_audit_${backupStamp()}`; };
     $('#meTest').onclick = () => {
       popNotify({ email: state.me.email, title: 'Test notification', body: 'This is how long pop-ups will stay on screen.' + ($('#meSlack') && $('#meSlack').checked ? ' A Slack test message is on its way too.' : ''), secs: Number($('#meSecs').value) });
       if ($('#meSlack') && $('#meSlack').checked) slackTest();
@@ -1405,7 +1408,7 @@
       // Read the grid BEFORE the modal closes, and keep any switch the master Slack toggle disabled.
       const shown = new Set($$('[data-ng]').map((i) => i.dataset.ng));
       const notifyOff = [...new Set(readNotifyGrid().concat((state.me.notifyOff || []).filter((k) => !shown.has(k))))];
-      try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value, notifyOff }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); }
+      try { const r = await post('/api/users', { op: 'profile', name: $('#meName').value, backupInitials: $('#meIni') ? $('#meIni').value : undefined, notifySecs: Number($('#meSecs').value), slackDM: $('#meSlack') ? $('#meSlack').checked : undefined, editorEnv: $('#meEnv').value, notifyOff }); state.me = r.user; await loadUsers(); closeModal(); render(); toast('Saved'); } catch (e) { toast(e.message); }
     };
   }
 
@@ -6773,7 +6776,10 @@
     delete state.skipAI[id];
     const startedAt = new Date().toISOString();
     state.scanning[id] = { done: 0, total: 0, message: 'Reading Business Info…' };
-    const st0 = await store({ op: 'scanState', id, stamp: backupStamp(), scan: { state: 'scanning', startedAt, error: '' } });
+    // A scan somebody started (Scan, Rescan, Audit now, chosen pages) backs the website up in Duda first;
+    // the SEO auto audits do not (Duda keeps only 50 backups per website).
+    const autoRun = !!((state.scanOpts || {})[id] || {}).auto;
+    const st0 = await store({ op: 'scanState', id, stamp: backupStamp(), backup: !autoRun, scan: { state: 'scanning', startedAt, error: '' } });
     upsertSummary(st0); render();
     if (st0 && st0.backup) toast(st0.backup.ok ? `Backed up in Duda first: ${st0.backup.name}` : `Couldn't back up in Duda: ${st0.backup.error}`);
     const log = [];
@@ -7564,7 +7570,7 @@
           <td class="small">${x.published ? esc(fmtFull(x.published)) : '—'}</td>
           <td>${seoStatus(x)}</td>
           <td>${x.audit ? `<a href="#/site/${esc(x.audit.id)}/report">${x.audit.open} open${x.audit.critical ? ` · <b class="db-worse">${x.audit.critical} critical</b>` : ''}</a>${x.audit.scanned ? `<div class="small faint">scanned ${esc(ago(x.audit.scanned))}</div>` : ''}` : '<span class="faint">Not on Audits yet</span>'}</td>
-          <td class="small">${pg ? (pg.loading ? 'Reading Duda\'s activity log…' : pg.error ? `<span class="faint" title="${esc(pg.error)}">Could not read the activity log</span>` : pg.pages.length ? `<details><summary>${pg.pages.length} page${pg.pages.length === 1 ? '' : 's'}</summary><ul class="seo-pages">${pg.pages.slice(0, 40).map((p) => `<li>${esc(p.title || p.path || p.id || 'Page')}${p.path ? ` <span class="mono faint">${esc(p.path)}</span>` : ''} <span class="faint">${esc(p.at ? fmtFull(p.at) : '')}</span></li>`).join('')}</ul></details>` : '<span class="faint">None found</span>') : `<button class="linkbtn" data-seopg="${esc(x.id)}">Show</button>`}</td>
+          <td class="small">${pg ? (pg.loading ? 'Reading Duda\'s activity log…' : pg.error ? `<span class="faint" title="${esc(pg.error)}">Could not read the activity log</span>` : pg.pages.length ? `<details><summary>${pg.pages.length} page${pg.pages.length === 1 ? '' : 's'}</summary><ul class="seo-pages">${pg.pages.slice(0, 40).map((p) => `<li>${p.title || p.path ? `${esc(p.title || p.path)}${p.path && p.title ? ` <span class="mono faint">${esc(p.path)}</span>` : ''}` : `<span class="faint">${p.deleted ? 'A page deleted since' : 'Page (Duda gave no name)'}</span>`} <span class="faint">${esc(p.at ? fmtFull(p.at) : '')}</span></li>`).join('')}</ul>${pg.sample && pg.pages.some((p) => !p.title && !p.path) && state.superAdmin ? `<details class="small faint"><summary>What Duda sent</summary><code class="mono" style="word-break:break-all">${esc(pg.sample)}</code></details>` : ''}</details>` : '<span class="faint">None found</span>') : `<button class="linkbtn" data-seopg="${esc(x.id)}">Show</button>`}</td>
           <td style="white-space:nowrap">${seoRunner() ? `<button class="btn sm" data-seorun="${esc(x.id)}" ${seo.busy ? 'disabled' : ''}>Audit now</button>` : ''}</td></tr>`; }).join('')}
         </tbody></table></div>`}</div>`;
     bindLiveTabs();
@@ -7590,7 +7596,7 @@
         try { const n = await store({ op: 'create', siteId: x.id, host, editorUrl: `https://${host}/home/site/${x.id}/home`, assignee: '' }); upsertSummary(n); auditId = n.id; }
         catch (e) { if (e.status === 409 && e.data && e.data.id) auditId = e.data.id; else throw e; }
       }
-      state.scanOpts = state.scanOpts || {}; state.scanOpts[auditId] = { bulk: true, seo: true };
+      state.scanOpts = state.scanOpts || {}; state.scanOpts[auditId] = { bulk: true, seo: true, ...(byHand ? {} : { auto: true }) };
       await scanSite(auditId);
       const after = await api('/api/store?op=site&id=' + encodeURIComponent(auditId)).catch(() => null);
       if (!after || !after.scan || after.scan.state !== 'complete') error = (after && after.scan && after.scan.error) || 'The scan did not finish';
@@ -8422,7 +8428,9 @@
     if (live.wc === 'clean') list = list.filter((x) => x.wc && !x.wc.n && !x.wc.e);
     if (live.wc === 'none') list = list.filter((x) => !x.wc || x.wc.e);
     if (live.wc === 'repub') list = list.filter(acRepub);
-    list = list.slice().sort((a, b) => live.sort === 'domain' ? (domProblem(b.dom) ? 1 : 0) - (domProblem(a.dom) ? 1 : 0) || String(b.published).localeCompare(String(a.published)) : live.sort === 'name' ? (a.name || a.id).localeCompare(b.name || b.id) : String(b.published).localeCompare(String(a.published)));
+    const DV = currentView('dr'); const dvf = vfilter('dr', DV);
+    list = list.filter(dvf.fn);
+    list = list.slice().sort(vsortFn('dr', live.sort));
     const PER = 100; const pages = Math.max(1, Math.ceil(list.length / PER)); live.page = Math.min(live.page, pages - 1);
     const shown = list.slice(live.page * PER, live.page * PER + PER);
     const host = editorHostOr();
@@ -8443,13 +8451,14 @@
       ${liveTabs('published')}
       ${live.error ? `<div class="note bad">${esc(live.error)}</div>` : ''}
 
-      <div class="panel"><div class="toolbar">
+      <div class="panel">${d ? viewTabsHtml('dr', all) : ''}
+      ${dvf.error ? `<div class="note bad small" style="margin:8px 14px">This filter cannot be read: ${esc(dvf.error)}</div>` : ''}<div class="toolbar">
         <input type="search" id="liveQ" placeholder="Search by name, site ID, domain or label…" value="${esc(live.q)}" style="flex:1;min-width:220px">
         <select id="liveAudit"><option value="">All sites (${all.length})</option><option value="no" ${live.audit === 'no' ? 'selected' : ''}>Not audited yet (${all.filter((x) => !isAudited(x.id)).length})</option><option value="yes" ${live.audit === 'yes' ? 'selected' : ''}>Audited (${all.filter((x) => isAudited(x.id)).length})</option><option value="issues" ${live.audit === 'issues' ? 'selected' : ''}>Audited, with open issues</option><option value="leads" ${live.audit === 'leads' ? 'selected' : ''}>With enquiries (${all.filter((x) => (state.leadSums[String(x.id)] || {}).total).length})</option></select>
         <select id="liveDom"><option value="">Any domain status</option><option value="problem" ${live.dom === 'problem' ? 'selected' : ''}>Domain problems (${all.filter((x) => domProblem(x.dom)).length})</option><option value="ok" ${live.dom === 'ok' ? 'selected' : ''}>Domain working (${all.filter((x) => x.dom && x.dom.status === 'ok').length})</option><option value="expiring" ${live.dom === 'expiring' ? 'selected' : ''}>Domain expiring or expired (${all.filter((x) => domExpiring(x.dom)).length})</option><option value="cert" ${live.dom === 'cert' ? 'selected' : ''}>Certificate ending (info only, ${all.filter((x) => domCertFyi(x.dom)).length})</option><option value="none" ${live.dom === 'none' ? 'selected' : ''}>Not checked yet (${all.filter((x) => !x.dom).length})</option></select>
         ${canCust() ? `<select id="liveCust" aria-label="Customer account"><option value="">Any customer</option><option value="yes" ${live.cust === 'yes' ? 'selected' : ''}>With a customer account (${state.clients ? all.filter(hasCust).length : '…'})</option><option value="no" ${live.cust === 'no' ? 'selected' : ''}>No customer account (${state.clients ? all.filter((x) => !hasCust(x)).length : '…'})</option></select>` : ''}
         <select id="liveWc" aria-label="Auto audit"><option value="">Any auto audit</option><option value="critical" ${live.wc === 'critical' ? 'selected' : ''}>Super critical: contact info (${all.filter((x) => x.wc && x.wc.c).length})</option><option value="issues" ${live.wc === 'issues' ? 'selected' : ''}>Auto audit found something (${all.filter((x) => x.wc && x.wc.n).length})</option><option value="clean" ${live.wc === 'clean' ? 'selected' : ''}>Auto audit done, all fine (${all.filter((x) => x.wc && !x.wc.n && !x.wc.e).length})</option><option value="repub" ${live.wc === 'repub' ? 'selected' : ''}>Republished, queued again (${all.filter(acRepub).length})</option><option value="none" ${live.wc === 'none' ? 'selected' : ''}>Not auto audited yet (${all.filter((x) => !x.wc || x.wc.e).length})</option></select>
-        <select id="liveSort"><option value="published">Recently published first</option><option value="domain" ${live.sort === 'domain' ? 'selected' : ''}>Domain problems first</option><option value="name" ${live.sort === 'name' ? 'selected' : ''}>Name A–Z</option></select>
+        <select id="liveSort" aria-label="Sort">${VSORTS.dr.map(([k, l]) => `<option value="${k}" ${live.sort === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       </div>
       ${live.names || live.doms ? `<div class="live-progress small muted"><span class="pulse-dot"></span> ${live.names ? `Loading business names ${live.names.done}/${live.names.total}` : ''}${live.names && live.doms ? ' · ' : ''}${live.doms ? `Checking domains ${live.doms.done}/${live.doms.total}` : ''}</div>` : ''}
       ${live.leadJob ? (live.leadJob.note
@@ -8475,6 +8484,7 @@
     const qi = $('#liveQ'); qi.oninput = (e) => { live.q = e.target.value; live.page = 0; const pos = e.target.selectionStart; renderLive(); const n = $('#liveQ'); n.focus(); n.setSelectionRange(pos, pos); };
     $('#liveAudit').onchange = (e) => { live.audit = e.target.value; live.page = 0; renderLive(); };
     $('#liveSort').onchange = (e) => { live.sort = e.target.value; renderLive(); };
+    if (d) bindViewTabs('dr', renderLive, all);
     $('#liveDom').onchange = (e) => { live.dom = e.target.value; live.page = 0; renderLive(); };
     if ($('#liveWc')) $('#liveWc').onchange = (e) => { live.wc = e.target.value; live.page = 0; renderLive(); };
     paintAutoPanel(); if (!wq.liveAt || Date.now() - wq.liveAt > 10000) pollAuto();
@@ -8994,6 +9004,303 @@
     if (!liveDR.data) return null;
     return liveDR.data.sites.find((y) => String(y.id).toLowerCase() === String(siteId).toLowerCase()) || false;
   }
+  // =====================================================================
+  // SAVED FILTERS ("views"): tabs above the Audits list and DR Websites
+  // =====================================================================
+  // A filter is a query in plain words, close to SQL:   label = "SEO Customer" AND published < 7d
+  // Conditions join with AND / OR (AND first), NOT, and brackets. Anyone can save their own; a
+  // shared one shows for the whole team. The built-in ones below are always there.
+  const BUILTIN_VIEWS = {
+    audits: [
+      { id: 'all', name: 'All', q: '' },
+      { id: 'open', name: 'All open websites', q: 'status != Complete' },
+      { id: 'mine', name: 'Assigned to me', q: 'assigned = me' },
+      { id: 'seo', name: 'SEO Websites', q: 'label = "SEO Customer"' },
+    ],
+    dr: [
+      { id: 'all', name: 'All', q: '' },
+      { id: 'seo', name: 'SEO Websites', q: 'label = "SEO Customer"' },
+    ],
+  };
+  const views = { list: null, loading: false };
+  async function loadViews(force) {
+    if (views.loading || (views.list && !force)) return;
+    views.loading = true;
+    try { views.list = (await api('/api/store?op=views')).views || []; } catch (e) { views.list = views.list || []; }
+    views.loading = false;
+  }
+  const allViews = (list) => BUILTIN_VIEWS[list].map((v) => Object.assign({ builtin: true }, v)).concat((views.list || []).filter((v) => v.list === list));
+  const vselKey = (list) => 'dsa-view-' + list;
+  function currentView(list) {
+    let id = state.vsel && state.vsel[list];
+    if (!id) { try { id = localStorage.getItem(vselKey(list)) || ''; } catch (e) { id = ''; } }
+    return allViews(list).find((v) => v.id === id) || allViews(list)[0];
+  }
+  function pickView(list, id) {
+    state.vsel = Object.assign({}, state.vsel, { [list]: id });
+    try { localStorage.setItem(vselKey(list), id); } catch (e) { /* private window */ }
+  }
+
+  // ---- what can be asked, for each list ----
+  const dateOf = (v) => { const t = Date.parse(v || ''); return isNaN(t) ? null : t; };
+  const auditLabels = (siteId) => { const x = liveOf(siteId) || ((liveDR.un && liveDR.un.sites) || []).find((y) => sameId(y.id, siteId)); return (x && x.labels) || []; };
+  const openOf = (c) => (c.critical || 0) + (c.warning || 0) + (c.info || 0) + (c.outdated || 0);
+  const VFIELDS = {
+    audits: {
+      name: { t: 'text', d: 'Business name', g: (s) => s.businessName },
+      siteid: { t: 'text', d: 'Duda site ID', g: (s) => s.siteId },
+      domain: { t: 'text', d: 'Live domain', g: (s) => (liveOf(s.siteId) || {}).domain || '' },
+      label: { t: 'list', d: 'Duda labels', g: (s) => auditLabels(s.siteId) },
+      status: { t: 'text', d: `Audit status (${SITE_STATUSES.join(', ')})`, g: (s) => s.status },
+      assigned: { t: 'person', d: 'Who has the audit (me, nobody, a name or email)', g: (s) => s.assignee ? [s.assignee] : [] },
+      addedby: { t: 'person', d: 'Who added it', g: (s) => s.addedBy ? [s.addedBy] : [] },
+      worked: { t: 'person', d: 'Anyone who worked on it', g: (s) => s.people || [] },
+      commented: { t: 'person', d: 'Who commented on it', g: (s) => s.cmBy || [] },
+      falsealarm: { t: 'person', d: 'Who marked an item False alarm', g: (s) => s.faBy || [] },
+      fixed: { t: 'person', d: 'Who marked an item Done', g: (s) => s.doneBy || [] },
+      added: { t: 'date', d: 'When it was added to Audits', g: (s) => s.createdAt },
+      scanned: { t: 'date', d: 'Last scan finished', g: (s) => (s.scan || {}).finishedAt },
+      published: { t: 'date', d: 'Last published in Duda', g: (s) => (liveOf(s.siteId) || {}).published },
+      updated: { t: 'date', d: 'Last change on the audit', g: (s) => s.updatedAt },
+      scan: { t: 'text', d: 'Scan state (complete, failed, scanning, none)', g: (s) => (s.scan && s.scan.state) || 'none' },
+      live: { t: 'text', d: 'live, draft (not published) or gone', g: (s) => dudaState(s.siteId) },
+      critical: { t: 'num', d: 'Open critical items', g: (s) => (s.counts || {}).critical || 0 },
+      warnings: { t: 'num', d: 'Open warnings', g: (s) => (s.counts || {}).warning || 0 },
+      info: { t: 'num', d: 'Open info items', g: (s) => (s.counts || {}).info || 0 },
+      open: { t: 'num', d: 'All open must-fix items', g: (s) => openOf(s.counts || {}) },
+      closed: { t: 'num', d: 'Closed must-fix items', g: (s) => (s.counts || {}).closed || 0 },
+      polish: { t: 'num', d: 'Open design polish items', g: (s) => (s.counts || {}).po || 0 },
+      lengths: { t: 'num', d: 'Open SEO Lengths items', g: (s) => (s.counts || {}).lo || 0 },
+      questions: { t: 'num', d: 'Items waiting on an answer', g: (s) => (s.counts || {}).clarification || 0 },
+      comments: { t: 'num', d: 'Comments on the audit', g: (s) => (s.counts || {}).comments || 0 },
+      pages: { t: 'num', d: 'Pages in the last scan', g: (s) => (s.scan || {}).pages || 0 },
+      supercritical: { t: 'num', d: 'Super critical on the live website (auto audit)', g: (s) => (s.autoLive || {}).c || 0 },
+      republished: { t: 'yes', d: 'Published again since the last scan', g: (s) => !!repubSince(s) },
+      mustdone: { t: 'yes', d: 'All must-fix items closed', g: (s) => mustState(s) === 'done' },
+      complete: { t: 'yes', d: 'Marked Complete', g: (s) => !!s.completedAt },
+      customer: { t: 'yes', d: 'Has a customer account', g: (s) => customersOf(s.siteId, s.id).length > 0 },
+    },
+    dr: {
+      name: { t: 'text', d: 'Business name', g: (x) => x.name || '' },
+      siteid: { t: 'text', d: 'Duda site ID', g: (x) => x.id },
+      domain: { t: 'text', d: 'Domain', g: (x) => x.domain || x.defaultDomain || '' },
+      label: { t: 'list', d: 'Duda labels', g: (x) => x.labels || [] },
+      published: { t: 'date', d: 'Last published', g: (x) => x.published },
+      domainstatus: { t: 'text', d: 'ok, problem, expiring, none', g: (x) => (!x.dom ? 'none' : domExpiring(x.dom) ? 'expiring' : domProblem(x.dom) ? 'problem' : 'ok') },
+      enquiries: { t: 'num', d: 'Form submissions on record', g: (x) => ((state.leadSums || {})[String(x.id)] || {}).total || 0 },
+      comments: { t: 'num', d: 'Duda comments', g: (x) => (cmtFor(x.id) || {}).total || 0 },
+      waiting: { t: 'num', d: 'Duda comments a client is waiting on', g: (x) => (cmtFor(x.id) || {}).waiting || 0 },
+      autoaudit: { t: 'text', d: 'Auto audit: done, issues, not read', g: (x) => (!x.wc || x.wc.e ? 'not read' : x.wc.n ? 'issues' : 'done') },
+      supercritical: { t: 'num', d: 'Super critical (auto audit)', g: (x) => (x.wc && x.wc.c) || 0 },
+      autoissues: { t: 'num', d: 'Things to check (auto audit)', g: (x) => (x.wc && x.wc.n) || 0 },
+      audited: { t: 'yes', d: 'On Audits', g: (x) => !!auditFor(x.id) },
+      customer: { t: 'yes', d: 'Has a customer account', g: (x) => customersOf(x.id, (auditFor(x.id) || {}).id).length > 0 },
+      critical: { t: 'num', d: 'Open critical items on its audit', g: (x) => ((auditFor(x.id) || {}).counts || {}).critical || 0 },
+      status: { t: 'text', d: 'Its audit status', g: (x) => (auditFor(x.id) || {}).status || '' },
+      assigned: { t: 'person', d: 'Who has its audit', g: (x) => { const a = auditFor(x.id); return a && a.assignee ? [a.assignee] : []; } },
+      commented: { t: 'person', d: 'Who commented on its audit', g: (x) => (auditFor(x.id) || {}).cmBy || [] },
+      falsealarm: { t: 'person', d: 'Who marked an item of its audit False alarm', g: (x) => (auditFor(x.id) || {}).faBy || [] },
+      scanned: { t: 'date', d: 'Its audit\'s last scan', g: (x) => ((auditFor(x.id) || {}).scan || {}).finishedAt },
+    },
+  };
+  const VSORTS = {
+    audits: [['added', 'Newest added first'], ['updated', 'Recently worked on'], ['scanned', 'Recently scanned'], ['published', 'Recently published'], ['name', 'Name A–Z'], ['label', 'Label A–Z'], ['critical', 'Most critical first']],
+    dr: [['published', 'Recently published first'], ['domain', 'Domain problems first'], ['name', 'Name A–Z'], ['label', 'Label A–Z'], ['critical', 'Most critical first']],
+  };
+  function vsortFn(list, by) {
+    const F = VFIELDS[list];
+    const t = (f) => (x) => dateOf(F[f].g(x)) || 0;
+    const firstLabel = (x) => (F.label.g(x).slice().sort()[0] || '￿').toLowerCase();
+    if (by === 'name') return (a, b) => String(F.name.g(a) || F.siteid.g(a)).localeCompare(String(F.name.g(b) || F.siteid.g(b)));
+    if (by === 'label') return (a, b) => firstLabel(a).localeCompare(firstLabel(b)) || String(F.name.g(a)).localeCompare(String(F.name.g(b)));
+    if (by === 'critical') return (a, b) => F.critical.g(b) - F.critical.g(a);
+    if (by === 'domain' && list === 'dr') return (a, b) => (domProblem(b.dom) ? 1 : 0) - (domProblem(a.dom) ? 1 : 0) || (t('published')(b) - t('published')(a));
+    if (F[by] && F[by].t === 'date') return (a, b) => t(by)(b) - t(by)(a);
+    return list === 'audits' ? (a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) : (a, b) => t('published')(b) - t('published')(a);
+  }
+
+  // ---- the query: read it, then test each website against it ----
+  function vlex(q) {
+    const out = []; let i = 0;
+    while (i < q.length) {
+      const c = q[i];
+      if (/\s/.test(c)) { i++; continue; }
+      if (c === '(' || c === ')') { out.push({ k: c }); i++; continue; }
+      if (c === '"' || c === "'") { const j = q.indexOf(c, i + 1); if (j < 0) throw new Error('A quote is not closed.'); out.push({ k: 'str', v: q.slice(i + 1, j) }); i = j + 1; continue; }
+      const op = q.slice(i).match(/^(!=|>=|<=|!~|=|>|<|~)/);
+      if (op) { out.push({ k: 'op', v: op[1] }); i += op[1].length; continue; }
+      const w = q.slice(i).match(/^[^\s()"'=<>!~]+/);
+      if (!w) throw new Error(`Cannot read "${q.slice(i, i + 12)}".`);
+      const word = w[0], up = word.toUpperCase();
+      if (up === 'AND' || up === 'OR' || up === 'NOT') out.push({ k: up }); else out.push({ k: 'w', v: word });
+      i += word.length;
+    }
+    return out;
+  }
+  function vparse(q, list) {
+    const toks = vlex(String(q || '')); let p = 0;
+    const F = VFIELDS[list];
+    const peek = () => toks[p]; const next = () => toks[p++];
+    const expr = () => { let l = and(); while (peek() && peek().k === 'OR') { next(); const r = and(); const a = l; l = (x) => a(x) || r(x); } return l; };
+    const and = () => { let l = unary(); while (peek() && (peek().k === 'AND' || (peek().k === 'w' || peek().k === 'NOT' || peek().k === '('))) { if (peek().k === 'AND') next(); const r = unary(); const a = l; l = (x) => a(x) && r(x); } return l; };
+    const unary = () => {
+      const t = peek();
+      if (!t) throw new Error('Something is missing at the end.');
+      if (t.k === 'NOT') { next(); const f = unary(); return (x) => !f(x); }
+      if (t.k === '(') { next(); const f = expr(); if (!peek() || peek().k !== ')') throw new Error('A bracket is not closed.'); next(); return f; }
+      return cond();
+    };
+    const cond = () => {
+      const ft = next();
+      if (!ft || ft.k !== 'w') throw new Error('Expected a field name, like label or published.');
+      const key = ft.v.toLowerCase().replace(/[^a-z]/g, '');
+      const fd = F[key];
+      if (!fd) throw new Error(`"${ft.v}" is not something this list knows. Try: ${Object.keys(F).slice(0, 12).join(', ')}…`);
+      // The operator: a sign, or words (is, is not, contains, not contains, has).
+      let op = '';
+      const t = peek();
+      if (t && t.k === 'op') { op = next().v; }
+      else if (t && t.k === 'w' && /^(is|contains|has|includes)$/i.test(t.v)) { next(); op = /^is$/i.test(t.v) ? '=' : '~'; if (peek() && peek().k === 'NOT') { next(); op = op === '=' ? '!=' : '!~'; } }
+      else if (t && t.k === 'NOT' && toks[p + 1] && toks[p + 1].k === 'w' && /^(contains|has|includes)$/i.test(toks[p + 1].v)) { next(); next(); op = '!~'; }
+      else if (fd.t === 'yes') op = '=';
+      else throw new Error(`After "${ft.v}" put =, !=, >, <, contains…`);
+      // The value: a quoted text, or the words up to the next AND / OR / bracket.
+      let val = '';
+      if (fd.t === 'yes' && (!peek() || ['AND', 'OR', ')'].includes(peek().k)) && op === '=' && !(t && t.k === 'op')) val = 'yes';
+      else {
+        const parts = [];
+        while (peek() && (peek().k === 'w' || peek().k === 'str')) { parts.push(next().v); if (parts.length && toks[p - 1].k === 'str') break; }
+        if (!parts.length) throw new Error(`"${ft.v} ${op}" needs a value.`);
+        val = parts.join(' ');
+      }
+      return vcond(fd, op, val);
+    };
+    if (!toks.length) return () => true;
+    const fn = expr();
+    if (p < toks.length) throw new Error(`Cannot read from "${toks[p].v || toks[p].k}".`);
+    return fn;
+  }
+  /** One condition: the field's kind decides what = > < contains mean. */
+  function vcond(fd, op, val) {
+    const v = String(val).trim(); const lv = v.toLowerCase();
+    const empty = /^(empty|none|nobody|nothing|blank)$/.test(lv);
+    const cmpNum = (a, b) => ({ '=': a === b, '!=': a !== b, '>': a > b, '<': a < b, '>=': a >= b, '<=': a <= b }[op]);
+    if (fd.t === 'num') {
+      const n = Number(v); if (!Number.isFinite(n)) throw new Error(`"${v}" is not a number.`);
+      if (!['=', '!=', '>', '<', '>=', '<='].includes(op)) throw new Error('Numbers take =, !=, >, <, >=, <=.');
+      return (x) => cmpNum(Number(fd.g(x)) || 0, n);
+    }
+    if (fd.t === 'yes') {
+      const want = /^(yes|true|1|y)$/.test(lv) ? true : /^(no|false|0|n)$/.test(lv) ? false : null;
+      if (want === null) throw new Error(`Use yes or no, not "${v}".`);
+      return (x) => (op === '!=' ? !!fd.g(x) !== want : !!fd.g(x) === want);
+    }
+    if (fd.t === 'date') {
+      if (empty) return (x) => (op === '!=' ? dateOf(fd.g(x)) !== null : dateOf(fd.g(x)) === null);
+      // 7d / 2w / 3m / 1y / 12h: how long ago. "< 7d" = in the last 7 days; "> 30d" = longer ago than that.
+      const dur = lv.match(/^(\d+(?:\.\d+)?)\s*(h|hours?|d|days?|w|weeks?|m|months?|y|years?)$/);
+      if (dur) {
+        const u = dur[2][0]; const ms = Number(dur[1]) * ({ h: 3600e3, d: 864e5, w: 6048e5, m: 2592e6, y: 31536e6 }[u]);
+        if (!['<', '>', '<=', '>='].includes(op)) throw new Error('With a length of time use < (within) or > (longer ago), e.g. published < 7d.');
+        return (x) => { const t = dateOf(fd.g(x)); if (t === null) return false; const age = Date.now() - t; return cmpNum(age, ms); };
+      }
+      const day = lv === 'today' ? new Date(new Date().toDateString()).getTime() : lv === 'yesterday' ? new Date(new Date().toDateString()).getTime() - 864e5 : dateOf(v);
+      if (day === null) throw new Error(`"${v}" is not a date. Use 2026-11-01, today, or 7d.`);
+      const end = /^\d{4}-\d{2}-\d{2}$/.test(v) || lv === 'today' || lv === 'yesterday' ? day + 864e5 : day;
+      return (x) => { const t = dateOf(fd.g(x)); if (t === null) return false;
+        return { '=': t >= day && t < end, '!=': t < day || t >= end, '>': t >= end, '>=': t >= day, '<': t < day, '<=': t < end }[op] || false; };
+    }
+    // Text, lists and people: compared without caring about capitals.
+    const me = String(state.me.email).toLowerCase();
+    const want = fd.t === 'person' && lv === 'me' ? me : lv;
+    const vals = (x) => { const g = fd.g(x); return (Array.isArray(g) ? g : [g]).filter((y) => y !== undefined && y !== null && y !== '').map((y) => String(y).toLowerCase()); };
+    const alias = (e) => (fd.t === 'person' ? [e, String(nameOf(e, '') || '').toLowerCase()] : [e]);
+    const eq = (x) => vals(x).some((e) => alias(e).some((a) => a === want));
+    const has = (x) => vals(x).some((e) => alias(e).some((a) => a.includes(want)));
+    if (empty) return (x) => (op === '!=' || op === '!~' ? vals(x).length > 0 : vals(x).length === 0);
+    if (op === '=') return eq; if (op === '!=') return (x) => !eq(x);
+    if (op === '~') return has; if (op === '!~') return (x) => !has(x);
+    throw new Error(`"${op}" does not work with text. Use =, != or contains.`);
+  }
+  function vcompile(q, list) { try { return { fn: vparse(q, list), error: '' }; } catch (e) { return { fn: () => true, error: e.message }; } }
+  const vcache = new Map();
+  function vfilter(list, view) { const k = list + '|' + view.q; if (!vcache.has(k)) vcache.set(k, vcompile(view.q, list)); return vcache.get(k); }
+
+  // ---- the tabs and the editor ----
+  function viewTabsHtml(list, rows) {
+    if (!views.list && !views.loading) loadViews().then(() => (list === 'dr' ? renderLive() : renderSites()));
+    const cur = currentView(list);
+    return `<div class="vtabs" role="tablist" aria-label="Saved filters">${allViews(list).map((v) => {
+      const c = vfilter(list, v); const n = c.error ? '!' : rows.filter(c.fn).length;
+      return `<button type="button" role="tab" class="vtab ${v.id === cur.id ? 'on' : ''}" data-vtab="${esc(v.id)}" aria-selected="${v.id === cur.id}" title="${esc(v.q ? v.q + (v.builtin ? '' : ` · ${v.shared ? 'shared with the team' : 'only you'} · by ${v.ownerName || ''}`) : 'Every website')}">${v.shared ? '<span aria-hidden="true">👥 </span>' : ''}${esc(v.name)} <span class="vtab-n">${n}</span></button>`;
+    }).join('')}
+      ${cur && !cur.builtin && (cur.owner === state.me.email || state.me.role === 'admin') ? `<button type="button" class="linkbtn vtab-edit" data-vedit="${esc(cur.id)}">✎ Edit</button>` : ''}
+      <button type="button" class="linkbtn vtab-new" data-vnew="1">＋ New filter</button></div>`;
+  }
+  function bindViewTabs(list, rerender, rows) {
+    $$('[data-vtab]').forEach((b) => (b.onclick = () => { pickView(list, b.dataset.vtab); const v = currentView(list); if (v.sort) { if (list === 'dr') live.sort = v.sort; else state.asort = v.sort; } if (list === 'dr') live.page = 0; rerender(); }));
+    $$('[data-vnew]').forEach((b) => (b.onclick = () => openViewEditor(list, null, rerender, rows)));
+    $$('[data-vedit]').forEach((b) => (b.onclick = () => openViewEditor(list, allViews(list).find((v) => v.id === b.dataset.vedit), rerender, rows)));
+  }
+  function openViewEditor(list, v, rerender, rows) {
+    const F = VFIELDS[list];
+    const ex = list === 'dr'
+      ? ['label = "SEO Customer"', 'published < 7d AND audited = no', 'domainstatus = problem', 'waiting > 0', 'label contains MFG AND supercritical > 0', 'commented = me']
+      : ['label = "SEO Customer" AND status != Complete', 'assigned = me AND critical > 0', 'commented = me OR falsealarm = me', 'published < 3d AND republished = yes', 'scanned > 30d', 'addedby = me AND added < 7d'];
+    const fieldList = Object.entries(F).map(([k, f]) => `<tr><td class="mono">${k}</td><td class="small">${esc(f.d)}</td><td class="small faint">${{ text: 'text', list: 'list', person: 'person', num: 'number', date: 'date', yes: 'yes / no' }[f.t]}</td></tr>`).join('');
+    modal(`<header><h2>${v ? 'Edit filter' : 'New filter'}</h2><button class="btn ghost" data-close>✕</button></header>
+      <div class="body vf">
+        <label class="field">Name <input type="text" id="vfName" maxlength="40" value="${esc(v ? v.name : '')}" placeholder="e.g. My SEO websites this week"></label>
+        <label class="field">Show the websites where <textarea id="vfQ" rows="3" class="mono" spellcheck="false" placeholder='label = "SEO Customer" AND published < 7d'>${esc(v ? v.q : '')}</textarea></label>
+        <div class="vf-add small"><b>Add a condition:</b>
+          <select id="vfF">${Object.entries(F).map(([k, f]) => `<option value="${k}">${k} · ${esc(f.d)}</option>`).join('')}</select>
+          <select id="vfO"></select><input type="text" id="vfV" placeholder="value"><button class="btn sm" type="button" id="vfAdd">Add</button></div>
+        <div class="vf-res small" id="vfRes"></div>
+        <label class="field">Sort <select id="vfSort"><option value="">Keep the list's own order</option>${VSORTS[list].map(([k, l]) => `<option value="${k}" ${v && v.sort === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+        <label class="check-row"><input type="checkbox" id="vfShare" ${v && v.shared ? 'checked' : ''}><span>Share with the team <span class="small muted">(everyone sees it as a tab; only you${state.me.role === 'admin' ? '' : ' and the admins'} can change it)</span></span></label>
+        <details class="small"><summary>How to write a filter</summary>
+          <p>Each condition is <span class="mono">field</span>, a sign, and a value. Join them with <b>AND</b> / <b>OR</b> (AND counts first), turn one around with <b>NOT</b>, group with brackets.</p>
+          <ul><li><b>Text and labels:</b> <span class="mono">=</span> exactly, <span class="mono">!=</span> not, <span class="mono">contains</span> (or <span class="mono">~</span>) part of it. Capitals don't matter; put spaces inside quotes or just write the words.</li>
+          <li><b>People:</b> <span class="mono">me</span>, <span class="mono">nobody</span>, a name or an email: <span class="mono">assigned = me</span>, <span class="mono">commented = "Chris Barnett"</span>.</li>
+          <li><b>Numbers:</b> <span class="mono">= != &gt; &lt; &gt;= &lt;=</span>: <span class="mono">critical &gt; 0</span>.</li>
+          <li><b>Dates:</b> a length of time means how long ago: <span class="mono">published &lt; 7d</span> (in the last 7 days), <span class="mono">scanned &gt; 30d</span> (longer ago). Or a day: <span class="mono">added &gt;= 2026-11-01</span>, <span class="mono">today</span>. <span class="mono">h d w m y</span> = hours, days, weeks, months, years.</li>
+          <li><b>Yes / no:</b> <span class="mono">republished = yes</span>, or just <span class="mono">republished</span>.</li>
+          <li><b>Nothing there:</b> <span class="mono">assigned = nobody</span>, <span class="mono">label = empty</span>.</li></ul>
+          <p>Examples: ${ex.map((x) => `<button type="button" class="linkbtn mono vf-ex" data-vex="${esc(x)}">${esc(x)}</button>`).join(' · ')}</p>
+          <table class="grid vf-fields"><thead><tr><th>Field</th><th>What it is</th><th>Kind</th></tr></thead><tbody>${fieldList}</tbody></table></details>
+      </div>
+      <footer>${v ? '<button class="btn danger" id="vfDel" type="button">Delete</button>' : ''}<span class="spacer"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="vfSave" type="button">Save</button></footer>`);
+    const OPS = { text: ['=', '!=', 'contains', 'not contains'], list: ['=', '!=', 'contains', 'not contains'], person: ['=', '!='], num: ['>', '<', '=', '!=', '>=', '<='], date: ['<', '>', '=', '>=', '<='], yes: ['='] };
+    const HINT = { person: 'me', date: '7d', num: '0', yes: 'yes', list: '"SEO Customer"', text: '' };
+    const fillOps = () => { const f = F[$('#vfF').value]; $('#vfO').innerHTML = OPS[f.t].map((o) => `<option>${o}</option>`).join(''); $('#vfV').placeholder = HINT[f.t] || 'value'; };
+    fillOps(); $('#vfF').onchange = fillOps;
+    const check = () => {
+      const c = vcompile($('#vfQ').value, list);
+      $('#vfRes').innerHTML = c.error ? `<span class="db-worse">⚠ ${esc(c.error)}</span>` : `<span class="db-better">✓ ${rows.filter(c.fn).length} of ${rows.length} websites match</span>`;
+      $('#vfSave').disabled = !!c.error;
+    };
+    $('#vfQ').oninput = check; check();
+    $('#vfAdd').onclick = () => {
+      const f = $('#vfF').value; const o = $('#vfO').value; let val = $('#vfV').value.trim() || ($('#vfV').placeholder || '');
+      if (/\s/.test(val) && !/^["'].*["']$/.test(val)) val = `"${val}"`;
+      const cur = $('#vfQ').value.trim();
+      $('#vfQ').value = (cur ? cur + ' AND ' : '') + `${f} ${o} ${val}`.trim(); $('#vfV').value = ''; check();
+    };
+    $$('[data-vex]').forEach((b) => (b.onclick = () => { $('#vfQ').value = b.dataset.vex; check(); }));
+    $('#vfSave').onclick = async () => {
+      const name = $('#vfName').value.trim(); if (!name) { toast('Give the filter a name.'); $('#vfName').focus(); return; }
+      try {
+        const r = await store({ op: 'viewSave', view: { id: v ? v.id : '', list, name, q: $('#vfQ').value.trim(), sort: $('#vfSort').value, shared: $('#vfShare').checked } });
+        await loadViews(true); vcache.clear(); pickView(list, r.view.id);
+        if (r.view.sort) { if (list === 'dr') live.sort = r.view.sort; else state.asort = r.view.sort; }
+        closeModal(); rerender(); toast(`Saved "${r.view.name}"`);
+      } catch (e) { toast(e.message); }
+    };
+    if ($('#vfDel')) $('#vfDel').onclick = async () => {
+      if (!confirm(`Delete the filter "${v.name}"?${v.shared ? ' It goes for the whole team.' : ''}`)) return;
+      try { await store({ op: 'viewRemove', id: v.id }); await loadViews(true); pickView(list, 'all'); closeModal(); rerender(); toast('Deleted'); } catch (e) { toast(e.message); }
+    };
+  }
   function renderSites() {
     // Websites on the Jaguars board are worked from Tasks, so others don't see them here until they
     // are complete. Whoever holds one does: it is their work, and this is where they look for it.
@@ -9002,14 +9309,15 @@
     const onBoard = state.sites.length - SITES.length;
     if (!liveDR.data && !liveDR.loading && !liveDR.error) loadLive(false).then(() => { if (route().name === 'sites') renderSites(); });
     const f = state.filters;
-    const list = SITES.filter((s) => (!f.status || s.status === f.status) && (!f.assignee || (f.assignee === '_none' ? !s.assignee : f.assignee === '_mine' ? s.assignee === state.me.email : s.assignee === f.assignee)) &&
+    const AV = currentView('audits'); const avf = vfilter('audits', AV);
+    let list = SITES.filter((s) => (!f.status || s.status === f.status) && (!f.assignee || (f.assignee === '_none' ? !s.assignee : f.assignee === '_mine' ? s.assignee === state.me.email : s.assignee === f.assignee)) &&
       (!f.q || (s.businessName + ' ' + s.siteId + ' ' + s.editorUrl + ' ' + (s.addedByName || '')).toLowerCase().includes(f.q.toLowerCase())) &&
       (!f.live || (f.live === 'gone' || f.live === 'draft' ? dudaState(s.siteId) === f.live : f.live === 'domain' ? (liveOf(s.siteId) && domProblem(liveOf(s.siteId).dom)) : true)) &&
       (!f.oldChecks || newChecksFor(s).length) &&
       (!f.repub || repubSince(s)) &&
       (!f.must || (f.must === 'crit' ? ((s.counts || {}).critical || 0) > 0 : mustState(s) === f.must)) &&
       (!f.clar || ((s.counts || {}).clarification || 0) > 0))
-      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      .filter(avf.fn).sort(vsortFn('audits', state.asort || AV.sort || 'added'));
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0, repub: SITES.filter((s) => repubSince(s)).length };
     tot.mustDone = SITES.filter((s) => mustState(s) === 'done').length; tot.critSites = SITES.filter((s) => ((s.counts || {}).critical || 0) > 0).length;
     SITES.forEach((s) => { const c = s.counts || {}; tot.crit += c.critical || 0; tot.clar += c.clarification || 0; if (s.status === 'Complete') tot.complete++; if (s.scan && s.scan.state === 'complete') tot.scanned++; if (newChecksFor(s).length) tot.oldChecks++; });
@@ -9026,6 +9334,8 @@
         <div class="panel stat"><div class="n" style="color:var(--ok)">${tot.complete}</div><div class="l">Marked Complete</div></div>
       </div>
       <div class="panel">
+        ${viewTabsHtml('audits', SITES)}
+        ${avf.error ? `<div class="note bad small" style="margin:8px 14px">This filter cannot be read: ${esc(avf.error)}</div>` : ''}
         <div class="toolbar">
           <input type="search" id="fq" placeholder="Search business name, site ID or who added it…" value="${esc(f.q)}">
           <select id="fstatus"><option value="">All statuses</option>${SITE_STATUSES.map((s) => `<option ${s === f.status ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
@@ -9034,6 +9344,7 @@
           ${tot.oldChecks ? `<button class="btn sm ${f.oldChecks ? 'primary' : ''}" id="foldck" title="These were scanned before the newest checks existed. Their items are unchanged — a rescan is what adds the new ones.">✨ Scanned before the newest checks (${tot.oldChecks})</button>` : ''}
           <select id="fmust" title="Audit items that affect the business and SEO (not fonts or duplicate photos)"><option value="">Must-fix: any</option><option value="crit" ${f.must === 'crit' ? 'selected' : ''}>Critical still open (${tot.critSites})</option><option value="open" ${f.must === 'open' ? 'selected' : ''}>Must-fix still open (${SITES.filter((s) => mustState(s) === 'open').length})</option><option value="done" ${f.must === 'done' ? 'selected' : ''}>Must-fix done (${tot.mustDone})</option></select>
           ${tot.repub || f.repub ? `<button class="btn sm ${f.repub ? 'primary' : ''}" id="frepub" title="Published again in Duda after their last scan: rescan to check the audit items are still there">↻ Republished since scan (${tot.repub})</button>` : ''}
+          <select id="asort" aria-label="Sort">${VSORTS.audits.map(([k, l]) => `<option value="${k}" ${(state.asort || AV.sort || 'added') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
           <span class="spacer"></span>
           <button class="btn sm" id="rescanAll">Rescan all shown</button>
         </div>
@@ -9078,6 +9389,8 @@
     if ($('#statMust')) $('#statMust').onclick = () => { f.must = f.must === 'done' ? '' : 'done'; renderSites(); };
     if ($('#statClar')) $('#statClar').onclick = () => { f.clar = !f.clar; renderSites(); };
     if ($('#sfClear')) $('#sfClear').onclick = () => { Object.assign(f, { q: '', status: '', assignee: '', live: '', oldChecks: false, clar: false, repub: false, must: '' }); renderSites(); };
+    bindViewTabs('audits', renderSites, SITES);
+    if ($('#asort')) $('#asort').onchange = (e) => { state.asort = e.target.value; renderSites(); };
     $('#rescanAll').onclick = () => {
       const todo = list.filter((s) => !state.scanning[s.id] && !otherClaim(s.id)), busy = list.length - todo.length;
       if (!todo.length) { toast('Every website shown is already queued or scanning.'); return; }
@@ -9791,6 +10104,8 @@
   }
   /** "Last published …" for the site header: Duda's answer when loaded, else the Live DR Sites list. */
   /** Local date and time as YYYYMMDD_HHMM, for backup names people read in their own time zone. */
+  /** The letters a backup name uses when somebody has not set their own: first letters of the name, words with numbers ("8bit") left out. Same rule as api/_backup.js. */
+  const myInitials = (name) => String(name || '').split(/[\s-]+/).filter((w) => w && !/\d/.test(w)).map((w) => w.replace(/[^A-Za-z]/g, '')).filter(Boolean).map((w) => w[0]).join('').toUpperCase().slice(0, 4) || 'X';
   function backupStamp() {
     const d = new Date(); const p = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
@@ -9799,7 +10114,7 @@
   function backupLine(s) {
     const last = (s.backups || [])[0];
     const btn = can('site.scan') && s.siteId ? ` <button class="linkbtn" id="sBackup" title="Make a backup of the website in Duda now. It appears in the editor under Site History, where it can be restored.">Back up now</button>` : '';
-    if (!last) return `<div class="small faint">💾 No backup made from here yet — one is made automatically before the first scan.${btn}</div>`;
+    if (!last) return `<div class="small faint">💾 No backup made from here yet — one is made automatically before each scan somebody starts.${btn}</div>`;
     return `<div class="small ${last.ok ? 'faint' : 'v-still-t'}">💾 ${last.ok ? `Backup in Duda: <span class="mono">${esc(last.name)}</span>` : `Backup failed (${esc(last.error || 'unknown')})`} · ${esc(last.byName || nameOf(last.by))} · ${esc(fmtFull(last.at))}${btn}</div>`;
   }
   /** Sections someone opened or closed stay that way for them (Reference data closed by default). */
@@ -9827,7 +10142,7 @@
   /** The backup, in a few words for the line under the title; the details on hover. */
   function backupShort(s) {
     const last = (s.backups || [])[0];
-    if (!last) return '<span title="One is made automatically before the first scan">💾 No backup yet</span>';
+    if (!last) return '<span title="One is made automatically before each scan somebody starts">💾 No backup yet</span>';
     return last.ok ? `<span title="${esc(`Backup in Duda: ${last.name} · ${last.byName || nameOf(last.by)} · ${fmtFull(last.at)}`)}">💾 Backed up ${esc(ago(last.at))}</span>`
       : `<span class="v-still-t" title="${esc(last.error || '')}">💾 Backup failed</span>`;
   }

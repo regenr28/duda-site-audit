@@ -109,6 +109,21 @@ export const HELP_SECTIONS = [
 </ul>`,
   },
   {
+    id: 'filters', group: 'Audits', title: 'Saved filters: tabs on Audits and DR Websites', audience: 'all',
+    html: `<p>Above the <b>Audits</b> list and <b>DR Websites</b> there is a row of tabs. Each one is a saved filter: click it and the list shows only those websites, in its own order. The number on a tab is how many websites it has.</p>
+<ul>
+<li><b>Built in:</b> on Audits, <b>All</b>, <b>All open websites</b> (not Complete), <b>Assigned to me</b> and <b>SEO Websites</b> (Duda label "SEO Customer"); on DR Websites, <b>All</b> and <b>SEO Websites</b>.</li>
+<li><b>＋ New filter</b> makes your own. Write what you want in plain words, close to SQL, and the editor says straight away how many websites match:
+<ul><li><span class="mono">label = "SEO Customer" AND published &lt; 7d</span>: SEO websites published in the last 7 days</li>
+<li><span class="mono">commented = me OR falsealarm = me</span>: websites you commented on or marked a False alarm</li>
+<li><span class="mono">assigned = nobody AND critical &gt; 0</span>, <span class="mono">scanned &gt; 30d</span>, <span class="mono">label contains MFG</span>, <span class="mono">NOT status = Complete</span></li></ul></li>
+<li><b>How to write one:</b> <span class="mono">field</span>, a sign, a value. Join with <b>AND</b> / <b>OR</b> (AND counts first), turn around with <b>NOT</b>, group with brackets. Text: <span class="mono">=</span>, <span class="mono">!=</span>, <span class="mono">contains</span>. Numbers: <span class="mono">&gt; &lt; &gt;= &lt;=</span>. Dates: <span class="mono">published &lt; 7d</span> is "in the last 7 days", <span class="mono">&gt; 30d</span> "longer ago" (h, d, w, m, y), or a day like <span class="mono">2026-11-01</span>. People: <span class="mono">me</span>, <span class="mono">nobody</span>, a name or an email. Every field is listed in the editor under <b>How to write a filter</b>, with examples you can click. <b>Add a condition</b> writes one for you.</li>
+<li><b>Sort:</b> both lists have a sort menu (newest added, recently worked on, scanned, published, name, label, most critical); a filter can bring its own sort.</li>
+<li><b>Share with the team</b> makes it a tab for everyone (👥). Only you (and the admins) can change or delete it. Without sharing, only you see it.</li>
+<li>The tab you had open is remembered on this computer.</li>
+</ul>`,
+  },
+  {
     id: 'audits', group: 'Audits', title: 'The Audits page', audience: 'all',
     html: `<p><b>Audits</b> lists every website the team is auditing.</p>
 <ul>
@@ -137,7 +152,8 @@ export const HELP_SECTIONS = [
 </ul>
 <h4>Backups in Duda</h4>
 <ul>
-<li>Before the <b>first scan</b> of an audit, the app makes a backup of the website in Duda, named <span class="mono">R8</span> + your initials + <span class="mono">_b4_audit_</span> + the date and time, e.g. <span class="mono">R8RR_b4_audit_20261007_0930</span>. Rescans don't make more.</li>
+<li>Before every scan <b>somebody starts</b> (the first scan, <b>Rescan</b>, <b>Scan chosen pages</b>, <b>Audit now</b> on SEO Websites), the app makes a backup of the website in Duda, named <span class="mono">R8</span> + your initials + <span class="mono">_b4_audit_</span> + the date and time, e.g. <span class="mono">R8RR_b4_audit_20261007_0930</span>. If one was made in the last 30 minutes, that one is enough. The <b>automatic</b> SEO audits make none.</li>
+<li><b>Your initials</b> are the first letters of your name (a word with a number in it, like "8bit", is left out). To use other letters, set <b>Initials for backups</b> in your account (your picture, top right).</li>
 <li><b>Back up now</b> makes one at any time. Two in the same minute get <span class="mono">_2</span> on the end.</li>
 <li>Backups live in Duda, not here. To restore one, open the editor and use <b>Site History</b>.</li>
 <li>Duda keeps at most <b>50</b> manual backups per website. When it's full, the app says so; delete old ones in Site History.</li>

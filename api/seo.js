@@ -64,26 +64,55 @@ async function duda(path) {
 async function seoPages(site, fresh) {
   const [cached] = await redis(['GET', PAGES(site)]);
   const c = jparse(cached);
-  if (c && !fresh && Date.now() - c.at < 3600000) return c;
-  const pick = (o, keys) => { for (const k of keys) { const v = k.split('.').reduce((x, y) => (x == null ? x : x[y]), o); if (v != null && v !== '') return v; } return ''; };
-  const out = []; let fields = [];
+  if (c && c.v === 2 && !fresh && Date.now() - c.at < 3600000) return c;
+  // Every text in an activity, with where it sits ("data.page_title"), so the page's name, address
+  // and id are found wherever Duda puts them (the answer's fields are not documented).
+  const flatten = (o, pre = '', out = [], depth = 0) => {
+    if (o == null || depth > 4) return out;
+    if (typeof o !== 'object') { out.push([pre, String(o)]); return out; }
+    for (const [k, v] of Object.entries(o)) flatten(v, pre ? pre + '.' + k : k, out, depth + 1);
+    return out;
+  };
+  const NOT_PAGE = /user|account|actor|author|by|site_?name|site_?(url|domain)|email|source|activity|type|event/i;
+  // A field about the person (user.name, account.email) or the site is never the page's.
+  const PERSON = /^(user|users|account|actor|author|performed_?by|by|editor|site|source)$/i;
+  const find = (pairs, keyRe, valRe) => { const hit = pairs.find(([k, v]) => { const seg = k.split('.'); const last = seg.pop(); return keyRe.test(last) && !NOT_PAGE.test(last) && !seg.some((x) => PERSON.test(x)) && v && (!valRe || valRe.test(v)); }); return hit ? hit[1] : ''; };
+  const out = []; let sample = null;
   for (let offset = 0; offset < 1000; offset += 100) {
     const j = await duda(`/sites/multiscreen/${encodeURIComponent(site)}/activities?limit=100&offset=${offset}&activities=page_created`);
     const rows = Array.isArray(j) ? j : (j && (j.results || j.activities || j.data || j.items)) || [];
-    if (!fields.length && rows[0]) fields = Object.keys(rows[0]).slice(0, 20);
     rows.forEach((a) => {
-      const type = String(pick(a, ['activity', 'type', 'activity_type', 'event', 'name']) || '').toLowerCase();
-      if (type && !/page.?created/.test(type)) return;
-      const by = String(pick(a, ['user', 'user_email', 'email', 'performed_by', 'account_name', 'actor', 'user.email', 'source.user', 'details.user'])).toLowerCase();
-      out.push({ at: String(pick(a, ['date', 'timestamp', 'created', 'created_at', 'time', 'activity_date'])), by,
-        title: String(pick(a, ['page_title', 'details.page_title', 'page.title', 'data.page_title', 'title', 'page_name', 'details.page_name', 'data.page_name'])),
-        path: String(pick(a, ['page_url', 'details.page_url', 'page.url', 'data.page_url', 'page_path', 'details.page_path', 'data.page_path', 'url'])),
-        id: String(pick(a, ['page_uuid', 'page_id', 'details.page_uuid', 'details.page_id', 'data.page_uuid', 'page.uuid'])) });
+      const pairs = flatten(a);
+      if (!sample) sample = JSON.stringify(a).slice(0, 600);
+      const type = (find(pairs, /^(activity|type|activity_type|event|name)$/) || (pairs.find(([k]) => /^(activity|type|event)$/i.test(k)) || [])[1] || '').toLowerCase();
+      if (type && /page|site|backup|publish|domain/.test(type) && !/page.?created/.test(type)) return;
+      const by = pairs.filter(([k, v]) => /user|email|account|actor|performed|author/i.test(k) && /@|\w/.test(v)).map(([, v]) => v).join(' ').toLowerCase();
+      out.push({
+        at: find(pairs, /^(date|timestamp|created|created_at|time|activity_date|.*_date)$/i),
+        by,
+        title: find(pairs, /(page_?)?(title|name|label)$/i, /^(?![a-z]+(_[a-z]+)+$)/),
+        path: find(pairs, /(page_?)?(url|path|alias|link|slug)$/i, /^\/|^https?:|^[\w-]+(\/[\w-]+)*$/),
+        id: find(pairs, /(page_?)?(uuid|id)$/i),
+      });
     });
     if (rows.length < 100) break;
   }
   const mine = out.filter((x) => x.by.includes(EMAIL()));
-  const r = { at: Date.now(), pages: mine, all: out.length, fields };
+  // Whatever the activity leaves out, the page itself says: its address and title from the pages list.
+  if (mine.some((x) => !x.title || !x.path)) {
+    try {
+      const pj = await duda(`/sites/multiscreen/${encodeURIComponent(site)}/pages`);
+      const list = (Array.isArray(pj) ? pj : (pj && (pj.results || pj.pages)) || []).map((p) => ({ uuid: String(p.uuid || p.page_uuid || p.id || ''), path: '/' + String(p.path || p.page_path || p.url || '').replace(/^\/+/, ''), title: p.title || p.page_title || (p.seo && p.seo.title) || '' }));
+      const norm = (x) => String(x || '').replace(/^https?:\/\/[^/]+/i, '').replace(/^\/+|\/+$/g, '').toLowerCase();
+      mine.forEach((x) => {
+        const hit = list.find((p) => (x.id && p.uuid && p.uuid === x.id) || (x.path && norm(p.path) === norm(x.path)) || (x.title && p.title && p.title.toLowerCase() === x.title.toLowerCase()));
+        if (hit) { x.path = x.path || hit.path; x.title = x.title || hit.title; }
+        else if (!x.title && !x.path) x.deleted = true;
+      });
+    } catch (e) { /* names stay as the activity gave them */ }
+  }
+  mine.forEach((x) => { if (x.path && /^https?:/i.test(x.path)) x.path = x.path.replace(/^https?:\/\/[^/]+/i, '') || '/'; if (x.path && !x.path.startsWith('/')) x.path = '/' + x.path; });
+  const r = { v: 2, at: Date.now(), pages: mine, all: out.length, sample };
   await redis(['SET', PAGES(site), JSON.stringify(r), 'EX', 86400]);
   return r;
 }
