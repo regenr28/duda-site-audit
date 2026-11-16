@@ -2363,3 +2363,5 @@ ol.ln-list { list-style: none; }
 
 .ln-old { margin: 4px 0 8px; }
 .ln-pending { color: var(--accent); margin: 2px 0 6px; }
+
+.ln-workers { margin: 6px 0 10px; }

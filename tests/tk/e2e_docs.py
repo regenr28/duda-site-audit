@@ -208,7 +208,7 @@ try:
         pg.click('#sRescan'); time.sleep(0.3)
         pg.goto(f'http://localhost:{APORT}/#/site/s1/profile')
         pg.wait_for_selector('#scanStrip .progress', timeout=15000); time.sleep(0.3)
-        check(pg.locator('#scanStrip .progress').count() == 1 and 'Keep this browser tab open' in pg.inner_text('#scanStrip'), 'the scan\'s progress shows at the top of the Profile tab')
+        check(pg.locator('#scanStrip .progress').count() == 1 and 'goes back to the front' in pg.inner_text('#scanStrip'), 'the scan\'s progress shows at the top of the Profile tab')
         pg.screenshot(path=os.path.join(OUT, 'scan-strip-profile.png'))
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('#scanStrip', timeout=10000); time.sleep(0.3)
         check(pg.locator('.progress i[id^="pg-"]').count() == 1, 'on Audit items the progress shows once (at the top), not twice')
@@ -216,10 +216,13 @@ try:
         check(pg.locator('[id^="pb-"]').count() >= 1, 'the Audits list shows the scan on the website\'s row')
         pg.goto(f'http://localhost:{APORT}/#/site/s1/report'); pg.wait_for_selector('#scanStrip', timeout=10000)
         pg.reload(); pg.wait_for_selector('#scanStrip', timeout=15000)
-        for _ in range(20):
-            if 'started again' in pg.inner_text('#toast'): break
+        back = None
+        for _ in range(30):
+            LN = pg.evaluate("async () => (await (await fetch('/api/store?op=line')).json())")
+            c = (LN['claims'].get('s1') or {}).get('item') or next((x for x in LN['line'] if x['id'] == 's1'), None) or {}
+            if c.get('back'): back = c['back']; break
             time.sleep(0.3)
-        check('started again' in pg.inner_text('#toast'), 'a reload in the middle of a scan starts it again by itself: ' + pg.inner_text('#toast')[:100])
+        check(back and back.get('why') == 'closed', 'a reload in the middle of a scan puts it back in the line, and it starts again by itself: ' + str(back))
         SLOW[0] = 0
         S3 = wait_scan(pg, (S2.get('scan') or {}).get('finishedAt'))
         check((S3.get('scan') or {}).get('state') == 'complete', 'the restarted scan finishes')

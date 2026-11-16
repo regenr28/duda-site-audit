@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-team-line', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: 'One scan line for the whole team: scans keep going when you close your tab',
+    what: 'Every Rescan, Rescan all, chosen-pages scan and SEO auto audit now joins <b>one line, kept on the server</b>. Everybody sees the same line in the same order, and dragging it changes it for everyone at once (no more snapping back). <b>Every open tab of the app scans for the line</b>, so you can close yours: a website it was scanning goes back to the front and another open tab starts it again. Tabs opened before an update have their waiting websites moved into the team\'s line by themselves. If nobody has the app open, the line waits safely until someone does.',
+    where: ['<b>Walkthrough:</b> click the <b>🔄 · ⏳</b> chip in the top bar (or <b>See the line</b> on Audits) → drag a row, or <b>Move to the front</b>.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-16-timezone', date: '2026-11-16', audience: 'all', tag: 'Account',
     title: 'Your own time zone, and dragging another tab\'s line that sticks',
     what: 'Set <b>Time zone</b> in your account (your picture, top right): every date and time in the app is shown in it, and each person sees their own. The activity log also shows the time for the person who did it when their zone is different. Dragging another tab\'s scan line now keeps the new order on screen while that tab takes it; a tab on an older version of the app is marked, with what to do (reload it).',

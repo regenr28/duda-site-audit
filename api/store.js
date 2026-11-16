@@ -155,10 +155,78 @@ export async function saveIndex(id) {
 const QUEUE_TTL = 15 * 60000, SCAN_TTL = 3 * 60000;
 function liveClaim(raw) { const c = typeof raw === 'string' ? jparse(raw) : raw; return c && c.until > Date.now() ? c : null; }
 async function freshClaims(raw) {
-  const all = pairs(raw, true), out = {}, old = [];
-  Object.entries(all).forEach(([id, c]) => { if (liveClaim(c)) out[id] = c; else old.push(id); });
+  const all = pairs(raw, true), out = {}, old = [], dead = [];
+  Object.entries(all).forEach(([id, c]) => {
+    if (liveClaim(c)) out[id] = c;
+    // A scan taken from the shared line whose tab stopped sending news (closed, crashed, asleep): it goes
+    // back to the front of the line so another open tab starts it again.
+    else if (c && c.item && c.state === 'scanning') dead.push([id, c]);
+    else old.push(id);
+  });
   if (old.length) { try { await redis(['HDEL', P + 'scanclaims', ...old]); } catch (e) { /* tidy-up only */ } }
+  if (dead.length) { try { await putBack(dead, 'stopped'); } catch (e) { /* next read tries again */ } }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// THE SCAN LINE: one line for the whole team, kept here. Every open tab of the app takes the next
+// website from the top (lineNext) and scans it; nothing waits inside one browser any more, so
+// closing a tab loses nothing. Items: dsa:line (id → what to scan, who added it and why, its first
+// place "o"); places people dragged: dsa:lineord (id → { o, mv }), kept apart so a drag can never
+// bring back a website another tab has just taken. dsa:scanworkers: the tabs able to scan now.
+// ---------------------------------------------------------------------------------------------
+const LINE = P + 'line', LORD = P + 'lineord', WORKERS = P + 'scanworkers';
+const SCAN_MAX = () => Math.max(1, Math.min(30, Number(process.env.SCAN_MAX) || 6));
+const PRI = (k) => (k === 'manual' || k === 'pages' ? 0 : 1);
+const LKIND = /^(manual|bulk|seo|pages)$/;
+function sortLine(rawLine, rawOrd) {
+  const items = pairs(rawLine, true), ord = pairs(rawOrd, true);
+  return Object.entries(items).filter(([, x]) => x && typeof x === 'object' && x.k)
+    .map(([id, x]) => { const o = ord[id]; const it = Object.assign({}, x, { id, o: o && typeof o.o === 'number' ? o.o : Number(x.o) || 0 }); if (o && o.mv) it.mv = o.mv; return it; })
+    .sort((a, b) => a.o - b.o || String(a.at).localeCompare(String(b.at)));
+}
+/** Websites whose scan stopped part-way go back to the front of the line (once each). */
+async function putBack(list, why, dropLock) {
+  if (!list.length) return [];
+  // One put-back per stopped scan, even when several reads notice it at the same moment.
+  const keys = await redis(...list.map(([id, c]) => ['SET', P + 'lineback:' + id + ':' + (c.until || 0), '1', 'NX', 'EX', 900]));
+  const go = list.filter((x, i) => keys[i] === 'OK'); if (!go.length) return [];
+  const [rl, ro] = await redis(['HGETALL', LINE], ['HGETALL', LORD]);
+  const line = sortLine(rl, ro); let o = (line.length ? line[0].o : 0) - go.length - 1;
+  const cmds = [];
+  go.forEach(([id, c]) => {
+    const it = Object.assign({}, c.item, { o: o++, back: { n: c.byName || '', by: c.by || '', at: now(), why } });
+    delete it.id; delete it.pos; delete it.mv;
+    if (dropLock) cmds.push(['DEL', P + 'scanlock:' + id]);
+    cmds.push(['HDEL', LORD, id], ['HSETNX', LINE, id, JSON.stringify(it)], ['HDEL', P + 'scanclaims', id]);
+  });
+  await redis(...cmds);
+  return go.map(([id]) => id);
+}
+/** A tab opened before the shared line kept its own line of websites. They move into the team's line
+ *  (once per website and tab), so nobody has to find that tab to change their order. When one of
+ *  them comes up, the line takes it over from that tab; that tab then skips it. */
+async function adoptOld(list) {
+  const marks = await redis(...list.map(([id, c]) => ['SET', P + 'adopted:' + id + ':' + c.cid, '1', 'NX', 'EX', 6 * 3600]));
+  const go = list.filter((x, i) => marks[i] === 'OK').sort((a, b) => (a[1].pos || 1e9) - (b[1].pos || 1e9));
+  if (!go.length) return;
+  const [rl, ro] = await redis(['HGETALL', LINE], ['HGETALL', LORD]);
+  const line = sortLine(rl, ro); let end = line.length ? line[line.length - 1].o : 0;
+  const names = await redis(...go.map(([id]) => ['HGET', P + 'index', id]));
+  await redis(...go.map(([id, c], i) => ['HSETNX', LINE, id, JSON.stringify({ k: LKIND.test(c.k || '') ? c.k : 'bulk',
+    why: c.why || `Moved into the team's line from ${c.byName || 'a member'}\u2019s tab, which was opened before an update`, name: (jparse(names[i]) || {}).businessName || '', by: c.by || '', byName: c.byName || '', at: c.qat || c.at || now(), o: ++end, old: c.cid })]));
+}
+/** Everything the scan line screen needs, in one read. */
+async function lineState() {
+  const [cl] = await redis(['HGETALL', P + 'scanclaims']);
+  const claims = await freshClaims(cl); // may put stopped scans back first
+  const oldQ = Object.entries(claims).filter(([, c]) => c && c.state === 'queued');
+  if (oldQ.length) { try { await adoptOld(oldQ); } catch (e) { /* next read */ } }
+  const [rl, ro, ap, wk] = await redis(['HGETALL', LINE], ['HGETALL', LORD], ['GET', P + 'autopause'], ['HGETALL', WORKERS]);
+  const workers = [], gone = [];
+  Object.entries(pairs(wk, true)).forEach(([cid, w]) => { if (w && w.at > Date.now() - 3 * 60000) workers.push(Object.assign({ cid }, w)); else gone.push(cid); });
+  if (gone.length) { try { await redis(['HDEL', WORKERS, ...gone]); } catch (e) { /* tidy-up only */ } }
+  return { line: sortLine(rl, ro).map((x, i) => Object.assign(x, { pos: i + 1 })), claims, autoPause: jparse(ap) || null, workers, cap: SCAN_MAX() };
 }
 async function log(siteId, me, type, text, extra = {}) {
   const e = { id: newId(6), at: now(), by: me.email, byName: me.name, type, text, ...extra };
@@ -305,6 +373,8 @@ async function handler(req, res) {
         const [cl, ap] = await redis(['HGETALL', P + 'scanclaims'], ['GET', P + 'autopause']);
         return res.status(200).json({ claims: await freshClaims(cl), autoPause: jparse(ap) || null });
       }
+      // The team's scan line: what is waiting (in order), what is scanning where, and which tabs can scan.
+      if (op === 'line') return res.status(200).json(await lineState());
       // Requests from other people to change this tab's scan line (move to the front, remove): read once.
       if (op === 'lineask') {
         const cid = String(req.query.cid || '').slice(0, 40); if (!cid) return res.status(200).json({ asks: [] });
@@ -858,6 +928,116 @@ async function handler(req, res) {
         await redis(['SET', DOCS(b.id), packJSON(list)]);
         return res.status(200).json({ doc: d });
       }
+      case 'lineAdd': {
+        // Put websites in the team's scan line. A website already waiting or being scanned is skipped.
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
+        const seen = new Set();
+        const items = (Array.isArray(b.items) ? b.items : []).slice(0, 1000).map((x) => (x && typeof x === 'object' ? {
+          id: String(x.id || '').slice(0, 40), k: LKIND.test(x.k) ? x.k : 'manual', why: String(x.why || '').slice(0, 160), name: String(x.name || '').slice(0, 120),
+          ...(Array.isArray(x.paths) && x.paths.length ? { paths: x.paths.map((q) => String(q).slice(0, 300)).slice(0, 300) } : {}),
+          ...(x.seo && typeof x.seo === 'object' ? { seo: { site: String(x.seo.site || '').slice(0, 64), pub: String(x.seo.pub || '').slice(0, 40), name: String(x.seo.name || '').slice(0, 120) } } : {}),
+        } : null)).filter((x) => x && x.id && !seen.has(x.id) && seen.add(x.id));
+        if (!items.length) return res.status(200).json(Object.assign(await lineState(), { ok: [], taken: [], already: [] }));
+        const [rl, ro] = await redis(['HGETALL', LINE], ['HGETALL', LORD]);
+        const line = sortLine(rl, ro); const waiting = new Set(line.map((x) => x.id));
+        const locks = await redis(...items.map((x) => ['GET', P + 'scanlock:' + x.id]));
+        const already = items.filter((x) => waiting.has(x.id)).map((x) => x.id);
+        const busy = items.filter((x, i) => !waiting.has(x.id) && locks[i]);
+        const taken = [];
+        if (busy.length) {
+          const info = await redis(...busy.map((x) => ['HGET', P + 'scanclaims', x.id]));
+          busy.forEach((x, i) => { const c = jparse(info[i]) || {}; taken.push({ id: x.id, byName: c.byName || 'Another member', by: c.by || '', state: c.state || 'scanning' }); });
+        }
+        const add = items.filter((x) => !waiting.has(x.id) && !busy.includes(x));
+        if (add.length) {
+          // A Rescan by hand (or chosen pages) goes after the other hand-made ones, ahead of "Rescan all"
+          // and SEO auto audits; anything else joins the end.
+          let last = -1; line.forEach((x, i) => { if (PRI(x.k) === 0) last = i; });
+          if (last < 0) { let i = 0; while (i < line.length && line[i].mv) i++; last = i - 1; }
+          const pri = add.filter((x) => PRI(x.k) === 0), rest = add.filter((x) => PRI(x.k) !== 0);
+          const from = last >= 0 ? line[last].o : (line.length ? line[0].o - 1 : 0);
+          const to = last + 1 < line.length ? line[last + 1].o : from + pri.length + 1;
+          pri.forEach((x, i) => { x.o = from + ((to - from) * (i + 1)) / (pri.length + 1); });
+          let end = Math.max(line.length ? line[line.length - 1].o : 0, ...pri.map((x) => x.o));
+          rest.forEach((x) => { x.o = ++end; });
+          const at = now();
+          await redis(['HDEL', LORD, ...add.map((x) => x.id)], ['HSET', LINE, ...add.flatMap((x) => { const it = Object.assign({}, x, { by: me.email, byName: me.name, at }); delete it.id; return [x.id, JSON.stringify(it)]; })]);
+        }
+        return res.status(200).json(Object.assign(await lineState(), { ok: add.map((x) => x.id), taken, already }));
+      }
+      case 'lineNext': {
+        // A tab with room asks for the next websites to scan. Each is taken atomically (the same lock as
+        // before), so two tabs never scan the same website; the whole team scans at most SCAN_MAX at once.
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
+        const cid = String(b.cid || '').slice(0, 40); if (!cid) return res.status(400).json({ error: 'Missing tab id' });
+        const n = Math.max(0, Math.min(2, Number(b.n) || 0));
+        await redis(['HSET', WORKERS, cid, JSON.stringify({ by: me.email, byName: me.name, at: Date.now(), free: n })]);
+        let st = await lineState();
+        // A tab opened before an update would scan with the old checks: it helps again once reloaded.
+        if (b.build && b.build !== buildId()) return res.status(200).json(Object.assign(st, { got: [], stale: true }));
+        const got = [];
+        if (n && st.line.length) {
+          const live = Object.values(st.claims).filter((c) => c.state !== 'queued');
+          let room = Math.min(n, SCAN_MAX() - live.length);
+          const paused = !!(st.autoPause && st.autoPause.on);
+          // SEO auto audits wait while they are paused, or while the team's own scans are scanning or waiting
+          // (unless somebody dragged one up the line).
+          const teamBusy = st.line.some((x) => x.k !== 'seo') || live.some((c) => c.k && c.k !== 'seo');
+          for (const x of st.line) {
+            if (room <= 0) break;
+            if (x.k === 'seo' && (paused || (teamBusy && !x.mv))) continue;
+            let [r] = await redis(['SET', P + 'scanlock:' + x.id, cid, 'NX', 'PX', SCAN_TTL]);
+            if (r !== 'OK') {
+              const [h, cr] = await redis(['GET', P + 'scanlock:' + x.id], ['HGET', P + 'scanclaims', x.id]); const hc = jparse(cr) || {};
+              // Somebody is scanning it right now (a tab before the update): it no longer needs to wait here.
+              if (hc.state === 'scanning' && h && h !== cid) { await redis(['HDEL', LINE, x.id], ['HDEL', LORD, x.id]); x.gone = true; continue; }
+              // Still held by an older tab's own line: the team's line takes it over.
+              if (hc.state === 'queued' && h === hc.cid) { await redis(['SET', P + 'scanlock:' + x.id, cid, 'PX', SCAN_TTL]); r = 'OK'; }
+              else continue;
+            }
+            const item = Object.assign({}, x); delete item.pos;
+            const claim = { by: me.email, byName: me.name, cid, state: 'scanning', at: now(), until: Date.now() + SCAN_TTL, k: x.k, ...(x.why ? { why: x.why } : {}), qat: x.at, ...(x.mv ? { mv: x.mv } : {}), p: { done: 0, total: 0, msg: 'Starting the scan', at: now() }, item };
+            await redis(['HDEL', LINE, x.id], ['HDEL', LORD, x.id], ['HSET', P + 'scanclaims', x.id, JSON.stringify(claim)]);
+            got.push(item); st.claims[x.id] = claim; room--;
+          }
+          if (got.length || st.line.some((x) => x.gone)) st.line = st.line.filter((x) => !x.gone && !got.some((g) => g.id === x.id)).map((x, i) => Object.assign(x, { pos: i + 1 }));
+        }
+        return res.status(200).json(Object.assign(st, { got }));
+      }
+      case 'lineMove': {
+        // Somebody dragged the line (or pressed "Move to the front"): this is the new order, for everyone.
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
+        const id = String(b.id || '').slice(0, 40);
+        const ids = Array.isArray(b.ids) ? b.ids.map(String).slice(0, 2000) : [];
+        const [rl, ro] = await redis(['HGETALL', LINE], ['HGETALL', LORD]);
+        const line = sortLine(rl, ro); const here = new Map(line.map((x) => [x.id, x]));
+        const order = ids.filter((x, i) => here.has(x) && ids.indexOf(x) === i); order.push(...line.map((x) => x.id).filter((x) => !order.includes(x)));
+        if (order.length) await redis(['HSET', LORD, ...order.flatMap((x, i) => [x, JSON.stringify({ o: i, ...(x === id ? { mv: { n: me.name, by: me.email, at: now(), to: i + 1 } } : here.get(x).mv ? { mv: here.get(x).mv } : {}) })])]);
+        return res.status(200).json(await lineState());
+      }
+      case 'lineRemove': {
+        // Take websites out of the line before they start. An SEO auto audit taken out is let go, so it
+        // comes back the next time it is due.
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
+        const ids = [...new Set([].concat(b.ids || (b.id ? [b.id] : [])).map(String))].slice(0, 2000);
+        if (ids.length) {
+          const raw = await redis(...ids.map((x) => ['HGET', LINE, x]));
+          const seoLocks = raw.map((r) => jparse(r)).filter((x) => x && x.seo && x.seo.site).map((x) => P + 'seolock:' + x.seo.site);
+          await redis(['HDEL', LINE, ...ids], ['HDEL', LORD, ...ids], ...(seoLocks.length ? [['DEL', ...seoLocks]] : []));
+        }
+        return res.status(200).json(await lineState());
+      }
+      case 'lineGiveBack': {
+        // A tab is closing (or reloading) in the middle of scans: they go back to the front of the line
+        // right away, so another open tab starts them instead of waiting for the hold to run out.
+        const cid = String(b.cid || '').slice(0, 40); if (!cid) return res.status(200).json({ ok: [] });
+        const [cl] = await redis(['HGETALL', P + 'scanclaims']);
+        const mine = Object.entries(pairs(cl, true)).filter(([, c]) => c && c.cid === cid && c.item && c.state === 'scanning');
+        const holders = mine.length ? await redis(...mine.map(([id]) => ['GET', P + 'scanlock:' + id])) : [];
+        const ok = await putBack(mine.filter((x, i) => holders[i] === cid), 'closed', true);
+        await redis(['HDEL', WORKERS, cid]);
+        return res.status(200).json({ ok });
+      }
       case 'autoPause': {
         // "Pause all auto audits": SEO auto audits start nowhere until somebody resumes them (or 12 hours pass).
         if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
@@ -1142,6 +1322,12 @@ async function handler(req, res) {
           if (mine.length) { await redis(...mine.map((id) => ['SET', P + 'scanlock:' + id, cid, 'XX', 'PX', ttl])); ok.push(...mine); }
         }
         const claims = {};
+        // A scan taken from the shared line keeps what it was (so it can go back to the line if this tab stops).
+        const prevItem = {};
+        if (ok.length && st === 'scanning') {
+          const pr = await redis(...ok.map((id) => ['HGET', P + 'scanclaims', id]));
+          ok.forEach((id, i) => { const c = jparse(pr[i]); if (c && c.cid === cid && c.item) prevItem[id] = c.item; });
+        }
         if (ok.length) {
           const until = Date.now() + ttl;
           // How far the scan has got, so whoever else opens the website sees it (sent with each heartbeat).
@@ -1157,7 +1343,7 @@ async function handler(req, res) {
             const m0 = b.m && typeof b.m === 'object' && b.m[id] && typeof b.m[id] === 'object' ? b.m[id] : null;
             const meta = m0 ? { ...(m0.why ? { why: String(m0.why).slice(0, 160) } : {}), ...(m0.at && !isNaN(Date.parse(m0.at)) ? { qat: String(m0.at) } : {}),
               ...(m0.mv && m0.mv.n ? { mv: { n: String(m0.mv.n).slice(0, 60), at: String(m0.mv.at || '').slice(0, 40), to: Number(m0.mv.to) || 0 } } : {}) } : {};
-            claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}), ...(KIND.test(k) ? { k } : {}), ...(pos ? { pos, of: ids.length } : {}), ...meta };
+            claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}), ...(KIND.test(k) ? { k } : {}), ...(pos ? { pos, of: ids.length } : {}), ...meta, ...(prevItem[id] ? { item: prevItem[id] } : {}) };
           });
           await redis(['HSET', P + 'scanclaims', ...ok.flatMap((id) => [id, JSON.stringify(claims[id])])]);
         }
@@ -1516,7 +1702,7 @@ async function handler(req, res) {
           findings: f.length, cleared: f.filter(cleared).length, comments: (cm || []).length,
           removedBy: me.email, removedByName: me.name, removedAt: now(), reason };
         await redis(['DEL', P + 'site:' + b.id, P + 'fstate:' + b.id, P + 'fnum:' + b.id, P + 'seq:' + b.id, P + 'cmt:' + b.id, P + 'act:' + b.id, P + 'ailock:' + b.id, P + 'scanlock:' + b.id, P + 'ver:s:' + b.id, ...imgKeys],
-          ['HDEL', P + 'index', b.id], ['HDEL', P + 'scanclaims', b.id], ['HSET', P + 'removed', b.id, JSON.stringify(card)], ['INCR', P + 'ver:index']);
+          ['HDEL', P + 'index', b.id], ['HDEL', P + 'scanclaims', b.id], ['HDEL', LINE, b.id], ['HDEL', LORD, b.id], ['HSET', P + 'removed', b.id, JSON.stringify(card)], ['INCR', P + 'ver:index']);
         await trimRemoved();
         await globalLog(me, 'site-delete', `removed the audit for ${site.businessName ? site.businessName + ' (' + site.siteId + ')' : site.siteId} from the Audits list${reason ? ` · ${reason}` : ''}`,
           { siteRef: site.siteId, siteName: site.businessName || '', addedByName: site.addedByName || '', findings: f.length, reason });
