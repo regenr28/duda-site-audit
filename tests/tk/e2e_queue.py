@@ -51,7 +51,8 @@ try:
         nums = pg.locator('#lnMine .ln-n').all_inner_texts()
         check(len(order) == 3 and nums == ['1', '2', '3'] and 'In line (3)' in line and pg.locator('#slBody .ln-n.now').count() == 2, 'the pop-up lists what is scanning (Now) and the line, numbered 1, 2, 3')
         check('Reading Business Info' in line, 'each scan says what it is doing, not just a bar')
-        check('added by you' in line and 'Rescan all shown (5)' in line, 'each says who added it and why ("Rescan all shown (5)")')
+        check('added by you' in line and 'Why: Rescan all shown (5)' in line, 'each says who added it and why ("Rescan all shown (5)")')
+        check('👤 By hand · Rescan all' in line, 'each is labelled auto audit or by hand, and which kind')
         last = order[-1]
         pg.click('#lnMine li:last-child [data-lnfront]'); time.sleep(0.4)
         check(pg.locator('#lnMine li a').first.inner_text() == last and 'moved to 1 by Reymark R' in pg.inner_text('#lnMine'), f'Move to the front puts {last} first, and says who moved it')
@@ -103,6 +104,22 @@ try:
         mine = pg.inner_text('#lnMine')
         check(pg.locator('#lnMine li a').first.inner_text() == 'Other Co' and 'moved to 1 by Reymark R' in mine, 'asking another tab to move it: that tab moves it to the front within 15 seconds and notes who asked')
         pg.click('[data-close]')
+        # Drag another tab's line: that tab takes the new order within 15 seconds and notes who moved it.
+        pg2.click('#btnScans'); pg2.wait_for_selector('#slBody ol.ln-other li'); time.sleep(0.5)
+        before = pg2.locator('#slBody ol.ln-other li a').all_inner_texts()
+        pg2.drag_and_drop('#slBody ol.ln-other li:nth-child(2)', '#slBody ol.ln-other li:nth-child(1)', target_position={'x': 40, 'y': 4}); time.sleep(17)
+        pg2.click('[data-close]')
+        pg.click('#btnScans'); pg.wait_for_selector('#lnMine'); time.sleep(0.5)
+        after = pg.locator('#lnMine li a').all_inner_texts()
+        print('  drag other:', before, '->', after, flush=True)
+        check(after and after[0] == before[1] and 'moved to 1 by Reymark R' in pg.inner_text('#lnMine'), 'dragging another tab\'s line reorders it there, noting who moved it')
+        pg.click('[data-close]')
+        # A tab on an older version sends no kind and no reason: the line says so instead of guessing.
+        pg.evaluate("async () => fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'scanClaim', ids: ['s3'], cid: 'oldtab123', state: 'queued' }) })")
+        pg2.click('#btnScans'); pg2.wait_for_selector('#slBody'); time.sleep(16)
+        old = pg2.inner_text('#slBody')
+        check('kind not known' in old and 'not recorded' in old and 'reload it' in old, 'a scan from a tab on an older version says the kind and reason are not known, and to reload that tab')
+        pg2.click('[data-close]')
         # Other tabs' scans are refreshed every 15 seconds, so they don't vanish here while still running.
         asked = []; pg2.on('request', lambda r: asked.append(r.url) if 'op=claims' in r.url else None)
         pg2.click('#btnScans'); pg2.wait_for_selector('#slBody'); time.sleep(31); print('  hidden:', pg2.evaluate('() => document.hidden'), flush=True)

@@ -870,8 +870,10 @@ async function handler(req, res) {
         // it within 15 seconds and says who asked.
         if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
         const cid = String(b.cid || '').slice(0, 40); const id = String(b.id || '').slice(0, 40);
-        if (!cid || !id || !['front', 'remove'].includes(b.act)) return res.status(400).json({ error: 'Unknown request' });
-        await redis(['HSET', P + 'lineask:' + cid, id, JSON.stringify({ act: b.act, by: me.email, byName: me.name, at: now() })], ['EXPIRE', P + 'lineask:' + cid, 3600]);
+        if (!cid || !id || !['front', 'remove', 'order'].includes(b.act)) return res.status(400).json({ error: 'Unknown request' });
+        // "order": somebody dragged that tab's line; the whole new order of its waiting websites.
+        const order = b.act === 'order' && Array.isArray(b.ids) ? b.ids.map(String).slice(0, 500) : null;
+        await redis(['HSET', P + 'lineask:' + cid, b.act === 'order' ? '_order' : id, JSON.stringify({ act: b.act, by: me.email, byName: me.name, at: now(), ...(order ? { ids: order, id } : {}) })], ['EXPIRE', P + 'lineask:' + cid, 3600]);
         return res.status(200).json({ ok: true });
       }
       case 'viewSave': {

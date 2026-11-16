@@ -6751,11 +6751,18 @@
     let r; try { r = await api('/api/store?op=lineask&cid=' + encodeURIComponent(CID)); } catch (e) { return; }
     (r.asks || []).forEach((a) => {
       if (a.act === 'front' && state.queue.includes(a.id)) moveToFront(a.id, { name: a.byName, email: a.by });
+      if (a.act === 'order' && state.queue.includes(a.id)) {
+        // Somebody dragged this tab's line: take their order for the websites still waiting.
+        const want = (a.ids || []).filter((x) => state.queue.includes(x));
+        state.queue = want.concat(state.queue.filter((x) => !want.includes(x)));
+        qmeta(a.id).mv = { n: a.byName, at: a.at || new Date().toISOString(), to: state.queue.indexOf(a.id) + 1 };
+        syncLine(); render(); toast(`${a.byName} moved ${siteName(a.id)} to number ${state.queue.indexOf(a.id) + 1} in this tab's line.`);
+      }
       if (a.act === 'remove' && state.queue.includes(a.id)) { cancelQueued(a.id); toast(`${a.byName} took ${siteName(a.id)} out of this tab's line.`); }
     });
   }, 15000);
-  async function askLine(cid, id, act, ownerName) {
-    try { await store({ op: 'lineAsk', cid, id, act }); toast(`Asked ${ownerName}'s tab to ${act === 'front' ? 'move it to the front' : 'take it out of the line'}. It happens within 15 seconds while that tab is open.`); }
+  async function askLine(cid, id, act, ownerName, ids, to) {
+    try { await store({ op: 'lineAsk', cid, id, act, ...(ids ? { ids, to } : {}) }); toast(`Asked ${ownerName}'s tab to ${act === 'front' ? 'move it to the front' : act === 'order' ? `move ${siteName(id)} to number ${(to || 0) + 1}` : 'take it out of the line'}. It happens within 15 seconds while that tab is open.`); }
     catch (e) { toast(e.message); }
   }
   /** Everything scanning or waiting: this tab first, then everyone else's, grouped by tab. */
@@ -6778,7 +6785,9 @@
   const whoOf = (g) => (g.by === state.me.email ? 'Your other tab' : g.byName || 'Another member');
   const tabOf = (g) => (g.by === state.me.email ? 'your other tab' : `${g.byName || 'another member'}’s tab`);
   const progTxt = (l) => (l && l.total ? `${l.done}/${l.total}` : l && (l.message || l.msg) ? String(l.message || l.msg).slice(0, 40) : 'starting');
-  const kindChip = (k) => (k ? `<span class="badge subtle ln-kind">${esc(KIND_LABEL[k] || k)}</span>` : '');
+  /** Auto audit or added by a person, and which kind: always said, even when the tab sent nothing. */
+  const kindChip = (k) => (k === 'seo' ? '<span class="badge ln-auto-chip">🤖 Auto audit · SEO</span>'
+    : k ? `<span class="badge ln-hand-chip">👤 By hand · ${esc(KIND_LABEL[k] || k)}</span>` : '<span class="badge subtle ln-kind" title="That tab runs an older version of the app, which does not say what kind of scan it is. Reload that tab.">kind not known</span>');
   /** What a scan is doing right now, in words: the step, and how fresh that news is. */
   function stepTxt(x) {
     if (x.l) {
@@ -6799,8 +6808,9 @@
   /** Who put it in line, why, and who moved it last. */
   function metaTxt(x) {
     const bits = [];
-    bits.push(`added by ${x.by === state.me.email ? 'you' : esc(x.byName || 'someone')}${x.at ? ' at ' + esc(shortTime(x.at)) : ''}`);
-    if (x.why) bits.push(esc(x.why));
+    const who = x.by === state.me.email ? 'you' : esc(x.byName || 'someone');
+    bits.push(x.k === 'seo' ? `added automatically in ${x.by === state.me.email ? 'your' : who + '\u2019s'} tab${x.at ? ' at ' + esc(shortTime(x.at)) : ''}` : `added by ${who}${x.at ? ' at ' + esc(shortTime(x.at)) : ''}`);
+    bits.push(x.why ? `<b>Why:</b> ${esc(x.why)}` : '<b>Why:</b> not recorded (that tab runs an older version of the app: reload it to see why and what kind)');
     if (x.mv && x.mv.n) bits.push(`↕ moved to ${x.mv.to} by ${esc(x.mv.n)}${x.mv.at ? ' at ' + esc(shortTime(x.mv.at)) : ''}`);
     return bits.join(' · ');
   }
@@ -6832,17 +6842,40 @@
     const acts = opts.mine && x.pos
       ? `<span class="ln-acts">${x.pos > 1 ? `<button class="linkbtn" data-lnfront="${esc(x.id)}">Move to the front</button>` : '<span class="small faint">next</span>'} <button class="linkbtn" data-cancelq="${esc(x.id)}">Remove</button></span>`
       : opts.cid && x.pos ? `<span class="ln-acts">${x.pos > 1 ? `<button class="linkbtn" data-lnask="front" data-cid="${esc(opts.cid)}" data-id="${esc(x.id)}" data-owner="${esc(opts.owner)}">Ask to move it to the front</button>` : '<span class="small faint">next</span>'} <button class="linkbtn" data-lnask="remove" data-cid="${esc(opts.cid)}" data-id="${esc(x.id)}" data-owner="${esc(opts.owner)}">Ask to remove</button></span>` : '';
-    return `<li class="ln-row${opts.mine && x.pos ? ' ln-drag' : ''}"${opts.mine && x.pos ? ` draggable="true" data-lnid="${esc(x.id)}"` : ''}>${opts.mine && x.pos ? '<span class="ln-grip" aria-hidden="true" title="Drag to change the order">⋮⋮</span>' : ''}${num}
+    const drag = (opts.mine || opts.cid) && x.pos;
+    return `<li class="ln-row${drag ? ' ln-drag' : ''}"${drag ? ` draggable="true" data-lnid="${esc(x.id)}"` : ''}>${drag ? '<span class="ln-grip" aria-hidden="true" title="Drag to change the order">⋮⋮</span>' : ''}${num}
       <div class="ln-main"><div><a href="#/site/${esc(x.id)}" data-lnlink="1">${esc(x.name)}</a> ${kindChip(x.k)}
         ${pr && pr.total ? `<span class="ln-prog"><span class="progress"><i style="width:${Math.round((pr.done / pr.total) * 100)}%"></i></span><span class="small faint">${pr.done}/${pr.total}</span></span>` : ''}</div>
         ${opts.now ? `<div class="small ln-step">${esc(stepTxt(x))}</div>` : ''}
         <div class="small faint ln-meta">${metaTxt(x)}</div></div>${acts}</li>`;
   }
   let lnDragging = false;
+  /** Drag and drop on one line (an <ol> of li[data-lnid]); done(id, newOrder, newIndex). */
+  function bindLineDrag(list, done) {
+    let dragId = '';
+    $$('li[data-lnid]', list).forEach((li) => {
+      li.addEventListener('dragstart', (e) => { dragId = li.dataset.lnid; lnDragging = true; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', dragId); e.dataTransfer.effectAllowed = 'move'; } catch (er) { /* ignore */ } });
+      li.addEventListener('dragend', () => { lnDragging = false; li.classList.remove('dragging'); $$('.drop-before, .drop-after', list).forEach((x) => x.classList.remove('drop-before', 'drop-after')); });
+      li.addEventListener('dragover', (e) => { e.preventDefault(); const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2; li.classList.toggle('drop-after', after); li.classList.toggle('drop-before', !after); });
+      li.addEventListener('dragleave', () => li.classList.remove('drop-before', 'drop-after'));
+      li.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const id = dragId || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+        const target = li.dataset.lnid; lnDragging = false;
+        $$('.drop-before, .drop-after, .dragging', list).forEach((x) => x.classList.remove('drop-before', 'drop-after', 'dragging'));
+        if (!id || id === target) return;
+        const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+        const rest = $$('li[data-lnid]', list).map((x) => x.dataset.lnid).filter((x) => x !== id);
+        const to = rest.indexOf(target) + (after ? 1 : 0);
+        rest.splice(to, 0, id);
+        done(id, rest, to);
+      });
+    });
+  }
   function drawScanLine() {
     const box = $('#slBody'); if (!box || lnDragging) return;
     const m = lineModel();
-    box.innerHTML = `<p class="small muted">Scans run in the browser tab that started them. Each tab scans <b>${SCAN_CONCURRENCY_SITES} websites at a time</b> and keeps its own line, so somebody else's scans never hold yours up. A <b>Rescan</b> you click goes ahead of <b>Rescan all</b> in your line, and <b>SEO auto audits</b> only start when your tab has nothing else to scan. Drag your own line to change its order.</p>
+    box.innerHTML = `<p class="small muted">Scans run in the browser tab that started them. Each tab scans <b>${SCAN_CONCURRENCY_SITES} websites at a time</b> and keeps its own line, so somebody else's scans never hold yours up. A <b>Rescan</b> you click goes ahead of <b>Rescan all</b> in your line, and <b>SEO auto audits</b> only start when your tab has nothing else to scan. Drag any line to change its order (another tab's line changes within 15 seconds). <b>🤖 Auto audit</b> or <b>👤 By hand</b> says how each one got there, and <b>Why</b> says what added it.</p>
       ${autoPauseHtml()}
       <h3>This tab</h3>
       ${m.mine.scanning.length ? `<ol class="ln-list">${m.mine.scanning.map((x) => lineRowHtml(x, { now: true })).join('')}</ol>` : '<div class="small faint">Scanning nothing now.</div>'}
@@ -6850,33 +6883,21 @@
       ${m.mine.queued.length ? `<ol class="ln-list" id="lnMine">${m.mine.queued.map((x) => lineRowHtml(x, { mine: true })).join('')}</ol>` : '<div class="small faint">Nothing waiting.</div>'}
       ${m.others.length ? m.others.map((g) => `<h3>${esc(whoOf(g) === 'Your other tab' ? 'Your other tab' : whoOf(g) + '’s tab')}</h3>
         ${g.scanning.length ? `<ol class="ln-list">${g.scanning.map((x) => lineRowHtml(x, { now: true })).join('')}</ol>` : '<div class="small faint">Scanning nothing now.</div>'}
-        ${g.queued.length ? `<div class="small" style="margin-top:8px"><b>In line (${g.queued.length})</b> <span class="faint">changes are asked of that tab and happen within 15 seconds</span></div><ol class="ln-list">${g.queued.map((x) => lineRowHtml(x, { cid: g.cid, owner: whoOf(g) === 'Your other tab' ? 'your other' : g.byName })).join('')}</ol>` : ''}`).join('') : '<h3>Other tabs</h3><div class="small faint">Nobody else is scanning.</div>'}
+        ${g.queued.length ? `<div class="small" style="margin-top:8px"><b>In line (${g.queued.length})</b> <span class="faint">drag to change the order; changes are asked of that tab and happen within 15 seconds</span></div><ol class="ln-list ln-other" data-cid="${esc(g.cid)}" data-owner="${esc(whoOf(g) === 'Your other tab' ? 'your other' : g.byName)}">${g.queued.map((x) => lineRowHtml(x, { cid: g.cid, owner: whoOf(g) === 'Your other tab' ? 'your other' : g.byName })).join('')}</ol>` : ''}`).join('') : '<h3>Other tabs</h3><div class="small faint">Nobody else is scanning.</div>'}
       <p class="small faint">News from other tabs comes every 20 seconds. If a tab is closed, what it held is let go within a few minutes.</p>`;
     $$('[data-lnlink]', box).forEach((a) => (a.onclick = () => closeModal()));
     $$('[data-lnfront]', box).forEach((b) => (b.onclick = () => { moveToFront(b.dataset.lnfront); drawScanLine(); }));
     $$('[data-lnask]', box).forEach((b) => (b.onclick = () => askLine(b.dataset.cid, b.dataset.id, b.dataset.lnask, b.dataset.owner)));
     if ($('[data-lnclear]', box)) $('[data-lnclear]', box).onclick = () => { if (confirm(`Take all ${state.queue.length} waiting websites out of the line? The ones scanning now carry on.`)) { clearLine(); drawScanLine(); } };
-    // Drag to reorder this tab's line.
+    // Drag to reorder: this tab's line directly, another tab's by asking it.
+    $$('ol.ln-other', box).forEach((ol) => bindLineDrag(ol, (id, ids, to) => {
+      $$('li[data-lnid]', ol).forEach((li) => ol.appendChild(li));
+      const byId = new Map($$('li[data-lnid]', ol).map((li) => [li.dataset.lnid, li])); ids.forEach((x) => ol.appendChild(byId.get(x)));
+      $$('li[data-lnid] .ln-n', ol).forEach((n, i) => { n.textContent = i + 1; });
+      askLine(ol.dataset.cid, id, 'order', ol.dataset.owner, ids, to);
+    }));
     const list = $('#lnMine', box);
-    if (list) {
-      let dragId = '';
-      $$('li[data-lnid]', list).forEach((li) => {
-        li.addEventListener('dragstart', (e) => { dragId = li.dataset.lnid; lnDragging = true; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', dragId); e.dataTransfer.effectAllowed = 'move'; } catch (er) { /* ignore */ } });
-        li.addEventListener('dragend', () => { lnDragging = false; li.classList.remove('dragging'); $$('.drop-before, .drop-after', list).forEach((x) => x.classList.remove('drop-before', 'drop-after')); });
-        li.addEventListener('dragover', (e) => { e.preventDefault(); const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2; li.classList.toggle('drop-after', after); li.classList.toggle('drop-before', !after); });
-        li.addEventListener('dragleave', () => li.classList.remove('drop-before', 'drop-after'));
-        li.addEventListener('drop', (e) => {
-          e.preventDefault();
-          const id = dragId || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
-          const target = li.dataset.lnid; lnDragging = false;
-          if (!id || id === target) { drawScanLine(); return; }
-          const r = li.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
-          const rest = state.queue.filter((x) => x !== id);
-          const to = rest.indexOf(target) + (after ? 1 : 0);
-          moveInLine(id, to); drawScanLine(); toast(`${siteName(id)} moved to number ${to + 1}.`);
-        });
-      });
-    }
+    if (list) bindLineDrag(list, (id, ids, to) => { moveInLine(id, to); drawScanLine(); toast(`${siteName(id)} moved to number ${to + 1}.`); });
   }
   // Other tabs' scans are kept fresh here every 15 seconds while anything is scanning or waiting
   // anywhere (or the scan line is open). Their holds run 3 minutes and are renewed every 20 seconds, so

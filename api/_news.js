@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-16-scan-line-3', date: '2026-11-16', audience: 'all', tag: 'Audits',
+    title: 'Scan line: drag any line, and every row says auto audit or by hand, and why',
+    what: 'Every row in the scan line now says <b>🤖 Auto audit</b> or <b>👤 By hand</b> (and which kind), and <b>Why</b> it was added. Any line can be dragged into a new order, another person\'s tab included (it changes there within 15 seconds and notes who moved it). A tab still on an older version of the app says it cannot tell: reload that tab.',
+    where: ['<b>Walkthrough:</b> the 🔄 chip in the top bar → <b>Scan line</b> → drag a row by ⋮⋮.'],
+    link: '#/help/scan', linkText: 'How scanning works',
+  },
+  {
     id: '2026-11-16-auto-pause', date: '2026-11-16', audience: 'all', tag: 'Audits',
     title: 'Auto audits wait for the team, and can be paused',
     what: 'SEO auto audits now wait while anybody on the team has a Rescan, Rescan all or chosen-pages scan going or waiting, and carry on by themselves afterwards. <b>⏸ Pause all auto audits</b> stops them for everyone until somebody resumes them. Also fixed: scans in another tab vanished from the scan line after a few minutes while they were still running, and came back on a reload.',
