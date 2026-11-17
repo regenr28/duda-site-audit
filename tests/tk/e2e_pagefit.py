@@ -212,7 +212,7 @@ try:
         REAL = ['Harker Heights Ceramic', 'HARKER HEIGHTS CERAMIC', 'Reymark', 'reymark@', '8bitcreative', '8bit Creative', '(254)', '254-555', 'Dana Dev', 'Buff & Beyond', 'Detailers Roadmap']
         def leaks(txt): return [w for w in REAL if w.lower() in txt.lower()]
         pg.goto(f'http://localhost:{APORT}/?demo=1#/site/s1'); pg.wait_for_selector('table.findings', timeout=20000); time.sleep(1.2)
-        check(pg.is_visible('.demo-bar') and 'demo=1' not in pg.url, 'demo mode starts from ?demo=1, shows its bar, and tidies the address')
+        check(pg.evaluate("() => window.DemoMode.on()") and pg.locator('.demo-bar').count() == 0 and 'demo=1' not in pg.url, 'demo mode starts from ?demo=1 with no bar on the screen, and tidies the address')
         txt = pg.inner_text('body')
         check(not leaks(txt), 'the audit page shows no real business name, person, phone or agency name: ' + ', '.join(leaks(txt)))
         html = pg.evaluate("() => [...document.querySelectorAll('[title],[href],[alt]')].map(e => (e.getAttribute('title')||'') + ' ' + (e.getAttribute('href')||'') + ' ' + (e.getAttribute('alt')||'')).join(' ')")
@@ -221,7 +221,7 @@ try:
         pg.screenshot(path=os.path.join(OUT, 'demo-audit.png'))
         pg.goto(f'http://localhost:{APORT}/#/'); time.sleep(1.5)
         txt = pg.inner_text('body')
-        check(pg.is_visible('.demo-bar') and not leaks(txt), 'it stays on across pages (Audits list) with nothing real showing: ' + ', '.join(leaks(txt)))
+        check(pg.evaluate("() => window.DemoMode.on()") and not leaks(txt), 'it stays on across pages (Audits list) with nothing real showing: ' + ', '.join(leaks(txt)))
         pg.screenshot(path=os.path.join(OUT, 'demo-list.png'))
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('#sStatus', timeout=20000); time.sleep(0.8)
         before = pg.input_value('#sStatus')
@@ -234,8 +234,11 @@ try:
         m = re.search(r'Found: (.+)\n+(?:.*Capture proof.*\n+)?Expected: (.+)', nv)
         check(m and m.group(2).strip() == m.group(1).strip() + 's', 'the name slip still reads as a slip with made-up names ("X" found, "Xs" expected): ' + (repr(m.groups()) if m else repr(nv[-200:])))
         pg.set_viewport_size({'width': 390, 'height': 844}); time.sleep(0.5); pg.screenshot(path=os.path.join(OUT, 'demo-phone.png')); pg.set_viewport_size({'width': 1440, 'height': 1000})
-        pg.click('#demoExit'); pg.wait_for_selector('table.findings', timeout=20000); time.sleep(1)
-        check(not pg.is_visible('.demo-bar') and 'Harker Heights Ceramic' in pg.inner_text('body'), 'Exit demo brings the real names back')
+        # Exit demo: your profile (bottom left) → Exit demo, at the bottom.
+        pg.click('#snMe'); pg.wait_for_selector('#meDemoExit', timeout=10000)
+        check('Exit demo' in pg.inner_text('.modal footer') and pg.locator('.modal #meName').count() == 0, 'in demo mode the profile shows Exit demo at the bottom (and not the account details)')
+        pg.click('#meDemoExit'); pg.wait_for_selector('table.findings', timeout=20000); time.sleep(1)
+        check(not pg.evaluate("() => window.DemoMode.on()") and 'Harker Heights Ceramic' in pg.inner_text('body'), 'Exit demo brings the real names back')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

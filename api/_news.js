@@ -4,6 +4,13 @@
 
 export const NEWS = [
   {
+    id: '2026-11-18-demo-exit', date: '2026-11-18', audience: 'all', tag: 'Demo mode',
+    title: 'Demo mode: no bar on the screen, Exit demo is in your profile',
+    what: 'Demo mode no longer shows a bar at the bottom of the screen, so the people watching only see the app. To end it, click your profile (your photo, bottom left): <b>Exit demo</b> is at the bottom.',
+    where: ['<b>Walkthrough:</b> your profile → <b>🎭 Start demo mode</b> … then your profile again → <b>Exit demo</b>.'],
+    link: '#/help/demo', linkText: 'How demo mode works',
+  },
+  {
     id: '2026-11-18-no-doubles', date: '2026-11-18', audience: 'all', tag: 'Audits',
     title: 'Fixed: the same audit item listed hundreds of times',
     what: 'Each time the AI check resumed on a website (after waiting for AI credits), the auto audit\'s items and the items written by hand were copied again, so some websites showed the same item hundreds of times and thousands of "critical". Every audit now shows each item once, and its counts are worked out again.',

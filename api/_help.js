@@ -599,7 +599,7 @@ export const HELP_SECTIONS = [
     html: `<p>For a show and tell with a prospect or a new client: the whole app works as usual, but every <b>business name</b>, <b>person</b>, <b>phone</b>, <b>email</b>, <b>website address</b> and <b>street address</b> is swapped for a made-up one. Our own names (Detailers Roadmap, 8bit Creative) are swapped too.</p>
 <ul>
 <li><b>Start it</b>: your profile (your photo, bottom left) → <b>🎭 Start demo mode</b>, or type "demo" in Search, or open the app with <span class="mono">?demo=1</span> at the end of its address (for example <span class="mono">https://audits.8bitcreative.com/?demo=1</span>). You need to be signed in: nobody else can open it.</li>
-<li><b>Stop it</b>: <b>Exit demo</b> on the dark bar at the bottom of the screen. It also ends by itself after 8 hours.</li>
+<li><b>Stop it</b>: click your profile (your photo, bottom left) → <b>Exit demo</b> at the bottom. Nothing on the screen says demo mode is on, so the people watching don't see it. It also ends by itself after 8 hours.</li>
 <li>The same business always gets the same made-up name ("Summit Auto Spa"), so a story told across pages still makes sense. Phones become (555) 555-01xx, website addresses end in <span class="mono">.example</span>.</li>
 <li><b>Pictures</b> (team photos, screenshots, website previews) are blurred. <b>Comment and ticket text</b> is hidden.</li>
 <li><b>View-only</b>: nothing can be changed or saved, and downloads are off, so a made-up name can never be saved over a real one or leave in a file. Copying gives the made-up words.</li>

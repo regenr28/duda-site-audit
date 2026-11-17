@@ -1426,6 +1426,14 @@
     });
   }
   function openMe() {
+    // In demo mode the profile shows only what you need on a shared screen: Exit demo, at the bottom.
+    if (window.DemoMode && window.DemoMode.on()) {
+      modal(`<header><h2>🎭 Demo mode</h2><button class="btn ghost" data-close>✕</button></header>
+        <div class="body"><p class="small muted" style="margin:0">Every business, person and contact detail is made up, pictures are blurred, and nothing can be saved. Only this browser. It ends by itself after 8 hours.</p></div>
+        <footer><span class="spacer"></span><button class="btn primary" id="meDemoExit" type="button">Exit demo</button></footer>`);
+      $('#meDemoExit').onclick = () => window.DemoMode.set(false);
+      return;
+    }
     modal(`<header><h2>Your account</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body"><div class="member-row" style="border:0"><span id="meAv">${avatar(state.me.email, 48)}</span><div><b>${esc(state.me.name)}</b><div class="small muted">${esc(state.me.email)}${state.superAdmin ? ' · Super Admin' : state.myRole ? ' · ' + esc(state.myRole.name.toLowerCase()) : ''}</div></div></div>
       ${state.superAdmin ? `<button class="btn sm" id="meHealth" type="button" style="justify-self:start">⚑ System health</button>

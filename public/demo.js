@@ -322,11 +322,8 @@
   // ---------- start ----------
   function start() {
     document.documentElement.classList.add('demo-mode');
-    const bar = document.createElement('div');
-    bar.className = 'demo-bar'; bar.setAttribute('data-demo-keep', '');
-    bar.innerHTML = '<span>🎭 <b>Demo mode</b><span class="demo-more">: every business, person and contact detail is made up, pictures are blurred, and nothing can be saved.</span></span><button type="button" id="demoExit">Exit demo</button>';
-    document.body.appendChild(bar);
-    bar.querySelector('#demoExit').onclick = () => setOn(false);
+    // No bar on screen (the people watching don't need to see it): Exit demo sits at the bottom of
+    // your profile (your photo, bottom left).
     run();
     new MutationObserver(run).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS.concat(['class']) });
     // Copying, notifications and downloads carry the made-up words too.
