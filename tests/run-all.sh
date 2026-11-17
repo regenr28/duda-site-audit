@@ -9,7 +9,7 @@ for f in tk/e2e_queue.py tk/e2e_pick.py tk/e2e_notifpop.py tk/engine_textai.py t
   timeout 420 python3 -I $f "$A" "$T" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED|Traceback|.*Error|no page|errors:|light |dark )" | head -20
 done
 echo "######## unit"
-node tk/owner_alert.mjs "$A" "$T" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"
+node tk/owner_alert.mjs "$A" "$T" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"; node tk/net_unit.mjs "$A" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"
 node tk/api_test.mjs "$A" "$T" 2>&1 | tail -3
 node tk/watch_unit.mjs "$A" 2>&1 | tail -1
 node domains.mjs "$A" 2>&1 | tail -1; node tk/analytics_shapes.mjs "$A" 2>&1 | tail -1; node tk/psi_key.mjs "$A" 2>&1 | tail -1; node tk/contacts_spam.mjs "$A" 2>&1 | tail -1

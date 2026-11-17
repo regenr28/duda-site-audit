@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-18-domain-cutoff', date: '2026-11-18', audience: 'all', tag: 'DR Websites',
+    title: 'No more false "Connection refused" on every domain',
+    what: 'Almost every domain showed <b>Connection refused</b>: the domain check was being cut off by the websites\' host, not the websites being down. It now checks like a normal browser, tries a cut-off connection again, and when most of a run is cut off it saves nothing, tells nobody the websites are down, and tries again later. The wrong results are rechecked first.',
+    where: ['<b>Walkthrough:</b> DR Websites → <b>🌐 Check domains</b> to recheck them now.'],
+  },
+  {
     id: '2026-11-17-faster-audit', date: '2026-11-17', audience: 'all', tag: 'Audits',
     title: 'Faster: status changes and the Audit items tab',
     what: 'Clicking <b>Done</b> (or any status) changes it at once and saves in the background, instead of freezing for a couple of seconds first. If a save fails, it goes back and says so. Opening <b>Audit items</b> shows the first rows straight away and the rest arrive a moment later. And while scans are running, the app no longer keeps the browser busy redrawing the page (the spinning scan icon, the glowing bulb and the scan bar were redrawing everything several times a second), so clicks respond straight away again.',

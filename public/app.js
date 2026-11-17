@@ -7811,13 +7811,17 @@
   async function checkDomains(all) {
     if (live.doms || !live.data) return;
     const stale = Date.now() - 7 * 86400000;
-    const todo = live.data.sites.filter((x) => all || !x.dom || x.dom.checkedAt < stale).map((x) => x.id);
+    // A result that only says the connection was cut off is checked again too.
+    const cut = (d) => d && d.status === 'down' && /ECONNRESET|ECONNREFUSED|socket|other side closed/i.test(String(d.detail || ''));
+    const todo = live.data.sites.filter((x) => all || !x.dom || x.dom.checkedAt < stale || cut(x.dom)).map((x) => x.id);
     if (!todo.length) return;
     live.doms = { done: 0, total: todo.length }; liveRedraw();
     for (let k = 0; k < todo.length; k += 10) {
       try {
         const r = await post('/api/dudasites', { op: 'domains', ids: todo.slice(k, k + 10) });
         Object.entries(r.domains || {}).forEach(([id, d]) => { const x = live.data.sites.find((y) => y.id === id); if (x) x.dom = d; });
+        // Cut off by the websites' host: stop here rather than mark the rest down; it is tried again later.
+        if (r.blocked) { toast(`The domain check is being cut off (${r.blocked} of the last ${Math.min(10, todo.length - k)} could not be reached). Stopped; nothing was marked down. Try again later.`); break; }
       } catch (e) { break; }
       live.doms.done = Math.min(todo.length, k + 10); liveRedraw();
     }

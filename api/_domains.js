@@ -7,6 +7,12 @@
 // op=sweep), and Duda's own webhook when it fails to issue a certificate.
 import tls from 'node:tls';
 import { redis, P, jparse, fetchWithTimeout, listUsers, notifyUser } from './_lib.js';
+import { alertOwner } from './_queue.js';
+// The same browser the auto audit presents itself as. A user agent that says "health check" is the
+// kind a website's firewall cuts off, and a cut-off connection looked exactly like a website that is down.
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
+/** A failure that says more about the checker's connection than about the website. */
+const NET_FAIL = (r) => !!r && (r.status === 'timeout' || r.status === 'error' || (r.status === 'down' && /ECONNRESET|ECONNREFUSED|socket|other side closed|UND_ERR/i.test(String(r.detail || ''))));
 
 export const DOMS = P + 'domstat';      // hash: site id -> last check result
 
@@ -22,9 +28,11 @@ async function basicCheck(domain) {
   let r = null, body = '';
   for (let i = 0; i < 6; i++) {
     try {
-      r = await fetchWithTimeout(url, { redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SiteAuditor/1.0; domain health check)', Accept: 'text/html' } }, 9000);
+      r = await fetchWithTimeout(url, { redirect: 'manual', headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9' } }, 9000);
     } catch (e) {
       const m = String((e && e.cause && (e.cause.code || e.cause.message)) || e.message || e);
+      // A connection cut off once is usually the network, not the website: try that address once more.
+      if (/ECONNRESET|socket|other side closed/i.test(m) && !out.retried) { out.retried = true; await new Promise((ok) => setTimeout(ok, 2500)); i--; continue; }
       if (i === 0 && url.startsWith('https://') && /CERT|SSL|TLS|certificate|self.signed|ERR_TLS|UNABLE_TO_VERIFY|EPROTO/i.test(m)) { out.sslError = true; url = 'http://' + domain + '/'; continue; }
       if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) return Object.assign(out, { status: 'dns', label: "Domain doesn't resolve (DNS)", detail: 'The domain has no working DNS record. It may have expired or its DNS was changed.' });
       if (/abort|timeout|ETIMEDOUT/i.test(m)) return Object.assign(out, { status: 'timeout', label: 'Not responding', detail: 'The domain did not respond within 9 seconds.' });
@@ -158,7 +166,7 @@ const fmtDay = (ms) => new Date(ms).toISOString().slice(0, 10);
  * Nobody is told about a one-off blip: a domain that worked last time and fails now is checked a
  * second time a few seconds later, and only reported if it fails again.
  */
-export async function checkAndStore(sites, { budgetMs = 0, concurrency = 10 } = {}) {
+export async function checkAndStore(sites, { budgetMs = 0, concurrency = 10, report = null } = {}) {
   if (!sites.length) return {};
   const ids = sites.map((x) => x.id);
   const [prevRaw] = await redis(['HMGET', DOMS, ...ids]);
@@ -172,6 +180,17 @@ export async function checkAndStore(sites, { budgetMs = 0, concurrency = 10 } = 
     if (isProblem(r) && p && p.status === 'ok') { await sleep(4000); r = await checkDomain(x.domain, r); }
     out[x.id] = r;
   });
+  // When most of a run fails the same way (connections cut off, nothing answering), the fault is on
+  // the checker's side (its network, or being blocked for checking too many websites at once), not
+  // 699 websites going down together. Those results are thrown away: each website keeps what it had,
+  // stays due to be checked again, nobody is told it is down, and the app owner hears about it.
+  const tried = Object.values(out).filter((r) => r && r.status !== 'nodomain');
+  const failed = tried.filter(NET_FAIL);
+  if (tried.length >= 6 && failed.length >= tried.length * 0.6) {
+    Object.keys(out).forEach((id) => { if (NET_FAIL(out[id])) delete out[id]; });
+    if (report) report.blocked = failed.length;
+    await alertOwner('domains-blocked', `The domain check could not reach ${failed.length} of ${tried.length} websites in one run (${String(failed[0].detail || failed[0].label).slice(0, 60)}). That is the checker being cut off, not the websites being down, so those results were not saved and nobody was told. If it keeps happening, the websites' host may be blocking the checks.`, { cooldownMs: 6 * 3600000 }).catch(() => {});
+  }
   const now = Date.now();
   const alerts = []; const events = [];
   sites.forEach((x) => {
@@ -255,10 +274,13 @@ export async function sendDomainAlerts(alerts) {
 export async function sendDigest() {
   const [all] = await redis(['HGETALL', DOMS]);
   const c = { expired: [], soon7: [], soon30: [], redirect: [], down: [] };
-  for (let i = 0; all && i < all.length; i += 2) {
-    const d = jparse(all[i + 1]); if (!d || d.status === 'nodomain') continue;
-    const name = d.domain || all[i];
-    if (isProblem(d)) c[problemClass(d.status) || 'down'].push(name);
+  // Dozens of websites "down" with a cut-off connection is the checker being blocked, not news.
+  const rows = []; for (let i = 0; all && i < all.length; i += 2) rows.push([all[i], jparse(all[i + 1])]);
+  const massCut = rows.filter(([, d]) => NET_FAIL(d)).length >= 20;
+  for (const [key, d] of rows) {
+    if (!d || d.status === 'nodomain') continue;
+    const name = d.domain || key;
+    if (isProblem(d) && !(massCut && NET_FAIL(d))) c[problemClass(d.status) || 'down'].push(name);
     if (d.reg && d.reg.expires) { const left = daysLeft(d.reg.expires); if (left < 0) c.expired.push(name); else if (left <= 7) c.soon7.push(name); else if (left <= 30) c.soon30.push(name); }
   }
   const total = Object.values(c).reduce((n, a) => n + a.length, 0);

@@ -1,6 +1,7 @@
 // POST /api/check  { urls: [...] }  → [{ url, status, finalUrl, error }]
 // Checks external links and images for 404 / server errors. Social networks are skipped (they block bots).
-import { metered, requireUser, fetchWithTimeout, readBody, UA_DESKTOP } from './_lib.js';
+import { metered, requireUser, readBody, UA_DESKTOP } from './_lib.js';
+import { fetchPublic } from './_net.js';
 
 const SKIP = /(^|\.)(facebook\.com|instagram\.com|linkedin\.com|tiktok\.com|twitter\.com|x\.com|yelp\.com|google\.[a-z.]+|goo\.gl|g\.page|youtube\.com)$/i;
 
@@ -9,13 +10,14 @@ async function check(url) {
   try { u = new URL(url); } catch (e) { return { url, status: 0, error: 'invalid URL' }; }
   if (!/^https?:$/.test(u.protocol)) return { url, status: -1 };
   if (SKIP.test(u.hostname)) return { url, status: -1, skipped: true };
-  if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.)/.test(u.hostname)) return { url, status: -1 };
   const headers = { 'User-Agent': UA_DESKTOP, Accept: '*/*' };
   try {
-    let r = await fetchWithTimeout(url, { method: 'HEAD', redirect: 'follow', headers }, 9000);
-    if ([403, 405, 501, 400].includes(r.status)) r = await fetchWithTimeout(url, { method: 'GET', redirect: 'follow', headers }, 9000);
+    // Only public addresses, on every redirect too: a link on a page must not reach the server's own network.
+    let r = await fetchPublic(url, { method: 'HEAD', headers }, 9000);
+    if ([403, 405, 501, 400].includes(r.status)) r = await fetchPublic(url, { method: 'GET', headers }, 9000);
     return { url, status: r.status, finalUrl: r.url };
   } catch (e) {
+    if (e.blocked) return { url, status: -1 };
     return { url, status: 0, error: e.name === 'AbortError' ? 'timeout' : (e.cause && e.cause.code) || e.message };
   }
 }

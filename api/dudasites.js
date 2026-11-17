@@ -128,12 +128,15 @@ async function sweep(req, res) {
   const bot = { email: '', name: 'Daily check' };
   const list = await loadList('published', bot, false);
   const [doms, names] = await redis(['HGETALL', DOMS], ['HGETALL', NAMES]);
-  const last = {}; for (let i = 0; doms && i < doms.length; i += 2) { const v = jparse(doms[i + 1]); last[doms[i]] = (v && v.domain && v.checkedAt) || 0; }
+  // A result that only says the connection was cut off is checked again first (it was the checker, not the website).
+  const cut = (v) => v && /ECONNRESET|ECONNREFUSED|socket|other side closed/i.test(String(v.detail || '')) && v.status === 'down';
+  const last = {}; for (let i = 0; doms && i < doms.length; i += 2) { const v = jparse(doms[i + 1]); last[doms[i]] = cut(v) ? 0 : (v && v.domain && v.checkedAt) || 0; }
   const nm = {}; for (let i = 0; names && i < names.length; i += 2) { const v = String(names[i + 1] || ''); const j = v.startsWith('{') ? jparse(v) : null; nm[names[i]] = (j ? j.n : v) || ''; }
   const due = checkRows(list).filter((x) => x.domain && Date.now() - (last[x.id] || 0) > 20 * 3600000)
     .map((x) => Object.assign(x, { name: x.name || (nm[x.id] !== '-' ? nm[x.id] : '') }))
     .sort((a, b) => (last[a.id] || 0) - (last[b.id] || 0));
-  const out = await checkAndStore(due, { budgetMs: 95000, concurrency: 12 });
+  // Fewer at once: a dozen connections to the same host at the same moment is what gets a checker cut off.
+  const out = await checkAndStore(due, { budgetMs: 95000, concurrency: 6 });
   await markRun('domains', bot, false, { count: Object.keys(out).length });
   const open = await sendDigest().catch(() => 0);
   return res.status(200).json({ checked: Object.keys(out).length, due: due.length, open });
@@ -263,9 +266,10 @@ async function handler(req, res) {
           const v = String((names || [])[i] || ''); const j = v.startsWith('{') ? jparse(v) : null; const n = (j ? j.n : v) || '';
           return Object.assign(x, { name: x.name || (n !== '-' ? n : '') });
         });
-        const out = await checkAndStore(rows);
+        const report = {};
+        const out = await checkAndStore(rows, { report });
         await markRun('domains', me, true, { count: pick.length });
-        return res.status(200).json({ domains: out });
+        return res.status(200).json({ domains: out, blocked: report.blocked || 0 });
       }
       return res.status(400).json({ error: 'Unknown op' });
     } catch (e) { return res.status(500).json({ error: String(e.message || e) }); }

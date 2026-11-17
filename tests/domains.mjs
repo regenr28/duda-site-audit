@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 const appDir = path.resolve(process.argv[2]);
 process.env.KV_REST_API_URL = 'https://fake-redis.test';
 process.env.KV_REST_API_TOKEN = 'x';
+process.env.SUGGESTIONS_OWNER = 'admin@x.com'; // technical alerts go to this person in the test
 
 const kv = new Map();
 const h = (k) => { if (!(kv.get(k) instanceof Map)) kv.set(k, new Map()); return kv.get(k); };
@@ -49,6 +50,8 @@ globalThis.fetch = async (url, opts = {}) => {
   if (mode === 'ok') return new Response('<html><head><title>Shop</title></head><body><div id="dmRoot">Duda site</div></body></html>', { status: 200 });
   if (mode === 'down') return new Response('err', { status: 503 });
   if (mode === 'flaky') { site[host] = 'ok'; return new Response('err', { status: 503 }); }   // fails once, then fine
+  if (mode === 'reset') { const e = new TypeError('fetch failed'); e.cause = { code: 'ECONNRESET' }; throw e; }
+  if (mode === 'resetonce') { site[host] = 'ok'; const e = new TypeError('fetch failed'); e.cause = { code: 'ECONNRESET' }; throw e; }
   if (mode === 'sale') return new Response('<html><title>This domain is for sale</title><body>buy this domain</body></html>', { status: 200 });
   return new Response('', { status: 200 });
 };
@@ -183,4 +186,19 @@ check(want.every((w) => sig.split(' ').includes(w)) && set.length === want.lengt
 const prevList = Array.from({ length: 100 }, (_, i) => ({ id: 'x' + i }));
 check(H.diffEvents(prevList, prevList.slice(0, 50), now - DAY).length === 0, 'a pull half the usual size records nothing');
 check(H.diffEvents(prevList, prevList.slice(0, 97).concat([{ id: 'new1' }]), now - DAY).length === 4, 'a normal pull records 3 gone + 1 new');
+// --- a connection cut off once is tried again; a whole run cut off is the checker, not the websites ---
+site['blip.com'] = 'resetonce';
+const blip = await D.checkDomain('blip.com', null);
+check(blip.status === 'ok', 'a connection cut off once is tried again and the website reads as working');
+const cutRows = Array.from({ length: 10 }, (_, i) => ({ id: 'c' + i, name: 'Cut ' + i, domain: `cut${i}.com` }));
+cutRows.forEach((r, i) => { site[r.domain] = i < 8 ? 'reset' : 'ok'; h(P + 'domains').set(r.id, prev('ok', { domain: r.domain })); });
+const notesBefore = (kv.get(P + 'notif:admin@x.com') || []).length;
+const rep = {};
+const cutOut = await D.checkAndStore(cutRows, { report: rep });
+const kept = JSON.parse(h(P + 'domains').get('c0'));
+check(rep.blocked === 8 && !cutOut.c0 && cutOut.c9 && cutOut.c9.status === 'ok', `8 of 10 cut off in one run: those results are thrown away (${rep.blocked} blocked)`);
+check(kept.status === 'ok', 'each of them keeps what it had (still working, not "Connection refused")');
+const cutNotes = (kv.get(P + 'notif:admin@x.com') || []).slice(0, (kv.get(P + 'notif:admin@x.com') || []).length - notesBefore).map((x) => JSON.parse(x));
+check(!cutNotes.some((n) => /domain-problem/.test(n.kind)), 'nobody is told 8 websites went down');
+check(cutNotes.some((n) => n.kind === 'system' && /cut off/.test(n.text)), 'the app owner is told the checker was cut off');
 console.log(ok ? 'ALL PASSED' : 'SOME FAILED');

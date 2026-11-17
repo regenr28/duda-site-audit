@@ -1,7 +1,10 @@
 // POST /api/social { urls: [facebook / google maps / gbp links] }
 // Best-effort read of public profile metadata (name, phone, email) to compare with Business Info.
 // Facebook and Google often block automated reads — anything we can't read is returned as "unverified".
-import { metered, requireUser, fetchWithTimeout, readBody } from './_lib.js';
+import { metered, requireUser, readBody } from './_lib.js';
+import { fetchPublic } from './_net.js';
+// Only the profiles this is for: it returns what a page says, so it must not read just any address.
+const SOCIAL_HOSTS = /(^|\.)(facebook\.com|fb\.com|fb\.me|google\.[a-z.]+|goo\.gl|g\.page|g\.co|instagram\.com|yelp\.com|linkedin\.com|tiktok\.com|youtube\.com|youtu\.be|x\.com|twitter\.com|pinterest\.com|nextdoor\.com|bbb\.org)$/i;
 
 const PHONE = /(?:\+?1[\s.\-]?)?\(?([2-9]\d{2})\)?[\s.\-]?(\d{3})[\s.\-](\d{4})/g;
 const EMAIL = /[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}/gi;
@@ -15,11 +18,12 @@ const decode = (s) => s.replace(/&amp;/g, '&').replace(/&#39;|&#x27;/g, "'").rep
 
 async function read(url) {
   let u; try { u = new URL(url); } catch (e) { return { url, ok: false, error: 'invalid URL' }; }
+  if (!SOCIAL_HOSTS.test(u.hostname)) return { url, ok: false, error: 'not a social profile address' };
   const isFb = /facebook\.com|fb\.com/i.test(u.hostname);
   // Facebook serves Open Graph tags to its own crawler user agent
   const ua = isFb ? 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)' : 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
   try {
-    const r = await fetchWithTimeout(url, { headers: { 'User-Agent': ua, 'Accept-Language': 'en-US,en;q=0.9' }, redirect: 'follow' }, 12000);
+    const r = await fetchPublic(url, { headers: { 'User-Agent': ua, 'Accept-Language': 'en-US,en;q=0.9' } }, 12000);
     const html = (await r.text()).slice(0, 600000);
     const title = meta(html, 'og:title') || (html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '';
     const description = meta(html, 'og:description') || meta(html, 'description');
