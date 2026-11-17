@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-18-no-doubles', date: '2026-11-18', audience: 'all', tag: 'Audits',
+    title: 'Fixed: the same audit item listed hundreds of times',
+    what: 'Each time the AI check resumed on a website (after waiting for AI credits), the auto audit\'s items and the items written by hand were copied again, so some websites showed the same item hundreds of times and thousands of "critical". Every audit now shows each item once, and its counts are worked out again.',
+    where: ['<b>Walkthrough:</b> open the audit: the copies are gone.'],
+  },
+  {
     id: '2026-11-18-domain-cutoff', date: '2026-11-18', audience: 'all', tag: 'DR Websites',
     title: 'No more false "Connection refused" on every domain',
     what: 'Almost every domain showed <b>Connection refused</b>: the domain check was being cut off by the websites\' host, not the websites being down. It now checks like a normal browser, tries a cut-off connection again, and when most of a run is cut off it saves nothing, tells nobody the websites are down, and tries again later. The wrong results are rechecked first.',

@@ -714,6 +714,7 @@ export async function syncAudit(recId, result, opts = {}) {
   const nums = pairs(fnumRaw); const st = pairs(fstRaw, true);
   let seq = Number(seqRaw || 0);
   const at = new Date(result.at || Date.now()).toISOString(); const nowIso = new Date().toISOString();
+  { const seen = new Set(); site.findings = (site.findings || []).filter((f) => f && (!f.id || !seen.has(f.id)) && (seen.add(f.id), true)); } // one copy of each item
   const old = new Map((site.findings || []).filter((f) => f.code === 'AUTO_LIVE').map((f) => [f.liveKey, f]));
   const others = (site.findings || []).filter((f) => f.code !== 'AUTO_LIVE');
   const numAdd = []; const stAdd = []; let added = 0, closed = 0, back = 0, fixed = 0;

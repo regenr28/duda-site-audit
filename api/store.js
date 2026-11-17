@@ -24,10 +24,20 @@ const GROUP_ADMINS = '*admins';
 const FLABEL = { open: 'Open', clarification: 'For clarification', done: 'Done', hold: 'On hold', false: 'False alarm' };
 const SITE_STATUSES = ['Not started', 'In progress', 'Complete with query', 'Complete', 'On hold'];
 
+/** The first copy of each item ID (also fixes records saved with copies). */
+function uniqById(list) {
+  const seen = new Set(); const out = [];
+  (list || []).forEach((f) => { if (!f) return; const k = f.id || ''; if (k && seen.has(k)) return; if (k) seen.add(k); out.push(f); });
+  return out;
+}
 async function loadSite(id) {
   const [raw, fstate, fnum, cmts] = await redis(['GET', P + 'site:' + id], ['HGETALL', P + 'fstate:' + id], ['HGETALL', P + 'fnum:' + id], ['HGETALL', P + 'cmt:' + id]);
   const site = unpackJSON(raw);
   if (!site) return null;
+  // One item per ID. An "AI check resumed" save once sent the auto audit's and hand-written items
+  // back with the scan's, and each resume doubled them (#1 showing 1,024 times); copies are dropped here.
+  { const n0 = (site.findings || []).length; site.findings = uniqById(site.findings);
+    if (site.findings.length !== n0) { try { await redis(['SET', P + 'site:' + id, packJSON(site)]); } catch (e) { /* tidied on the next save */ } } }
   const st = pairs(fstate, true); const nums = pairs(fnum); const comments = Object.values(pairs(cmts, true));
   // Exceptions (manufacturer pages and values): open items they cover read as Exempt. Worked out
   // fresh on every load, so adding or removing an exception changes the items at once.
@@ -92,7 +102,7 @@ function summary(site, comments) {
   return {
     id: site.id, siteId: site.siteId, host: site.host, editorUrl: site.editorUrl, businessName: site.businessName || '',
     assignee: site.assignee || '', status: site.status || 'Not started', scan: slimScan(site.scan), addedBy: site.addedBy || '', addedByName: site.addedByName || '',
-    createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c, exv: site._exv || 0, sv: 2, cmBy, faBy, doneBy,
+    createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c, exv: site._exv || 0, sv: 3, cmBy, faBy, doneBy,
     // Everyone this website has passed through, so the list can be narrowed to a person's own work
     // without reading every full record.
     people: site.people || [site.addedBy, site.assignee].filter(Boolean),
@@ -350,7 +360,7 @@ async function handler(req, res) {
         // Summaries written before must-fix and design polish were counted apart are brought up to
         // date a few at a time (each is one website read), so the list is right within a load or two.
         // …and so are those counted before the exception sets last changed.
-        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined || (x.exv || 0) !== exv || x.sv !== 2)).slice(0, 40);
+        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined || (x.exv || 0) !== exv || x.sv !== 3)).slice(0, 40);
         if (old.length) {
           const fresh = await Promise.all(old.map((x) => saveIndex(x.id).catch(() => null)));
           const byId = new Map(fresh.filter(Boolean).map((x) => [x.id, x]));
@@ -652,7 +662,12 @@ async function handler(req, res) {
         // A rescan replaces what the SCANNER found. An item a person typed in is not the scanner's
         // to withdraw — QA writes those precisely because no scan will ever see them — so they are
         // carried across untouched, statuses and all.
+        site.findings = uniqById(site.findings);
         const byHand = (site.findings || []).filter((f) => f && f.manual);
+        // Items written by hand and the auto audit's items are the server's to carry: a copy sent back
+        // in the scan result is ignored (keeping both doubled them on every save).
+        const handIds = new Set(byHand.map((f) => f.id));
+        r.findings = uniqById((r.findings || []).filter((f) => f && !f.manual && !handIds.has(f.id)));
         // Everything the website had before this scan, to tell what has gone since.
         const before = (site.findings || []).filter((f) => f && !f.manual);
         site.findings = (r.findings || []).map((f) => { const c = Object.assign({}, f); ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done'].forEach((k) => delete c[k]); return c; }).concat(byHand);

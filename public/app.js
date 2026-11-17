@@ -7710,7 +7710,8 @@
       const s = await api('/api/store?op=site&id=' + encodeURIComponent(siteId));
       const open = (s.findings || []).filter((f) => /^AI_PENDING/.test(f.code) && f.status !== 'done' && f.status !== 'false');
       if (!open.length) { await store({ op: 'aiUnlock', id: siteId }); return; }
-      const rest = (s.findings || []).filter((f) => !open.includes(f)).map(stripState);
+      // Only the scan's own items: hand-written and auto-audit items stay on the server as they are.
+      const rest = (s.findings || []).filter((f) => !open.includes(f) && !f.manual).map(stripState);
       const alts = [].concat(...open.filter((f) => f.code === 'AI_PENDING_ALT').map((f) => f.aiPending.items || []));
       const texts = [].concat(...open.filter((f) => f.code === 'AI_PENDING_TEXT').map((f) => f.aiPending.items || []));
       const res = { truth: s.truth || {}, pages: s.pages || [], findings: rest, alts, texts };
