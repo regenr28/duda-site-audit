@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-scan-took', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'How long a scan takes: a live timer, and the time in every report',
+    what: 'While a website is being scanned, a <b>⏱ timer</b> under the progress bar shows how long the scan has been running (on the audit and on Audits). When it finishes, the scan summary says how long it took, and every scan in <b>📊 Audit Report → Scan history</b> has a <b>Took</b> column; the scan\'s own report (📋 View, and its download) says it too. ⚡ Apply check updates keeps its own time. Scans from before today have no time on record.',
+    where: ['<b>Walkthrough:</b> rescan a website → the timer under the progress bar → afterwards <b>📊 Audit Report</b> → <b>Scan history</b>.'],
+  },
+  {
     id: '2026-11-19-hidden-button-css', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: 'Fixed: hidden gallery "Button" labels kept coming back after every rescan',
     what: 'A photo gallery with captions switched off keeps a "Button" label per picture, hidden by the website\'s stylesheet. The first check only saw styles written on the element itself, so it reported them; the check that opens each page in a browser saw they were hidden, but only labelled them "Hidden on the page". Now that check leaves them out, so they close as <i>check corrected</i>. A visible "Button" is still reported. <b>⟳ Recheck</b> uses the same check now.',

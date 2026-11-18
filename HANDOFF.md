@@ -392,3 +392,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 ## 189 — Hidden "Button" via stylesheet
 - engine's DEFAULT_LABEL skip (`hiddenReason`) only sees inline styles / Duda hide classes. A gallery caption "Button" hidden by a stylesheet rule got through; `markHiddenText` (computed style in a sandboxed iframe) saw it hidden everywhere but only set `hiddenLive`. Now it sets `dropHidden` for PLACEHOLDER "Button" default labels hidden on every device (log line). `recheckItems` runs `markHiddenText` too.
 - Release v40 (fixes + scope PLACEHOLDER) so ⚡ Apply check updates closes them as check-corrected. Test `tests/tk/e2e_hiddenbtn.py` (fails on the old code).
+
+## 190 — Scan timer and durations
+- `state.scanT0[id]` set at the start of `scanSiteRun` (cleared at the end); `liveLine` shows `⏱ <b data-elapsed>` updated by the 1s interval. `fmtTook(ms)`.
+- `saveScan` stores `ms` (the client's `scan.durationMs`, capped at 24h) on each `site.scans` line and in the scan report (`scanrep`); check updates keep the full scan's record and add `scan.updMs`. Summary index carries `updAt/updMs`.
+- Shown: scan summary ("⏱ took"), Scan history "Took" column, report modal and downloaded report. Test `tests/tk/e2e_took.py`.

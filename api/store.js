@@ -123,7 +123,7 @@ function summary(site, comments) {
 function slimScan(sc) {
   sc = sc || {};
   const o = {};
-  ['state', 'cv', 'startedAt', 'finishedAt', 'pages', 'error', 'by', 'startedBy', 'startedByName', 'durationMs'].forEach((k) => { if (sc[k] !== undefined && sc[k] !== '') o[k] = sc[k]; });
+  ['state', 'cv', 'startedAt', 'finishedAt', 'pages', 'error', 'by', 'startedBy', 'startedByName', 'durationMs', 'updAt', 'updMs'].forEach((k) => { if (sc[k] !== undefined && sc[k] !== '') o[k] = sc[k]; });
   if (sc.counts) o.counts = sc.counts;
   if (sc.ai && sc.ai.paused) o.ai = { paused: { retryAt: sc.ai.paused.retryAt } };
   if (o.error) o.error = String(o.error).slice(0, 200);
@@ -670,6 +670,8 @@ async function handler(req, res) {
         const codes = Array.isArray(b.codes) && b.codes.length ? b.codes.map((c) => String(c).slice(0, 60)).slice(0, 200) : null;
         const codeIn = (f) => !codes || codes.some((x) => (x.endsWith('_') ? String(f.code).startsWith(x) : String(f.code) === x));
         const scanBefore = site.scan ? Object.assign({}, site.scan) : null;
+        // How long this scan (or check update) took, start to save, for the scan history and its report.
+        const tookMs = Math.max(0, Math.min(Number((r.scan || {}).durationMs) || 0, 86400000));
         if (partial) {
           const old = new Map((site.pages || []).map((pg) => [normQ(pg.path), pg]));
           (r.pages || []).forEach((pg) => old.set(normQ(pg.path), pg));
@@ -684,7 +686,7 @@ async function handler(req, res) {
           if (!codes.some((c) => /^IMAGE_DUPLICATE/.test(c))) delete r.photos;
           // The scan's own record (when, how many pages, how long) stays the full scan's; it notes the update.
           if (r.scan && scanBefore && scanBefore.finishedAt) {
-            const keep = Object.assign({}, scanBefore, { state: 'complete', cv: r.scan.cv, updAt: now(), updBy: me.email, updByName: me.name,
+            const keep = Object.assign({}, scanBefore, { state: 'complete', cv: r.scan.cv, updAt: now(), updBy: me.email, updByName: me.name, updMs: tookMs,
               log: [].concat(r.scan.log || []).concat(scanBefore.log || []).slice(0, 40) });
             delete keep.partial; delete keep.error;
             r.scan = keep;
@@ -870,7 +872,7 @@ async function handler(req, res) {
           const live = site.findings.filter((f) => !f.gone);
           const cats = {}; const groups = { must: 0, polish: 0, length: 0, tech: 0 };
           live.forEach((f) => { const k = f.category || 'Other'; cats[k] = (cats[k] || 0) + 1; const g = globalThis.DudaAudit.groupOf(f); groups[g] = (groups[g] || 0) + 1; });
-          const snap = { at: now(), by: me.email, byName: me.name, tool: 'Site Auditor', auto: true, ...(partial ? { partial: [...partial].slice(0, 30) } : {}), ...(codes ? { upd: 1 } : {}), cv: Number((site.scan && site.scan.cv) || 0),
+          const snap = { at: now(), by: me.email, byName: me.name, tool: 'Site Auditor', auto: true, ...(partial ? { partial: [...partial].slice(0, 30) } : {}), ...(codes ? { upd: 1 } : {}), ...(tookMs ? { ms: tookMs } : {}), cv: Number((site.scan && site.scan.cv) || 0),
             pages: (r.pages || []).length, counts: Object.assign({}, c), total: activeN, cats, groups,
             fixed: fixedN, added: Math.max(0, seq - Number(seqRaw || 0)), reopened: backN + stillN };
           const list = Array.isArray(site.scans) ? site.scans : [];
@@ -890,7 +892,7 @@ async function handler(req, res) {
             const items = live.map((f) => ({ id: f.id, n: Number(nums[f.id]) || 0, c: f.code, s: f.severity, g: f.category || 'Other', m: cut(f.message, 220),
               p: f.path || '/', pc: (f.pages || []).length || 1, f: cut(f.found, 160), e: cut(f.expected, 120), l: f.location || '', st: (stm[f.id] && stm[f.id].status) || 'open',
               ...(f.contrast ? { k: f.contrast } : {}) })).sort((x, y) => x.n - y.n);
-            cmds.push(['SET', P + 'scanrep:' + b.id + ':' + repId, packJSON({ at: resumed ? last.at : snap.at, cv: snap.cv, pages: snap.pages, counts: snap.counts, by: snap.byName, items })]);
+            cmds.push(['SET', P + 'scanrep:' + b.id + ':' + repId, packJSON({ at: resumed ? last.at : snap.at, cv: snap.cv, pages: snap.pages, counts: snap.counts, by: snap.byName, ...(snap.ms ? { ms: snap.ms } : {}), items })]);
           }
           // Reports of scans that dropped off the end of the history go with them.
           list.slice(0, Math.max(0, list.length - 40)).forEach((x) => { if (x.rep) cmds.push(['DEL', P + 'scanrep:' + b.id + ':' + x.rep]); });

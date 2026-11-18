@@ -7262,6 +7262,7 @@
     const { sApi, sPost } = siteApi(id);
     const site = await api('/api/store?op=site&id=' + encodeURIComponent(id));
     const t0 = Date.now();
+    state.scanT0 = state.scanT0 || {}; state.scanT0[id] = t0;
     delete state.skipAI[id];
     const startedAt = new Date().toISOString();
     state.scanning[id] = { done: 0, total: 0, message: 'Reading Business Info…' };
@@ -7390,6 +7391,7 @@
       try { upsertSummary(await store({ op: 'scanState', id, scan: { state: 'failed', error: String(e.message || e), finishedAt: new Date().toISOString(), log } })); } catch (x) { /* ignore */ }
       toast('Scan failed: ' + (e.message || e));
     }
+    if (state.scanT0) delete state.scanT0[id];
     if (state.current && state.current.id === id) await loadSite(id);
   }
   // ---------- AI alt-text judgement ----------
@@ -9444,11 +9446,19 @@
     const b = document.getElementById('pb-' + id); if (b) b.textContent = `Scanning ${live.done}/${live.total}`;
   }
   /** Live line under the progress bar: a pulsing dot, seconds on the current step, and "Skip AI" during AI steps. */
+  /** How long something took, in words: "41s", "9m 41s", "1h 02m". */
+  function fmtTook(ms) {
+    const t = Math.round((Number(ms) || 0) / 1000); if (t <= 0) return '';
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+    return h ? `${h}h ${String(m).padStart(2, '0')}m` : m ? `${m}m ${String(sec).padStart(2, '0')}s` : `${sec}s`;
+  }
   function liveLine(id, live) {
     const isAI = /✨/.test(live.message || '');
-    return `<span class="pulse-dot"></span> <span data-since="${live.since || Date.now()}" data-ai="${isAI ? 1 : 0}">working…</span>${isAI && !state.skipAI[id] ? ` · <button class="linkbtn" data-skipai="${esc(id)}" title="Stop the AI check for this scan. Unchecked pages become 'AI check pending' items that resume later.">Skip AI for now</button>` : ''}`;
+    const t0 = (state.scanT0 || {})[id];
+    return `${t0 ? `<span class="scan-clock" title="Time since this scan started">⏱ <b data-elapsed="${t0}">${fmtTook(Date.now() - t0) || '0s'}</b></span> · ` : ''}<span class="pulse-dot"></span> <span data-since="${live.since || Date.now()}" data-ai="${isAI ? 1 : 0}">working…</span>${isAI && !state.skipAI[id] ? ` · <button class="linkbtn" data-skipai="${esc(id)}" title="Stop the AI check for this scan. Unchecked pages become 'AI check pending' items that resume later.">Skip AI for now</button>` : ''}`;
   }
   setInterval(() => {
+    $$('[data-elapsed]').forEach((el) => { el.textContent = fmtTook(Date.now() - Number(el.dataset.elapsed)) || '0s'; });
     $$('[data-since]').forEach((el) => {
       const sec = Math.floor((Date.now() - Number(el.dataset.since)) / 1000);
       const ai = el.dataset.ai === '1';
@@ -11493,7 +11503,7 @@
         <div class="small" style="margin-top:3px">The business details on this website’s project come from the document the client supplied, so they are what every item below is measured against. Duda’s own Business Info is still accepted — nothing is flagged for using a value Duda holds.</div></div>` : ''}
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${state.scanning[s.id] || otherClaim(s.id) ? '<span class="small muted">The scan’s progress is at the top of the page.</span>' : scanBadge(s)}</div>${state.scanning[s.id] || otherClaim(s.id) ? '' : `<div id="aiCredits">${aiCreditsHtml()}</div>`}</div>
-        ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${sc.contrast ? (sc.contrast.skipped ? '<span title="' + esc(sc.contrast.skipped) + '">contrast not checked</span> · ' : `contrast on ${sc.contrast.pages}${sc.contrast.of > sc.contrast.pages ? '/' + sc.contrast.of : ''} pages · `) : ''}${Math.round((sc.durationMs || 0) / 1000)}s${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
+        ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${sc.contrast ? (sc.contrast.skipped ? '<span title="' + esc(sc.contrast.skipped) + '">contrast not checked</span> · ' : `contrast on ${sc.contrast.pages}${sc.contrast.of > sc.contrast.pages ? '/' + sc.contrast.of : ''} pages · `) : ''}<span title="How long the scan took, from start to saved">⏱ took ${fmtTook(sc.durationMs) || '—'}</span>${sc.updAt ? ` · ⚡ check updates ${esc(ago(sc.updAt))}${sc.updMs ? `, took ${fmtTook(sc.updMs)}` : ''}` : ''}${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
         ${sc.ai ? `<details class="scan-more"${uiOpen('scanai') ? ' open' : ''} data-ui="scanai"><summary class="small">${aiShort(sc.ai)} <span class="faint">· details</span></summary><div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Business name and location: <b>${sc.ai.text.blocks}</b> blocks that mention a name, a place or contact details checked${sc.ai.text.skipped ? ` <span class="faint" title="These blocks contain no business name, place or contact detail, so there is nothing in them for this check to get wrong. They are still proofread.">(the other ${sc.ai.text.skipped} have none)</span>` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
             ${sc.ai.fit ? ` Read <b>${sc.ai.fit.pages}</b> pages against their address (service, town, name): <b>${sc.ai.fit.flagged}</b> new item${sc.ai.fit.flagged === 1 ? '' : 's'}.` : ''}
@@ -12613,7 +12623,7 @@
     let q = '', sev = '', limit = 150;
     const list = () => r.items.filter((i) => (!sev || i.s === sev) && (!q || [i.m, i.f, i.p, i.g, '#' + i.n].join(' ').toLowerCase().includes(q)));
     body.innerHTML = `<div class="rep">
-      <div class="small muted">${esc(s.businessName || s.siteId)} · ${x.now ? 'as it is now' : `scanned by ${esc(r.by || x.byName || '—')}`}${r.pages ? ` · ${r.pages} pages` : ''}${r.cv ? ` · checks v${r.cv}` : ''}</div>
+      <div class="small muted">${esc(s.businessName || s.siteId)} · ${x.now ? 'as it is now' : `scanned by ${esc(r.by || x.byName || '—')}`}${r.pages ? ` · ${r.pages} pages` : ''}${r.ms || x.ms ? ` · ⏱ took ${fmtTook(r.ms || x.ms)}` : ''}${r.cv ? ` · checks v${r.cv}` : ''}</div>
       <div class="db-tiles rep-tiles">${[['Items found', r.items.length], ['⛔ Critical', r.counts.critical || 0], ['⚠ Warning', r.counts.warning || 0], ['ⓘ Info', r.counts.info || 0]].map(([l, n]) => `<div class="db-tile"><span class="db-tile-n">${n}</span><span class="db-tile-l">${l}</span></div>`).join('')}</div>
       <section class="db-card"><h3>By severity</h3>${dbSevBar(r.counts)}<div class="db-status small">${[['open', 'Open'], ['clarification', 'For clarification'], ['hold', 'On hold'], ['done', 'Done'], ['false', 'False alarm']].map(([v, l]) => `<span>${l} <b>${st(v)}</b></span>`).join('')}<span class="faint">status ${x.now ? 'now' : 'at the time of the scan'}</span></div></section>
       <section class="db-card"><h3>By category</h3>${dbHBars(Object.values(cats).sort((a, b) => b.n - a.n), null, 'No items.')}</section>
@@ -12693,7 +12703,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
     const cats = {}; r.items.forEach((i) => { const c = cats[i.g] || (cats[i.g] = { k: i.g, n: 0 }); c.n++; });
     const st = (v) => r.items.filter((i) => i.st === v).length;
     return repDoc(`Scan report: ${s.businessName || s.siteId}`, `<h1>Scan report: ${esc(s.businessName || s.siteId)}</h1>
-      <div class="muted">${esc(repName(x))}${r.pages ? ` · ${r.pages} pages` : ''}${r.by ? ` · by ${esc(r.by)}` : ''}${r.cv ? ` · checks v${r.cv}` : ''}</div>
+      <div class="muted">${esc(repName(x))}${r.pages ? ` · ${r.pages} pages` : ''}${r.ms || x.ms ? ` · took ${fmtTook(r.ms || x.ms)}` : ''}${r.by ? ` · by ${esc(r.by)}` : ''}${r.cv ? ` · checks v${r.cv}` : ''}</div>
       <div class="db-tiles">${[['Items found', r.items.length], ['Critical', r.counts.critical || 0], ['Warning', r.counts.warning || 0], ['Info', r.counts.info || 0]].map(([l, n]) => `<div class="db-tile"><span class="db-tile-n">${n}</span><span class="db-tile-l">${l}</span></div>`).join('')}</div>
       <div class="db-card"><h3>By severity</h3>${dbSevBar(r.counts)}<div class="db-status">${[['open', 'Open'], ['clarification', 'For clarification'], ['hold', 'On hold'], ['done', 'Done'], ['false', 'False alarm']].map(([v, l]) => `<span>${l} <b>${st(v)}</b></span>`).join('')}</div></div>
       <div class="db-card"><h3>By category</h3>${dbHBars(Object.values(cats).sort((a, b) => b.n - a.n), null, 'No items.')}</div>
@@ -12746,12 +12756,12 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
           ${first && last && first !== last ? `<p class="db-since">Since the first scan on <b>${esc(dbDate(first.at))}</b>: critical <b>${(first.counts || {}).critical || 0} → ${(last.counts || {}).critical || 0}</b> ${dbChange((first.counts || {}).critical || 0, (last.counts || {}).critical || 0)}, everything <b>${tot(first)} → ${tot(last)}</b> ${dbChange(tot(first), tot(last))}.</p>` : ''}
           <div class="viz-wrap db-hist">${dbHistory(scans)}</div>
           <div class="table-wrap"><table class="grid db-table">
-            <thead><tr><th>Date</th><th>Tool</th><th title="Critical / errors">Critical</th><th>Warning</th><th title="Info / notices">Info</th><th>Total</th><th title="Against the previous result from the same tool">Change</th><th>Pages</th><th>By</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Tool</th><th title="Critical / errors">Critical</th><th>Warning</th><th title="Info / notices">Info</th><th>Total</th><th title="Against the previous result from the same tool">Change</th><th>Pages</th><th title="How long the scan took">Took</th><th>By</th><th></th></tr></thead>
             <tbody>${scans.map((x, i) => { const p = prevSame(i); return `<tr class="${x.auto ? '' : 'db-row-other'}">
               <td>${esc(dbDate(x.at))}</td><td>${x.auto ? 'Site Auditor' : `<b>${esc(x.tool)}</b>`}${x.partial ? `<div class="small faint" title="${esc(x.partial.join(', '))}">🎯 ${x.partial.length} chosen page${x.partial.length === 1 ? '' : 's'}</div>` : ''}${x.seo ? `<div class="small faint">🔍 SEO auto audit · ${(x.seo.pages || []).length} page${(x.seo.pages || []).length === 1 ? '' : 's'} by ${esc(x.seo.by)}</div>` : ''}${x.note ? `<div class="small faint">${esc(x.note)}</div>` : ''}${x.cv ? `<div class="small faint" title="Version of the checks">checks v${x.cv}</div>` : ''}</td>
               <td>${(x.counts || {}).critical || 0}${(x.counts || {}).outdated ? ` <span class="small faint">+${x.counts.outdated} outdated</span>` : ''}</td><td>${(x.counts || {}).warning || 0}</td><td>${(x.counts || {}).info || 0}</td><td><b>${tot(x)}</b></td>
               <td>${dbChange(p ? tot(p) : 0, tot(x))}${x.auto && (x.fixed || x.added) ? `<div class="small faint">${x.fixed ? `${x.fixed} fixed` : ''}${x.fixed && x.added ? ' · ' : ''}${x.added ? `${x.added} new` : ''}</div>` : ''}</td>
-              <td>${x.pages || '—'}</td><td>${esc(x.byName || nameOf(x.by, '—'))}</td>
+              <td>${x.pages || '—'}</td><td class="nowrap">${x.ms ? fmtTook(x.ms) : '<span class="faint">—</span>'}</td><td>${esc(x.byName || nameOf(x.by, '—'))}</td>
               <td class="db-row-acts">${x.rep ? `<button class="btn sm" data-dbview="${i}" title="Every item this scan found, to look through, download or compare">📋 View</button>` : x.auto ? '<span class="small faint" title="Scanned before scan reports were kept">numbers only</span>' : ''}${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
           <div class="db-acts"><button class="btn sm" id="dbNow" type="button" title="Every item open or closed on this audit today">📋 Today's report</button>${scans.some((x) => x.rep) ? `<button class="btn sm" id="dbFirstNow" type="button" title="What was fixed, what is new and what is still there since the first scan with a report">⇄ ${scans.filter((x) => x.rep).length > 1 ? 'First scan vs today' : 'Scan vs today'}</button>` : ''}${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
             <span class="small faint">Each tool counts differently, so a result is only compared with an earlier result from the same tool.</span></div>

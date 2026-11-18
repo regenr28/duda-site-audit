@@ -2450,3 +2450,5 @@ table.findings .rw-status select { max-width: 150px; }
 .nap-miss .nap-m { background: var(--warn-soft); color: var(--warn); }
 .nap-unk .nap-m { background: var(--panel-2); color: var(--muted); }
 .nap-guide { margin-top: 14px; } .nap-guide ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 5px; }
+.nowrap { white-space: nowrap; }
+.scan-clock { font-variant-numeric: tabular-nums; }
