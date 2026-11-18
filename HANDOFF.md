@@ -365,3 +365,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `pvLivePills(s, f)` in the list WHERE cell and the drawer (+ `.pvl-say` sentence); AUTO_LIVE items use `f.autoLive.gone`. Styles `.dev.pvl-t/o/u`.
 - `fragmentText(f)` falls back to `f.found` (4–80 chars); Show on preview/live add `&t=<words>` to `#dsa=`; HIGHLIGHT_BM finds the element by those words when the selector is missing on the page (bookmark must be dragged again).
 - Test: `tests/tk/e2e_livecmp.py` (mocked live HTML differs from preview).
+
+## 185 — Both pills always; click to check live
+- `pvLive` always returns both: Preview `t/o/u`, Live `t/o/u/n/x` (n = not compared yet → `<button data-livecmp>` "? Live · check", x = not published via `isPublished(s)`). Manual items: Preview ✗, Live ? .
+- `liveCheckItem(s, f)` (document capture click on `[data-livecmp]`): claims the site, `liveCompare(id, recheckPages(f))`, reloads. `recheckItems` also runs `liveCompare(s.id, paths)`.
+- `liveResults` now only judges items whose pages were read on live (a failed live page → `u`), so a one-page compare no longer marks other pages' items "fine". `liveCompare` returns 'ok' / 'unpublished' / 'error'; partial compares keep earlier results.

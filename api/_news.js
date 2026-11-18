@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-live-check', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'Preview and Live pills on every item, with a one-click live check',
+    what: 'Every audit item now always shows both pills. When an item was not compared with the live website yet (for example an audit scanned before this update), the Live pill says <b>? Live · check</b>: click it to check just that page on the live website, no full rescan needed. <b>⟳ Recheck this item</b> also checks the live website now.',
+    where: ['<b>Walkthrough:</b> open an audit item → under <b>WHERE</b>, click <b>? Live · check</b>.'],
+  },
+  {
     id: '2026-11-19-preview-live', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: 'Each item says whether it is in the editor, on the live website, or both',
     what: 'After a scan of a published website, the app reads the same pages on the live website and puts two pills under <b>WHERE</b>: <b>Preview</b> and <b>Live</b>. A red ✗ means the problem is there, a green ✓ means it is fine. So you can tell at a glance whether visitors see a problem, or whether it is only waiting to be published. <b>🌐 Show on live</b> and <b>Show on preview</b> now also scroll to the item\'s words when the element has no id.',

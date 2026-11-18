@@ -57,6 +57,24 @@ try:
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('table.findings', timeout=15000); time.sleep(0.8)
         row = pg.inner_text(f'table.findings tr:has-text("Phone")').strip() if pg.locator('table.findings tr:has-text("Phone")').count() else pg.inner_text('table.findings tbody tr >> nth=0')
         check('✗ Preview' in row and '✗ Live' in row, 'the list shows both pills too (a problem in both places)')
+        # An audit never compared with the live website: both pills still show, and the Live one can be checked by a click.
+        pg.evaluate("async () => { const s = await (await fetch('/api/store?op=site&id=s1')).json(); return s; }")
+        redis_key = 'dsa:site:s1'
+        raw = redis(['GET', redis_key])[0]
+        if raw and raw.startswith('{'):
+            d = json.loads(raw); d.pop('live', None); redis(['SET', redis_key, json.dumps(d)])
+        else:
+            pg.evaluate("async () => fetch('/api/store', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({op:'saveLive', id:'s1', live:{domain:'www.buffandbeyond.com', res:{}}})})")
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/item/{lo["num"]}'); pg.reload(); pg.wait_for_selector('#drawer .pvl-row', timeout=15000); time.sleep(0.5)
+        d = pg.inner_text('#drawer .pvl-row')
+        print('  before check:', d, flush=True)
+        check('Preview' in d and 'Live' in d and '? Live' in d, 'with no comparison yet, both pills show (Live: "? Live · check")')
+        pg.click('#drawer [data-livecmp]')
+        for _ in range(40):
+            time.sleep(0.5)
+            if '✓ Live' in pg.inner_text('#drawer .pvl-row'): break
+        print('  after check:', pg.inner_text('#drawer .pvl-row'), flush=True)
+        check('✓ Live' in pg.inner_text('#drawer .pvl-row'), 'clicking it reads that page on the live website and shows ✓ Live')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

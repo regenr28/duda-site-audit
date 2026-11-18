@@ -2392,4 +2392,7 @@ ol.ln-list { list-style: none; }
 .dev.pvl-t { background: var(--crit-soft); color: var(--crit); border-color: transparent; }
 .dev.pvl-o { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .dev.pvl-u { background: transparent; color: var(--faint); border-style: dashed; }
+.dev.pvl-n { background: transparent; color: var(--muted); border: 1px dashed var(--border-strong); cursor: pointer; font: inherit; }
+.dev.pvl-n:hover { color: var(--accent); border-color: var(--accent); }
+.dev.pvl-x { background: transparent; color: var(--faint); }
 .pvl-say { margin-top: 2px; max-width: 280px; }

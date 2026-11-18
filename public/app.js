@@ -10066,12 +10066,19 @@
    * Is the problem in the editor (preview), on the live website, or both? Two small pills under Where.
    * Preview = what the last scan read; Live = the comparison made right after it on the published website.
    */
+  /** Is the website published? true / false / null (not known yet). */
+  function isPublished(s) {
+    const pd = (pubInfo[s.id] || {}).d;
+    if (pd) return !!pd.domain && /PUBLISHED/i.test(pd.publishStatus || '') && !/NOT_PUBLISHED|UNPUBLISHED/i.test(pd.publishStatus || '');
+    return liveDomain(s) || (s.live && s.live.domain) ? true : null;
+  }
+  // Preview and Live are always both shown. t = the problem is there (red), o = fine there (green),
+  // u = could not be compared, n = not compared yet (click to check), x = not published (no live website).
   function pvLive(s, f) {
-    if (f.manual && f.code !== 'AUTO_LIVE') return null;
     const L = s && s.live; const asOf = L && L.at ? ` (compared ${fmtFull(L.at)})` : '';
-    const pv = f.code === 'AUTO_LIVE' ? '' : f.gone ? 'o' : 't';
-    const lv = f.code === 'AUTO_LIVE' ? (f.autoLive && f.autoLive.gone ? 'o' : 't') : (L && L.res && L.res[f.id]) || '';
-    if (!pv && !lv) return null;
+    const pv = f.code === 'AUTO_LIVE' ? 'u' : f.gone ? 'o' : 't';
+    let lv = f.code === 'AUTO_LIVE' ? (f.autoLive && f.autoLive.gone ? 'o' : 't') : (L && L.res && L.res[f.id]) || '';
+    if (!lv) lv = isPublished(s) === false ? 'x' : f.manual ? 'u' : 'n';
     const both = pv === 't' && lv === 't', onlyEd = pv === 't' && lv === 'o', onlyLive = pv === 'o' && lv === 't';
     const say = both ? 'In the editor and on the live website: visitors see it.'
       : onlyEd ? 'Only in the editor: the live website is fine (the change is not published yet, or it was fixed on live another way).'
@@ -10081,7 +10088,16 @@
   }
   function pvLivePills(s, f) {
     const r = pvLive(s, f); if (!r) return '';
-    const pill = (where, st) => !st ? '' : `<span class="dev pvl pvl-${st}" title="${esc(where === 'Preview' ? (st === 't' ? 'Found in the editor (the preview the scan read)' : 'No longer in the editor') : st === 't' ? 'Also on the live website' + r.asOf : st === 'o' ? 'Not on the live website' + r.asOf : 'Could not be compared on the live website' + r.asOf)}">${st === 't' ? '✗' : st === 'o' ? '✓' : '?'} ${where}</span>`;
+    const tip = (where, st) => where === 'Preview'
+      ? (st === 't' ? (f.manual ? 'Reported in the editor (written by hand)' : 'Found in the editor (the preview the scan read)') : st === 'o' ? 'No longer in the editor' : 'Found by the live audit, not by a preview scan')
+      : st === 't' ? 'Also on the live website' + r.asOf : st === 'o' ? 'Fine on the live website' + r.asOf
+      : st === 'x' ? 'The website is not published yet, so there is no live website'
+      : st === 'n' ? 'Not compared with the live website yet. Click to check this page on the live website.'
+      : f.manual ? 'Written by hand: the app cannot check it on the live website' : 'Could not be compared on the live website (needs a person to look, or the page did not load there)' + r.asOf;
+    const sym = (st) => st === 't' ? '✗' : st === 'o' ? '✓' : st === 'x' ? '–' : '?';
+    const pill = (where, st) => st === 'n' && can('site.scan')
+      ? `<button type="button" class="dev pvl pvl-n" data-livecmp="${esc(f.id)}" title="${esc(tip(where, st))}">? ${where} · check</button>`
+      : `<span class="dev pvl pvl-${st === 'n' ? 'u' : st}" title="${esc(tip(where, st))}">${sym(st)} ${where}</span>`;
     return `<div class="pvl-row">${pill('Preview', r.pv)}${pill('Live', r.lv)}</div>`;
   }
   function devChips(f) {
@@ -10418,7 +10434,7 @@
       const pagesMeta = {};
       try { const meta = await sApi('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); } catch (e) { log.push('Duda pages list unavailable: ' + e.message); }
       const res = await A.runScan({
-        siteId: s.siteId, host: info.domain, truth: A.truthWithout(s.truth, s.allow), allow: s.allow || [], pagesMeta, seedPaths: paths || (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: paths ? paths.length : Math.max(10, (s.pages || []).length + 5),
+        siteId: s.siteId, host: info.domain, truth: A.truthWithout(s.truth, s.allow), allow: s.allow || [], pagesMeta, seedPaths: paths || (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: paths ? paths.length + (paths.includes('/') ? 0 : 1) : Math.max(10, (s.pages || []).length + 5),
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ live: '1', domain: info.domain, site: s.siteId, path, device });
           for (let attempt = 0; attempt < 3; attempt++) {
@@ -10442,8 +10458,14 @@
   /** Each item against the live website: 't' it is there too, 'o' it is not (fine on live), 'u' can't be told. */
   function liveResults(s, res, aiGap) {
     const keys = new Set(res.findings.map(vKey)); const out = {};
+    const read = new Set(), failed = new Set();
+    (res.pages || []).forEach((p) => (p.error || p.notFound ? failed : read).add(A.normalizePath(p.path)));
     (s.findings || []).forEach((f) => {
       if (f.gone || f.manual || /^AI_PENDING/.test(f.code)) return;
+      // Only pages that were read on the live website say anything; a page that did not load there is "unknown".
+      const pages = (f.pages && f.pages.length ? f.pages : [f.path || '/']).map((p) => A.normalizePath(p));
+      if (pages.some((p) => failed.has(p))) { out[f.id] = 'u'; return; }
+      if (!pages.some((p) => read.has(p))) return;
       // Colour contrast needs a picture of the page and the live read reads the code only.
       out[f.id] = /^CONTRAST_/.test(f.code) ? 'u' : keys.has(vKey(f)) ? 't' : (f.ai && aiGap ? 'u' : 'o');
     });
@@ -10457,18 +10479,20 @@
     if (window.DemoMode && window.DemoMode.on()) return;
     const { sApi } = siteApi(id);
     let s, info;
-    try { s = await api('/api/store?op=site&id=' + encodeURIComponent(id)); info = await sApi('/api/site?light=1&editor=' + encodeURIComponent(s.editorUrl)); } catch (e) { return; }
+    try { s = await api('/api/store?op=site&id=' + encodeURIComponent(id)); info = await sApi('/api/site?light=1&editor=' + encodeURIComponent(s.editorUrl)); } catch (e) { return 'error'; }
     pubInfo[id] = { at: Date.now(), d: info };
-    if (!info.domain || !/PUBLISHED/i.test(info.publishStatus || '') || /NOT_PUBLISHED|UNPUBLISHED/i.test(info.publishStatus || '')) return;
+    if (!info.domain || !/PUBLISHED/i.test(info.publishStatus || '') || /NOT_PUBLISHED|UNPUBLISHED/i.test(info.publishStatus || '')) return 'unpublished';
     const log = [];
     state.scanning[id] = Object.assign({}, state.scanning[id], { done: 0, total: 0, message: `🌐 Comparing with the live website ${info.domain}…` }); renderProgress(id);
     try {
       const { res, aiGap } = await liveRead(s, info, log, paths, (p) => { state.scanning[id] = Object.assign({}, p, { message: '🌐 Live website · ' + p.message }); renderProgress(id); });
       const lr = liveResults(s, res, aiGap);
       // A scan of chosen pages compares only those pages: the rest keep what the last comparison said.
-      if (paths && s.live && s.live.res) { const keep = new Set(paths.map((p) => A.normalizePath(p))); (s.findings || []).forEach((f) => { if (!(f.id in lr) && s.live.res[f.id] && !((f.pages && f.pages.length ? f.pages : [f.path || '/']).every((p) => keep.has(A.normalizePath(p))))) lr[f.id] = s.live.res[f.id]; }); }
+      // Items on pages this read did not cover keep what the last comparison said.
+      if (paths && s.live && s.live.res) (s.findings || []).forEach((f) => { if (!(f.id in lr) && s.live.res[f.id]) lr[f.id] = s.live.res[f.id]; });
       await store({ op: 'saveLive', id, live: { domain: info.domain, publishedAt: info.publishedAt || '', pages: res.pages.length, res: lr } });
-    } catch (e) { console.error(e); }
+      return 'ok';
+    } catch (e) { console.error(e); return 'error'; }
   }
   async function verifyLive(s) {
     const { sApi, sPost } = siteApi(s.id);
@@ -10533,6 +10557,28 @@
   const recheckPages = (f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).map((p) => A.normalizePath(p));
   const looseKey = (f) => [f.code, f.found || '', f.message, (f.pages && f.pages.length > 1) ? '*' : (f.path || '/')].join('|');
 
+  /** The "? Live · check" pill: reads this item's pages on the live website and fills in the Live pills. */
+  async function liveCheckItem(s, f) {
+    if (!can('site.scan')) return toast('Your role does not allow scanning websites.');
+    if (state.scanning[s.id] || state.verifying) return toast('This website is already being scanned. Try again when it finishes.');
+    const got = await store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => ({ ok: [] }));
+    if (!(got.ok || []).includes(s.id)) return toast(claimText((got.taken || [])[0] || {}) + '. Try again when it finishes.');
+    const paths = recheckPages(f);
+    state.scanning[s.id] = { done: 0, total: 0, message: '🌐 Checking the live website…' }; renderSite();
+    let r = 'error';
+    try { r = await liveCompare(s.id, paths); }
+    finally {
+      releaseScan([s.id]); delete state.scanning[s.id];
+      if (state.current && state.current.id === s.id) { await loadSite(s.id); renderSite(); }
+    }
+    toast(r === 'ok' ? `Compared ${paths.length === 1 ? 'this page' : paths.length + ' pages'} with the live website` : r === 'unpublished' ? 'This website is not published yet, so there is no live website to compare with.' : "Couldn't read the live website. Try again in a moment.");
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('[data-livecmp]'); if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    const s = state.current; const f = s && (s.findings || []).find((x) => x.id === b.dataset.livecmp);
+    if (f) liveCheckItem(s, f);
+  }, true);
   async function recheckItems(s, ids) {
     if (!can('item.status')) return toast('Your role does not allow changing audit item statuses.');
     if (state.scanning[s.id] || state.verifying) return toast('This website is already being scanned. Try again when it finishes.');
@@ -10608,6 +10654,7 @@
       if (unknown.length) parts.push(`${unknown.length} couldn't be checked${aiGap ? ' (AI unavailable right now)' : ''}`);
       if (skipped.length) parts.push(`${skipped.length} skipped`);
       toast(`Recheck ${label}: ${parts.join(' · ') || 'nothing changed'}`);
+      await liveCompare(s.id, paths);
     } catch (e) { console.error(e); toast('Recheck failed: ' + (e.message || e)); }
     finally {
       clearInterval(beat); releaseScan([s.id]); delete state.scanning[s.id];
