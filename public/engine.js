@@ -428,6 +428,15 @@
         'The AI\u2019s answer "should open the page it is already on" is never used: that is not a fix for a link',
       ],
     },
+    {
+      v: 36,
+      date: '2026-11-19',
+      title: 'A "Button" hidden any way is not a label left on the page',
+      items: [
+        'A gallery caption\u2019s "Button" hidden with visibility:hidden (not only display:none) is no longer reported: visitors never see it and screen readers skip it',
+        'Blog posts are recognised from the page itself, so "Show in editor" opens them where the editor keeps them (/blog/<post>)',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1954,10 +1963,10 @@
         const m = t.match(re);
         if (m) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: label, found: cut(t, 160) });
       }
-      // A "Button" hidden with display:none is part of Duda's widget kept in the code (a gallery with
-      // captions switched off keeps one per picture), not something left on the page. Every other
-      // default label, and a "Button" hidden any other way, is still reported.
-      if (DEFAULT_LABEL.test(t) && !(t === 'Button' && /display:\s*none/i.test(hiddenReason(el, device) || ''))) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: `Duda's default label left on the page ("${t}")`, found: t, expected: 'Real wording, or remove the element' });
+      // A hidden "Button" (display:none or visibility:hidden) is part of Duda's widget kept in the code
+      // (a gallery with captions switched off keeps one per picture): visitors never see it and screen
+      // readers skip it. Every other default label is still reported, hidden or not.
+      if (DEFAULT_LABEL.test(t) && !(t === 'Button' && hiddenReason(el, device))) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: `Duda's default label left on the page ("${t}")`, found: t, expected: 'Real wording, or remove the element' });
       const cm = t.match(/(?:©|\(c\)|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})\s*(.{0,70})/i);
       if (cm) {
         const yr = parseInt(cm[1], 10);
@@ -3058,6 +3067,9 @@
           const doc = parser.parseFromString(res.html, 'text/html');
           const r = auditDocument(doc, { device, path, pageUrl: res.url || `https://${opts.host}/site/${opts.siteId}${path === '/' ? '' : path}`, truth, siteId: opts.siteId, host: opts.host, noIndex: pagesMeta[path] && pagesMeta[path].noIndex, copy: !!opts.keepCopy && device === devices[0] });
           if (r.notFound) { info.notFound = true; break; }
+          // A blog post: Duda says so in the page (its layout is BLOG_LAYOUT, its parts are bound to the post).
+          // Its address has no /blog/ in it, but the editor opens it under /blog/<post>.
+          if (/pageType\s*:\s*['"]BLOG_LAYOUT['"]/.test(res.html) || doc.querySelector('[data-blog-template], [data-blog-post-alias]')) info.blog = true;
           info.title = info.title || r.meta.title;
           info.h1 = info.h1 || (r.meta.h1 || [])[0] || '';
           info.description = info.description || r.meta.description;
@@ -3234,7 +3246,7 @@
       fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 14) } : null,
       photos: photoSys,
       findings: merged,
-      pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', h1: p.h1 || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [] })),
+      pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', h1: p.h1 || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [], ...(p.blog ? { blog: true } : {}) })),
       links: Array.from(linkMap.values()),
       // For the AI read of whether each page fits its address. Not saved with the audit.
       // Buttons on each page, in order (desktop). Not saved with the audit.

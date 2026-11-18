@@ -14,7 +14,7 @@ N = 400
 F = [{'id': f'f{i}', 'num': i + 1, 'code': 'PLACEHOLDER', 'severity': 'warning' if i % 3 else 'critical', 'category': 'Content', 'message': f'Item number {i + 1} on the page',
       'found': f'text {i}', 'path': f'/page-{i % 20}', 'device': 'desktop', 'devices': ['desktop'], 'visibleOn': ['desktop'], 'selector': f'[id="x{i}"]', 'location': 'Body', 'status': 'open', 'visible': True} for i in range(N)]
 site = json.loads(redis(['GET', 'dsa:site:s1'])[0])
-site.update({'findings': F, 'scan': {'state': 'complete', 'finishedAt': '2026-11-16T10:00:00Z', 'startedAt': '2026-11-16T09:50:00Z', 'pages': 20}})
+site.update({'pages': [{'path': '/page-4', 'blog': True, 'title': 'A blog post'}], 'findings': F, 'scan': {'state': 'complete', 'finishedAt': '2026-11-16T10:00:00Z', 'startedAt': '2026-11-16T09:50:00Z', 'pages': 20}})
 redis(['SET', 'dsa:site:s1', json.dumps(site)])
 ok = True
 def check(c, label):
@@ -83,11 +83,12 @@ try:
         u1 = ed.url
         pg.bring_to_front(); pg.goto(f'http://localhost:{APORT}/#/site/s1/item/5'); pg.wait_for_selector('#drawer [data-editat]', timeout=15000); time.sleep(0.5)
         pg.locator('#drawer [data-editat]').first.click()
-        try: ed.wait_for_url('**/page-4', timeout=10000)
+        try: ed.wait_for_url('**/blog/page-4', timeout=10000)
         except Exception: pass
         time.sleep(0.5)
         print('  editor tabs:', [x.url for x in ctx.pages], flush=True)
         check(len(ctx.pages) == 2 and ed.url != u1 and '/page-4' in ed.url and '/page-1' in u1, 'Show in editor on the next item loads it in the same editor tab (no new tab)')
+        check(ed.url.endswith('/home/site/abc123/blog/page-4') and u1.endswith('/home/site/abc123/page-1'), 'a blog post opens in the editor under /blog/<post>; a normal page does not: ' + ed.url)
         # And Show on preview does the same with its own tab.
         pg.locator('#drawer [data-prevat]').first.click(); time.sleep(1)
         n3 = len(ctx.pages)

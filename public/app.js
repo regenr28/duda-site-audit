@@ -10079,7 +10079,10 @@
   /** The Duda editor page for a path: /home/site/<id>/<page>, same editor host as the saved editor link. */
   function editorUrl(site, path) {
     const origin = 'https://' + linkHost(site);
-    const page = !path || path === '/' ? 'home' : String(path).replace(/^\/+/, '').replace(/\/+$/, '');
+    let page = !path || path === '/' ? 'home' : String(path).replace(/^\/+/, '').replace(/\/+$/, '');
+    // A blog post's address has no /blog/ in it, but the editor keeps it under /blog/<post>.
+    const pg = (site.pages || []).find((x) => x && x.path === path);
+    if (pg && pg.blog && !/^blog\//i.test(page)) page = 'blog/' + page;
     return `${origin}/home/site/${site.siteId}/${page}`;
   }
   /** Text the browser can jump to and highlight by itself (Chrome/Edge/Safari "text fragments"). */

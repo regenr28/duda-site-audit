@@ -98,5 +98,19 @@ with sync_playwright() as p:
     }""")
     print('  links:', lk, flush=True)
     check(lk == ['a2'], 'a "PPF" link to the PPF page is fine on any page, and "should open the page it is on" is dropped; a real wrong link is kept: ' + str(lk))
+    bl = pg.evaluate("""async () => {
+      const A = window.DudaAudit;
+      const post = `<html><head><title>Dust | Shop</title><script>window.Parameters = { pageType: 'BLOG_LAYOUT', InitialPageAlias: 'd1-internal-blog-post' };</script></head><body data-page-alias="d1-internal-blog-post"><div id="dmcontent"><h1>How ceramic coating protects</h1><p>Ceramic coating works by bonding with the paint.</p>
+        <ul style="display:none"><li style="visibility:hidden"><a style="visibility:hidden"><span class="text" id="hb1" style="visibility:hidden">Button</span></a></li></ul>
+        <div style="visibility:hidden"><span id="hb2">Button</span></div></div></body></html>`;
+      const page = `<html><head><title>Home | Shop</title></head><body><div id="dmcontent"><h1>Shop</h1><p>Hello there friends.</p><a href="/how-ceramic-coating-protects">Read</a></div></body></html>`;
+      const truth = A.buildTruth({ site: { site_business_info: { business_name: 'Shop' } }, content: {} }, null, null);
+      const res = await A.runScan({ siteId: 'abc', host: 'x', truth, pagesMeta: {}, seedPaths: ['/', '/how-ceramic-coating-protects'], maxPages: 2, devices: ['desktop'], concurrency: 1,
+        fetchPage: async (p) => ({ status: 200, html: p === '/' ? page : post, url: 'https://x/site/abc' + p }), checkUrls: async () => [], imageHashes: async () => ({}), saveImageHashes: async () => {} });
+      return { pages: res.pages.map((p) => p.path + ':' + !!p.blog), labels: res.findings.filter((f) => /default label/.test(f.message)).length };
+    }""")
+    print('  blog:', bl, flush=True)
+    check('/how-ceramic-coating-protects:true' in bl['pages'] and '/:false' in bl['pages'], 'a blog post is recognised from the page itself (BLOG_LAYOUT), its address has no /blog/')
+    check(bl['labels'] == 0, 'a "Button" hidden with visibility:hidden is not a default label left on the page either')
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED')

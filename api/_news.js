@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-blog-editor', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'Blog posts open in the right place in the editor; hidden gallery "Button"s are gone',
+    what: '<b>✎ Show in editor</b> on a blog post now opens it where the Duda editor keeps it (<span class="mono">/blog/&lt;post&gt;</span>); the app recognises a blog post from the page itself, even though its address has no /blog/ in it. A gallery\'s hidden "Button" is no longer reported however it is hidden. Rescan an audit once to get both.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⟳ Rescan</b>.'],
+  },
+  {
     id: '2026-11-18-demo-exit', date: '2026-11-18', audience: 'all', tag: 'Demo mode',
     title: 'Demo mode: no bar on the screen, Exit demo is in your profile',
     what: 'Demo mode no longer shows a bar at the bottom of the screen, so the people watching only see the app. To end it, click your profile (your photo, bottom left): <b>Exit demo</b> is at the bottom.',
