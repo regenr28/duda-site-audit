@@ -7250,6 +7250,8 @@
           }
         } catch (e) { /* the scan is saved either way */ }
       }
+      // The same pages on the live website, so each item says whether visitors see the problem too.
+      await liveCompare(id, only || null);
       upsertSummary(sum);
       toast(`Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
     } catch (e) {
@@ -10060,6 +10062,28 @@
   // SITE DETAIL
   // =====================================================================
   const effWho = (f, s) => f.assignee || s.assignee || '';
+  /**
+   * Is the problem in the editor (preview), on the live website, or both? Two small pills under Where.
+   * Preview = what the last scan read; Live = the comparison made right after it on the published website.
+   */
+  function pvLive(s, f) {
+    if (f.manual && f.code !== 'AUTO_LIVE') return null;
+    const L = s && s.live; const asOf = L && L.at ? ` (compared ${fmtFull(L.at)})` : '';
+    const pv = f.code === 'AUTO_LIVE' ? '' : f.gone ? 'o' : 't';
+    const lv = f.code === 'AUTO_LIVE' ? (f.autoLive && f.autoLive.gone ? 'o' : 't') : (L && L.res && L.res[f.id]) || '';
+    if (!pv && !lv) return null;
+    const both = pv === 't' && lv === 't', onlyEd = pv === 't' && lv === 'o', onlyLive = pv === 'o' && lv === 't';
+    const say = both ? 'In the editor and on the live website: visitors see it.'
+      : onlyEd ? 'Only in the editor: the live website is fine (the change is not published yet, or it was fixed on live another way).'
+      : onlyLive ? 'Fixed in the editor, still on the live website: publish the website to fix it for visitors.'
+      : pv === 'o' && lv === 'o' ? 'Fixed in the editor and on the live website.' : '';
+    return { pv, lv, say, asOf };
+  }
+  function pvLivePills(s, f) {
+    const r = pvLive(s, f); if (!r) return '';
+    const pill = (where, st) => !st ? '' : `<span class="dev pvl pvl-${st}" title="${esc(where === 'Preview' ? (st === 't' ? 'Found in the editor (the preview the scan read)' : 'No longer in the editor') : st === 't' ? 'Also on the live website' + r.asOf : st === 'o' ? 'Not on the live website' + r.asOf : 'Could not be compared on the live website' + r.asOf)}">${st === 't' ? '✗' : st === 'o' ? '✓' : '?'} ${where}</span>`;
+    return `<div class="pvl-row">${pill('Preview', r.pv)}${pill('Live', r.lv)}</div>`;
+  }
   function devChips(f) {
     return A.DEVICES.map((d) => {
       if (!(f.devices || []).includes(d)) return '';
@@ -10087,7 +10111,11 @@
   }
   /** Text the browser can jump to and highlight by itself (Chrome/Edge/Safari "text fragments"). */
   function fragmentText(f) {
-    if (!f.snippet || /^<(img|meta|iframe)\b/i.test(f.snippet)) return '';
+    // No usable snippet: the words found (a phone number, a name) are on the page too, so the browser can find those.
+    if (!f.snippet || /^<(img|meta|iframe)\b/i.test(f.snippet)) {
+      const w = String(f.found || '').replace(/^"|"$/g, '').replace(/\s+/g, ' ').trim();
+      return w.length >= 4 && w.length <= 80 && !/^(https?:|\/|<|#)/.test(w) && !/ → /.test(w) ? w : '';
+    }
     let t = f.snippet.replace(/^<a [^>]*>/i, '').replace(/<\/a>$/i, '').split('…')[0].replace(/\s+/g, ' ').trim();
     if (t.length < 4) return '';
     const words = t.split(' ');
@@ -10097,10 +10125,10 @@
   function previewAtItem(site, f) {
     const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
     const txt = fragmentText(f);
-    return previewUrl(site, f.path, dev) + '#dsa=' + encodeURIComponent(f.selector || '') + (txt ? ':~:text=' + encodeURIComponent(txt).replace(/-/g, '%2D') : '');
+    return previewUrl(site, f.path, dev) + '#dsa=' + encodeURIComponent(f.selector || '') + (txt ? '&t=' + encodeURIComponent(txt).replace(/[-:]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + ':~:text=' + encodeURIComponent(txt).replace(/-/g, '%2D') : '');
   }
   // One-time bookmark that outlines an element on the preview or in the editor (both are other websites, so the app can't reach in)
-  const HIGHLIGHT_BM = `javascript:(async()=>{let s=decodeURIComponent((location.hash.match(/dsa=([^&:]+)/)||[])[1]||'');if(!s){try{s=(await navigator.clipboard.readText()).trim()}catch(e){}}if(!s||s.length>400||/\\s{2}|\\n/.test(s))s=prompt('Paste the CSS selector to highlight:',s||'');if(!s)return;const D=[document];const walk=d=>d.querySelectorAll('iframe').forEach(f=>{try{const c=f.contentDocument;if(c){D.push(c);walk(c)}}catch(e){}});walk(document);let el=null;for(const d of D){try{el=d.querySelector(s)}catch(e){alert('That is not a valid CSS selector.');return}if(el)break}if(!el){alert('Not found on this view. Switch to the device this item is on (Desktop, Tablet or Mobile), or open the side panel, then click the bookmark again.');return}el.scrollIntoView({block:'center',behavior:'smooth'});const o=el.style.outline,oo=el.style.outlineOffset;el.style.outline='4px solid %23e11d48';el.style.outlineOffset='3px';let n=0;const t=setInterval(()=>{el.style.outline=(n++%252?'4px solid %23e11d48':'4px solid %23fbbf24');if(n>7){clearInterval(t);el.style.outline='4px solid %23e11d48'}},350);setTimeout(()=>{el.style.outline=o;el.style.outlineOffset=oo},15000);const r=el.getBoundingClientRect();if(!r.width&&!r.height)alert('Found it, but it is hidden on this view (e.g. inside the side panel or a closed section). Open it, then click the bookmark again.')})()`;
+  const HIGHLIGHT_BM = `javascript:(async()=>{let s=decodeURIComponent((location.hash.match(/dsa=([^&:]+)/)||[])[1]||'');const tx=decodeURIComponent((location.hash.match(/[&]t=([^&:]+)/)||[])[1]||'');if(!s){try{s=(await navigator.clipboard.readText()).trim()}catch(e){}}if(!s||s.length>400||/\\s{2}|\\n/.test(s))s=prompt('Paste the CSS selector to highlight:',s||'');if(!s)return;const D=[document];const walk=d=>d.querySelectorAll('iframe').forEach(f=>{try{const c=f.contentDocument;if(c){D.push(c);walk(c)}}catch(e){}});walk(document);let el=null;for(const d of D){try{el=d.querySelector(s)}catch(e){alert('That is not a valid CSS selector.');return}if(el)break}if(!el&&tx){for(const d of D){const w=d.createTreeWalker(d.body,4);let n;while((n=w.nextNode())){if(n.nodeValue&&n.nodeValue.replace(/\\s+/g,' ').includes(tx)){el=n.parentElement;break}}if(el)break}}if(!el){alert('Not found on this view. Switch to the device this item is on (Desktop, Tablet or Mobile), or open the side panel, then click the bookmark again.');return}el.scrollIntoView({block:'center',behavior:'smooth'});const o=el.style.outline,oo=el.style.outlineOffset;el.style.outline='4px solid %23e11d48';el.style.outlineOffset='3px';let n=0;const t=setInterval(()=>{el.style.outline=(n++%252?'4px solid %23e11d48':'4px solid %23fbbf24');if(n>7){clearInterval(t);el.style.outline='4px solid %23e11d48'}},350);setTimeout(()=>{el.style.outline=o;el.style.outlineOffset=oo},15000);const r=el.getBoundingClientRect();if(!r.width&&!r.height)alert('Found it, but it is hidden on this view (e.g. inside the side panel or a closed section). Open it, then click the bookmark again.')})()`;
   function openHighlighterHelp() {
     modal(`<header><h2>One-click highlighter</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body">
@@ -10153,7 +10181,9 @@
     const dom = f.liveDomain || (site && liveDomain(site)) || (!pd && site && site.truth && site.truth.domain) || '';
     if (!dom) return '';
     const txt = fragmentText(f);
-    return `https://${dom}${!f.path || f.path === '/' ? '/' : f.path}#dsa=${encodeURIComponent(f.selector || '')}${txt ? ':~:text=' + encodeURIComponent(txt).replace(/-/g, '%2D') : ''}`;
+    // #dsa= is the element for ⌖ DSA Highlight (&t= its words, used when the element can't be found by its
+    // selector); :~:text= makes the browser itself scroll to those words and mark them, no bookmark needed.
+    return `https://${dom}${!f.path || f.path === '/' ? '/' : f.path}#dsa=${encodeURIComponent(f.selector || '')}${txt ? '&t=' + encodeURIComponent(txt).replace(/[-:]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + ':~:text=' + encodeURIComponent(txt).replace(/-/g, '%2D') : ''}`;
   }
   const selLinks = (f) => `<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Show on preview</button>${liveAtItem(state.current, f) ? `<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website, as visitors see it">🌐 Show on live</button>` : ''}<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Show in editor</button><button class="linkbtn faint" data-hlhelp title="How to outline the element on the preview or in the editor">?</button>`;
   function bindSelLinks(root, site, list) {
@@ -10378,6 +10408,68 @@
   const vKey = (f) => [f.code, f.path, f.selector].join('|'); // looser than the item ID: live links differ slightly from preview links
   const CLOSED = (f) => f.status === 'done' || f.status === 'false' || f.status === 'exempt';
   const lastDoneAt = (s) => (s.findings || []).filter((f) => f.status === 'done' && f.statusAt).map((f) => f.statusAt).sort().pop() || '';
+  /**
+   * Read the PUBLISHED website with the same checks as a scan (the same pages, or only `paths`).
+   * Returns the findings, and whether the AI could not answer everything (its items then can't be judged).
+   */
+  async function liveRead(s, info, log, paths, onProgress) {
+    const { sApi, sPost } = siteApi(s.id);
+      // Page SEO settings (noindex etc.) come from Duda, like a normal scan
+      const pagesMeta = {};
+      try { const meta = await sApi('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); } catch (e) { log.push('Duda pages list unavailable: ' + e.message); }
+      const res = await A.runScan({
+        siteId: s.siteId, host: info.domain, truth: A.truthWithout(s.truth, s.allow), allow: s.allow || [], pagesMeta, seedPaths: paths || (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: paths ? paths.length : Math.max(10, (s.pages || []).length + 5),
+        fetchPage: async (path, device) => {
+          const q = new URLSearchParams({ live: '1', domain: info.domain, site: s.siteId, path, device });
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try { const r = await sApi('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
+            await new Promise((ok) => setTimeout(ok, 800 * (attempt + 1)));
+          }
+        },
+        checkUrls: (urls) => sPost('/api/check', { urls }),
+        // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
+        imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}),
+        saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }),
+        onProgress,
+      });
+      res.aiSkip = new Set();
+      // Same AI checks as a scan (answers are cached, so unchanged text costs nothing)
+      const aiAlt = await aiAltCheck(res, s.id, log);
+      const aiText = await aiTextCheck(res, s.id, log, aiAlt && aiAlt.paused);
+      const aiGap = !!((aiAlt && aiAlt.pending && aiAlt.pending.length) || (aiText && aiText.pending && aiText.pending.length));
+    return { res, aiGap };
+  }
+  /** Each item against the live website: 't' it is there too, 'o' it is not (fine on live), 'u' can't be told. */
+  function liveResults(s, res, aiGap) {
+    const keys = new Set(res.findings.map(vKey)); const out = {};
+    (s.findings || []).forEach((f) => {
+      if (f.gone || f.manual || /^AI_PENDING/.test(f.code)) return;
+      // Colour contrast needs a picture of the page and the live read reads the code only.
+      out[f.id] = /^CONTRAST_/.test(f.code) ? 'u' : keys.has(vKey(f)) ? 't' : (f.ai && aiGap ? 'u' : 'o');
+    });
+    return out;
+  }
+  /**
+   * After a scan of a PUBLISHED website: the same pages are read on the live website, and each item
+   * says whether the problem is there too. Nothing is changed on the items; it is information.
+   */
+  async function liveCompare(id, paths) {
+    if (window.DemoMode && window.DemoMode.on()) return;
+    const { sApi } = siteApi(id);
+    let s, info;
+    try { s = await api('/api/store?op=site&id=' + encodeURIComponent(id)); info = await sApi('/api/site?light=1&editor=' + encodeURIComponent(s.editorUrl)); } catch (e) { return; }
+    pubInfo[id] = { at: Date.now(), d: info };
+    if (!info.domain || !/PUBLISHED/i.test(info.publishStatus || '') || /NOT_PUBLISHED|UNPUBLISHED/i.test(info.publishStatus || '')) return;
+    const log = [];
+    state.scanning[id] = Object.assign({}, state.scanning[id], { done: 0, total: 0, message: `🌐 Comparing with the live website ${info.domain}…` }); renderProgress(id);
+    try {
+      const { res, aiGap } = await liveRead(s, info, log, paths, (p) => { state.scanning[id] = Object.assign({}, p, { message: '🌐 Live website · ' + p.message }); renderProgress(id); });
+      const lr = liveResults(s, res, aiGap);
+      // A scan of chosen pages compares only those pages: the rest keep what the last comparison said.
+      if (paths && s.live && s.live.res) { const keep = new Set(paths.map((p) => A.normalizePath(p))); (s.findings || []).forEach((f) => { if (!(f.id in lr) && s.live.res[f.id] && !((f.pages && f.pages.length ? f.pages : [f.path || '/']).every((p) => keep.has(A.normalizePath(p))))) lr[f.id] = s.live.res[f.id]; }); }
+      await store({ op: 'saveLive', id, live: { domain: info.domain, publishedAt: info.publishedAt || '', pages: res.pages.length, res: lr } });
+    } catch (e) { console.error(e); }
+  }
   async function verifyLive(s) {
     const { sApi, sPost } = siteApi(s.id);
     if (state.verifying) return toast('A live check is already running');
@@ -10398,29 +10490,7 @@
     state.scanning[s.id] = { done: 0, total: 0, message: `Checking the live site ${info.domain}…` }; renderSite();
     const log = [];
     try {
-      // Page SEO settings (noindex etc.) come from Duda, like a normal scan
-      const pagesMeta = {};
-      try { const meta = await sApi('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); } catch (e) { log.push('Duda pages list unavailable: ' + e.message); }
-      const res = await A.runScan({
-        siteId: s.siteId, host: info.domain, truth: A.truthWithout(s.truth, s.allow), allow: s.allow || [], pagesMeta, seedPaths: (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: Math.max(10, (s.pages || []).length + 5),
-        fetchPage: async (path, device) => {
-          const q = new URLSearchParams({ live: '1', domain: info.domain, site: s.siteId, path, device });
-          for (let attempt = 0; attempt < 3; attempt++) {
-            try { const r = await sApi('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
-            await new Promise((ok) => setTimeout(ok, 800 * (attempt + 1)));
-          }
-        },
-        checkUrls: (urls) => sPost('/api/check', { urls }),
-        // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
-        imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}),
-        saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }),
-        onProgress: (p) => { state.scanning[s.id] = Object.assign({}, p, { message: 'Live site · ' + p.message }); renderProgress(s.id); },
-      });
-      res.aiSkip = new Set();
-      // Same AI checks as a scan (answers are cached, so unchanged text costs nothing)
-      const aiAlt = await aiAltCheck(res, s.id, log);
-      const aiText = await aiTextCheck(res, s.id, log, aiAlt && aiAlt.paused);
-      const aiGap = !!((aiAlt && aiAlt.pending && aiAlt.pending.length) || (aiText && aiText.pending && aiText.pending.length));
+      const { res, aiGap } = await liveRead(s, info, log, null, (p) => { state.scanning[s.id] = Object.assign({}, p, { message: 'Live site · ' + p.message }); renderProgress(s.id); });
       const liveKeys = new Set(res.findings.map(vKey));
       const results = {};
       (s.findings || []).forEach((f) => {
@@ -10432,7 +10502,8 @@
         // The live check reads the code only; colour contrast needs a picture of the page, so it can't say.
         if (f.status === 'done') results[f.id] = /^CONTRAST_/.test(f.code) ? 'unknown' : present ? 'still' : (isAI && aiGap ? 'unknown' : 'ok');
       });
-      const sum = await store({ op: 'saveVerify', id: s.id, verify: { domain: info.domain, publishedAt: info.publishedAt, pages: res.pages.length, results } });
+      const sum = await store({ op: 'saveVerify', id: s.id, verify: { domain: info.domain, publishedAt: info.publishedAt, pages: res.pages.length, results },
+        live: { domain: info.domain, publishedAt: info.publishedAt || '', pages: res.pages.length, res: liveResults(s, res, aiGap) } });
       upsertSummary(sum);
       const v = Object.values(results);
       toast(`Live check done: ${v.filter((x) => x === 'ok').length} confirmed fixed${v.includes('still') ? `, ${v.filter((x) => x === 'still').length} still on the live site` : ''}`);
@@ -11262,7 +11333,7 @@
               <td><span class="badge sev-${f.severity}">${esc(f.severity)}</span><div class="small faint" style="margin-top:4px">${esc(f.category)}</div></td>
               <td style="max-width:200px" data-stop><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small" title="Open ${esc(A.DEVICE_LABEL[dev])} preview">${esc(f.path)}</a>
                 ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more pages</div>` : ''}</td>
-              <td><div class="loc">${esc(f.location)}</div>${devChips(f)}</td>
+              <td><div class="loc">${esc(f.location)}</div>${devChips(f)}${pvLivePills(s, f)}</td>
               <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
                 <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
                 <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
@@ -12698,7 +12769,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
         ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${dupPlaces(f)}${reportNote(f)}${knownNote(f, s)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
-          <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}</div>
+          <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}${pvLivePills(s, f)}${(pvLive(s, f) || {}).say ? `<div class="small faint pvl-say">${esc(pvLive(s, f).say)}</div>` : ''}</div>
           <div class="span2"><div class="k">Unique CSS selector</div>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" id="drInspect2" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
             <button class="btn sm primary" id="drInspect">👁 Show on page</button> <button class="btn sm ghost" data-copy="${esc(f.selector)}">Copy selector</button>
             <button class="btn sm ghost" id="drSnip" title="Copy a console snippet that scrolls to and highlights this element">⌖ Console snippet</button>

@@ -359,3 +359,9 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 
 ## 183 — Show on live
 - `liveAtItem(site, f)` (app.js): `https://<domain><path>#dsa=<selector>` (+ text fragment), domain = `f.liveDomain` (auto-audit items) → `liveDomain(site)` (Duda's answer / DR list) → the scan's `truth.domain` while Duda's answer isn't loaded yet; none → no button. `selLinks` shows **🌐 Show on live**; `bindSelLinks` opens it with `openInTab('live', …)` (one live tab per website). Highlighter help mentions it. Test: `tests/tk/e2e_pick.py`.
+
+## 184 — Preview / Live pills, find the spot by words
+- After every scan of a published website (`scanSiteRun` → `liveCompare(id, only)`), app.js reads the same pages on the live domain (`liveRead`: `A.runScan` with `/api/fetch?live=1` + AI alt/text checks) and maps each item to `t` (also on live) / `o` (fine on live) / `u` (unknown: CONTRAST, manual, AI pending) with `liveResults`. Stored as `site.live = {at, by, domain, publishedAt, pages, res}` by new store op `saveLive` (site.scan permission; `cleanLive`); `saveVerify` (Verify on live) stores it too. Partial rescans merge.
+- `pvLivePills(s, f)` in the list WHERE cell and the drawer (+ `.pvl-say` sentence); AUTO_LIVE items use `f.autoLive.gone`. Styles `.dev.pvl-t/o/u`.
+- `fragmentText(f)` falls back to `f.found` (4–80 chars); Show on preview/live add `&t=<words>` to `#dsa=`; HIGHLIGHT_BM finds the element by those words when the selector is missing on the page (bookmark must be dragged again).
+- Test: `tests/tk/e2e_livecmp.py` (mocked live HTML differs from preview).

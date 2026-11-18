@@ -24,6 +24,12 @@ const GROUP_ADMINS = '*admins';
 const FLABEL = { open: 'Open', clarification: 'For clarification', done: 'Done', hold: 'On hold', false: 'False alarm' };
 const SITE_STATUSES = ['Not started', 'In progress', 'Complete with query', 'Complete', 'On hold'];
 
+/** What the browser says about each item on the live website, kept short and to the three answers. */
+function cleanLive(v, me) {
+  v = v && typeof v === 'object' ? v : {};
+  const out = {}; Object.entries(v.res || {}).slice(0, 5000).forEach(([k, x]) => { if (x === 't' || x === 'o' || x === 'u') out[String(k).slice(0, 60)] = x; });
+  return { at: now(), by: me.email, domain: String(v.domain || '').slice(0, 200), publishedAt: String(v.publishedAt || '').slice(0, 40), pages: Number(v.pages) || 0, res: out };
+}
 /** The first copy of each item ID (also fixes records saved with copies). */
 function uniqById(list) {
   const seen = new Set(); const out = [];
@@ -1301,6 +1307,15 @@ async function handler(req, res) {
         const sum = await saveIndex(b.id);
         return res.status(200).json(Object.assign({}, sum, { closed }));
       }
+      case 'saveLive': {
+        // Each item compared with the live website after a scan: there too ('t'), fine on live ('o'), can't tell ('u').
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
+        const [raw] = await redis(['GET', P + 'site:' + b.id]);
+        const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
+        site.live = cleanLive(b.live, me);
+        await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+        return res.status(200).json(await saveIndex(b.id));
+      }
       case 'saveVerify': {
         // Result of "Verify on live site": which closed items are really gone from the published site
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
@@ -1308,6 +1323,7 @@ async function handler(req, res) {
         const v = b.verify || {};
         const results = {}; Object.entries(v.results || {}).slice(0, 2000).forEach(([k, x]) => { if (['ok', 'still', 'unknown', 'fixed-open'].includes(x)) results[String(k).slice(0, 40)] = x; });
         const count = (t) => Object.values(results).filter((x) => x === t).length;
+        if (b.live) site.live = cleanLive(b.live, me);
         site.verify = { at: now(), by: me.email, byName: me.name, domain: String(v.domain || '').slice(0, 200), publishedAt: String(v.publishedAt || '').slice(0, 40), pages: Number(v.pages) || 0, results,
           ok: count('ok'), still: count('still'), unknown: count('unknown'), fixedOpen: count('fixed-open') };
         site.updatedAt = now();

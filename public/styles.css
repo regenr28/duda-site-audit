@@ -2385,3 +2385,11 @@ ol.ln-list { list-style: none; }
 .scan-chip .sc-spin, .pulse-dot, .spin-dot, .menu-btn.glow, .spin { will-change: transform, opacity; }
 .mk-m.st-sending { animation-name: mkFade; } .mk-dot.st-sending { animation-name: mkFade; } .ac-dot.run { animation-name: mkFade; }
 @keyframes mkFade { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+/* Preview vs live: is the problem in the editor, on the live website, or both? */
+.pvl-row { margin-top: 4px; }
+.dev.pvl { white-space: nowrap; }
+.dev.pvl-t { background: var(--crit-soft); color: var(--crit); border-color: transparent; }
+.dev.pvl-o { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.dev.pvl-u { background: transparent; color: var(--faint); border-style: dashed; }
+.pvl-say { margin-top: 2px; max-width: 280px; }
