@@ -4,6 +4,18 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-apply-updates', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: '⚡ Apply check updates: catch up without a full rescan',
+    what: 'When the checks change after a website was scanned, the note at the top of its <b>Audit items</b> now has <b>⚡ Apply check updates</b>. It runs <b>only the changed checks</b>: a corrected check re-reads just the pages its items are on, a new check reads every page but runs only itself, and the file checks read only robots.txt, sitemap.xml and llms.txt. Everything else is left alone: no AI unless the change needs it, no contrast pictures, no link checks, no Duda backup, and every status, number and comment stays. The note lists, update by update, which items (#numbers) and how many pages will be read before you press it.',
+    where: ['<b>Walkthrough:</b> open an audit scanned before today → the note at the top → <b>What ⚡ Apply check updates will do</b> → <b>⚡ Apply check updates</b>.'],
+  },
+  {
+    id: '2026-11-19-tech-seo-nap', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: '🛠 Technical SEO and 📇 NAP tabs, and automation emails',
+    what: '<b>🛠 Technical SEO</b> gathers what search engines and AI assistants read: structured data (schema) checked the way Google reads it, robots.txt, sitemap.xml and llms.txt (read from the published website), indexing, analytics and icons. <b>📇 NAP</b> puts the business\'s name, address, phone, email and website side by side: Business Info, the website, its schema, llms.txt, and Google, Facebook, Yelp and the other profiles, red where they differ. An email in Business Info that is there for automation (such as <span class="mono">…@robot.zapier.com</span>) is never expected on the website, and is critical wherever it shows.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>Audit results</b> → <b>🛠 Technical SEO</b> or <b>📇 NAP</b> (rescan, or ⚡ Apply check updates, to fill them).'],
+  },
+  {
     id: '2026-11-19-calmer-rows', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: 'A calmer audit list: the problem first',
     what: 'Each audit item in the list now leads with the problem: its title, then <b>Found</b> (red) and <b>Expected</b> (green). Where it is (page, part of the page, Preview / Live) has its own column, and the quick buttons (<b>👁 Page · ▶ Preview · 🌐 Live · ✎ Editor · ⧉ Copy selector · ⟳ Recheck</b>) sit quietly on one line and light up when you point at the item. The full selector, the proof picture and the longer options are in the item\'s panel. Clicking any empty space on an item now opens it, the Status column included.',

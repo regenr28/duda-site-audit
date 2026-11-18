@@ -231,7 +231,7 @@ try:
         after = pg.input_value('#sStatus')
         check(refused and before == after == 'Not started', f'it is view-only: changing the status is refused and nothing is saved ({before!r} → {after!r})')
         nv = pg.evaluate("() => [...document.querySelectorAll('table.findings tr')].map(r => r.innerText).find(t => t.includes('missing the final'))") or ''
-        m = re.search(r'Found: (.+)\n+(?:.*Capture proof.*\n+)?Expected: (.+)', nv)
+        m = re.search(r'Found:?\s*\n?\s*(.+)\n+(?:.*Capture proof.*\n+)?Expected:?\s*\n?\s*(.+)', nv, re.I)
         check(m and m.group(2).strip() == m.group(1).strip() + 's', 'the name slip still reads as a slip with made-up names ("X" found, "Xs" expected): ' + (repr(m.groups()) if m else repr(nv[-200:])))
         pg.set_viewport_size({'width': 390, 'height': 844}); time.sleep(0.5); pg.screenshot(path=os.path.join(OUT, 'demo-phone.png')); pg.set_viewport_size({'width': 1440, 'height': 1000})
         # Exit demo: your profile (bottom left) → Exit demo, at the bottom.

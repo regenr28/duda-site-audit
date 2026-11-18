@@ -2308,6 +2308,115 @@
 
   /** The shortcut from anywhere on the audit: its Audit exceptions tab. */
   function openExceptions(s) { closeDrawer(true); location.hash = `#/site/${encodeURIComponent(s.id)}/exceptions`; }
+  // ---------- 🛠 TECHNICAL SEO: what search engines and AI assistants read ----------
+  function techHeadHtml(s, findings, mineOpen) {
+    const F = s.files || null; const sb = s.schemaBiz || null;
+    const open = (re) => findings.filter((f) => re.test(f.code) && (f.status === 'open' || f.status === 'clarification'));
+    const card = (title, okNow, line, re, help) => {
+      const n = open(re).length;
+      const st = okNow === null ? 'tq-unk' : n ? (open(re).some((f) => f.severity === 'critical') ? 'tq-bad' : 'tq-warn') : okNow ? 'tq-ok' : 'tq-warn';
+      const mark = okNow === null ? '?' : n ? '✗' : okNow ? '✓' : '!';
+      return `<div class="tq-card ${st}" title="${esc(help)}"><div class="tq-h"><span class="tq-m">${mark}</span> ${title}</div><div class="small">${line}</div>${n ? `<div class="small tq-n">${n} open item${n === 1 ? '' : 's'}</div>` : ''}</div>`;
+    };
+    const dom = F && F.domain;
+    const pubNote = 'Read from the published website';
+    const robots = !F || !F.robots ? card('robots.txt', null, F ? 'Not read' : 'Checked once the website is published (and rescanned)', /^ROBOTS_/, pubNote)
+      : card(`<a href="https://${esc(dom)}/robots.txt" target="_blank" rel="noopener">robots.txt ↗</a>`, F.robots.found && !F.robots.blocksAll, !F.robots.found ? 'Missing' : F.robots.blocksAll ? 'Blocks every search engine' : `Found${F.robots.sitemaps && F.robots.sitemaps.length ? ' · names the sitemap' : ' · no Sitemap line'}${F.robots.aiBlocked && F.robots.aiBlocked.length ? ` · keeps out ${F.robots.aiBlocked.length} AI assistant${F.robots.aiBlocked.length === 1 ? '' : 's'}` : ''}`, /^ROBOTS_/, 'Tells search engines and AI assistants which pages they may read');
+    const sitemap = !F || !F.sitemap ? card('sitemap.xml', null, 'Checked once the website is published (and rescanned)', /^SITEMAP_/, pubNote)
+      : card(`<a href="https://${esc(dom)}/sitemap.xml" target="_blank" rel="noopener">sitemap.xml ↗</a>`, F.sitemap.found, F.sitemap.found ? `${F.sitemap.urls} address${F.sitemap.urls === 1 ? '' : 'es'}${F.sitemap.index ? ' (an index of sitemaps)' : ''}` : 'Missing', /^SITEMAP_/, 'The list of pages search engines use to find every page');
+    const llms = !F || !F.llms ? card('llms.txt', null, 'Checked once the website is published (and rescanned)', /^LLMS_/, pubNote)
+      : card(`<a href="https://${esc(dom)}/llms.txt" target="_blank" rel="noopener">llms.txt ↗</a>`, F.llms.found, F.llms.found ? `${esc(F.llms.title || 'No title')}${F.llms.nameIn ? ' · names the business' : ''}` : F.llms.html ? 'Answers with a web page, not a text file' : 'Not there (optional, but helps AI assistants)', /^LLMS_/, 'A plain text summary of the business that AI assistants (ChatGPT, Claude, Perplexity) read');
+    const schema = !sb ? card('Structured data', null, 'Rescan to read the home page\'s schema', /^(SCHEMA_|FAQ_SCHEMA_)/, 'schema.org JSON-LD: how Google reads who the business is')
+      : sb.none ? card('Structured data', false, 'No business schema on the home page', /^(SCHEMA_|FAQ_SCHEMA_)/, 'Turn on "Local business schema" in Duda Business Info')
+      : card('Structured data', true, `${esc(sb.type)} · ${esc(sb.name || 'no name')}${sb.n > 1 ? ` · ${sb.n} business blocks` : ''}`, /^(SCHEMA_|FAQ_SCHEMA_)/, 'schema.org JSON-LD on the home page: how Google reads who the business is');
+    const index = card('Indexing', !open(/^META_(NOINDEX|CANONICAL_DOMAIN|THANKYOU_INDEXED)/).length, 'noindex, canonical address and thank-you pages', /^META_(NOINDEX|CANONICAL_DOMAIN|THANKYOU_INDEXED)/, 'Which pages Google may show');
+    const extras = card('Analytics and icons', !open(/^(ANALYTICS_|FAVICON_|HOMESCREEN_|META_OG_IMAGE|MIXED_CONTENT)/).length, 'Analytics tag, favicon, home screen icon, share image, https', /^(ANALYTICS_|FAVICON_|HOMESCREEN_|META_OG_IMAGE|MIXED_CONTENT)/, 'Measured visits, the icon in browser tabs and phones, the picture when the page is shared');
+    return `<div class="polish-head tech-head">
+      <div class="polish-head-t">🛠 Technical SEO <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
+      <div class="small">What search engines and AI assistants read about the website rather than what visitors see. Wrong business details <i>inside</i> the schema (name, phone, email, address) stay on <a href="#/site/${esc(s.id)}">Audit items</a>; the whole picture of the business's name, address and phone is on <a href="#/site/${esc(s.id)}/nap">📇 NAP</a>.</div>
+      <div class="tq-grid">${schema}${robots}${sitemap}${llms}${index}${extras}</div>
+      ${F && F.at ? `<div class="small faint">Files read from ${esc(dom)} on ${esc(fmtFull(F.at))}.</div>` : ''}
+    </div>`;
+  }
+
+  // ---------- 📇 NAP: Name, Address, Phone everywhere the business appears ----------
+  function renderNapTab(body, s) {
+    const t = s.truth || {}; const sb = s.schemaBiz || null; const F = s.files || {};
+    const live = (s.findings || []).filter((f) => !f.gone && f.status !== 'false' && f.status !== 'exempt');
+    const digits = (x) => String(x || '').replace(/\D/g, '').slice(-10);
+    const flat = (x) => String(x || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
+    const zipOf = (x) => (String(x || '').match(/\b(\d{5})(?:-\d{4})?\b/) || [])[1] || '';
+    const bi = { name: t.businessName || '', phone: (t.phones || []).map(A.fmtPhone).join(', '), phones: t.phones || [], email: (t.emails || []).join(', '),
+      address: (t.addresses || []).filter((a) => a && (a.street || a.zip)).map((a) => [a.street, a.city, [a.region || a.state, a.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ')).join(' | '),
+      zips: (t.addresses || []).map((a) => a && a.zip).filter(Boolean), website: t.domain || (F.domain || '') };
+    // Each field compared the way the audit compares it: phones by their digits, names by their words, addresses by ZIP.
+    const same = { name: (v) => !bi.name || flat(v) === flat(bi.name) || flat(v).includes(flat(bi.name)), phone: (v) => !bi.phones.length || String(v).split(/[,;|]/).every((p) => !digits(p) || bi.phones.includes(digits(p))),
+      email: (v) => !(t.emails || []).length || String(v).toLowerCase().split(/[,;\s]+/).filter(Boolean).every((e) => (t.emails || []).includes(e)), address: (v) => !bi.zips.length || !zipOf(v) || bi.zips.includes(zipOf(v)),
+      website: (v) => !bi.website || String(v).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') === String(bi.website).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') };
+    const cell = (k, v, note) => {
+      if (v === undefined) return '<td class="nap-c nap-na"><span class="faint">—</span></td>';
+      if (v === null) return `<td class="nap-c nap-unk"><span class="nap-m">?</span> <span class="faint small">${esc(note || 'Not known')}</span></td>`;
+      if (!String(v).trim()) return `<td class="nap-c nap-miss"><span class="nap-m">!</span> <span class="small">${esc(note || 'Not there')}</span></td>`;
+      const ok = same[k] ? same[k](v) : true;
+      return `<td class="nap-c ${ok ? 'nap-ok' : 'nap-bad'}"><span class="nap-m">${ok ? '✓' : '✗'}</span> ${esc(v)}${note ? `<div class="small faint">${esc(note)}</div>` : ''}</td>`;
+    };
+    // The website itself: what the scan found that differs (contact items), or ✓.
+    const CONTACT = { name: /^(NAME_SPELLING|TEXT_OTHER_BUSINESS|COPYRIGHT_NAME|META_TITLE_NO_NAME)$/, phone: /^(PHONE_MISMATCH|TEL_|SMS_MISMATCH)/, email: /^(EMAIL_|MAILTO_)/, address: /^(ADDRESS_|MAP_ADDRESS)/ };
+    const webCell = (k) => {
+      const its = live.filter((f) => CONTACT[k] && CONTACT[k].test(f.code) && (f.status === 'open' || f.status === 'clarification'));
+      if (!(s.scan || {}).finishedAt) return cell(k, null, 'Not scanned yet');
+      if (!its.length) return `<td class="nap-c nap-ok"><span class="nap-m">✓</span> <span class="small">Matches Business Info on every page read</span></td>`;
+      const vals = [...new Set(its.map((f) => String(f.found || '').slice(0, 60)).filter(Boolean))];
+      return `<td class="nap-c nap-bad"><span class="nap-m">✗</span> ${esc(vals.slice(0, 3).join(' · '))}${vals.length > 3 ? ` +${vals.length - 3}` : ''}<div class="small">${its.slice(0, 8).map((f) => `<a class="item-ref" href="#/site/${esc(s.id)}/item/${f.num}">#${f.num}</a>`).join(' ')}${its.length > 8 ? ` +${its.length - 8}` : ''}</div></td>`;
+    };
+    const L = F.llms && F.llms.found ? F.llms : null;
+    const W = (prof.pres || {})[s.siteId] || {}; const pr = W.result; const listings = (pr && pr.listings) || [];
+    const PL = ['google', 'facebook', 'yelp', 'instagram', 'youtube'];
+    const cols = [
+      { h: 'Business Info', sub: 'the fact', v: { name: bi.name, address: bi.address, phone: bi.phone, email: bi.email, website: bi.website }, ref: true },
+      { h: 'Website', sub: 'every page read', web: true },
+      { h: 'Schema', sub: 'home page JSON-LD', v: sb && !sb.none ? { name: sb.name, address: sb.address, phone: sb.phone, email: sb.email || undefined, website: sb.url } : null, note: sb && sb.none ? 'No business schema' : 'Rescan to read it' },
+      { h: 'llms.txt', sub: 'for AI assistants', v: L ? { name: L.nameIn ? bi.name : L.title, address: undefined, phone: (L.phones || []).map(A.fmtPhone).join(', '), email: (L.emails || []).join(', ') || undefined, website: undefined } : null, note: F.llms ? 'No llms.txt' : 'Checked once published' },
+    ].concat(PL.map((p) => { const l = listings.find((x) => x.platform === p); return l ? { h: PRES_NAME[p] || p, sub: l.source === 'places' ? 'from Google' : 'web search', url: l.url, v: l.found ? { name: l.name || '', address: l.address || '', phone: l.phone || '', email: l.email || undefined, website: l.website || '' } : null, note: l.found ? '' : "Couldn't confirm" } : null; }).filter(Boolean));
+    const ROWS = [['name', 'Name'], ['address', 'Address'], ['phone', 'Phone'], ['email', 'Email'], ['website', 'Website']];
+    const autoMails = (t.autoEmails || []);
+    body.innerHTML = `
+      <div class="panel panel-pad nap">
+        <div class="row-between" style="align-items:flex-start;gap:12px"><div>
+          <h2 style="margin:0">📇 NAP: Name, Address, Phone</h2>
+          <div class="small muted" style="margin-top:4px;max-width:820px">Google trusts a local business more when its name, address and phone are <b>exactly the same everywhere</b>: the website, its structured data, the Google Business Profile, Facebook, Yelp and the directories. Business Info is the fact; every other column is compared with it. <b>Red</b> differs, <b>green</b> matches, <b>?</b> could not be read.</div></div>
+          ${can('live.content') ? `<button class="btn sm" id="napPres" ${W.busy ? 'disabled' : ''}>${W.busy ? 'Searching… (up to a minute)' : pr ? '↻ Check Google & profiles again' : '🔎 Check Google & profiles'}</button>` : ''}
+        </div>
+        ${autoMails.length ? `<div class="note bad" style="margin-top:10px">🤖 <b>Automation email in Business Info:</b> ${autoMails.map(esc).join(', ')}. It is there so leads reach a system (Zapier, a form parser), so it is <b>never expected on the website</b>, and it is reported as critical wherever it shows (page, email link, schema, llms.txt).</div>` : ''}
+        <div class="table-wrap" style="margin-top:12px"><table class="grid nap-t">
+          <thead><tr><th></th>${cols.map((c) => `<th>${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.h)} ↗</a>` : esc(c.h)}<div class="nap-sub">${esc(c.sub || '')}</div></th>`).join('')}</tr></thead>
+          <tbody>${ROWS.map(([k, label]) => `<tr><th class="nap-row">${label}</th>${cols.map((c) => c.ref ? `<td class="nap-c nap-ref">${esc(c.v[k] || '—')}${k === 'email' && autoMails.length ? `<div class="small faint">+ automation: ${autoMails.map(esc).join(', ')}</div>` : ''}</td>` : c.web ? (k === 'website' ? '<td class="nap-c nap-na"><span class="faint">—</span></td>' : webCell(k)) : !c.v ? cell(k, null, c.note) : cell(k, c.v[k])).join('')}</tr>`).join('')}</tbody>
+        </table></div>
+        ${!pr ? `<div class="small muted" style="margin-top:8px">Google Business Profile, Facebook, Yelp and the others appear here after <b>Check Google & profiles</b> (one AI request and a few web searches).</div>` : `<div class="small faint" style="margin-top:8px">Profiles checked ${esc(fmtFull(new Date(pr.at).toISOString()))}.</div>`}
+      </div>
+      <div class="panel panel-pad nap-guide">
+        <h3>What a consistent NAP needs</h3>
+        <ul class="small">
+          <li><b>One name, written one way.</b> The legal or trading name exactly as on the Google Business Profile: no city or keywords added ("Denver Auto Shield", not "Denver Auto Shield | Best PPF Denver").</li>
+          <li><b>One address, formatted the same.</b> Street, Suite, town, state and ZIP the same on every listing (pick "Ste" or "Suite" and keep it). A business that serves an area and hides its street hides it everywhere.</li>
+          <li><b>One main phone,</b> a local number, the same on the website, schema and every profile. Call-tracking numbers only where they are swapped in by a tracking script, never typed into listings.</li>
+          <li><b>The website address</b> on every profile is the real domain (https, with or without www, consistently).</li>
+          <li><b>Structured data</b> (LocalBusiness or AutoRepair schema) carries the same name, address and phone: switch on "Local business schema" in Duda Business Info.</li>
+          <li><b>The places that count:</b> Google Business Profile first, then Apple Business Connect (Apple Maps), Bing Places, Facebook, Yelp, BBB, Nextdoor and the industry directories (for auto shops: RepairPal, CARFAX, Cars.com, the manufacturer's dealer locator such as XPEL or 3M).</li>
+          <li><b>Hours</b> match too: the Google Business Profile, the website and the schema.</li>
+          <li><b>Emails meant for systems</b> (Zapier, form parsers, no-reply) never appear publicly.</li>
+        </ul>
+      </div>`;
+    if (can("live.view")) loadPresence(s.siteId, () => { if (state.current && state.current.id === s.id && route().tab === "nap") renderNapTab(body, s); });
+    const b = $('#napPres', body);
+    if (b) b.onclick = async () => {
+      prof.pres = prof.pres || {};
+      prof.pres[s.siteId] = Object.assign({}, prof.pres[s.siteId], { busy: true }); renderNapTab(body, s);
+      try { const r = await post('/api/watch', { op: 'presence', id: s.siteId }); prof.pres[s.siteId] = Object.assign({}, prof.pres[s.siteId], { result: r.result, busy: false, at: Date.now() }); toast(r.result && r.result.error ? r.result.error : 'Google and the profiles checked'); }
+      catch (e) { prof.pres[s.siteId] = Object.assign({}, prof.pres[s.siteId], { busy: false }); toast(e.message); }
+      if (route().tab === 'nap') renderNapTab(body, s);
+    };
+  }
   async function renderExceptionsTab(body, s) {
     body.innerHTML = '<div class="empty">Loading…</div>';
     let d;
@@ -6777,7 +6886,7 @@
   // at once. Nothing waits inside one browser, so closing or reloading a tab loses nothing: what it
   // was scanning goes back to the front and another open tab starts it again. Everybody sees the same
   // line, and dragging it changes it for everyone at once.
-  const KIND_LABEL = { manual: 'Rescan', bulk: 'Rescan all', seo: '🔍 SEO auto audit', pages: 'Chosen pages' };
+  const KIND_LABEL = { manual: 'Rescan', bulk: 'Rescan all', seo: '🔍 SEO auto audit', pages: 'Chosen pages', update: '⚡ Check updates' };
   const kindOf = (id) => (state.kind || {})[id] || '';
   const lineOf = (id) => (state.line || []).find((x) => x.id === id) || null;
   const siteName = (id) => (state.sites.find((y) => y.id === id) || {}).businessName || (state.current && state.current.id === id ? state.current.businessName : '') || ((lineOf(id) || {}).name) || ((((state.claims || {})[id] || {}).item || {}).name) || 'A website';
@@ -6864,7 +6973,8 @@
     state.kind = state.kind || {}; state.kind[id] = x.k;
     const m = qmeta(id); m.why = x.why || ''; m.at = x.at || ''; if (x.mv) m.mv = x.mv; else delete m.mv;
     state.scanOpts = state.scanOpts || {};
-    if (x.paths && x.paths.length) state.scanOpts[id] = { paths: x.paths };
+    if (x.k === 'update') state.scanOpts[id] = { upd: true };
+    else if (x.paths && x.paths.length) state.scanOpts[id] = { paths: x.paths };
     else if (x.seo || x.k === 'seo') state.scanOpts[id] = { bulk: true, seo: true, ...(x.k === 'seo' ? { auto: true } : {}) };
     state.scanning[id] = { done: 0, total: 0, message: x.back ? 'Starting again (the tab scanning it stopped)…' : 'Starting the scan…' };
     state.running++; render();
@@ -7158,7 +7268,9 @@
     // A scan somebody started (Scan, Rescan, Audit now, chosen pages) backs the website up in Duda first;
     // the SEO auto audits do not (Duda keeps only 50 backups per website).
     const autoRun = !!((state.scanOpts || {})[id] || {}).auto;
-    const st0 = await store({ op: 'scanState', id, stamp: backupStamp(), backup: !autoRun, scan: { state: 'scanning', startedAt, error: '' } });
+    // Applying check updates changes nothing in Duda and reads few pages: no backup.
+    const updRun = !!((state.scanOpts || {})[id] || {}).upd;
+    const st0 = await store({ op: 'scanState', id, stamp: backupStamp(), backup: !autoRun && !updRun, ...(updRun ? { upd: 1 } : {}), scan: { state: 'scanning', startedAt, error: '' } });
     upsertSummary(st0); render();
     if (st0 && st0.backup) toast(st0.backup.ok ? `Backed up in Duda first: ${st0.backup.name}` : `Couldn't back up in Duda: ${st0.backup.error}`);
     const log = [];
@@ -7182,11 +7294,28 @@
       ((meta && meta.pages) || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; });
       // "Scan chosen pages": only these (the home page is always read too, and left out of the save).
       const opts0 = (state.scanOpts || {})[id] || {};
-      const only = opts0.paths || null;
+      // "Apply check updates": only the checks changed since this audit's scan, only on the pages they need.
+      const plan = opts0.upd ? A.updatePlan((site.scan && site.scan.cv) || 1, site.findings) : null;
+      const only = plan ? (plan.pages === 'all' ? null : plan.pages.length ? plan.pages : ['/']) : opts0.paths || null;
+      if (plan && !plan.full.length && !plan.codes.length) {
+        // Nothing on this website is touched by the updates: it is up to date as it is.
+        const sum = await store({ op: 'checksUpToDate', id, cv: A.CHECKS_VERSION });
+        upsertSummary(sum); toast('Check updates applied: nothing on this website needed reading again');
+        return;
+      }
+      const wants = (re) => !plan || plan.codes.some((c) => re.test(c));
+      if (plan) log.push(`Check updates applied (no full rescan): ${plan.steps.filter((x) => !x.skip).map((x) => x.title).join('; ')}. Only these checks ran${only ? `, on the ${only.length} page${only.length === 1 ? '' : 's'} they need` : ', on every page'}.`);
       if (state.scanOpts) delete state.scanOpts[id];
       state.runOpts = state.runOpts || {}; state.runOpts[id] = opts0.paths || opts0.seo ? opts0 : null;
-      if (only) log.push(`Scanned ${only.length} chosen page${only.length === 1 ? '' : 's'} only: ${only.slice(0, 8).join(', ')}${only.length > 8 ? '…' : ''}`);
+      if (only && !plan) log.push(`Scanned ${only.length} chosen page${only.length === 1 ? '' : 's'} only: ${only.slice(0, 8).join(', ')}${only.length > 8 ? '…' : ''}`);
+      // robots.txt, sitemap.xml and llms.txt live on the published website: read there, when it is published.
+      let pub = null;
+      try { pub = await sApi('/api/site?light=1&editor=' + encodeURIComponent(site.editorUrl)); pubInfo[id] = { at: Date.now(), d: pub }; } catch (e) { /* not known: the files are skipped */ }
+      const pubDom = pub && pub.domain && /PUBLISHED/i.test(pub.publishStatus || '') && !/NOT_PUBLISHED|UNPUBLISHED/i.test(pub.publishStatus || '') ? pub.domain : '';
+      const wantFiles = !plan || plan.codes.some((c) => /^(ROBOTS_|SITEMAP_|LLMS_|EMAIL_AUTOMATION)/.test(c));
       const res = await A.runScan({
+        ...(pubDom && wantFiles ? { fileDomain: pubDom, fetchFile: (path) => sApi('/api/fetch?' + new URLSearchParams({ live: '1', domain: pubDom, site: site.siteId, path, device: 'desktop' })).then((r) => ({ status: r.status, text: r.html || '' })) }
+          : { fileNote: pubDom ? '' : 'robots.txt, sitemap.xml and llms.txt are checked once the website is published.' }),
         siteId: site.siteId, allow: site.allow || [], host, truth: scanTruth, pagesMeta, seedPaths: only || Object.keys(pagesMeta), ...(only ? { maxPages: only.length + (only.includes('/') ? 0 : 1) } : {}), concurrency: 4,
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ host, site: site.siteId, path, device });
@@ -7195,21 +7324,21 @@
             await new Promise((ok) => setTimeout(ok, 800 * (attempt + 1)));
           }
         },
-        checkUrls: (urls) => sPost('/api/check', { urls }),
+        ...(wants(/^(LINK_|IMAGE_BROKEN)/) || (plan && plan.links) ? { checkUrls: (urls) => sPost('/api/check', { urls }) } : {}),
         // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
-        imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}),
-        saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }),
-        onProgress: (p) => { state.scanning[id] = p; renderProgress(id); },
+        ...(wants(/^IMAGE_DUPLICATE/) ? { imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}), saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }) } : {}),
+        onProgress: (p) => { state.scanning[id] = plan ? Object.assign({}, p, { message: '⚡ Check updates · ' + p.message }) : p; renderProgress(id); },
       });
       log.push(...res.log);
       // Pages whose "AI check pending" item was checked by hand: the AI skips them, and the item stays as Done
       const manual = (site.findings || []).filter((f) => /^AI_PENDING/.test(f.code) && (f.status === 'done' || f.status === 'false'));
       res.aiSkip = new Set(manual.map((f) => pendKey(f)));
-      const aiAlt = await aiAltCheck(res, id, log);
-      const aiText = await aiTextCheck(res, id, log, aiAlt && aiAlt.paused);
-      const aiMore = await aiDeepCheck(res, id, log, (aiText && aiText.paused) || (aiAlt && aiAlt.paused));
+      const useAI = !plan || plan.ai;
+      const aiAlt = useAI ? await aiAltCheck(res, id, log) : null;
+      const aiText = useAI ? await aiTextCheck(res, id, log, aiAlt && aiAlt.paused) : null;
+      const aiMore = useAI ? await aiDeepCheck(res, id, log, (aiText && aiText.paused) || (aiAlt && aiAlt.paused)) : null;
       // Colour contrast, read off a real picture of each page (server-side Chrome).
-      const ctr = await contrastCheck(res, id, log);
+      const ctr = !plan || plan.contrast ? await contrastCheck(res, id, log) : { notChecked: [], summary: { skipped: true } };
       // Text that is in the page code but hidden by the page's own styles: kept, as information.
       state.scanning[id] = Object.assign({}, state.scanning[id], { message: 'Checking which text visitors actually see…' }); renderProgress(id);
       await markHiddenText(res, async (path, device) => sApi('/api/fetch?' + new URLSearchParams({ host, site: site.siteId, path, device })), log, host).catch((e) => log.push('Visibility check: ' + e.message));
@@ -7232,10 +7361,12 @@
       // was never really fixed, and is closed saying so rather than credited as a fix.
       // Both kinds: corrected in an update, and set to Audit Adjusted by an admin since the last scan.
       const corrected = [...A.fixedSince((site.scan && site.scan.cv) || 1)];
+      if (plan) plan.steps.filter((x) => x.kind === 'fixes').forEach((x) => x.codes.forEach((c) => { if (!corrected.includes(c)) corrected.push(c); }));
       const lastDone = (site.scan && site.scan.finishedAt) || '';
       Object.values(state.fixedChecks || {}).forEach((x) => { if (x && x.code && lastDone && x.at > lastDone && !corrected.includes(x.code)) corrected.push(x.code); });
-      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, ...(only ? { partial: only } : {}), bulk: !!((state.scanning[id] && state.scanning[id].bulk) || opts0.bulk), result: {
-        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
+      if (plan) res.findings = res.findings.filter((f) => A.codeIn(plan.codes, f.code));
+      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, ...(only ? { partial: only } : {}), ...(plan ? { codes: plan.codes } : {}), bulk: !!((state.scanning[id] && state.scanning[id].bulk) || opts0.bulk), result: {
+        host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, ...(res.files ? { files: res.files } : {}), ...(res.schemaBiz ? { schemaBiz: res.schemaBiz } : {}), findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
         scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
       } });
       upsertSummary(sum);
@@ -7253,7 +7384,7 @@
       // The same pages on the live website, so each item says whether visitors see the problem too.
       await liveCompare(id, only || null);
       upsertSummary(sum);
-      toast(`Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
+      toast(plan ? `Check updates applied: ${sum.businessName || site.siteId}${sum.upd ? ` · ${sum.upd.closed || 0} closed, ${sum.upd.added || 0} new` : ''}` : `Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
     } catch (e) {
       console.error(e);
       try { upsertSummary(await store({ op: 'scanState', id, scan: { state: 'failed', error: String(e.message || e), finishedAt: new Date().toISOString(), log } })); } catch (x) { /* ignore */ }
@@ -9041,7 +9172,7 @@
   function route() {
     const h = location.hash.replace(/^#/, '') || '/';
     const parts = h.split('/').filter(Boolean);
-    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : parts[2] === 'length' ? 'length' : parts[2] === 'exceptions' ? 'exceptions' : parts[2] === 'dashboard' || parts[2] === 'report' ? 'dashboard' : parts[2] === 'docs' ? 'docs' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
+    if (parts[0] === 'site' && parts[1]) return { name: 'site', id: decodeURIComponent(parts[1]), tab: parts[2] === 'comments' ? 'comments' : parts[2] === 'activity' ? 'activity' : parts[2] === 'profile' ? 'profile' : parts[2] === 'leads' ? 'leads' : parts[2] === 'polish' ? 'polish' : parts[2] === 'length' ? 'length' : parts[2] === 'tech' ? 'tech' : parts[2] === 'nap' ? 'nap' : parts[2] === 'exceptions' ? 'exceptions' : parts[2] === 'dashboard' || parts[2] === 'report' ? 'dashboard' : parts[2] === 'docs' ? 'docs' : 'findings', item: parts[2] === 'item' ? Number(parts[3]) : null,
       sub: parts[2] === 'profile' ? (parts[3] || '') : parts[2] === 'leads' ? 'submissions' : '' };
     if (parts[0] === 'home') return { name: 'home' };
     if (parts[0] === 'guide' || parts[0] === 'about') return { name: 'about' };
@@ -10076,7 +10207,8 @@
   // u = could not be compared, n = not compared yet (click to check), x = not published (no live website).
   function pvLive(s, f) {
     const L = s && s.live; const asOf = L && L.at ? ` (compared ${fmtFull(L.at)})` : '';
-    const pv = f.code === 'AUTO_LIVE' ? 'u' : f.gone ? 'o' : 't';
+    const fileItem = /^(ROBOTS_|SITEMAP_|LLMS_)/.test(f.code);
+    const pv = f.code === 'AUTO_LIVE' || fileItem ? 'u' : f.gone ? 'o' : 't';
     let lv = f.code === 'AUTO_LIVE' ? (f.autoLive && f.autoLive.gone ? 'o' : 't') : (L && L.res && L.res[f.id]) || '';
     if (!lv) lv = isPublished(s) === false ? 'x' : f.manual ? 'u' : 'n';
     const both = pv === 't' && lv === 't', onlyEd = pv === 't' && lv === 'o', onlyLive = pv === 'o' && lv === 't';
@@ -10089,7 +10221,7 @@
   function pvLivePills(s, f) {
     const r = pvLive(s, f); if (!r) return '';
     const tip = (where, st) => where === 'Preview'
-      ? (st === 't' ? (f.manual ? 'Reported in the editor (written by hand)' : 'Found in the editor (the preview the scan read)') : st === 'o' ? 'No longer in the editor' : 'Found by the live audit, not by a preview scan')
+      ? (st === 't' ? (f.manual ? 'Reported in the editor (written by hand)' : 'Found in the editor (the preview the scan read)') : st === 'o' ? 'No longer in the editor' : /^(ROBOTS_|SITEMAP_|LLMS_)/.test(f.code) ? 'This file only exists on the published website' : 'Found by the live audit, not by a preview scan')
       : st === 't' ? 'Also on the live website' + r.asOf : st === 'o' ? 'Fine on the live website' + r.asOf
       : st === 'x' ? 'The website is not published yet, so there is no live website'
       : st === 'n' ? 'Not compared with the live website yet. Click to check this page on the live website.'
@@ -10245,11 +10377,11 @@
   const groupOfItem = (f) => (A.groupOf ? A.groupOf(f) : isPolishItem(f) ? 'polish' : 'must');
   const grpFindings = (s, g) => (s.findings || []).filter((f) => groupOfItem(f) === g);
   /** The tab each list lives on, and back. */
-  const TAB_OF = { must: 'findings', polish: 'polish', length: 'length' };
-  const GRP_OF = { findings: 'must', polish: 'polish', length: 'length' };
+  const TAB_OF = { must: 'findings', polish: 'polish', length: 'length', tech: 'tech' };
+  const GRP_OF = { findings: 'must', polish: 'polish', length: 'length', tech: 'tech' };
   /** Which audit tab a route shows: an item opened by number goes to the tab it belongs to. */
   function siteFindingsTab(r, s) {
-    if (r.tab === 'polish' || r.tab === 'length') return r.tab;
+    if (r.tab === 'polish' || r.tab === 'length' || r.tab === 'tech') return r.tab;
     if (r.tab !== 'findings') return r.tab;
     const f = r.item && s ? (s.findings || []).find((x) => x.num === r.item) : null;
     return f ? TAB_OF[groupOfItem(f)] : 'findings';
@@ -10333,6 +10465,8 @@
         <a href="#/site/${esc(s.id)}" class="pf-tab ${ftab === 'findings' ? 'on' : ''}" title="Contact details, links, spelling, SEO: what affects the business">Audit items ${tabN('must')}</a>
         <a href="#/site/${esc(s.id)}/polish" class="pf-tab ${ftab === 'polish' ? 'on' : ''}" title="Inconsistent fonts and duplicate photos: fix after the audit items">🎨 Design polish ${tabN('polish')}</a>
         <a href="#/site/${esc(s.id)}/length" class="pf-tab ${ftab === 'length' ? 'on' : ''}" title="SEO titles, meta descriptions and alt text that are longer or shorter than ideal: tidy after the audit items">📏 SEO Lengths ${tabN('length')}</a>
+        <a href="#/site/${esc(s.id)}/tech" class="pf-tab ${ftab === 'tech' ? 'on' : ''}" title="What search engines and AI assistants read: structured data (schema), robots.txt, sitemap.xml, llms.txt, indexing, analytics and icons">🛠 Technical SEO ${tabN('tech')}</a>
+        <a href="#/site/${esc(s.id)}/nap" class="pf-tab ${r.tab === 'nap' ? 'on' : ''}" title="Name, address and phone everywhere the business appears: Business Info, the website, its schema, llms.txt, Google and the other profiles">📇 NAP</a>
         <a href="#/site/${esc(s.id)}/docs" class="pf-tab ${r.tab === 'docs' ? 'on' : ''}" title="Check the website against the copy documents it was built from">📄 vs Docs</a>
         <a href="#/site/${esc(s.id)}/exceptions" class="pf-tab ${r.tab === 'exceptions' ? 'on' : ''}" title="What is not checked on this website, and why">🚫 Audit exceptions${(s.findings || []).some((f) => f.status === 'exempt') ? ` <span class="tcount">${(s.findings || []).filter((f) => f.status === 'exempt').length}</span>` : ''}</a>
       </nav>` : ''}
@@ -10409,6 +10543,7 @@
     else if (r.tab === 'exceptions') renderExceptionsTab(body, s);
     else if (r.tab === 'dashboard') renderDashboardTab(body, s);
     else if (r.tab === 'docs') renderDocsTab(body, s);
+    else if (r.tab === 'nap') renderNapTab(body, s);
     else if (r.tab === 'profile' || r.tab === 'leads') renderProfileTab(body, s, { cnt, generalComments, sub: r.sub });
     else renderFindingsTab(body, s, { cnt, sc, live, grp: state.ff.grp });
     // Changing tab while scrolled down: bring the tabs to the top, so the new tab is what is seen.
@@ -10462,6 +10597,8 @@
     (res.pages || []).forEach((p) => (p.error || p.notFound ? failed : read).add(A.normalizePath(p.path)));
     (s.findings || []).forEach((f) => {
       if (f.gone || f.manual || /^AI_PENDING/.test(f.code)) return;
+      // robots.txt, sitemap.xml and llms.txt are only ever read on the live website.
+      if (/^(ROBOTS_|SITEMAP_|LLMS_)/.test(f.code)) { out[f.id] = 't'; return; }
       // Only pages that were read on the live website say anything; a page that did not load there is "unknown".
       const pages = (f.pages && f.pages.length ? f.pages : [f.path || '/']).map((p) => A.normalizePath(p));
       if (pages.some((p) => failed.has(p))) { out[f.id] = 'u'; return; }
@@ -10977,18 +11114,47 @@
       : `<b>✨ ${n} new audit check${n === 1 ? '' : 's'} ${n === 1 ? 'has' : 'have'} been added since this website was scanned.</b>
          <div class="small" style="margin-top:3px">This audit still shows what the scan found on ${esc(fmtFull(sc.finishedAt))}, and it stays that way until someone rescans it.
          A rescan keeps every item you already have, with its number and its comments — anything marked <b>False alarm</b> or <b>On hold</b> stays as it is, and <b>Done</b> stays Done unless the rescan still finds it — and simply adds whatever the new checks find as new <b>Open</b> items. None of them are critical.</div>`;
+    const busy = state.scanning[s.id] || otherClaim(s.id) ? 'disabled' : '';
+    const plan = rel.length ? A.updatePlan(sc.cv, s.findings) : null;
+    const canUpd = plan && !plan.full.length && can('site.scan');
     return `<div class="note ${bad.length ? 'fixed-checks' : 'new-checks'}" id="ckBanner">
       <div class="row-between" style="align-items:flex-start;gap:12px">
         <div class="grow">${head}</div>
-        <div style="white-space:nowrap"><button class="btn sm primary" id="ckRescan" ${state.scanning[s.id] || otherClaim(s.id) ? 'disabled' : ''}>${bad.length ? 'Rescan to clear them' : 'Rescan now'}</button>${bad.length ? '' : ` <button class="btn sm ghost" id="ckLater" title="Hide this note on this website, for you">Not now</button>`}</div>
+        <div class="ck-btns">${canUpd ? `<button class="btn sm primary" id="ckApply" ${busy} title="Runs only the changed checks, only on the pages they need. See below what it will do.">⚡ Apply check updates</button>` : ''}<button class="btn sm ${canUpd ? '' : 'primary'}" id="ckRescan" ${busy} title="Reads every page again and runs every check">${bad.length ? 'Full rescan' : 'Rescan now'}</button>${bad.length ? '' : ` <button class="btn sm ghost" id="ckLater" title="Hide this note on this website, for you">Not now</button>`}</div>
       </div>
+      ${plan ? updPlanHtml(s, plan) : ''}
       ${rel.length ? `<details style="margin-top:8px"><summary class="small">${bad.length ? 'What changed' : 'See what was added'}</summary>
         ${rel.map((r) => `<div class="small" style="margin-top:8px"><b>${esc(r.title)}</b> <span class="faint">· ${r.fixes && r.fixes.length ? 'corrected' : 'added'} ${esc(fmtDate(r.date))}</span>
           <ul class="ck-list">${r.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}
       </details>` : ''}</div>`;
   }
+  /** What "Apply check updates" will do on this website, in words: per update, which items and pages, and what is left alone. */
+  function updPlanHtml(s, plan) {
+    const nPages = (s.pages || []).filter((p) => !p.notFound).length || (s.scan || {}).pages || 0;
+    const nums = (items) => items.map((f) => f.num).filter(Boolean).sort((a, c) => a - c);
+    const refs = (items) => { const n = nums(items); return n.length ? n.slice(0, 12).map((x) => `<a class="item-ref" href="#/site/${esc(s.id)}/item/${x}">#${x}</a>`).join(' ') + (n.length > 12 ? ` <span class="faint">+${n.length - 12} more</span>` : '') : ''; };
+    const pg = (x) => (x === 'all' ? `every page (${nPages})` : `${x.length} page${x.length === 1 ? '' : 's'}`);
+    const step = (x) => x.skip
+      ? `<li class="upd-skip"><b>${esc(x.title)}</b><div class="small faint">Nothing to do here: no item on this website came from this check.</div></li>`
+      : x.kind === 'fixes'
+        ? `<li><span class="badge upd-fix">🔧 Corrected</span> <b>${esc(x.title)}</b>
+            <div class="small">Reads ${pg(x.pages)} again (where its ${x.items.length} item${x.items.length === 1 ? ' is' : 's are'}: ${refs(x.items)}) and runs <b>only this check</b>${x.ai ? ' (with the AI, on those pages only)' : ''}. An item it no longer raises is closed as <i>check corrected</i>; one it still raises stays as it is.</div></li>`
+        : x.files ? `<li><span class="badge upd-new">✨ New</span> <b>${esc(x.title)}</b>
+            <div class="small">Reads only robots.txt, sitemap.xml and llms.txt on the published website (and the home page). What it finds is added as new <b>Open</b> items.</div></li>`
+        : `<li><span class="badge upd-new">✨ New</span> <b>${esc(x.title)}</b>
+            <div class="small">Reads ${pg('all')} and runs <b>only this check</b>${x.ai ? ' (with the AI)' : ''}${x.contrast ? ' (takes a picture of each page for the contrast measurement)' : ''}. What it finds is added as new <b>Open</b> items.</div></li>`;
+    const touched = plan.steps.filter((x) => !x.skip);
+    const total = touched.reduce((a, x) => a + x.items.length, 0);
+    return `<details class="upd-plan" ${plan.full.length ? '' : 'open'}><summary class="small"><b>${plan.full.length ? 'Why a full rescan' : 'What ⚡ Apply check updates will do'}</b>${plan.full.length ? '' : ` · ${touched.length ? `${total} existing item${total === 1 ? '' : 's'} rechecked · ${plan.pages === 'all' ? `every page (${nPages})` : `${plan.pages.length} of ${nPages} pages`} read` : 'nothing to read again'}`}</summary>
+      ${plan.full.length ? `<div class="small" style="margin-top:6px">${plan.full.length === 1 ? 'One update' : `${plan.full.length} updates`} since this scan (${plan.full.map((r) => esc(r.title)).join('; ')}) came before updates said which checks they touched, so only a full rescan applies ${plan.full.length === 1 ? 'it' : 'them'}.</div>` : `
+      <ul class="upd-steps">${plan.steps.map(step).join('')}</ul>
+      <div class="small muted">Left alone: every other check and every other item (statuses, numbers, comments and assignees too)${plan.ai ? '' : ', the AI (nothing here needs it, so no AI credits are used)'}${plan.contrast ? '' : ', the colour-contrast pictures'}${plan.codes.some((c) => /^LINK_/.test(c)) ? '' : ', the link checks'}. No backup in Duda is made, because nothing in Duda changes. ${touched.length ? 'Afterwards the audit counts as up to date with the checks.' : 'It only marks the audit as up to date with the checks.'}</div>`}
+    </details>`;
+  }
   function bindNewChecks(body, s) {
     bindStale(body);
+    const apply = $('#ckApply', body);
+    if (apply) apply.onclick = () => addToLine([{ id: s.id, k: 'update', why: 'Apply check updates' }]);
     const later = $('#ckLater', body); const go = $('#ckRescan', body);
     if (later) later.onclick = () => { try { localStorage.setItem(ckKey(s), '1'); } catch (e) { /* private window */ } const b = $('#ckBanner', body); if (b) b.remove(); };
     if (go) go.onclick = () => requestScan([s.id]);
@@ -11250,15 +11416,16 @@
     if (can('live.view') && (s.findings || []).some((f) => /^GMB_ID_(ONLY|MISMATCH)$/.test(f.code)) && !((prof.pres || {})[s.siteId])) {
       loadPresence(s.siteId, () => { if (state.current && state.current.id === s.id && GRP_OF[state.renderedTab]) renderSite(); });
     }
-    const polish = grp === 'polish' || grp === 'length';   // a "later" list: its own header, no scan panel
+    const polish = grp === 'polish' || grp === 'length' || grp === 'tech';   // a list of its own: its own header, no scan panel
     const lengths = grp === 'length';
+    const tech = grp === 'tech';
     const findings = grpFindings(s, grp || 'must');
-    const other = polish ? grpFindings(s, 'must') : grpFindings(s, 'polish').concat(grpFindings(s, 'length'));
+    const other = polish ? grpFindings(s, 'must') : grpFindings(s, 'polish').concat(grpFindings(s, 'length'), grpFindings(s, 'tech'));
     const otherOpen = other.filter((f) => f.status === 'open' || f.status === 'clarification').length;
     const mineOpen = findings.filter((f) => f.status === 'open' || f.status === 'clarification').length;
     // On the Design polish tab the useful reference is the website's fonts, not its Business Info.
     const refWas = state.refTab;
-    if (polish && !lengths && !state.refTab) state.refTab = 'fonts';
+    if (polish && !lengths && !tech && !state.refTab) state.refTab = 'fonts';
     const cats = [...new Set(findings.map((f) => f.category))].sort();
     const locs = [...new Set(findings.map((f) => f.location))].sort();
     const shown = filteredFindings(s);
@@ -11301,7 +11468,7 @@
       <div class="polish-head-t">📏 SEO Lengths <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
       <div class="small">${findings.length ? `<b>${nLen(/^META_TITLE_/)}</b> SEO title${nLen(/^META_TITLE_/) === 1 ? '' : 's'}, <b>${nLen(/^META_DESC_/)}</b> meta description${nLen(/^META_DESC_/) === 1 ? '' : 's'} and <b>${nLen(/^ALT_LONG$/)}</b> alt text${nLen(/^ALT_LONG$/) === 1 ? '' : 's'} longer or shorter than ideal. ` : ''}Worth tidying, but the wording itself (spelling, punctuation, a wrong name or phone) is checked on the <a href="#/site/${esc(s.id)}">Audit items</a> tab${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}, which comes first.</div>
     </div>`;
-    const polishHead = lengths ? lengthHead : `<div class="polish-head">
+    const polishHead = tech ? techHeadHtml(s, findings, mineOpen) : lengths ? lengthHead : `<div class="polish-head">
       <div class="polish-head-t">🎨 Design polish <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
       <div class="small">${findings.length ? `<b>${nFont}</b> inconsistent font item${nFont === 1 ? '' : 's'} and <b>${nDup}</b> duplicate photo${nDup === 1 ? '' : 's'} open. ` : ''}These don't change the business's details, links or what Google reads, so they come after the <a href="#/site/${esc(s.id)}">Audit items</a>${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}.</div>
     </div>`;
@@ -11365,7 +11532,7 @@
       </details>
       ${polish ? `<div class="note grp-note"><b>🎨 Design polish</b> — inconsistent fonts and duplicate photos. They don't change the business's details, links or what Google reads, so they come after the <a href="#/site/${esc(s.id)}">Audit items</a>${otherOpen ? ` (<b>${otherOpen}</b> still open there)` : ' (all closed ✓)'}.</div>`
         : findings.length && !mineOpen && sc.state === 'complete' ? `<div class="note good grp-note"><b>✓ Every audit item that affects the business is closed.</b>${otherOpen ? ` What's left can follow: <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a> and <a href="#/site/${esc(s.id)}/length">📏 SEO Lengths</a> (${otherOpen} open).` : ''}</div>`
-        : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a>, and title, description and alt-text lengths on <a href="#/site/${esc(s.id)}/length">📏 SEO Lengths</a> (${otherOpen} open), so this list is what affects the business and SEO.</div>` : ''}
+        : other.length ? `<div class="small muted grp-line">Fonts and duplicate photos are on <a href="#/site/${esc(s.id)}/polish">🎨 Design polish</a>, title, description and alt-text lengths on <a href="#/site/${esc(s.id)}/length">📏 SEO Lengths</a>, and schema, robots.txt, llms.txt and indexing on <a href="#/site/${esc(s.id)}/tech">🛠 Technical SEO</a> (${otherOpen} open), so this list is what visitors see.</div>` : ''}
 `;
     // One row of the list. The first rows are drawn with the page; the rest follow straight after in
     // batches (see below), so opening this tab no longer waits for hundreds of rows to be laid out.
@@ -11452,7 +11619,7 @@
           <thead><tr><th class="pick-col"><input type="checkbox" id="pickAll" ${allPicked ? 'checked' : ''} title="Select every item shown"></th><th>ID</th><th>Audit item</th><th>Where</th><th>Status</th><th>Assignee</th></tr></thead>
           <tbody id="itemRows">${shown.slice(0, FIRST_ROWS).map(rowHtml).join('')}</tbody></table></div>`}
       </div>
-      ${polish && !lengths ? `      <details class="ref-details polish-ref" style="margin-top:16px">
+      ${polish && !lengths && !tech ? `      <details class="ref-details polish-ref" style="margin-top:16px">
         <summary class="small muted">Reference: the website\'s fonts and pictures</summary>
         <div class="ref-tabs"><span class="chips">
           <button class="chipbtn ${state.refTab === 'info' || !state.refTab ? 'active' : ''}" data-ref="info">Business Info</button>

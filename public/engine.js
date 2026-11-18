@@ -341,6 +341,7 @@
     },
     {
       v: 27,
+      scope: { adds: ['PAGE_TOPIC_MISMATCH', 'PAGE_TOPIC_BODY', 'PAGE_WRONG_CITY', 'PAGE_WRONG_CITY_BODY', 'AI_PAGE_CITY', 'AI_PAGE_TOPIC', 'NAME_SPELLING', 'PLACEHOLDER', 'META_TITLE_NO_NAME'], ai: true },
       date: '2026-11-10',
       title: 'Every page is read against its address: service, town, business name and notes left in',
       items: [
@@ -353,6 +354,7 @@
     },
     {
       v: 28,
+      scope: { adds: ['META_LOOKALIKE_CHAR'] },
       date: '2026-11-12',
       title: 'Look-alike characters in SEO titles and meta descriptions',
       items: [
@@ -364,6 +366,7 @@
     },
     {
       v: 29,
+      scope: { adds: ['CONTRAST_'], contrast: true },
       date: '2026-11-12',
       title: 'Colour contrast (WCAG AA), measured on a picture of every page',
       items: [
@@ -375,6 +378,7 @@
     },
     {
       v: 30,
+      scope: { fixes: ['TEXT_OTHER_BUSINESS', 'SOCIAL_OTHER_BUSINESS', 'SOCIAL_MISMATCH'], ai: true },
       date: '2026-11-16',
       title: 'Fewer false "not theirs": video links, and text cut where a link starts',
       items: [
@@ -385,6 +389,7 @@
     },
     {
       v: 31,
+      scope: { fixes: ['MAP_ADDRESS', 'MAP_OTHER_BUSINESS'] },
       date: '2026-11-16',
       title: 'Google Map embeds of a business whose name starts with a number',
       items: [
@@ -393,6 +398,7 @@
     },
     {
       v: 32,
+      scope: { fixes: ['PLACEHOLDER'] },
       date: '2026-11-17',
       title: 'A hidden "Button" is not a default label left on the page',
       items: [
@@ -402,6 +408,7 @@
     },
     {
       v: 33,
+      scope: { fixes: ['AI_PAGE_CITY', 'PAGE_WRONG_CITY', 'PAGE_WRONG_CITY_BODY'], ai: true },
       date: '2026-11-17',
       title: 'A page for a town is about that town, wherever the shop is',
       items: [
@@ -412,6 +419,7 @@
     },
     {
       v: 34,
+      scope: { fixes: ['AI_PAGE_CITY', 'PAGE_WRONG_CITY', 'PAGE_WRONG_CITY_BODY'], ai: true },
       date: '2026-11-17',
       title: 'Pages with no town in their address may name the shop\u2019s town',
       items: [
@@ -421,6 +429,7 @@
     },
     {
       v: 35,
+      scope: { fixes: ['LINK_WRONG_PAGE'], ai: true },
       date: '2026-11-17',
       title: 'A link on a service word that opens that service\u2019s page is right',
       items: [
@@ -430,11 +439,45 @@
     },
     {
       v: 36,
+      scope: { fixes: ['PLACEHOLDER'] },
       date: '2026-11-19',
       title: 'A "Button" hidden any way is not a label left on the page',
       items: [
         'A gallery caption\u2019s "Button" hidden with visibility:hidden (not only display:none) is no longer reported: visitors never see it and screen readers skip it',
         'Blog posts are recognised from the page itself, so "Show in editor" opens them where the editor keeps them (/blog/<post>)',
+      ],
+    },
+    {
+      v: 37,
+      date: '2026-11-19',
+      title: 'robots.txt, sitemap.xml and llms.txt (Technical SEO)',
+      scope: { adds: ['ROBOTS_', 'SITEMAP_', 'LLMS_', 'EMAIL_AUTOMATION'], files: true },
+      items: [
+        'robots.txt: missing, blocking every search engine or Google ("Disallow: /"), no Sitemap line, a sitemap on another website, and AI assistants (ChatGPT, Claude, Perplexity, Google\u2019s AI) kept out',
+        'sitemap.xml: missing, empty (the whole website set to no index), or listing addresses on another website',
+        'llms.txt (the summary AI assistants read): missing, not in the llms.txt format, not naming the business, or giving a phone or email that is not in Business Info',
+        'Read from the published website, so only once it is published',
+      ],
+    },
+    {
+      v: 38,
+      date: '2026-11-19',
+      title: 'Structured data (schema) checked the way Google reads it',
+      scope: { adds: ['SCHEMA_INVALID_JSON', 'SCHEMA_NO_TYPE', 'SCHEMA_NO_CONTEXT', 'SCHEMA_MULTI_BUSINESS', 'SCHEMA_REQUIRED', 'SCHEMA_RECOMMENDED', 'SCHEMA_TYPE_GENERIC', 'SCHEMA_RATING', 'SCHEMA_SELF_REVIEW', 'SCHEMA_URL', 'SCHEMA_FAQ_EMPTY'] },
+      items: [
+        'Every page: JSON-LD that is not valid JSON (Google ignores it), blocks with no @type or no schema.org @context, and several business blocks naming different businesses',
+        'The business block: Google\u2019s required properties (name, full address) and the recommended ones (phone, website, hours, map position, image, price range); a plain "LocalBusiness" for an auto shop (AutoRepair, AutoBodyShop\u2026 are more exact); a website address that is not theirs',
+        'Review stars: an incomplete rating, and a business rating on its own website (Google does not show it as stars)',
+        'FAQ structured data with no complete question and answer',
+      ],
+    },
+    {
+      v: 39,
+      date: '2026-11-19',
+      title: 'Automation email addresses are never shown to customers',
+      scope: { adds: ['EMAIL_AUTOMATION'] },
+      items: [
+        'An address that is in Business Info for automation (iyz\u2026@robot.zapier.com, a form parser, "no-reply") is no longer expected on the website, and is a critical item wherever it is shown: page text, an email link, the structured data or llms.txt',
       ],
     },
   ];
@@ -443,6 +486,33 @@
   function checksSince(v) { const n = Number(v) || 1; return CHECK_RELEASES.filter((r) => r.v > n); }
   /** The check codes corrected since a scan ran — items carrying one of these are known to be unreliable. */
   function fixedSince(v) { const out = new Set(); checksSince(v).forEach((r) => (r.fixes || []).forEach((c) => out.add(c))); return out; }
+  /**
+   * "Apply check updates": what to read again so an audit catches up with the checks, without a full rescan.
+   * Each release says what it touched (scope): `fixes` = checks that were corrected (only the pages with
+   * those items need reading again), `adds` = new checks (every page, but only those checks), and whether
+   * the AI, the colour-contrast pictures or the link checks are needed. A release without a scope (older
+   * ones) can only be caught up with a full rescan.
+   * Returns { releases, full: [releases that need a full rescan], codes, pages: 'all' | [paths], ai, contrast, links, steps: [...] }.
+   */
+  function codeIn(codes, code) { const c = String(code || ''); return codes.some((x) => (x.endsWith('_') ? c.startsWith(x) : c === x)); }
+  function updatePlan(v, findings) {
+    const rel = checksSince(v);
+    const full = rel.filter((r) => !r.scope);
+    const live = (findings || []).filter((f) => f && !f.gone && !f.manual);
+    const codes = new Set(); const paths = new Set(); let all = false, ai = false, contrast = false, links = false;
+    const steps = rel.filter((r) => r.scope).map((r) => {
+      const sc = r.scope; const fx = sc.fixes || [], ad = sc.adds || [];
+      const items = live.filter((f) => codeIn(fx, f.code));
+      items.forEach((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).forEach((p) => paths.add(normalizePath(p))));
+      const used = items.length > 0 || ad.length > 0;
+      if (used) { fx.concat(ad).forEach((c) => codes.add(c)); if (sc.ai) ai = true; if (sc.contrast) contrast = true; if (sc.links) links = true; }
+      if (ad.length && !sc.files) all = true;
+      return { v: r.v, title: r.title, kind: ad.length ? 'adds' : 'fixes', files: !!sc.files, codes: fx.concat(ad), items, pages: sc.files ? [] : ad.length ? 'all' : [...new Set(items.flatMap((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).map(normalizePath)))], ai: !!sc.ai, contrast: !!sc.contrast, skip: !used };
+    });
+    // Checks that compare the whole website (duplicate titles, fonts, duplicate photos…) read every page.
+    if ([...codes].some((c) => /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|LINK_BROKEN_INTERNAL|PAGE_WRONG_CITY)/.test(c))) all = true;
+    return { releases: rel, full, codes: [...codes], pages: all ? 'all' : [...paths], ai, contrast, links, steps };
+  }
 
   // Words that don't identify a specific business (used for name/handle matching)
   const GENERIC = new Set(('the and of for co company llc inc ltd corp auto autos automotive car cars truck trucks ' +
@@ -737,6 +807,10 @@
    * down. Duda's values are kept alongside rather than discarded, so a phone number that appears in
    * either place is still correct and nobody gets a false alarm for using the one Duda holds.
    */
+  // Addresses that exist for automation (Zapier, form parsers, "no reply"): they can sit in Business Info so
+  // leads reach a CRM, but a customer must never see them. Kept apart from the business's own emails.
+  const AUTOMATION_EMAIL = /@(robot\.zapier\.com|zapiermail\.com|[a-z0-9.-]*\.?mailparser\.io|parsio\.io|[a-z0-9.-]*\.cloudmailin\.net|inbound\.[a-z0-9.-]+|[a-z0-9.-]+\.inbound\.[a-z0-9.-]+|email\.mailgun\.org|parse\.[a-z0-9.-]+)$|^(no-?reply|do-?not-?reply|mailer-daemon)@/i;
+  const isAutomationEmail = (e) => AUTOMATION_EMAIL.test(String(e || '').trim());
   function buildTruth(api, schemaObj, brief) {
     api = api || {};
     const site = api.site || {};
@@ -820,6 +894,9 @@
     }
     t.businessName = t.names[0] || '';
     t.nameTokens = nameTokens(t.businessName);
+    // Automation addresses are kept apart: never expected on the website, and reported if shown there.
+    t.autoEmails = t.emails.filter(isAutomationEmail);
+    t.emails = t.emails.filter((e) => !isAutomationEmail(e));
     return t;
   }
 
@@ -1466,6 +1543,175 @@
     return out;
   }
 
+  // ---------- TECHNICAL SEO: structured data, robots.txt, sitemap.xml, llms.txt ----------
+  // Structured data (schema.org JSON-LD) is read by Google for the business panel, rich results and
+  // the map; the rules below are Google's own (required and recommended properties for LocalBusiness,
+  // review snippets, FAQ). Everything is the "Technical SEO" category, its own tab on the audit.
+  const TECH = 'Technical SEO';
+  const SCHEMA_REC = [['telephone', 'telephone'], ['url', 'url (the website)'], ['openingHoursSpecification', 'opening hours'], ['geo', 'geo (map position)'], ['image', 'image'], ['priceRange', 'priceRange']];
+  const AUTO_WORDS = /\b(auto|car|vehicle|tint|detail|ceramic|ppf|paint protection|wrap|collision|body shop|mechanic|tire|windshield|glass)\b/i;
+  const typeName = (t) => [].concat(t || []).map((x) => String(x).replace(/^https?:\/\/schema\.org\//i, '')).join(', ');
+  function schemaTop(doc) {
+    // Each JSON-LD block, its top-level nodes (an @graph is read as nodes) and whether it parsed.
+    const out = [];
+    doc.querySelectorAll('script[type="application/ld+json"]').forEach((sc) => {
+      const raw = String(sc.textContent || '').trim();
+      if (!raw) return;
+      let j;
+      try { j = JSON.parse(raw); } catch (e) { out.push({ node: sc, error: String(e.message || e).slice(0, 120), raw }); return; }
+      const ctxOf = (o, outer) => o['@context'] || outer;
+      const push = (o, outer) => { if (o && typeof o === 'object' && !Array.isArray(o)) out.push({ node: sc, data: o, context: ctxOf(o, outer) }); };
+      const top = Array.isArray(j) ? j : [j];
+      top.forEach((o) => {
+        if (!o || typeof o !== 'object') return;
+        if (Array.isArray(o['@graph'])) o['@graph'].forEach((g) => push(g, o['@context']));
+        else push(o, null);
+      });
+    });
+    return out;
+  }
+  function schemaQuality(doc, ctx, add, truth) {
+    const nodes = schemaTop(doc);
+    const titleEl = doc.querySelector('head title') || doc.head || doc.documentElement;
+    nodes.filter((n) => n.error).forEach((n) => add(n.node, { code: 'SCHEMA_INVALID_JSON', severity: 'critical', category: TECH,
+      message: 'Structured data (JSON-LD) that is not valid JSON: Google ignores the whole block', found: n.error, expected: 'Valid JSON (check commas, quotes and brackets in the custom code)' }));
+    nodes.filter((n) => n.data).forEach((n) => {
+      const t = n.data['@type'];
+      if (!t) add(n.node, { code: 'SCHEMA_NO_TYPE', severity: 'warning', category: TECH, message: 'Structured data (JSON-LD) with no @type: Google does not know what it describes', found: Object.keys(n.data).slice(0, 6).join(', '), expected: 'An @type, such as AutoRepair, LocalBusiness or FAQPage' });
+      else if (!/schema\.org/i.test(String(n.context || ''))) add(n.node, { code: 'SCHEMA_NO_CONTEXT', severity: 'warning', category: TECH, message: `Structured data (${typeName(t)}) without "@context": "https://schema.org": Google may not read it`, found: String(n.context || '(none)'), expected: 'https://schema.org' });
+    });
+    const biz = nodes.filter((n) => n.data && isBusinessType(n.data['@type']));
+    // Several business blocks on one page that disagree on who the business is.
+    const names = [...new Set(biz.map((n) => String(n.data.name || '').trim()).filter(Boolean))];
+    if (names.length > 1) add(biz[1].node, { code: 'SCHEMA_MULTI_BUSINESS', severity: 'warning', category: TECH, message: `${biz.length} business blocks in the structured data name different businesses: Google has to guess which one this page is`, found: names.join(' | '), expected: truth.businessName || 'One business block' });
+    biz.forEach((n) => {
+      const d = n.data; const type = typeName(d['@type']);
+      const local = !/^(Organization|Corporation)$/i.test(type);
+      if (local) {
+        // Google's required properties for a local business: name and address (street, town, state, ZIP).
+        const a = d.address && typeof d.address === 'object' ? (Array.isArray(d.address) ? d.address[0] || {} : d.address) : null;
+        const hasStreet = (truth.addresses || []).some((x) => x && x.street);
+        const miss = [];
+        if (!d.name) miss.push('name');
+        if (!a) { if (hasStreet || typeof d.address === 'string') miss.push(typeof d.address === 'string' ? 'address as a PostalAddress (it is plain text)' : 'address'); }
+        else ['streetAddress', 'addressLocality', 'addressRegion', 'postalCode'].forEach((k) => { if (!a[k] && (k !== 'streetAddress' || hasStreet)) miss.push('address.' + k); });
+        if (miss.length) add(n.node, { code: 'SCHEMA_REQUIRED', severity: 'warning', category: TECH, message: `The business's structured data (${type}) is missing what Google requires for a local business`, found: 'Missing: ' + miss.join(', '), expected: 'name, and the full address (street, town, state, ZIP), as in Business Info' });
+        if (ctx.path === '/') {
+          const rec = SCHEMA_REC.filter(([k]) => !d[k] && !(k === 'openingHoursSpecification' && d.openingHours)).map(([, l]) => l);
+          if (rec.length) add(n.node, { code: 'SCHEMA_RECOMMENDED', severity: 'info', category: TECH, message: `The business's structured data (${type}) leaves out properties Google recommends`, found: 'Not filled in: ' + rec.join(', '), expected: 'Fill them in Duda Business Info (phone, hours, logo) so the schema carries them' });
+          // An auto shop described as a plain "LocalBusiness": a more exact type helps Google place it.
+          if (/^LocalBusiness$/i.test(type) && AUTO_WORDS.test([truth.businessName, d.name, d.description].join(' '))) add(n.node, { code: 'SCHEMA_TYPE_GENERIC', severity: 'info', category: TECH, message: 'The business is described as a general "LocalBusiness": a more exact type tells Google what kind of business it is', found: type, expected: 'AutoRepair, AutoBodyShop, AutoWash or AutomotiveBusiness (whichever fits)' });
+        }
+      }
+      // Review stars: Google needs both the rating and how many reviews; a business rating itself is not shown as stars.
+      const r = d.aggregateRating;
+      if (r && typeof r === 'object') {
+        const lack = ['ratingValue'].concat(r.reviewCount || r.ratingCount ? [] : ['reviewCount or ratingCount']).filter((k) => k.includes(' or ') || !r[k]);
+        if (lack.length) add(n.node, { code: 'SCHEMA_RATING', severity: 'warning', category: TECH, message: 'The review rating in the structured data is incomplete: Google ignores it', found: 'Missing: ' + lack.join(', '), expected: 'ratingValue and reviewCount, matching real reviews shown on the page' });
+        else add(n.node, { code: 'SCHEMA_SELF_REVIEW', severity: 'info', category: TECH, message: 'A business rating on its own website: Google does not show stars for reviews a business publishes about itself, and fake or copied ratings can bring a penalty', found: `${r.ratingValue} from ${r.reviewCount || r.ratingCount} reviews`, expected: 'Only real reviews that are shown on the page' });
+      }
+      // The website the business points to.
+      const u = d.url || d['@id'];
+      if (u && truth.domain && /^https?:/i.test(String(u))) {
+        let h = ''; try { h = new URL(String(u)).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { /* not a URL */ }
+        const own = String(truth.domain).replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '').toLowerCase();
+        if (h && own && h !== own && !/multiscreensite|dudaone|duda\.co|mobilesitesystem|ds-preview|localhost/.test(h)) add(n.node, { code: 'SCHEMA_URL', severity: 'warning', category: TECH, message: 'The business\'s structured data points to a different website', found: String(u), expected: 'https://' + own });
+      }
+    });
+    nodes.filter((n) => n.data && /FAQPage/i.test(typeName(n.data['@type']))).forEach((n) => {
+      const qs = [].concat(n.data.mainEntity || []).filter((q) => q && /Question/i.test(typeName(q['@type'])) && q.name && q.acceptedAnswer);
+      if (!qs.length) add(n.node, { code: 'SCHEMA_FAQ_EMPTY', severity: 'warning', category: TECH, message: 'FAQ structured data with no complete question and answer: Google ignores it', found: 'FAQPage', expected: 'Each question with its answer (Question + acceptedAnswer)' });
+    });
+    if (!biz.length) return ctx.path === '/' ? { none: true } : null;
+    const d = biz[0].data; const a = d.address && typeof d.address === 'object' ? (Array.isArray(d.address) ? d.address[0] || {} : d.address) : {};
+    return ctx.path === '/' ? { type: typeName(d['@type']), name: String(d.name || ''), phone: String(d.telephone || ''), email: String(d.email || ''), url: String(d.url || ''),
+      address: typeof d.address === 'string' ? d.address : [a.streetAddress, a.addressLocality, a.addressRegion, a.postalCode].filter(Boolean).join(', '), n: biz.length } : null;
+  }
+
+  // robots.txt, sitemap.xml and llms.txt: files at the root of the published website.
+  // files = { robots: {status, text}, sitemap: {status, text}, llms: {status, text}, domain }.
+  // Returns { raw: [findings without device], info: what each file says (for the Technical SEO and NAP tabs) }.
+  const AI_BOTS = ['GPTBot', 'ChatGPT-User', 'OAI-SearchBot', 'ClaudeBot', 'Claude-Web', 'anthropic-ai', 'PerplexityBot', 'Google-Extended', 'CCBot', 'Applebot-Extended', 'Bytespider', 'meta-externalagent'];
+  const looksHtml = (t) => /^\s*(<!doctype|<html|<head|<body)/i.test(String(t || ''));
+  function robotsGroups(text) {
+    const groups = []; let cur = null; let lastWasAgent = false; const sitemaps = [];
+    String(text || '').split(/\r?\n/).forEach((line) => {
+      const l = line.replace(/#.*$/, '').trim(); if (!l) return;
+      const m = l.match(/^([A-Za-z-]+)\s*:\s*(.*)$/); if (!m) return;
+      const k = m[1].toLowerCase(), v = m[2].trim();
+      if (k === 'sitemap') { sitemaps.push(v); return; }
+      if (k === 'user-agent') { if (!cur || !lastWasAgent) { cur = { agents: [], rules: [] }; groups.push(cur); } cur.agents.push(v.toLowerCase()); lastWasAgent = true; return; }
+      lastWasAgent = false;
+      if (cur && (k === 'disallow' || k === 'allow')) cur.rules.push({ k, v });
+    });
+    return { groups, sitemaps };
+  }
+  function blocksAll(groups, agent) {
+    const g = groups.find((x) => x.agents.includes(agent.toLowerCase())) || (agent !== '*' ? null : null);
+    if (!g) return false;
+    return g.rules.some((r) => r.k === 'disallow' && r.v === '/') && !g.rules.some((r) => r.k === 'allow' && (r.v === '/' || r.v === '/*'));
+  }
+  function fileFindings(files, truth) {
+    const raw = []; const info = { domain: files.domain || '', at: new Date().toISOString() };
+    const item = (code, severity, location, message, found, expected) => raw.push({ code, severity, category: TECH, message, found: found || '', expected: expected || '', path: '/', selector: '(page)', location, visible: true, hiddenBy: '', snippet: '' });
+    const ok = (f) => f && f.status === 200 && String(f.text || '').trim() && !looksHtml(f.text);
+    const own = String(files.domain || '').replace(/^www\./, '').toLowerCase();
+    const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return ''; } };
+    // robots.txt
+    const R = files.robots;
+    if (R) {
+      if (!ok(R)) { info.robots = { found: false, status: R.status || 0 }; item('ROBOTS_MISSING', 'warning', 'robots.txt', 'No robots.txt on the website: search engines expect one at /robots.txt', `https://${files.domain}/robots.txt → ${R.status || 'no answer'}`, 'Duda makes one on every publish: check Indexing & Crawling → URL Redirect for a custom robots.txt that replaces it'); }
+      else {
+        const { groups, sitemaps } = robotsGroups(R.text);
+        const allBlocked = blocksAll(groups, '*'); const gBlocked = blocksAll(groups, 'googlebot');
+        const ai = AI_BOTS.filter((b) => blocksAll(groups, b) || (allBlocked && !groups.some((g) => g.agents.includes(b.toLowerCase()))));
+        info.robots = { found: true, status: 200, blocksAll: allBlocked, blocksGoogle: gBlocked, sitemaps, aiBlocked: ai, lines: String(R.text).split(/\r?\n/).length, text: String(R.text).slice(0, 3000) };
+        if (allBlocked) item('ROBOTS_BLOCKS_ALL', 'critical', 'robots.txt', 'robots.txt tells every search engine not to read the website ("Disallow: /"): it will drop out of Google', 'User-agent: * / Disallow: /', 'Allow the website to be read (remove "Disallow: /")');
+        else if (gBlocked) item('ROBOTS_BLOCKS_ALL', 'critical', 'robots.txt', 'robots.txt tells Google not to read the website ("Disallow: /" for Googlebot)', 'User-agent: Googlebot / Disallow: /', 'Allow Googlebot');
+        if (!sitemaps.length) item('ROBOTS_NO_SITEMAP', 'info', 'robots.txt', 'robots.txt does not say where the sitemap is: search engines find pages faster when it does', '(no "Sitemap:" line)', `Sitemap: https://${files.domain}/sitemap.xml`);
+        sitemaps.forEach((u) => { const h = hostOf(u); if (h && own && h !== own) item('ROBOTS_SITEMAP_DOMAIN', 'warning', 'robots.txt', 'robots.txt points to a sitemap on another website', u, `https://${files.domain}/sitemap.xml`); });
+        if (!allBlocked && ai.length) item('ROBOTS_BLOCKS_AI', 'info', 'robots.txt', `robots.txt keeps AI assistants out (${ai.join(', ')}): ChatGPT, Claude, Perplexity and Google's AI answers cannot read or recommend the business from its website`, ai.join(', '), 'Allowed, unless the client chose to block them');
+      }
+    }
+    // sitemap.xml
+    const S = files.sitemap;
+    if (S) {
+      const isXml = S.status === 200 && /<(urlset|sitemapindex)\b/i.test(String(S.text || ''));
+      if (!isXml) { info.sitemap = { found: false, status: S.status || 0 }; item('SITEMAP_MISSING', 'warning', 'sitemap.xml', 'No sitemap at /sitemap.xml: search engines use it to find every page', `https://${files.domain}/sitemap.xml → ${S.status || 'no answer'}`, 'A sitemap.xml (Duda makes one when the website is published)'); }
+      else {
+        const locs = [...String(S.text).matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
+        const other = locs.filter((u) => { const h = hostOf(u); return h && own && h !== own; });
+        info.sitemap = { found: true, status: 200, urls: locs.length, index: /<sitemapindex/i.test(S.text) };
+        // Duda leaves noindex pages out of its sitemap: an empty one means the whole website is set to noindex.
+        if (!locs.length) item('SITEMAP_EMPTY', 'critical', 'sitemap.xml', 'The sitemap lists no pages: Duda leaves noindex pages out, so the whole website is probably set to "no index" and will not show in Google', 'sitemap.xml with 0 addresses', 'Turn off "Set the entire site to no index" in SEO settings, then publish');
+        if (other.length) item('SITEMAP_DOMAIN', 'warning', 'sitemap.xml', `The sitemap lists ${other.length} address${other.length === 1 ? '' : 'es'} on another website`, other.slice(0, 3).join(', ') + (other.length > 3 ? ` +${other.length - 3}` : ''), `Addresses on https://${files.domain}`);
+      }
+    }
+    // llms.txt: a plain text (Markdown) summary of the business for AI assistants (llmstxt.org).
+    const L = files.llms;
+    if (L) {
+      if (!ok(L)) { info.llms = { found: false, status: L.status || 0, html: L.status === 200 && looksHtml(L.text) };
+        item('LLMS_MISSING', 'info', 'llms.txt', info.llms.html ? 'llms.txt answers with a web page, not a text file: AI assistants find no summary of the business' : 'No llms.txt: Duda makes one on every publish (the summary AI assistants such as ChatGPT, Claude and Perplexity read), so it is missing or replaced by a custom file', `https://${files.domain}/llms.txt → ${info.llms.html ? 'a web page' : L.status || 'no answer'}`, 'Publish the website again; if it is still missing, check Indexing & Crawling → URL Redirect for a custom llms.txt'); }
+      else {
+        const t = String(L.text);
+        const phones = [...new Set([...t.matchAll(/(?:\+?1[\s.-]?)?\(?([2-9]\d{2})\)?[\s.-]?(\d{3})[\s.-](\d{4})/g)].map((m) => m[1] + m[2] + m[3]))];
+        const emails = [...new Set((t.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map((e) => e.toLowerCase()))];
+        const h1 = (t.match(/^\s*#\s+(.+)$/m) || [])[1] || '';
+        const nameIn = truth.businessName && t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').includes(String(truth.businessName).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim());
+        info.llms = { found: true, status: 200, title: h1.trim().slice(0, 120), phones, emails, nameIn: !!nameIn, chars: t.length, text: t.slice(0, 3000) };
+        if (!/^\s*#\s+\S/.test(t)) item('LLMS_FORMAT', 'warning', 'llms.txt', 'llms.txt does not start with the business name as a "# " heading, as the llms.txt format expects', t.trim().split(/\n/)[0].slice(0, 120), `# ${truth.businessName || 'Business name'}`);
+        if (truth.businessName && !nameIn) item('LLMS_NAME', 'warning', 'llms.txt', 'llms.txt never names the business as it is in Business Info', h1.slice(0, 120) || '(no name)', truth.businessName);
+        const tp = truth.phones || [];
+        phones.filter((d) => tp.length && !tp.includes(d)).forEach((d) => item('LLMS_PHONE', 'critical', 'llms.txt', 'llms.txt gives AI assistants a phone number that is not in Business Info', fmtPhone(d), tp.map(fmtPhone).join(', ')));
+        emails.forEach((e) => {
+          if (isAutomationEmail(e)) item('EMAIL_AUTOMATION', 'critical', 'llms.txt', 'llms.txt gives AI assistants an automation email address (it is for Zapier or a form parser, not for customers)', e, (truth.emails || []).join(', ') || 'Remove it');
+          else if ((truth.emails || []).length && !truth.emails.includes(e)) item('LLMS_EMAIL', 'critical', 'llms.txt', 'llms.txt gives AI assistants an email that is not in Business Info', e, truth.emails.join(', '));
+        });
+      }
+    }
+    return { raw, info };
+  }
+
   // ---------- DOM helpers ----------
   function hiddenReason(el, device) {
     const rule = HIDE_RULES[device] || HIDE_RULES.desktop;
@@ -1694,6 +1940,10 @@
     const emailOk = (e) => !truth.emails || !truth.emails.length || truth.emails.includes(String(e).toLowerCase());
     const expectedPhones = (truth.phones || []).map(fmtPhone).join(', ') || '(no phone in Business Info)';
     const expectedEmails = (truth.emails || []).join(', ') || '(no email in Business Info)';
+    // An automation address (Zapier, a form parser, "no reply") shown to visitors: its own item, whatever check found it.
+    const autoMailItem = (el, e, where, category) => add(el, { code: 'EMAIL_AUTOMATION', severity: 'critical', category: category || 'Contact info',
+      message: `An automation email address is shown to visitors${where || ''}: it is in Business Info so leads reach a system (Zapier, a form parser), not for customers to write to`,
+      found: e, expected: (truth.emails || []).length ? (truth.emails || []).join(', ') : 'Remove it (Business Info has no public email)' });
 
     // --- Meta ---
     // Spacing and punctuation slips in the words Google shows (SEO title, meta description) and reads
@@ -1765,14 +2015,14 @@
     // --- FAQ schema: Google wants at most one FAQ block per page ---
     const types = schemaTypes(doc);
     const faqBlocks = types.filter((t) => /^FAQPage$/i.test(t)).length;
-    if (faqBlocks > 1) add(titleEl, { code: 'FAQ_SCHEMA_MULTI', severity: 'warning', category: 'Schema', message: `This page has ${faqBlocks} FAQ schema blocks — only one per page should have "enable FAQ schema" turned on`, found: `${faqBlocks} FAQPage blocks` });
+    if (faqBlocks > 1) add(titleEl, { code: 'FAQ_SCHEMA_MULTI', severity: 'warning', category: TECH, message: `This page has ${faqBlocks} FAQ schema blocks — only one per page should have "enable FAQ schema" turned on`, found: `${faqBlocks} FAQPage blocks` });
     // An FAQ section on the page with the schema switch left off
     const faqEl = doc.querySelector('[class*="faq" i], [data-element-type*="faq" i], [id*="faq" i]');
     if (!faqBlocks && faqEl && (clean(faqEl.textContent).match(/\?/g) || []).length >= 3) {
-      add(faqEl, { code: 'FAQ_SCHEMA_OFF', severity: 'info', category: 'Schema', message: 'Looks like an FAQ section, but "enable FAQ schema" is off — no FAQ structured data on this page' });
+      add(faqEl, { code: 'FAQ_SCHEMA_OFF', severity: 'info', category: TECH, message: 'Looks like an FAQ section, but "enable FAQ schema" is off — no FAQ structured data on this page' });
     }
     if (ctx.path === '/' && !types.some((t) => /LocalBusiness|AutoRepair|AutoWash|Store|ProfessionalService|Organization/i.test(t))) {
-      add(titleEl, { code: 'SCHEMA_LOCALBUSINESS_OFF', severity: 'warning', category: 'Schema', message: 'No local business structured data on the home page — turn on "Local business schema" in Duda Business Info' });
+      add(titleEl, { code: 'SCHEMA_LOCALBUSINESS_OFF', severity: 'warning', category: TECH, message: 'No local business structured data on the home page — turn on "Local business schema" in Duda Business Info' });
     }
 
     // --- Page URL hygiene ---
@@ -1897,7 +2147,8 @@
         const theirs = tels.filter((d) => phoneOk(d));
         tels.filter((d) => !phoneOk(d)).forEach((d) => add(node, { code: 'SCHEMA_PHONE', severity: theirs.length ? 'warning' : 'critical', category: 'Schema', verify: theirs.length > 0,
           message: theirs.length ? 'Structured data (JSON-LD) lists a second phone that is not in Business Info (add it there if it is theirs)' : 'Structured data (JSON-LD) phone differs from Business Info', found: fmtPhone(d.slice(-10)), expected: expectedPhones }));
-        if (data.email && !emailOk(data.email)) add(node, { code: 'SCHEMA_EMAIL', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) email differs from Business Info', found: data.email, expected: expectedEmails });
+        if (data.email && isAutomationEmail(data.email)) autoMailItem(node, String(data.email), ' in the structured data (JSON-LD), which Google reads', 'Schema');
+        else if (data.email && !emailOk(data.email)) add(node, { code: 'SCHEMA_EMAIL', severity: 'critical', category: 'Schema', message: 'Structured data (JSON-LD) email differs from Business Info', found: data.email, expected: expectedEmails });
         if (biz && data.name && truth.businessName && !matchesBusiness(data.name, truth)) {
           const named = flatT(data.name);
           const ownData = theirs.length > 0 || (named.length >= 6 && heads.some((h) => h.includes(named) || named.includes(h)));
@@ -1913,6 +2164,8 @@
     schemas.forEach(({ node, data }) => {
       [].concat(data.sameAs || []).forEach((u) => checkSocial(node, u, 'Schema sameAs'));
     });
+    // The structure itself, the way Google reads it (Technical SEO). Desktop only: the code is the same on every device.
+    const schemaBiz = device === 'desktop' ? schemaQuality(doc, ctx, add, truth) : null;
 
     // --- Text nodes: phones, emails, placeholders, copyright ---
     const body = doc.body;
@@ -2002,7 +2255,8 @@
       }
       const emails = val.match(EMAIL_RE) || [];
       emails.filter(isEmailish).forEach((e) => {
-        if (!emailOk(e)) add(el, { code: 'EMAIL_MISMATCH', severity: 'critical', category, message: `Email not in Business Info${where}`, found: e, expected: expectedEmails });
+        if (isAutomationEmail(e)) autoMailItem(el, e, where);
+        else if (!emailOk(e)) add(el, { code: 'EMAIL_MISMATCH', severity: 'critical', category, message: `Email not in Business Info${where}`, found: e, expected: expectedEmails });
       });
     }
 
@@ -2106,6 +2360,7 @@
         }
         if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) { add(a, { code: 'MAILTO_INVALID', severity: 'critical', category: 'Contact info', message: 'Email link has an invalid address', found: href }); return; }
         const shownE = (text.match(EMAIL_RE) || [])[0];
+        if (isAutomationEmail(e)) { autoMailItem(a, e, ' (an email link opens it)'); return; }
         const mailOk = emailOk(e);
         // Same again: one link, one item, carrying everything that is wrong with it.
         if (shownE && shownE.toLowerCase() !== e) {
@@ -2343,7 +2598,7 @@
       prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       ...(ctx.copy ? { copy: pageCopy(body, device) } : {}),
       fonts,
-      meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon,
+      meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon, ...(schemaBiz ? { schemaBiz } : {}),
         // What the page says it is about, for the "does the page match its address" checks: every H1
         // (a hidden one still tells Google what the page is), and the section headings under it.
         buttons: btnList.map((b) => (b.to ? b : Object.assign(b, { to: /^https?:/i.test(b.href) ? b.href : '' }))),
@@ -3018,6 +3273,7 @@
     // but Duda serves the mobile HTML separately and often leaves the <link> out of it. So we
     // remember whether ANY page on ANY device carried one, and judge the website once (below).
     const siteIcon = { favicon: false, touchIcon: false };
+    let siteSchema = null;   // the business as the home page's structured data describes it (for the NAP tab)
     const pageInfo = {};
     const external = new Map();
     const images = new Map();
@@ -3078,6 +3334,7 @@
           if (r.copy) info.copy = r.copy;
           if (r.meta.favicon) siteIcon.favicon = true;
           if (r.meta.touchIcon) siteIcon.touchIcon = true;
+          if (r.meta.schemaBiz) siteSchema = r.meta.schemaBiz;
           info.devices = (info.devices || []).concat(device);
           r.findings.forEach((f) => raw.push(f));
           r.internal.forEach((p) => { if (!queued.has(p)) enqueue(p, path); (pageInfo[p] || {}).linkedFrom = (pageInfo[p] || {}).linkedFrom || { path, device }; });
@@ -3237,12 +3494,28 @@
       for (let i = raw.length - 1; i >= 0; i--) if (raw[i].code === code && i !== keep) raw.splice(i, 1);
     });
 
+    // robots.txt, sitemap.xml and llms.txt on the published website (the browser says how to read them).
+    let files = null;
+    if (opts.fetchFile) {
+      progress({ done: doneFetches, total: doneFetches, message: 'Reading robots.txt, sitemap.xml and llms.txt…' });
+      try {
+        const got = {};
+        for (const [k, path] of [['robots', '/robots.txt'], ['sitemap', '/sitemap.xml'], ['llms', '/llms.txt']]) {
+          try { const r = await opts.fetchFile(path); got[k] = { status: (r && r.status) || 0, text: String((r && (r.text || r.html)) || '').slice(0, 400000) }; } catch (e) { got[k] = { status: 0, text: '' }; }
+        }
+        got.domain = opts.fileDomain || '';
+        const ff = fileFindings(got, truth || {});
+        ff.raw.forEach((x) => devices.forEach((d) => raw.push(Object.assign({}, x, { device: d }))));
+        files = ff.info;
+      } catch (e) { log.push('robots.txt / llms.txt: ' + e.message); }
+    } else if (opts.fileNote) log.push(opts.fileNote);
     const merged = sortFindings(oneItemPerSite(groupAcrossPages(mergeDevices(raw))));
     const counts = { critical: 0, outdated: 0, warning: 0, info: 0 };
     merged.forEach((f) => { counts[f.severity]++; });
     return {
       truth,
       checks: CHECKS_VERSION,
+      files, schemaBiz: siteSchema,
       fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 14) } : null,
       photos: photoSys,
       findings: merged,
@@ -3549,7 +3822,15 @@
   const LENGTH_CODES = new Set(['META_TITLE_LONG', 'META_TITLE_SHORT', 'META_DESC_LONG', 'META_DESC_SHORT', 'ALT_LONG']);
   const isLength = (f) => !!f && LENGTH_CODES.has(f.code);
   /** Which list an audit item belongs to: 'must' (audit items), 'polish' (fonts, duplicate photos) or 'length'. */
-  const groupOf = (f) => (isPolish(f) ? 'polish' : isLength(f) ? 'length' : 'must');
+  /**
+   * Technical SEO: what search engines and AI assistants read about the website rather than what visitors
+   * see — structured data (schema), robots.txt, sitemap.xml, llms.txt, indexing settings, analytics and icons.
+   * Wrong business details INSIDE the schema (name, phone, email, address) stay with the audit items: they
+   * are contact details, just in another place.
+   */
+  const TECH_RE = /^(ROBOTS_|SITEMAP_|LLMS_|SCHEMA_(INVALID_JSON|NO_TYPE|NO_CONTEXT|MULTI_BUSINESS|REQUIRED|RECOMMENDED|TYPE_GENERIC|RATING|SELF_REVIEW|URL|FAQ_EMPTY|LOCALBUSINESS_OFF)$|FAQ_SCHEMA_|META_NOINDEX$|META_CANONICAL_DOMAIN$|META_THANKYOU_INDEXED$|MIXED_CONTENT$|ANALYTICS_|FAVICON_MISSING$|HOMESCREEN_ICON_MISSING$|META_OG_IMAGE$)/;
+  const isTech = (f) => !!f && TECH_RE.test(String(f.code || ''));
+  const groupOf = (f) => (isPolish(f) ? 'polish' : isLength(f) ? 'length' : isTech(f) ? 'tech' : 'must');
 
   // ---------------------------------------------------------------------------
   // EXCEPTIONS — pages (and values) where some checks don't apply.
@@ -3641,9 +3922,9 @@
   }
 
   global.DudaAudit = {
-    POLISH_CODES, isPolish, LENGTH_CODES, isLength, groupOf,
+    POLISH_CODES, isPolish, LENGTH_CODES, isLength, isTech, groupOf, isAutomationEmail, fileFindings, robotsGroups,
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
-    DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince,
+    DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince, updatePlan, codeIn,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
     matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,
   };

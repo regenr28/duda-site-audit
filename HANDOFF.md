@@ -376,3 +376,15 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `rowActs`: 👁 Page / ▶ Preview / 🌐 Live / ✎ Editor / ⧉ Copy selector / ⟳ Recheck; none of the selector ones for head selectors. Faded until row hover (`.rw-acts`).
 - Row click opens the item unless the target is a/select/button/input/summary, or text is selected; only the checkbox cell and the assignee picker keep `data-stop`.
 - Tests: e2e_proof checks the list chip and captures from the drawer.
+
+## 187 — ⚡ Apply check updates
+- engine `CHECK_RELEASES[].scope = { fixes:[codes], adds:[codes], ai, contrast, links, files }` (v27+; older releases have none → full rescan only). `A.updatePlan(cv, findings)` → `{codes, pages:'all'|[paths], ai, contrast, links, steps, full}`; `A.codeIn(codes, code)` (a code ending in `_` is a prefix).
+- Line kind `update` (LKIND) → `runItem` sets `scanOpts[id] = {upd:true}` → `scanSiteRun` computes the plan: `only` = plan pages (`['/']` when only files), skips AI / contrast / link checks / image hashes unless needed, no backup (`scanState` `upd`), filters results to the codes, sends `codes` to saveScan. Nothing to do → store op `checksUpToDate` (bumps cv).
+- `saveScan` with `codes`: only those codes are replaced (others are `skipped` = kept as is), fonts/photos kept, the scan record stays the full scan's plus `updAt/updBy`, log "applied the check updates", no notifications, response `upd: {closed, added}`.
+- Banner `newChecksBanner` → `#ckApply` + `updPlanHtml(s, plan)` (per update: items #, pages, what is left alone).
+## 188 — Technical SEO, NAP, automation emails
+- `buildTruth`: `t.autoEmails` (AUTOMATION_EMAIL: robot.zapier.com, mailparser, cloudmailin, inbound., no-reply…) removed from `t.emails`. `EMAIL_AUTOMATION` (critical) in page text, mailto, schema, llms.txt.
+- `schemaQuality` (desktop, every page): SCHEMA_INVALID_JSON / NO_TYPE / NO_CONTEXT / MULTI_BUSINESS / REQUIRED / RECOMMENDED (home) / TYPE_GENERIC (home) / RATING / SELF_REVIEW / URL / FAQ_EMPTY. Home business block summary → `res.schemaBiz` → `site.schemaBiz`.
+- `runScan({fetchFile, fileDomain})` reads /robots.txt /sitemap.xml /llms.txt on the live domain (app: `/api/fetch?live=1`), `fileFindings` → ROBOTS_* SITEMAP_* (incl. SITEMAP_EMPTY) LLMS_* items at path '/', location = file name; `res.files` → `site.files`. liveResults marks them 't'; Preview pill '?'.
+- Group `tech` (`A.isTech`, TECH_RE): those + FAQ_SCHEMA_*, SCHEMA_LOCALBUSINESS_OFF, META_NOINDEX/CANONICAL_DOMAIN/THANKYOU_INDEXED, MIXED_CONTENT, ANALYTICS_*, FAVICON/HOMESCREEN, META_OG_IMAGE. SCHEMA_NAME/PHONE/EMAIL/ADDRESS stay `must`. Tab `#/site/<id>/tech` (`techHeadHtml`), `#/site/<id>/nap` (`renderNapTab`, uses `prof.pres` online presence).
+- Releases v37 (files), v38 (schema), v39 (automation email). Tests: `tests/tk/e2e_techseo.py` (also Apply check updates: no AI/capture/check calls, other items untouched).

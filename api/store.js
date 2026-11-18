@@ -194,7 +194,7 @@ async function freshClaims(raw) {
 const LINE = P + 'line', LORD = P + 'lineord', WORKERS = P + 'scanworkers';
 const SCAN_MAX = () => Math.max(1, Math.min(30, Number(process.env.SCAN_MAX) || 6));
 const PRI = (k) => (k === 'manual' || k === 'pages' ? 0 : 1);
-const LKIND = /^(manual|bulk|seo|pages)$/;
+const LKIND = /^(manual|bulk|seo|pages|update)$/;
 function sortLine(rawLine, rawOrd) {
   const items = pairs(rawLine, true), ord = pairs(rawOrd, true);
   return Object.entries(items).filter(([, x]) => x && typeof x === 'object' && x.k)
@@ -622,7 +622,7 @@ async function handler(req, res) {
         if (b.scan && b.scan.state === 'scanning') { site.scan.startedBy = me.email; site.scan.startedByName = me.name; }
         await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
         if (backup) await log(b.id, me, 'backup', backup.ok ? `backed up the website in Duda before the ${wasScanned ? 'rescan' : 'audit'}: ${backup.name}` : `tried to back up the website in Duda before the ${wasScanned ? 'rescan' : 'audit'}, but it failed — ${backup.error}`);
-        if (b.scan && b.scan.state === 'scanning') await log(b.id, me, 'scan-start', wasScanned ? 'clicked Rescan (started a rescan)' : 'started the first scan');
+        if (b.scan && b.scan.state === 'scanning') await log(b.id, me, 'scan-start', b.upd ? 'applied the check updates (only the changed checks, no full rescan)' : wasScanned ? 'clicked Rescan (started a rescan)' : 'started the first scan');
         if (b.scan && b.scan.state === 'failed') await log(b.id, me, 'scan', 'scan failed: ' + String(b.scan.error || '').slice(0, 120));
         return res.status(200).json(Object.assign(await saveIndex(b.id), backup ? { backup } : {}));
       }
@@ -643,6 +643,17 @@ async function handler(req, res) {
         if (!bk.ok) return res.status(502).json({ error: bk.error, name: bk.name });
         return res.status(200).json({ ok: true, name: bk.name, backups: fresh.backups });
       }
+      case 'checksUpToDate': {
+        // "Apply check updates" when nothing on this website is touched by them: the audit is up to date as it is.
+        if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
+        const [raw] = await redis(['GET', P + 'site:' + b.id]);
+        const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
+        site.scan = Object.assign({}, site.scan, { state: 'complete', cv: Math.max(Number((site.scan || {}).cv) || 0, Number(b.cv) || 0), updAt: now(), updBy: me.email });
+        site.updatedAt = now();
+        await redis(['SET', P + 'site:' + b.id, packJSON(site)]);
+        await log(b.id, me, 'scan', 'applied the check updates: nothing on this website needed reading again');
+        return res.status(200).json(await saveIndex(b.id));
+      }
       case 'saveScan': {
         if (await denyUnless(res, me, 'site.scan', 'Your role does not allow running scans.')) return;
         const [raw, fnum, seqRaw] = await redis(['GET', P + 'site:' + b.id], ['HGETALL', P + 'fnum:' + b.id], ['GET', P + 'seq:' + b.id]);
@@ -655,6 +666,10 @@ async function handler(req, res) {
         const partial = Array.isArray(b.partial) && b.partial.length ? new Set(b.partial.map(normQ)) : null;
         const SITE_WIDE = /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR|PAGE_WRONG_CITY)/;
         const inPartial = (f) => partial && !SITE_WIDE.test(String(f.code)) && (f.pages && f.pages.length ? f.pages : [f.path || '/']).every((pg) => partial.has(normQ(pg)));
+        // "Apply check updates": only these checks ran. Everything else (other checks, on every page) stays as it was.
+        const codes = Array.isArray(b.codes) && b.codes.length ? b.codes.map((c) => String(c).slice(0, 60)).slice(0, 200) : null;
+        const codeIn = (f) => !codes || codes.some((x) => (x.endsWith('_') ? String(f.code).startsWith(x) : String(f.code) === x));
+        const scanBefore = site.scan ? Object.assign({}, site.scan) : null;
         if (partial) {
           const old = new Map((site.pages || []).map((pg) => [normQ(pg.path), pg]));
           (r.pages || []).forEach((pg) => old.set(normQ(pg.path), pg));
@@ -663,7 +678,22 @@ async function handler(req, res) {
           if (r.scan) r.scan.partial = [...partial];
           delete r.fonts; delete r.photos;
         }
-        ['host', 'editorUrl', 'businessName', 'truth', 'profiles', 'pages', 'scan', 'fonts', 'photos'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
+        if (codes) {
+          r.findings = (r.findings || []).filter(codeIn);
+          if (!codes.some((c) => /^FONT_/.test(c))) delete r.fonts;
+          if (!codes.some((c) => /^IMAGE_DUPLICATE/.test(c))) delete r.photos;
+          // The scan's own record (when, how many pages, how long) stays the full scan's; it notes the update.
+          if (r.scan && scanBefore && scanBefore.finishedAt) {
+            const keep = Object.assign({}, scanBefore, { state: 'complete', cv: r.scan.cv, updAt: now(), updBy: me.email, updByName: me.name,
+              log: [].concat(r.scan.log || []).concat(scanBefore.log || []).slice(0, 40) });
+            delete keep.partial; delete keep.error;
+            r.scan = keep;
+          }
+          if (partial && r.scan) delete r.scan.partial;
+        }
+        // files: what robots.txt, sitemap.xml and llms.txt say; schemaBiz: the business as the home page's schema describes it.
+        if (r.files && typeof r.files === 'object' && JSON.stringify(r.files).length > 20000) ['robots', 'llms'].forEach((k) => { if (r.files[k]) delete r.files[k].text; });
+        ['host', 'editorUrl', 'businessName', 'truth', 'profiles', 'pages', 'scan', 'fonts', 'photos', 'files', 'schemaBiz'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
         if (site.scan && Array.isArray(site.scan.log)) site.scan.log = site.scan.log.slice(0, 40).map((l) => String(l).slice(0, 300));
         // A rescan replaces what the SCANNER found. An item a person typed in is not the scanner's
         // to withdraw — QA writes those precisely because no scan will ever see them — so they are
@@ -725,7 +755,7 @@ async function handler(req, res) {
         // A scan of chosen pages leaves everything outside them alone.
         if (partial) notChecked.push({ prefix: '', pages: '*', unless: true });
         const keptAsIs = new Set();
-        const skipped = (f) => (partial && !inPartial(f)) || notChecked.some((x) => !x.unless && String(f.code).startsWith(x.prefix) && (x.pages === '*' || (f.pages && f.pages.length ? f.pages : [f.path || '/']).some((pg) => [].concat(x.pages || []).includes(pg))));
+        const skipped = (f) => (partial && !inPartial(f)) || !codeIn(f) || notChecked.some((x) => !x.unless && String(f.code).startsWith(x.prefix) && (x.pages === '*' || (f.pages && f.pages.length ? f.pages : [f.path || '/']).some((pg) => [].concat(x.pages || []).includes(pg))));
         before.forEach((f) => {
           if (nowIds.has(f.id) || taken.has(f.id)) return;
           if (!f.gone && skipped(f)) { site.findings.push(f); nowIds.add(f.id); keptAsIs.add(f.id); return; }
@@ -838,9 +868,9 @@ async function handler(req, res) {
         // tool, can be compared with it. Kept small (counts only) and for the last 40 scans.
         {
           const live = site.findings.filter((f) => !f.gone);
-          const cats = {}; const groups = { must: 0, polish: 0, length: 0 };
+          const cats = {}; const groups = { must: 0, polish: 0, length: 0, tech: 0 };
           live.forEach((f) => { const k = f.category || 'Other'; cats[k] = (cats[k] || 0) + 1; const g = globalThis.DudaAudit.groupOf(f); groups[g] = (groups[g] || 0) + 1; });
-          const snap = { at: now(), by: me.email, byName: me.name, tool: 'Site Auditor', auto: true, ...(partial ? { partial: [...partial].slice(0, 30) } : {}), cv: Number((site.scan && site.scan.cv) || 0),
+          const snap = { at: now(), by: me.email, byName: me.name, tool: 'Site Auditor', auto: true, ...(partial ? { partial: [...partial].slice(0, 30) } : {}), ...(codes ? { upd: 1 } : {}), cv: Number((site.scan && site.scan.cv) || 0),
             pages: (r.pages || []).length, counts: Object.assign({}, c), total: activeN, cats, groups,
             fixed: fixedN, added: Math.max(0, seq - Number(seqRaw || 0)), reopened: backN + stillN };
           const list = Array.isArray(site.scans) ? site.scans : [];
@@ -895,13 +925,16 @@ async function handler(req, res) {
           if (autos.length) await redis(['HSET', P + 'fstate:' + b.id, ...autos]);
         } catch (e) { /* the item simply stays Open */ }
         if (asked) await log(b.id, me, 'item-status', `${asked} item${asked === 1 ? '' : 's'} set to For clarification automatically — a client comment mentions the value`);
-        await log(b.id, me, 'scan', `completed a scan: ${activeN} findings (${c.critical || 0} critical)${seq > Number(seqRaw || 0) && Number(seqRaw || 0) ? `, ${seq - Number(seqRaw || 0)} new` : ''}`);
+        const updN = codes ? { closed: correctedN + fixedN, added: Math.max(0, seq - Number(seqRaw || 0)) } : null;
+        if (codes) await log(b.id, me, 'scan', `applied the check updates: ${updN.closed} item${updN.closed === 1 ? '' : 's'} closed, ${updN.added} new · ${activeN} findings now (${c.critical || 0} critical)`);
+        else await log(b.id, me, 'scan', `completed a scan: ${activeN} findings (${c.critical || 0} critical)${seq > Number(seqRaw || 0) && Number(seqRaw || 0) ? `, ${seq - Number(seqRaw || 0)} new` : ''}`);
         // Tell the person who added the website and whoever it's assigned to (bell, desktop and Slack) that it's ready
         const wasComplete = site.status === 'Complete' || !!site.completedAt;
         // The person who started it is told as well — the whole point is to walk away and be called
         // back. The browser says `bulk` when this is one of many, so a "rescan all" doesn't ring
         // dozens of times for the person who pressed it.
         const mine = b.bulk ? [] : [me.email];
+        if (codes) return res.status(200).json(Object.assign(await saveIndex(b.id), { upd: updN }));
         const tell = [...new Set([site.addedBy, site.assignee, wasComplete ? site.completedBy : null, ...mine].filter(Boolean).filter((e) => e !== me.email || !b.bulk))];
         const name = site.businessName || site.siteId;
         for (const email of tell) {

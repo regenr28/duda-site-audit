@@ -2420,3 +2420,33 @@ table.findings .rw-where { width: 210px; max-width: 230px; }
 .rw-hid { color: var(--faint); font-style: italic; }
 table.findings .rw-status { width: 150px; }
 table.findings .rw-status select { max-width: 150px; }
+/* Apply check updates */
+.ck-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; white-space: nowrap; }
+.upd-plan { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.upd-steps { margin: 8px 0; padding-left: 0; list-style: none; display: grid; gap: 8px; }
+.upd-steps li { padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.upd-steps li.upd-skip { opacity: .7; }
+.badge.upd-fix { background: var(--warn-soft); color: var(--warn); }
+.badge.upd-new { background: var(--accent-soft); color: var(--accent); }
+/* Technical SEO tab */
+.tq-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin: 10px 0 6px; }
+.tq-card { border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; background: var(--panel); border-left-width: 4px; }
+.tq-card .tq-h { font-weight: 650; display: flex; align-items: center; gap: 6px; }
+.tq-card .tq-m { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 800; background: var(--panel-2); color: var(--muted); }
+.tq-card.tq-ok { border-left-color: var(--ok); } .tq-ok .tq-m { background: var(--ok-soft); color: var(--ok); }
+.tq-card.tq-bad { border-left-color: var(--crit); } .tq-bad .tq-m { background: var(--crit-soft); color: var(--crit); }
+.tq-card.tq-warn { border-left-color: var(--warn); } .tq-warn .tq-m { background: var(--warn-soft); color: var(--warn); }
+.tq-card.tq-unk { border-left-style: dashed; }
+.tq-n { color: var(--crit); font-weight: 600; margin-top: 2px; }
+/* NAP tab */
+.nap-t th, .nap-t td { min-width: 150px; }
+.nap-t th.nap-row { min-width: 80px; background: var(--panel-2); position: static; text-transform: uppercase; font-size: 11.5px; color: var(--muted); }
+.nap-sub { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--faint); font-size: 11px; }
+.nap-c { font-size: 13px; word-break: break-word; }
+.nap-m { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; font-size: 10.5px; font-weight: 800; margin-right: 2px; vertical-align: 1px; }
+.nap-ref { background: var(--accent-soft); font-weight: 600; }
+.nap-ok .nap-m { background: var(--ok-soft); color: var(--ok); }
+.nap-bad { background: var(--crit-soft); } .nap-bad .nap-m { background: var(--crit); color: #fff; }
+.nap-miss .nap-m { background: var(--warn-soft); color: var(--warn); }
+.nap-unk .nap-m { background: var(--panel-2); color: var(--muted); }
+.nap-guide { margin-top: 14px; } .nap-guide ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 5px; }
