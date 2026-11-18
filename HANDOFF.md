@@ -388,3 +388,7 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `runScan({fetchFile, fileDomain})` reads /robots.txt /sitemap.xml /llms.txt on the live domain (app: `/api/fetch?live=1`), `fileFindings` → ROBOTS_* SITEMAP_* (incl. SITEMAP_EMPTY) LLMS_* items at path '/', location = file name; `res.files` → `site.files`. liveResults marks them 't'; Preview pill '?'.
 - Group `tech` (`A.isTech`, TECH_RE): those + FAQ_SCHEMA_*, SCHEMA_LOCALBUSINESS_OFF, META_NOINDEX/CANONICAL_DOMAIN/THANKYOU_INDEXED, MIXED_CONTENT, ANALYTICS_*, FAVICON/HOMESCREEN, META_OG_IMAGE. SCHEMA_NAME/PHONE/EMAIL/ADDRESS stay `must`. Tab `#/site/<id>/tech` (`techHeadHtml`), `#/site/<id>/nap` (`renderNapTab`, uses `prof.pres` online presence).
 - Releases v37 (files), v38 (schema), v39 (automation email). Tests: `tests/tk/e2e_techseo.py` (also Apply check updates: no AI/capture/check calls, other items untouched).
+
+## 189 — Hidden "Button" via stylesheet
+- engine's DEFAULT_LABEL skip (`hiddenReason`) only sees inline styles / Duda hide classes. A gallery caption "Button" hidden by a stylesheet rule got through; `markHiddenText` (computed style in a sandboxed iframe) saw it hidden everywhere but only set `hiddenLive`. Now it sets `dropHidden` for PLACEHOLDER "Button" default labels hidden on every device (log line). `recheckItems` runs `markHiddenText` too.
+- Release v40 (fixes + scope PLACEHOLDER) so ⚡ Apply check updates closes them as check-corrected. Test `tests/tk/e2e_hiddenbtn.py` (fails on the old code).

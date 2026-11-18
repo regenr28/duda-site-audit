@@ -480,6 +480,16 @@
         'An address that is in Business Info for automation (iyz\u2026@robot.zapier.com, a form parser, "no-reply") is no longer expected on the website, and is a critical item wherever it is shown: page text, an email link, the structured data or llms.txt',
       ],
     },
+    {
+      v: 40,
+      date: '2026-11-19',
+      title: 'A "Button" hidden by the page\u2019s stylesheet is not a label left on the page',
+      fixes: ['PLACEHOLDER'],
+      scope: { fixes: ['PLACEHOLDER'] },
+      items: [
+        'A gallery caption\u2019s "Button" hidden by the website\u2019s stylesheet (not written on the element itself) is no longer reported: the check that opens each page in a browser sees it is hidden on every device and leaves it out',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */

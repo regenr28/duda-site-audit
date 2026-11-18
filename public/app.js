@@ -7679,7 +7679,7 @@
     if (!items.length) return 0;
     const byPage = new Map();
     items.forEach((f) => { const pg = (f.pages && f.pages[0]) || f.path || '/'; (byPage.get(pg) || byPage.set(pg, []).get(pg)).push(f); });
-    let marked = 0, dropped = 0, loads = 0;
+    let marked = 0, dropped = 0, droppedBtn = 0, loads = 0;
     for (const [pg, list] of byPage) {
       if (loads >= 24) break;
       const sels = [...new Set(list.map((f) => f.selector))];
@@ -7706,6 +7706,9 @@
         // Hidden everywhere it was checked (tablet is drawn like desktop).
         f.visibleOn = [];
         if (WORDING.test(f.code) && inWidgetTemplate(f)) { f.dropHidden = true; dropped++; return; }
+        // Duda's "Button" label hidden everywhere: a widget's own spare caption (a gallery with captions off).
+        // The first pass only sees styles written on the element; this one sees the stylesheet's too.
+        if (f.code === 'PLACEHOLDER' && String(f.found || '').trim() === 'Button' && /default label/i.test(f.message || '')) { f.dropHidden = true; droppedBtn++; return; }
         f.hiddenLive = hid[0].why; marked++;
         if (f.code === 'DESIGNER_CREDIT' && f.severity !== 'critical') {
           f.was = f.severity; f.severity = 'critical'; f.hiddenCredit = true;
@@ -7715,6 +7718,10 @@
     if (dropped) {
       res.findings = res.findings.filter((f) => !f.dropHidden);
       log.push(`${dropped} piece${dropped === 1 ? '' : 's'} of text in a Duda widget's own hidden template (like the accordion's blank "Title or Question", which Duda's scripts replace and which is not in the editor) ${dropped === 1 ? 'was' : 'were'} left out.`);
+    }
+    if (droppedBtn) {
+      res.findings = res.findings.filter((f) => !f.dropHidden);
+      log.push(`${droppedBtn} "Button" label${droppedBtn === 1 ? '' : 's'} hidden on every device by the page's styles (a widget's spare caption) ${droppedBtn === 1 ? 'was' : 'were'} left out.`);
     }
     if (marked) log.push(`${marked} item${marked === 1 ? ' is' : 's are'} about text hidden by the page's own styles: visitors don't see it, but Google and SEO tools read it. Labelled "Hidden on the page".`);
     return marked;
@@ -10766,6 +10773,8 @@
         const aiText = await aiTextCheck(res, s.id, log, aiAlt && aiAlt.paused);
         aiGap = !state.ai || !state.ai.enabled || !!((aiAlt && (aiAlt.paused || (aiAlt.pending || []).length)) || (aiText && (aiText.paused || (aiText.pending || []).length)));
       }
+      // Text hidden by the page's stylesheet, as in a scan (a hidden "Button" label is left out there too).
+      await markHiddenText(res, async (path, device) => api('/api/fetch?' + new URLSearchParams({ host, site: s.siteId, path, device })), log, host).catch(() => {});
       const fresh = A.filterAllowed(res.findings, s.allow);
       const failedPages = new Set((res.pages || []).filter((p) => p.error || p.notFound).map((p) => A.normalizePath(p.path)));
       const ids0 = new Set(fresh.map((x) => x.id)); const loose0 = new Set(fresh.map(looseKey));

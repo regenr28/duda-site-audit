@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-hidden-button-css', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'Fixed: hidden gallery "Button" labels kept coming back after every rescan',
+    what: 'A photo gallery with captions switched off keeps a "Button" label per picture, hidden by the website\'s stylesheet. The first check only saw styles written on the element itself, so it reported them; the check that opens each page in a browser saw they were hidden, but only labelled them "Hidden on the page". Now that check leaves them out, so they close as <i>check corrected</i>. A visible "Button" is still reported. <b>⟳ Recheck</b> uses the same check now.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b> (it re-reads only the pages with these items).'],
+  },
+  {
     id: '2026-11-19-apply-updates', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: '⚡ Apply check updates: catch up without a full rescan',
     what: 'When the checks change after a website was scanned, the note at the top of its <b>Audit items</b> now has <b>⚡ Apply check updates</b>. It runs <b>only the changed checks</b>: a corrected check re-reads just the pages its items are on, a new check reads every page but runs only itself, and the file checks read only robots.txt, sitemap.xml and llms.txt. Everything else is left alone: no AI unless the change needs it, no contrast pictures, no link checks, no Duda backup, and every status, number and comment stays. The note lists, update by update, which items (#numbers) and how many pages will be read before you press it.',
