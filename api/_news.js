@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-show-on-live', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'Show on live: see an item on the published website',
+    what: 'Next to <b>Show on preview</b> and <b>Show in editor</b>, <b>🌐 Show on live</b> opens the item\'s page on the published website, as visitors see it, in its own tab (the next item reuses it). <b>⌖ DSA Highlight</b> outlines the element there too. It shows only for websites that are published.',
+    where: ['<b>Walkthrough:</b> open an audit item → <b>🌐 Show on live</b>.'],
+  },
+  {
     id: '2026-11-19-blog-editor', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: 'Blog posts open in the right place in the editor; hidden gallery "Button"s are gone',
     what: '<b>✎ Show in editor</b> on a blog post now opens it where the Duda editor keeps it (<span class="mono">/blog/&lt;post&gt;</span>); the app recognises a blog post from the page itself, even though its address has no /blog/ in it. A gallery\'s hidden "Button" is no longer reported however it is hidden. Rescan an audit once to get both.',

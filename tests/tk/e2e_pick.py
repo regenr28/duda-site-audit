@@ -25,6 +25,8 @@ try:
     with sync_playwright() as p:
         br = p.chromium.launch()
         ctx = br.new_context(viewport={'width': 1440, 'height': 1000}); ctx.add_cookies([{'name': 'dsa_sess', 'value': ADMIN, 'domain': 'localhost', 'path': '/'}])
+        # Duda says the website is published at www.buffandbeyond.com.
+        ctx.route('**/api/site?light=1*', lambda r: r.fulfill(status=200, content_type='application/json', body=json.dumps({'siteId': 'abc123', 'domain': 'www.buffandbeyond.com', 'publishStatus': 'PUBLISHED'})))
         pg = ctx.new_page(); pg.on('pageerror', lambda e: errors.append(str(e)))
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('table.findings [data-pick]', timeout=20000); time.sleep(1)
         # Opening the tab draws the first rows at once and the rest right after, in batches.
@@ -89,6 +91,14 @@ try:
         print('  editor tabs:', [x.url for x in ctx.pages], flush=True)
         check(len(ctx.pages) == 2 and ed.url != u1 and '/page-4' in ed.url and '/page-1' in u1, 'Show in editor on the next item loads it in the same editor tab (no new tab)')
         check(ed.url.endswith('/home/site/abc123/blog/page-4') and u1.endswith('/home/site/abc123/page-1'), 'a blog post opens in the editor under /blog/<post>; a normal page does not: ' + ed.url)
+        # Show on live: the page on the published website, at the element, in its own tab.
+        ctx.route('https://www.buffandbeyond.com/**', lambda r: r.fulfill(status=200, content_type='text/html', body='<html><body>Live site</body></html>'))
+        pg.bring_to_front(); pg.goto(f'http://localhost:{APORT}/#/site/s1/item/2'); pg.wait_for_selector('#drawer [data-liveat]', timeout=15000); time.sleep(0.5)
+        with ctx.expect_page() as lp: pg.locator('#drawer [data-liveat]').first.click()
+        lv = lp.value; lv.wait_for_load_state(); time.sleep(0.5)
+        print('  live:', lv.url, flush=True)
+        check(lv.url.startswith('https://www.buffandbeyond.com/page-1#dsa=') and 'x1' in lv.url, 'Show on live opens the page on the published website, with the element to outline: ' + lv.url[:90])
+        lv.close()
         # And Show on preview does the same with its own tab.
         pg.locator('#drawer [data-prevat]').first.click(); time.sleep(1)
         n3 = len(ctx.pages)

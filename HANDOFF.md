@@ -6,7 +6,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Owner / builder:** Reymark Regencia. He uploads files to GitHub himself and commits. **Never commit or push for him** — deliver a zip.
 - **Every update zip must come with a ready-to-paste commit title and description**, written for a non-technical reader (bullets, plain words).
-- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **183**.
+- **Repo:** `regenr28/duda-site-audit` (branch `main`). Commits are numbered (`134 - …`, `135 + 136 + 137 - …`, `138 + 139 - …`, `140 - …` … `143 - …`, `144 - …`). The next update is **184**.
 - **Two deployments, both auto-deploy from `main`:**
   - **Company app** ("8bit"): 8bitcreative's Vercel, database = Supabase (Postgres-backed KV). URL `duda-site-audit.vercel.app`.
   - **Reymark's quiet copy** (`duda-site-audit-draft`): his own Vercel + Upstash Redis, env `APP_COPY=1`. It switches some things off on purpose (System health → "copy" banner lists them). Be careful with it: don't break it, don't fill its database.
@@ -16,7 +16,7 @@ Read this first. It explains how the app is built, how updates are delivered, wh
 
 - **Server:** Vercel serverless functions, Node ESM, one file per endpoint in `api/*.js`. Files starting with `_` are shared modules, not endpoints. Every handler ends with `export default metered('<name>', handler)` (usage metering, `api/_meter.js`).
 - **Storage:** a Redis-style KV through `redis(...cmds)` from `api/_lib.js` (pipeline of commands). Every key starts with `P = 'dsa:'`. Works on Upstash and on the Supabase adapter (`api/_sql.js`). Big JSON is stored with `packJSON`/`unpackJSON`.
-- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 182: styles v48, demo v3, engine v21, app v61).
+- **Front end:** plain JavaScript, no framework. `public/index.html` loads `styles.css`, `engine.js`, `app.js` with `?v=` numbers. **Bump the `?v=` of every file you change** (after 183: styles v48, demo v3, engine v21, app v62).
 - **The audit engine** is `public/engine.js` (`window.DudaAudit`). The server imports the same file (`import '../public/engine.js'` → `globalThis.DudaAudit`) so the rules are identical on both sides.
 - **Check releases:** `CHECK_RELEASES` in engine.js. `CHECKS_VERSION` = the last entry's `v` (keep entries in order). An entry's `fixes: [codes]` closes items with those codes as "check-corrected" (the app's own mistake) on the next scan when they disappear. Latest is v29.
 - **Item groups:** `must` (everything important), `polish` (FONT_*, IMAGE_DUPLICATE) and `length` (META_TITLE_LONG/SHORT, META_DESC_LONG/SHORT, ALT_LONG). `groupOf(f)` in engine.js. The server summary (`api/store.js` `summary()`) counts must-only in `critical/warning/info/closed/total`, polish in `pt/pc/po`, lengths in `lt/lc/lo`.
@@ -356,3 +356,6 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `runScan` marks a page `blog: true` when its HTML says `pageType: 'BLOG_LAYOUT'` or has `[data-blog-template]` / `[data-blog-post-alias]` (Duda blog posts live at /<slug> with no /blog/ in the address). Saved in `site.pages`. `editorUrl()` (app.js) opens such a page at `/home/site/<id>/blog/<slug>`. Audits scanned before this need one rescan for it.
 - Engine: `DEFAULT_LABEL` skips a "Button" hidden in ANY way (`hiddenReason` non-empty: display:none or visibility:hidden); other default labels are still reported hidden or not. CHECK_RELEASES v36.
 - Tests: `tests/tk/engine_textai.py`, `tests/tk/e2e_pick.py`.
+
+## 183 — Show on live
+- `liveAtItem(site, f)` (app.js): `https://<domain><path>#dsa=<selector>` (+ text fragment), domain = `f.liveDomain` (auto-audit items) → `liveDomain(site)` (Duda's answer / DR list) → the scan's `truth.domain` while Duda's answer isn't loaded yet; none → no button. `selLinks` shows **🌐 Show on live**; `bindSelLinks` opens it with `openInTab('live', …)` (one live tab per website). Highlighter help mentions it. Test: `tests/tk/e2e_pick.py`.

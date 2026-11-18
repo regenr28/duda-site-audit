@@ -10108,6 +10108,7 @@
         <p><b>1.</b> Show your bookmarks bar (<b>Cmd+Shift+B</b> on Mac, <b>Ctrl+Shift+B</b> on Windows).<br>
         <b>2.</b> Drag this button onto the bookmarks bar: <a class="btn primary bm-drag" href="${esc(HIGHLIGHT_BM)}" onclick="return false" title="Drag me to your bookmarks bar">⌖ DSA Highlight</a></p>
         <p><b>Show on preview:</b> the page opens and scrolls to the text when it can. Click <b>⌖ DSA Highlight</b> to outline the exact element (it reads the selector from the address).</p>
+        <p><b>Show on live:</b> the same page on the published website, as visitors see it (only when the website is published). <b>⌖ DSA Highlight</b> outlines the element there too. A change made in the editor shows here only after it is published.</p>
         <p><b>Show in editor:</b> the selector is copied for you and the editor opens on that page. When the editor has loaded, click <b>⌖ DSA Highlight</b>. It reads the copied selector (allow clipboard access the first time), or you can paste it in.</p>
         <p class="small muted">If it says "hidden on this view", switch the editor or preview to the item's device (Desktop, Tablet or Mobile) or open the side panel, then click it again.</p>
       </div>
@@ -10145,11 +10146,25 @@
     openInTab('editor', site, editorUrl(site, f.path));
     hlHintOnce(`Selector copied, editor opening on ${f.path} (in the same editor tab each time). Switch to ${A.DEVICE_LABEL[dev]} if needed, then click ⌖ DSA Highlight.`);
   }
-  const selLinks = (f) => `<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Show on preview</button><button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Show in editor</button><button class="linkbtn faint" data-hlhelp title="How to outline the element on the preview or in the editor">?</button>`;
+  /** The page of an item on the published website, opened at the element (only when the website is live). */
+  function liveAtItem(site, f) {
+    // The published address: Duda's answer when loaded, else the DR list, else the website's own domain from the scan.
+    const pd = site && (pubInfo[site.id] || {}).d;
+    const dom = f.liveDomain || (site && liveDomain(site)) || (!pd && site && site.truth && site.truth.domain) || '';
+    if (!dom) return '';
+    const txt = fragmentText(f);
+    return `https://${dom}${!f.path || f.path === '/' ? '/' : f.path}#dsa=${encodeURIComponent(f.selector || '')}${txt ? ':~:text=' + encodeURIComponent(txt).replace(/-/g, '%2D') : ''}`;
+  }
+  const selLinks = (f) => `<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Show on preview</button>${liveAtItem(state.current, f) ? `<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website, as visitors see it">🌐 Show on live</button>` : ''}<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Show in editor</button><button class="linkbtn faint" data-hlhelp title="How to outline the element on the preview or in the editor">?</button>`;
   function bindSelLinks(root, site, list) {
     const find = (id) => (list || site.findings || []).find((x) => x.id === id);
     $$('[data-prevat]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const f = find(b.dataset.prevat); if (f) openItemPreview(site, f); }));
     $$('[data-editat]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const f = find(b.dataset.editat); if (f) openItemEditor(site, f); }));
+    $$('[data-liveat]', root).forEach((b) => (b.onclick = (e) => {
+      e.stopPropagation(); const f = find(b.dataset.liveat); const url = f && liveAtItem(site, f); if (!url) return;
+      openInTab('live', site, url);
+      hlHintOnce('Live page opened. Click ⌖ DSA Highlight to outline the element.');
+    }));
     $$('[data-hlhelp]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openHighlighterHelp(); }));
   }
   const statusSelect = (f, attr) => `<select class="pill fs-${f.status}" ${attr}="${esc(f.id)}"${f.status === 'exempt' && f.exempt ? ` title="Exempt: ${esc(f.exempt.name)}"` : ''}>${f.status === 'exempt' ? '<option value="exempt" selected disabled>Exempt</option>' : ''}${FSTATUS.map((s) => `<option value="${s.v}" ${s.v === f.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select>`;
