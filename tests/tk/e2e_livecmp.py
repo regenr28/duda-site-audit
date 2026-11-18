@@ -14,6 +14,7 @@ def check(c, label):
     global ok
     print(('PASS ' if c else 'FAIL ') + label, flush=True); ok = ok and bool(c)
 errors = []
+def site(pg): return pg.evaluate("async () => (await (await fetch('/api/store?op=site&id=s1')).json())")
 PAGE = lambda extra: f'''<html><head><title>Home | Buff & Beyond</title><meta name="description" content="Detailing in town."></head><body><div id="dmcontent"><h1>Buff & Beyond</h1>
 <p id="p1">Call us at <a href="tel:2145550100">(214) 555-0100</a>.</p><p id="p2">Our second shop: (469) 555-0199.</p>{extra}</div></body></html>'''
 PREVIEW = PAGE('<p id="p3">Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>')   # the editor still has placeholder text
@@ -75,6 +76,25 @@ try:
             if '✓ Live' in pg.inner_text('#drawer .pvl-row'): break
         print('  after check:', pg.inner_text('#drawer .pvl-row'), flush=True)
         check('✓ Live' in pg.inner_text('#drawer .pvl-row'), 'clicking it reads that page on the live website and shows ✓ Live')
+        # An AI item: the live read does not raise it the same way, so it is judged by its words on the live page.
+        import zlib, base64
+        def unpack(raw): return json.loads(zlib.decompress(base64.b64decode(raw[3:]), -15)) if raw.startswith('z1:') else json.loads(raw)
+        def pack(o):
+            c = zlib.compressobj(9, zlib.DEFLATED, -15); return 'z1:' + base64.b64encode(c.compress(json.dumps(o).encode()) + c.flush()).decode()
+        d = unpack(redis(['GET', 'dsa:site:s1'])[0])
+        base = {'severity': 'critical', 'category': 'Business name', 'path': '/', 'selector': 'head > title', 'location': 'Head / Meta', 'devices': ['desktop'], 'visibleOn': ['desktop'], 'ai': {'type': 'name_variant'}}
+        d['findings'] += [dict(base, id='aiT', code='AI_NAME_VARIANT', message='AI: business name is written differently (SEO title)', found='"We make cars shine"'),
+                          dict(base, id='aiO', code='AI_NAME_VARIANT', message='AI: business name is written differently (SEO title)', found='"Buff & Beyonde"')]
+        redis(['SET', 'dsa:site:s1', pack(d)], ['HSET', 'dsa:fnum:s1', 'aiT', '901', 'aiO', '902'])
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/item/901'); pg.reload(); pg.wait_for_selector('#drawer [data-livecmp]', timeout=15000)
+        pg.click('#drawer [data-livecmp]')
+        for _ in range(40):
+            time.sleep(0.5)
+            res = (site(pg).get('live') or {}).get('res') or {}
+            if 'aiT' in res: break
+        print('  ai items on live:', res.get('aiT'), res.get('aiO'), flush=True)
+        check(res.get('aiT') == 't', 'an AI item whose words are still on the live page is marked "on live too"')
+        check(res.get('aiO') == 'o', 'one whose words are gone from the live page is "fine on live"')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

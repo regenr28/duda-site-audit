@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-live-words', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'Fixed: AI items said "✓ Live" when the live website had the same mistake',
+    what: 'The live comparison runs the scan\'s rules on the published website, but not every AI check, so an AI item (a misspelt business name in an SEO title, a proofreading slip) was never raised there and was wrongly called fine on live. Now an item that is not raised the same way on live is looked for <b>by its words</b> on the live page (title, description, text, alt texts, phone and email links): still there means <b>✗ Live</b>, gone means <b>✓ Live</b>, and an AI item with nothing exact to look for says <b>? Live</b>. Click the <b>Live</b> pill on any item to check that page on the live website again.',
+    where: ['<b>Walkthrough:</b> open an audit item → click its <b>Live</b> pill (under WHERE) to check it again.'],
+  },
+  {
     id: '2026-11-19-scan-took', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: 'How long a scan takes: a live timer, and the time in every report',
     what: 'While a website is being scanned, a <b>⏱ timer</b> under the progress bar shows how long the scan has been running (on the audit and on Audits). When it finishes, the scan summary says how long it took, and every scan in <b>📊 Audit Report → Scan history</b> has a <b>Took</b> column; the scan\'s own report (📋 View, and its download) says it too. ⚡ Apply check updates keeps its own time. Scans from before today have no time on record.',

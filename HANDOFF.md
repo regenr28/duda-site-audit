@@ -397,3 +397,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `state.scanT0[id]` set at the start of `scanSiteRun` (cleared at the end); `liveLine` shows `⏱ <b data-elapsed>` updated by the 1s interval. `fmtTook(ms)`.
 - `saveScan` stores `ms` (the client's `scan.durationMs`, capped at 24h) on each `site.scans` line and in the scan report (`scanrep`); check updates keep the full scan's record and add `scan.updMs`. Summary index carries `updAt/updMs`.
 - Shown: scan summary ("⏱ took"), Scan history "Took" column, report modal and downloaded report. Test `tests/tk/e2e_took.py`.
+
+## 191 — Live pill: items judged by their words
+- `liveRead` keeps each live page's text (desktop: title, meta/og, alt, tel/mailto hrefs, JSON-LD, body) in `res.liveText` (Map path → `liveNorm` text, ≤60k). `liveResults`: no vKey match → `liveQuote(f)` (found without quotes; phones by digits) on the live text → 't' / 'o'; nothing to look for → 'u' for AI and `LIVE_UNCHECKED` codes (checks liveRead doesn't run), else 'o'. Bug: AI name_variant item said ✓ Live while live title still said "Denver Auto Spa".
+- Live pill is a `data-livecmp` button for any state (except not published / AUTO_LIVE): re-reads that item's pages on live.
+- Test: e2e_livecmp (AI items aiT/aiO).

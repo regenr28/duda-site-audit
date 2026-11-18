@@ -2452,3 +2452,5 @@ table.findings .rw-status select { max-width: 150px; }
 .nap-guide { margin-top: 14px; } .nap-guide ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 5px; }
 .nowrap { white-space: nowrap; }
 .scan-clock { font-variant-numeric: tabular-nums; }
+.dev.pvl-btn { cursor: pointer; font-family: inherit; font-size: 10.5px; font-weight: 700; line-height: inherit; }
+.dev.pvl-btn:hover { outline: 1px solid currentColor; }

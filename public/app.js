@@ -10246,7 +10246,10 @@
     const sym = (st) => st === 't' ? '✗' : st === 'o' ? '✓' : st === 'x' ? '–' : '?';
     const pill = (where, st) => st === 'n' && can('site.scan')
       ? `<button type="button" class="dev pvl pvl-n" data-livecmp="${esc(f.id)}" title="${esc(tip(where, st))}">? ${where} · check</button>`
-      : `<span class="dev pvl pvl-${st === 'n' ? 'u' : st}" title="${esc(tip(where, st))}">${sym(st)} ${where}</span>`;
+      // A Live answer can be checked again on its own (reads just this item's pages on the live website).
+      : where === 'Live' && st !== 'x' && can('site.scan') && f.code !== 'AUTO_LIVE'
+        ? `<button type="button" class="dev pvl pvl-${st} pvl-btn" data-livecmp="${esc(f.id)}" title="${esc(tip(where, st) + ' · Click to check the live website again')}">${sym(st)} ${where}</button>`
+        : `<span class="dev pvl pvl-${st === 'n' ? 'u' : st}" title="${esc(tip(where, st))}">${sym(st)} ${where}</span>`;
     return `<div class="pvl-row">${pill('Preview', r.pv)}${pill('Live', r.lv)}</div>`;
   }
   function devChips(f) {
@@ -10585,12 +10588,26 @@
       // Page SEO settings (noindex etc.) come from Duda, like a normal scan
       const pagesMeta = {};
       try { const meta = await sApi('/api/site?editor=' + encodeURIComponent(s.editorUrl)); (meta.pages || []).forEach((p) => { pagesMeta[A.normalizePath(p.path)] = p; }); } catch (e) { log.push('Duda pages list unavailable: ' + e.message); }
+      // What each live page says, as text (title, description, body, alt texts, phone and email links), so an
+      // item the live read did not raise the same way (an AI item, a check that runs only in a full scan)
+      // can still be found by its words.
+      const liveText = new Map();
+      const keepText = (path, html) => {
+        try {
+          const d = new DOMParser().parseFromString(html, 'text/html');
+          d.querySelectorAll('script:not([type="application/ld+json"]), style, noscript').forEach((x) => x.remove());
+          const bits = [d.title, ...[...d.querySelectorAll('meta[name="description"], meta[property^="og:"], meta[name^="twitter:"]')].map((m) => m.getAttribute('content') || ''),
+            ...[...d.querySelectorAll('img[alt]')].map((i) => i.getAttribute('alt')), ...[...d.querySelectorAll('a[href^="tel:"], a[href^="mailto:"], a[href^="sms:"]')].map((a) => a.getAttribute('href')),
+            ...[...d.querySelectorAll('script[type="application/ld+json"]')].map((x) => x.textContent), d.body ? d.body.textContent : ''];
+          liveText.set(A.normalizePath(path), liveNorm(bits.join(' \n ')).slice(0, 60000));
+        } catch (e) { /* the item is then judged as before */ }
+      };
       const res = await A.runScan({
         siteId: s.siteId, host: info.domain, truth: A.truthWithout(s.truth, s.allow), allow: s.allow || [], pagesMeta, seedPaths: paths || (s.pages || []).filter((p) => !p.notFound).map((p) => p.path), concurrency: 4, maxPages: paths ? paths.length + (paths.includes('/') ? 0 : 1) : Math.max(10, (s.pages || []).length + 5),
         fetchPage: async (path, device) => {
           const q = new URLSearchParams({ live: '1', domain: info.domain, site: s.siteId, path, device });
           for (let attempt = 0; attempt < 3; attempt++) {
-            try { const r = await sApi('/api/fetch?' + q); if (r.status || attempt === 2) return r; } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
+            try { const r = await sApi('/api/fetch?' + q); if (r.status || attempt === 2) { if (device === 'desktop' && r && r.html && r.status < 400) keepText(path, r.html); return r; } } catch (e) { if (attempt === 2) return { status: 0, html: '', error: e.message }; }
             await new Promise((ok) => setTimeout(ok, 800 * (attempt + 1)));
           }
         },
@@ -10605,8 +10622,22 @@
       const aiAlt = await aiAltCheck(res, s.id, log);
       const aiText = await aiTextCheck(res, s.id, log, aiAlt && aiAlt.paused);
       const aiGap = !!((aiAlt && aiAlt.pending && aiAlt.pending.length) || (aiText && aiText.pending && aiText.pending.length));
+      res.liveText = liveText;
     return { res, aiGap };
   }
+  const liveNorm = (x) => String(x || '').toLowerCase().replace(/[\u2018\u2019\u02bc`]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2013\u2014]/g, '-').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+  /** The words an item is about, to look for on the live page: what was found, without quotes. null when there is nothing exact to look for. */
+  function liveQuote(f) {
+    let q = String(f.found || '').trim();
+    if (!q || /→|->/.test(q) || q.length > 200) return null;
+    q = q.replace(/^["\u201c\u2018']+|["\u201d\u2019']+$/g, '').replace(/\u2026$|\.\.\.$/, '').trim();
+    const digits = q.replace(/\D/g, '');
+    if (/^[\d\s().+\-]+$/.test(q) && digits.length >= 10) return { phone: digits.slice(-10) };
+    return q.length >= 3 ? { text: liveNorm(q) } : null;
+  }
+  // Checks the live read does not run (the full scan's AI proofreading, page fit and link checks): their items
+  // are judged by their words on the live page, never called fixed just because the live read did not raise them.
+  const LIVE_UNCHECKED = /^(AI_|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_INCOMPLETE|TEXT_PUNCT|LINK_WRONG_PAGE|NAME_SPELLING|PAGE_TOPIC|PAGE_WRONG_CITY)/;
   /** Each item against the live website: 't' it is there too, 'o' it is not (fine on live), 'u' can't be told. */
   function liveResults(s, res, aiGap) {
     const keys = new Set(res.findings.map(vKey)); const out = {};
@@ -10621,7 +10652,16 @@
       if (pages.some((p) => failed.has(p))) { out[f.id] = 'u'; return; }
       if (!pages.some((p) => read.has(p))) return;
       // Colour contrast needs a picture of the page and the live read reads the code only.
-      out[f.id] = /^CONTRAST_/.test(f.code) ? 'u' : keys.has(vKey(f)) ? 't' : (f.ai && aiGap ? 'u' : 'o');
+      if (/^CONTRAST_/.test(f.code)) { out[f.id] = 'u'; return; }
+      if (keys.has(vKey(f))) { out[f.id] = 't'; return; }
+      // Not raised the same way on live: are its words still on the live page?
+      const q = liveQuote(f); const texts = pages.map((p) => (res.liveText || new Map()).get(p)).filter(Boolean);
+      if (q && texts.length) {
+        const there = q.phone ? texts.some((t) => t.replace(/\D/g, '').includes(q.phone)) : texts.some((t) => t.includes(q.text));
+        // Its words are gone from the live page: fixed there.
+        out[f.id] = there ? 't' : 'o'; return;
+      }
+      out[f.id] = (f.ai || LIVE_UNCHECKED.test(f.code)) ? 'u' : 'o';
     });
     return out;
   }
