@@ -57,11 +57,13 @@ try:
         check(img[0] == 200 and img[1] == 'image/webp' and 1000 < img[2] < 150000, f'the picture is a small cropped image ({img[2]} bytes)')
         check(all(not f.get('proof') for f in S['findings'] if f['severity'] != 'critical'), 'only critical items are pictured automatically')
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('table.findings', timeout=15000); time.sleep(0.6)
-        check(pg.locator('.proof-th img').count() >= 1 and '📸 Proof' in pg.inner_text('table.findings'), 'the item shows its proof thumbnail and date')
-        pg.click('.proof-th >> nth=0'); time.sleep(0.4)
+        check(pg.locator('table.findings [data-proofimg]').count() >= 1 and '📸 Proof' in pg.inner_text('table.findings'), 'the item in the list shows a small 📸 Proof chip')
+        pg.click('table.findings [data-proofimg] >> nth=0'); time.sleep(0.4)
         check(pg.locator('.lightbox img').count() == 1, 'clicking it opens the full picture')
         pg.keyboard.press('Escape'); time.sleep(0.2)
-        # By hand: a warning item.
+        # By hand: a warning item (from its panel; the list keeps only the chip).
+        w = next((f for f in site(pg)['findings'] if not f.get('proof') and f.get('selector') and f['selector'] != '(page)' and not f.get('gone') and f['severity'] != 'critical' and not f['selector'].startswith('head')), None)
+        if w: pg.goto(f'http://localhost:{APORT}/#/site/s1/item/{w["num"]}'); pg.reload(); pg.wait_for_selector('#drawer', timeout=15000); time.sleep(0.6)
         cap = pg.locator('[data-proofcap]')
         n0 = len([f for f in site(pg)['findings'] if f.get('proof')])
         check(cap.count() >= 1, 'items without a picture offer "📸 Capture proof"')

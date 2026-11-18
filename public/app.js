@@ -11369,26 +11369,52 @@
 `;
     // One row of the list. The first rows are drawn with the page; the rest follow straight after in
     // batches (see below), so opening this tab no longer waits for hundreds of rows to be laid out.
+    // Where it shows, in a few words: nothing when it is on every device (the usual case).
+    const devWords = (f) => {
+      const devs = (f.devices || []).filter((d) => A.DEVICES.includes(d)); if (!devs.length) return '';
+      const on = devs.filter((d) => (f.visibleOn || []).includes(d));
+      if (!on.length) return '<span class="rw-hid" title="In the page\'s code but hidden on every device">Hidden on every device</span>';
+      if (on.length === A.DEVICES.length) return '';
+      return `<span title="${esc(devs.filter((d) => !on.includes(d)).map((d) => 'Hidden on ' + A.DEVICE_LABEL[d]).join(', ') || 'Not on the other devices')}">${esc(on.map((d) => A.DEVICE_LABEL[d]).join(', '))} only</span>`;
+    };
+    // The quick actions, one line, under the item's details (full selector and longer labels are in the item's panel).
+    const rowActs = (f) => {
+      // Something in the page's head (title, favicon, tags) has nothing to point at on the page.
+      const hasSel = f.selector && f.selector !== '(page)' && !/^\s*(head|meta|link|title)\b/i.test(f.selector);
+      const b = [];
+      if (hasSel) {
+        b.push(`<button class="linkbtn" data-inspect="${esc(f.id)}" title="Open the page with this element highlighted">👁 Page</button>`);
+        b.push(`<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Preview</button>`);
+        if (liveAtItem(s, f)) b.push(`<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website, as visitors see it">🌐 Live</button>`);
+        b.push(`<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Editor</button>`);
+        b.push(`<button class="linkbtn" data-copy="${esc(f.selector)}" title="Copy the selector: ${esc(f.selector)}">⧉ Copy selector</button>`);
+      }
+      if (can('item.status') && canRecheck(f)) b.push(`<button class="linkbtn" data-recheck="${esc(f.id)}" title="Rescan only ${recheckPages(f).length === 1 ? 'this page' : 'these ' + recheckPages(f).length + ' pages'} and check whether this item is still there">⟳ Recheck</button>`);
+      return b.length ? `<div class="rw-acts">${b.join('')}</div>` : '';
+    };
     const FIRST_ROWS = 60;
     const rowHtml = (f) => {
             const dev = (f.visibleOn && f.visibleOn[0]) || (f.devices && f.devices[0]) || 'desktop';
             const closed = f.status === 'done' || f.status === 'false' || f.status === 'exempt';
-            return `<tr class="row-link ${closed ? 'done' : ''} ${pick.ids.has(f.id) ? 'picked' : ''}" data-item="${f.num}">
+            const p = f.proof;
+            const chips = [goneBadge(f), correctedBadge(s, f), reportChip(f),
+              f.hiddenLive ? `<span class="badge subtle" title="Hidden by the page's own styles (${esc(f.hiddenLive)}): visitors don't see it, but it is in the page's code, which Google and SEO tools read">👁 Hidden on the page</span>` : '',
+              p && p.img ? `<button type="button" class="badge subtle rw-proof" data-proofimg="${esc(proofSrc(s, f))}" title="Proof: ${esc(fmtFull(p.at))} · ${esc(A.DEVICE_LABEL[p.device] || p.device)}. Click to see the picture.">📸 Proof</button>` : '',
+              f.comments ? `<span class="badge subtle" title="Comments">💬 ${f.comments}</span>` : ''].filter(Boolean).join('');
+            const where = [esc(f.location || ''), devWords(f)].filter(Boolean).join(' · ');
+            return `<tr class="row-link rw ${closed ? 'done' : ''} ${pick.ids.has(f.id) ? 'picked' : ''}" data-item="${f.num}">
               <td class="pick-col" data-stop><input type="checkbox" data-pick="${esc(f.id)}" ${pick.ids.has(f.id) ? 'checked' : ''} aria-label="Select #${f.num}"></td>
-              <td><a class="item-id" href="#/site/${esc(s.id)}/item/${f.num}">#${f.num}</a></td>
-              <td data-stop>${statusSelect(f, 'data-fst')}${can('item.status') && canRecheck(f) ? `<div><button class="linkbtn recheck-btn" data-recheck="${esc(f.id)}" title="Rescan only ${recheckPages(f).length === 1 ? 'this page' : 'these ' + recheckPages(f).length + ' pages'} and check whether this item is still there">⟳ Recheck</button></div>` : ''}</td>
-              <td><span class="badge sev-${f.severity}">${esc(f.severity)}</span><div class="small faint" style="margin-top:4px">${esc(f.category)}</div></td>
-              <td style="max-width:200px" data-stop><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small" title="Open ${esc(A.DEVICE_LABEL[dev])} preview">${esc(f.path)}</a>
-                ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more pages</div>` : ''}</td>
-              <td><div class="loc">${esc(f.location)}</div>${devChips(f)}${pvLivePills(s, f)}</td>
-              <td class="cell-sel" data-stop>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" data-inspect="${esc(f.id)}" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
-                <div class="sel-actions"><button class="linkbtn" data-inspect="${esc(f.id)}">👁 Show on page</button><button class="linkbtn" data-copy="${esc(f.selector)}">Copy</button></div>
-                <div class="sel-actions">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</td>
-              <td style="min-width:240px">${goneBadge(f)}${correctedBadge(s, f)}${reportChip(f)}<div class="finding-msg">${esc(f.message)}</div>${gbpIdNote(s, f)}${f.hiddenLive ? `<div><span class="badge subtle" title="Hidden by the page's own styles (${esc(f.hiddenLive)}): visitors don't see it, but it is in the page's code, which Google and SEO tools read">👁 Hidden on the page</span></div>` : ''}
-                ${f.found ? `<div class="kv"><b>Found:</b> ${esc(f.found)}</div>` : ''}${ctrChip(f)}${proofHtml(s, f)}
-                ${f.expected ? `<div class="kv"><b>Expected:</b> ${esc(f.expected)}</div>` : ''}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}</td>
-              <td>${f.comments ? `<span class="badge subtle">💬 ${f.comments}</span>` : '<span class="faint small">—</span>'}</td>
-              <td data-stop><span class="member-select">${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
+              <td class="rw-id"><a class="item-id" href="#/site/${esc(s.id)}/item/${f.num}">#${f.num}</a><div><span class="badge sev-${f.severity}">${esc(f.severity)}</span></div><div class="small faint">${esc(f.category)}</div></td>
+              <td class="rw-main">
+                <div class="finding-msg">${esc(f.message)}</div>${chips ? `<div class="rw-chips">${chips}</div>` : ''}
+                ${f.found || f.expected ? `<dl class="rw-fe">${f.found ? `<dt>Found</dt><dd class="rw-found">${esc(f.found)}</dd>` : ''}${f.expected ? `<dt>Expected</dt><dd class="rw-exp">${esc(f.expected)}</dd>` : ''}</dl>` : ''}
+                ${gbpIdNote(s, f)}${ctrChip(f)}${dupWhereRow(f)}${aiNote(f, false)}${aiPendingHtml(f, false)}${verifyBadge(s, f) ? `<div style="margin-top:4px">${verifyBadge(s, f)}</div>` : ''}${recheckBadge(f) ? `<div style="margin-top:4px">${recheckBadge(f)}</div>` : ''}
+                ${rowActs(f)}</td>
+              <td class="rw-where"><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small rw-path" title="${esc(f.path)} · open the ${esc(A.DEVICE_LABEL[dev])} preview">${esc(f.path)}</a>
+                ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more page${f.pages.length === 2 ? '' : 's'}</div>` : ''}
+                ${where ? `<div class="small muted rw-loc">${where}</div>` : ''}${pvLivePills(s, f)}</td>
+              <td class="rw-status">${statusSelect(f, 'data-fst')}</td>
+              <td><span class="member-select" data-stop>${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
             </tr>`;
     };
     body.innerHTML = `
@@ -11423,7 +11449,7 @@
           <button class="btn sm primary" id="ffClear">Clear filters</button></div>` : `
         ${bulkHtml()}
         <div class="table-wrap"><table class="grid findings">
-          <thead><tr><th class="pick-col"><input type="checkbox" id="pickAll" ${allPicked ? 'checked' : ''} title="Select every item shown"></th><th>ID</th><th>Status</th><th>Severity</th><th>Page / path</th><th>Where</th><th>Unique CSS selector</th><th>Finding</th><th title="Comments">💬</th><th>Assignee</th></tr></thead>
+          <thead><tr><th class="pick-col"><input type="checkbox" id="pickAll" ${allPicked ? 'checked' : ''} title="Select every item shown"></th><th>ID</th><th>Audit item</th><th>Where</th><th>Status</th><th>Assignee</th></tr></thead>
           <tbody id="itemRows">${shown.slice(0, FIRST_ROWS).map(rowHtml).join('')}</tbody></table></div>`}
       </div>
       ${polish && !lengths ? `      <details class="ref-details polish-ref" style="margin-top:16px">
@@ -11482,7 +11508,7 @@
       openInspector(s, Object.assign({}, f, { selector: b.dataset.dupsel, path: b.dataset.duppath, pages: f.placesKind === 'link' ? [b.dataset.duppath] : (place.paths || [b.dataset.duppath]), location: place.location || f.location }, place.devices && place.devices.length ? { visibleOn: place.devices } : {}));
     }));
     bindSelLinks(root, s);
-    $$('tr[data-item]', root).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button')) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
+    $$('tr[data-item]', root).forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-stop], a, select, button, input, summary, details[open] code')) return; if (String(window.getSelection && window.getSelection()) .trim()) return; location.hash = `#/site/${s.id}/item/${tr.dataset.item}`; }));
     $$('[data-fst]', root).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fst], { status: sel.value })));
     $$('[data-fwho]', root).forEach((sel) => (sel.onchange = () => setFinding(s, [sel.dataset.fwho], { assignee: sel.value })));
     $$('[data-pick]', root).forEach((cb) => (cb.onchange = () => { if (cb.checked) pick.ids.add(cb.dataset.pick); else pick.ids.delete(cb.dataset.pick); syncPick(); }));

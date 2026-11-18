@@ -370,3 +370,9 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `pvLive` always returns both: Preview `t/o/u`, Live `t/o/u/n/x` (n = not compared yet → `<button data-livecmp>` "? Live · check", x = not published via `isPublished(s)`). Manual items: Preview ✗, Live ? .
 - `liveCheckItem(s, f)` (document capture click on `[data-livecmp]`): claims the site, `liveCompare(id, recheckPages(f))`, reloads. `recheckItems` also runs `liveCompare(s.id, paths)`.
 - `liveResults` now only judges items whose pages were read on live (a failed live page → `u`), so a one-page compare no longer marks other pages' items "fine". `liveCompare` returns 'ok' / 'unpublished' / 'error'; partial compares keep earlier results.
+
+## 186 — Calmer audit item rows
+- `rowHtml` (renderSite list): columns ☐ | ID (+severity, category) | Audit item (title, chips incl. `📸 Proof` [data-proofimg] and 💬 count, `<dl class="rw-fe">` Found red / Expected green, notes, `rowActs`) | Where (path clamp, +N pages, location · `devWords`, pills) | Status | Assignee. Selector code, proof thumbnail, Capture proof, device chips moved out of the list (drawer has them).
+- `rowActs`: 👁 Page / ▶ Preview / 🌐 Live / ✎ Editor / ⧉ Copy selector / ⟳ Recheck; none of the selector ones for head selectors. Faded until row hover (`.rw-acts`).
+- Row click opens the item unless the target is a/select/button/input/summary, or text is selected; only the checkbox cell and the assignee picker keep `data-stop`.
+- Tests: e2e_proof checks the list chip and captures from the drawer.

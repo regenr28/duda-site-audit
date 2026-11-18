@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-calmer-rows', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'A calmer audit list: the problem first',
+    what: 'Each audit item in the list now leads with the problem: its title, then <b>Found</b> (red) and <b>Expected</b> (green). Where it is (page, part of the page, Preview / Live) has its own column, and the quick buttons (<b>👁 Page · ▶ Preview · 🌐 Live · ✎ Editor · ⧉ Copy selector · ⟳ Recheck</b>) sit quietly on one line and light up when you point at the item. The full selector, the proof picture and the longer options are in the item\'s panel. Clicking any empty space on an item now opens it, the Status column included.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>Audit items</b>.'],
+  },
+  {
     id: '2026-11-19-live-check', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: 'Preview and Live pills on every item, with a one-click live check',
     what: 'Every audit item now always shows both pills. When an item was not compared with the live website yet (for example an audit scanned before this update), the Live pill says <b>? Live · check</b>: click it to check just that page on the live website, no full rescan needed. <b>⟳ Recheck this item</b> also checks the live website now.',
