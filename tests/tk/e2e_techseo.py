@@ -45,6 +45,10 @@ try:
     with sync_playwright() as p:
         br = p.chromium.launch(); ctx = br.new_context(viewport={'width': 1440, 'height': 1000}); ctx.add_cookies([{'name': 'dsa_sess', 'value': 'tokadmin1234567890abcdef', 'domain': 'localhost', 'path': '/'}])
         ctx.route('**/api/site?*', site_route); ctx.route('**/api/fetch?*', fetch_route)
+        PRES = {'result': {'at': 1795000000000, 'reference': {}, 'listings': [
+            {'platform': 'instagram', 'found': True, 'source': 'search', 'url': 'https://instagram.com/denver.auto.shield', 'name': 'Buff & Beyond Auto Detailing', 'address': '', 'phone': ''},
+            {'platform': 'facebook', 'found': True, 'source': 'search', 'url': 'https://facebook.com/x', 'name': 'Buff & Beyond Auto Detailing', 'address': '4211 S Natches Court Suite D, Englewood, Colorado 80110', 'phone': '(214) 555-0100'}]}, 'maps': False, 'cfg': {}}
+        ctx.route('**/api/watch?op=presence*', lambda r: r.fulfill(status=200, content_type='application/json', body=json.dumps(PRES)))
         ctx.route('**/api/ai*', count('ai')); ctx.route('**/api/capture*', count('capture')); ctx.route('**/api/check*', count('check'))
         pg = ctx.new_page(); pg.on('pageerror', lambda e: errors.append(str(e))); pg.on('dialog', lambda d: d.accept())
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('#sRescan', timeout=20000); time.sleep(1)
@@ -78,6 +82,11 @@ try:
         check('business info' in n and 'schema' in n and 'llms.txt' in n and 'automation email in business info' in n, 'the NAP tab compares Business Info, the website, the schema and llms.txt')
         check(pg.locator('.nap-t .nap-bad').count() >= 1 and pg.locator('.nap-t .nap-ok').count() >= 1, 'with red where a value differs and green where it matches')
         pg.screenshot(path=os.path.join(OUT, 'nap-tab.png'), full_page=True)
+        cellOf = lambda col: pg.evaluate('''(col) => { const hs = [...document.querySelectorAll('.nap-t thead th')].map(h => h.innerText.toLowerCase()); const i = hs.findIndex(h => h.startsWith(col)); const r = document.querySelectorAll('.nap-t tbody tr')[1]; return r && i >= 0 ? r.children[i].innerText : ''; }''', col)
+        ig, fb = cellOf('instagram'), cellOf('facebook')
+        print('  instagram address:', ig.replace('\n', ' '), '| facebook:', fb.replace('\n', ' '), flush=True)
+        check('Not read by the search' in ig and 'Not there' not in ig, 'a profile detail the search did not bring back is "?", not "Not there"')
+        check('≈' in fb and 'Suite D' in fb, 'an address written differently (Court / Ct, a suite) is marked ≈ with what differs')
         # ---- Apply check updates: an audit scanned before v37 ----
         S = site(pg)
         keep = next(f for f in S['findings'] if f['code'] == 'PLACEHOLDER' and not f.get('gone'))
@@ -105,6 +114,21 @@ try:
         k2 = next((f for f in S2['findings'] if f['id'] == keep['id']), {})
         check(k2.get('status') == 'hold' and not k2.get('gone'), 'an item from another check is left exactly as it was (On hold)')
         check(calls['ai'] == 0 and calls['capture'] == 0 and calls['check'] == 0, 'no AI, no contrast pictures and no link checks were run')
+        lp = next((f for f in S2['findings'] if f['code'] == 'LLMS_PHONE' and not f.get('gone')), {})
+        check('(469) 555-0199' in (lp.get('snippet') or '') and 'read on' in (lp.get('snippet') or ''), f"the llms.txt item shows the line it came from and when it was read: {lp.get('snippet')!r}")
+        # The client fixes llms.txt (Duda rebuilds it on publish): read the files again, nothing else.
+        FILES['/llms.txt'] = (200, '# Buff & Beyond Auto Detailing\n\n> Detailing.\n\nCall (214) 555-0100\n')
+        cv0 = int(S2['scan']['cv'])
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/tech'); pg.reload(); pg.wait_for_selector('#techReread', timeout=15000)
+        calls.update({'ai': 0, 'capture': 0, 'check': 0, 'fetch': []})
+        pg.click('#techReread')
+        for _ in range(90):
+            time.sleep(1); S3 = site(pg)
+            if (S3.get('scan') or {}).get('state') == 'complete' and not any(f['code'] == 'LLMS_PHONE' and not f.get('gone') for f in S3['findings']): break
+        print('  reread fetches:', calls['fetch'], flush=True)
+        check(not any(f['code'] == 'LLMS_PHONE' and not f.get('gone') for f in S3['findings']), 'after "Read the files again", the fixed llms.txt phone item closes')
+        check(int(S3['scan']['cv']) == cv0 and calls['ai'] == 0, 'only the files were read: no AI, and the audit\'s check version is unchanged')
+        check({x.replace('live:', '') for x in calls['fetch']} <= {'/', '/robots.txt', '/sitemap.xml', '/llms.txt'}, 'and only the home page was read besides the files')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

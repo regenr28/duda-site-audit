@@ -2335,7 +2335,8 @@
       <div class="polish-head-t">🛠 Technical SEO <span class="polish-head-n">${mineOpen ? `${mineOpen} open` : findings.length ? '✓ all closed' : 'nothing found'}</span></div>
       <div class="small">What search engines and AI assistants read about the website rather than what visitors see. Wrong business details <i>inside</i> the schema (name, phone, email, address) stay on <a href="#/site/${esc(s.id)}">Audit items</a>; the whole picture of the business's name, address and phone is on <a href="#/site/${esc(s.id)}/nap">📇 NAP</a>.</div>
       <div class="tq-grid">${schema}${robots}${sitemap}${llms}${index}${extras}</div>
-      ${F && F.at ? `<div class="small faint">Files read from ${esc(dom)} on ${esc(fmtFull(F.at))}.</div>` : ''}
+      <div class="small faint tq-read">${F && F.at ? `Files read from ${esc(dom)} on <b>${esc(fmtFull(F.at))}</b>. Duda rebuilds them on every publish, so they can change after that.` : 'Files not read yet.'}
+        ${can('site.scan') ? ` <button class="btn sm" id="techReread" ${state.scanning[s.id] || otherClaim(s.id) ? 'disabled' : ''} title="Reads only robots.txt, sitemap.xml and llms.txt on the published website and updates their items (no pages, no AI)">↻ Read the files again</button>` : ''}</div>
     </div>`;
   }
 
@@ -2353,12 +2354,30 @@
     const same = { name: (v) => !bi.name || flat(v) === flat(bi.name) || flat(v).includes(flat(bi.name)), phone: (v) => !bi.phones.length || String(v).split(/[,;|]/).every((p) => !digits(p) || bi.phones.includes(digits(p))),
       email: (v) => !(t.emails || []).length || String(v).toLowerCase().split(/[,;\s]+/).filter(Boolean).every((e) => (t.emails || []).includes(e)), address: (v) => !bi.zips.length || !zipOf(v) || bi.zips.includes(zipOf(v)),
       website: (v) => !bi.website || String(v).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') === String(bi.website).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') };
-    const cell = (k, v, note) => {
+    // Addresses: the same place can be written differently ("Court" / "Ct", a suite on one and not the other).
+    const ABBR = { court: 'ct', street: 'st', avenue: 'ave', road: 'rd', drive: 'dr', boulevard: 'blvd', lane: 'ln', place: 'pl', parkway: 'pkwy', highway: 'hwy', suite: 'ste', south: 's', north: 'n', east: 'e', west: 'w', colorado: 'co', texas: 'tx', tennessee: 'tn', california: 'ca', florida: 'fl' };
+    const addrToks = (x) => String(x || '').toLowerCase().replace(/[.,#]/g, ' ').split(/\s+/).filter(Boolean).map((w) => ABBR[w] || w).filter((w) => !/^(usa|us|united|states)$/.test(w));
+    const UNIT = /\b(?:suite|ste|unit|apt|#)\s*[a-z0-9-]+/i;
+    const addrNote = (v) => {
+      if (!bi.address) return '';
+      const a = addrToks(v), b = addrToks(bi.address.split(' | ')[0]);
+      if (a.join(' ') === b.join(' ')) return '';
+      const unitV = (String(v).match(UNIT) || [])[0], unitB = (bi.address.match(UNIT) || [])[0];
+      if (unitV && !unitB) return `Same place, but it has “${unitV.trim()}” and Business Info doesn't: write it the same everywhere`;
+      if (unitB && !unitV) return `Same place, but Business Info has “${unitB.trim()}” and this doesn't`;
+      const extra = a.filter((w) => !b.includes(w)), miss = b.filter((w) => !a.includes(w));
+      return extra.length || miss.length ? 'Same place, written differently from Business Info' : '';
+    };
+    const cell = (k, v, note, o) => {
+      o = o || {};
       if (v === undefined) return '<td class="nap-c nap-na"><span class="faint">—</span></td>';
       if (v === null) return `<td class="nap-c nap-unk"><span class="nap-m">?</span> <span class="faint small">${esc(note || 'Not known')}</span></td>`;
+      // A profile read by web search: an empty detail means the search did not bring it back, not that the profile lacks it.
+      if (!String(v).trim() && o.profile) return `<td class="nap-c nap-unk"><span class="nap-m">?</span> <span class="faint small">${(o.unconf || []).some((u) => String(u).toLowerCase().startsWith(k)) ? 'Seen, but not confirmed word for word' : 'Not read by the search'}${o.url ? ` · <a href="${esc(o.url)}" target="_blank" rel="noopener">open the profile ↗</a>` : ''}</span></td>`;
       if (!String(v).trim()) return `<td class="nap-c nap-miss"><span class="nap-m">!</span> <span class="small">${esc(note || 'Not there')}</span></td>`;
       const ok = same[k] ? same[k](v) : true;
-      return `<td class="nap-c ${ok ? 'nap-ok' : 'nap-bad'}"><span class="nap-m">${ok ? '✓' : '✗'}</span> ${esc(v)}${note ? `<div class="small faint">${esc(note)}</div>` : ''}</td>`;
+      const fmt = ok && k === 'address' ? addrNote(v) : '';
+      return `<td class="nap-c ${!ok ? 'nap-bad' : fmt ? 'nap-fmt' : 'nap-ok'}"><span class="nap-m">${!ok ? '✗' : fmt ? '≈' : '✓'}</span> ${esc(v)}${fmt ? `<div class="small">${esc(fmt)}</div>` : ''}${note ? `<div class="small faint">${esc(note)}</div>` : ''}</td>`;
     };
     // The website itself: what the scan found that differs (contact items), or ✓.
     const CONTACT = { name: /^(NAME_SPELLING|TEXT_OTHER_BUSINESS|COPYRIGHT_NAME|META_TITLE_NO_NAME)$/, phone: /^(PHONE_MISMATCH|TEL_|SMS_MISMATCH)/, email: /^(EMAIL_|MAILTO_)/, address: /^(ADDRESS_|MAP_ADDRESS)/ };
@@ -2376,21 +2395,21 @@
       { h: 'Business Info', sub: 'the fact', v: { name: bi.name, address: bi.address, phone: bi.phone, email: bi.email, website: bi.website }, ref: true },
       { h: 'Website', sub: 'every page read', web: true },
       { h: 'Schema', sub: 'home page JSON-LD', v: sb && !sb.none ? { name: sb.name, address: sb.address, phone: sb.phone, email: sb.email || undefined, website: sb.url } : null, note: sb && sb.none ? 'No business schema' : 'Rescan to read it' },
-      { h: 'llms.txt', sub: 'for AI assistants', v: L ? { name: L.nameIn ? bi.name : L.title, address: undefined, phone: (L.phones || []).map(A.fmtPhone).join(', '), email: (L.emails || []).join(', ') || undefined, website: undefined } : null, note: F.llms ? 'No llms.txt' : 'Checked once published' },
-    ].concat(PL.map((p) => { const l = listings.find((x) => x.platform === p); return l ? { h: PRES_NAME[p] || p, sub: l.source === 'places' ? 'from Google' : 'web search', url: l.url, v: l.found ? { name: l.name || '', address: l.address || '', phone: l.phone || '', email: l.email || undefined, website: l.website || '' } : null, note: l.found ? '' : "Couldn't confirm" } : null; }).filter(Boolean));
+      { h: 'llms.txt', sub: 'for AI assistants', v: L ? { name: L.nameIn ? bi.name : L.title, address: undefined, phone: (L.phones || []).map(A.fmtPhone).join(', '), email: (L.emails || []).join(', ') || undefined, website: undefined } : null, note: F.llms ? 'No llms.txt' : 'Checked once published', url: F.llms && F.llms.found && F.domain ? `https://${F.domain}/llms.txt` : '', sub2: F.at ? 'read ' + fmtDate(F.at) : '' },
+    ].concat(PL.map((p) => { const l = listings.find((x) => x.platform === p); return l ? { h: PRES_NAME[p] || p, sub: l.source === 'places' ? 'from Google' : 'web search', url: l.url, profile: true, unconf: l.unconfirmed || [], v: l.found ? { name: l.name || '', address: l.address || '', phone: l.phone || '', email: l.email || undefined, website: l.website || '' } : null, note: l.found ? '' : "Couldn't confirm" } : null; }).filter(Boolean));
     const ROWS = [['name', 'Name'], ['address', 'Address'], ['phone', 'Phone'], ['email', 'Email'], ['website', 'Website']];
     const autoMails = (t.autoEmails || []);
     body.innerHTML = `
       <div class="panel panel-pad nap">
         <div class="row-between" style="align-items:flex-start;gap:12px"><div>
           <h2 style="margin:0">📇 NAP: Name, Address, Phone</h2>
-          <div class="small muted" style="margin-top:4px;max-width:820px">Google trusts a local business more when its name, address and phone are <b>exactly the same everywhere</b>: the website, its structured data, the Google Business Profile, Facebook, Yelp and the directories. Business Info is the fact; every other column is compared with it. <b>Red</b> differs, <b>green</b> matches, <b>?</b> could not be read.</div></div>
+          <div class="small muted" style="margin-top:4px;max-width:820px">Google trusts a local business more when its name, address and phone are <b>exactly the same everywhere</b>: the website, its structured data, the Google Business Profile, Facebook, Yelp and the directories. Business Info is the fact; every other column is compared with it. <b>Red</b> differs, <b>green</b> matches, <b>≈</b> the same but written differently, <b>?</b> could not be read (the profiles are found by web search, which often does not bring every detail back: open the profile to check).</div></div>
           ${can('live.content') ? `<button class="btn sm" id="napPres" ${W.busy ? 'disabled' : ''}>${W.busy ? 'Searching… (up to a minute)' : pr ? '↻ Check Google & profiles again' : '🔎 Check Google & profiles'}</button>` : ''}
         </div>
         ${autoMails.length ? `<div class="note bad" style="margin-top:10px">🤖 <b>Automation email in Business Info:</b> ${autoMails.map(esc).join(', ')}. It is there so leads reach a system (Zapier, a form parser), so it is <b>never expected on the website</b>, and it is reported as critical wherever it shows (page, email link, schema, llms.txt).</div>` : ''}
         <div class="table-wrap" style="margin-top:12px"><table class="grid nap-t">
-          <thead><tr><th></th>${cols.map((c) => `<th>${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.h)} ↗</a>` : esc(c.h)}<div class="nap-sub">${esc(c.sub || '')}</div></th>`).join('')}</tr></thead>
-          <tbody>${ROWS.map(([k, label]) => `<tr><th class="nap-row">${label}</th>${cols.map((c) => c.ref ? `<td class="nap-c nap-ref">${esc(c.v[k] || '—')}${k === 'email' && autoMails.length ? `<div class="small faint">+ automation: ${autoMails.map(esc).join(', ')}</div>` : ''}</td>` : c.web ? (k === 'website' ? '<td class="nap-c nap-na"><span class="faint">—</span></td>' : webCell(k)) : !c.v ? cell(k, null, c.note) : cell(k, c.v[k])).join('')}</tr>`).join('')}</tbody>
+          <thead><tr><th></th>${cols.map((c) => `<th>${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.h)} ↗</a>` : esc(c.h)}<div class="nap-sub">${esc(c.sub || '')}${c.sub2 ? ` · ${esc(c.sub2)}` : ''}</div></th>`).join('')}</tr></thead>
+          <tbody>${ROWS.map(([k, label]) => `<tr><th class="nap-row">${label}</th>${cols.map((c) => c.ref ? `<td class="nap-c nap-ref">${esc(c.v[k] || '—')}${k === 'email' && autoMails.length ? `<div class="small faint">+ automation: ${autoMails.map(esc).join(', ')}</div>` : ''}</td>` : c.web ? (k === 'website' ? '<td class="nap-c nap-na"><span class="faint">—</span></td>' : webCell(k)) : !c.v ? cell(k, null, c.note) : cell(k, c.v[k], '', { profile: c.profile, unconf: c.unconf, url: c.url })).join('')}</tr>`).join('')}</tbody>
         </table></div>
         ${!pr ? `<div class="small muted" style="margin-top:8px">Google Business Profile, Facebook, Yelp and the others appear here after <b>Check Google & profiles</b> (one AI request and a few web searches).</div>` : `<div class="small faint" style="margin-top:8px">Profiles checked ${esc(fmtFull(new Date(pr.at).toISOString()))}.</div>`}
       </div>
@@ -6973,7 +6992,7 @@
     state.kind = state.kind || {}; state.kind[id] = x.k;
     const m = qmeta(id); m.why = x.why || ''; m.at = x.at || ''; if (x.mv) m.mv = x.mv; else delete m.mv;
     state.scanOpts = state.scanOpts || {};
-    if (x.k === 'update') state.scanOpts[id] = { upd: true };
+    if (x.k === 'update') state.scanOpts[id] = { upd: true, ...(x.files ? { files: true } : {}) };
     else if (x.paths && x.paths.length) state.scanOpts[id] = { paths: x.paths };
     else if (x.seo || x.k === 'seo') state.scanOpts[id] = { bulk: true, seo: true, ...(x.k === 'seo' ? { auto: true } : {}) };
     state.scanning[id] = { done: 0, total: 0, message: x.back ? 'Starting again (the tab scanning it stopped)…' : 'Starting the scan…' };
@@ -7296,7 +7315,11 @@
       // "Scan chosen pages": only these (the home page is always read too, and left out of the save).
       const opts0 = (state.scanOpts || {})[id] || {};
       // "Apply check updates": only the checks changed since this audit's scan, only on the pages they need.
-      const plan = opts0.upd ? A.updatePlan((site.scan && site.scan.cv) || 1, site.findings) : null;
+      // "Read the files again": only robots.txt, sitemap.xml and llms.txt (the audit's check version stays as it is).
+      const FILE_CODES = ['ROBOTS_', 'SITEMAP_', 'LLMS_', 'EMAIL_AUTOMATION'];
+      const plan = opts0.upd && opts0.files ? { files: true, keepCv: true, full: [], codes: FILE_CODES, pages: [], ai: false, contrast: false, links: false,
+          steps: [{ title: 'robots.txt, sitemap.xml and llms.txt read again', kind: 'adds', files: true, codes: FILE_CODES, items: [], pages: [] }] }
+        : opts0.upd ? A.updatePlan((site.scan && site.scan.cv) || 1, site.findings) : null;
       const only = plan ? (plan.pages === 'all' ? null : plan.pages.length ? plan.pages : ['/']) : opts0.paths || null;
       if (plan && !plan.full.length && !plan.codes.length) {
         // Nothing on this website is touched by the updates: it is up to date as it is.
@@ -7368,7 +7391,7 @@
       if (plan) res.findings = res.findings.filter((f) => A.codeIn(plan.codes, f.code));
       const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, ...(only ? { partial: only } : {}), ...(plan ? { codes: plan.codes } : {}), bulk: !!((state.scanning[id] && state.scanning[id].bulk) || opts0.bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, ...(res.files ? { files: res.files } : {}), ...(res.schemaBiz ? { schemaBiz: res.schemaBiz } : {}), findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
-        scan: { state: 'complete', cv: A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
+        scan: { state: 'complete', cv: plan && plan.keepCv ? ((site.scan && site.scan.cv) || 1) : A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
       } });
       upsertSummary(sum);
       // Proof pictures of the critical items, while they are on the page (skipped when the page browser isn't available).
@@ -7385,7 +7408,7 @@
       // The same pages on the live website, so each item says whether visitors see the problem too.
       await liveCompare(id, only || null);
       upsertSummary(sum);
-      toast(plan ? `Check updates applied: ${sum.businessName || site.siteId}${sum.upd ? ` · ${sum.upd.closed || 0} closed, ${sum.upd.added || 0} new` : ''}` : `Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
+      toast(plan && plan.files ? `robots.txt, sitemap.xml and llms.txt read again${sum.upd ? ` · ${sum.upd.closed || 0} closed, ${sum.upd.added || 0} new` : ''}` : plan ? `Check updates applied: ${sum.businessName || site.siteId}${sum.upd ? ` · ${sum.upd.closed || 0} closed, ${sum.upd.added || 0} new` : ''}` : `Scan complete: ${sum.businessName || site.siteId} · ${res.counts.critical} critical`);
     } catch (e) {
       console.error(e);
       try { upsertSummary(await store({ op: 'scanState', id, scan: { state: 'failed', error: String(e.message || e), finishedAt: new Date().toISOString(), log } })); } catch (x) { /* ignore */ }
@@ -11753,6 +11776,7 @@
       if (shown.length > FIRST_ROWS) setTimeout(() => requestAnimationFrame(more), 0); }
     bindVerify(body, s);
     bindNewChecks(body, s);
+    if ($('#techReread', body)) $('#techReread', body).onclick = () => addToLine([{ id: s.id, k: 'update', files: 1, why: 'Read robots.txt, sitemap.xml and llms.txt again' }]);
     state.refTab = refWas;
     $$('[data-ref]', body).forEach((b) => (b.onclick = () => { state.refTab = b.dataset.ref; renderSite(); }));
     if ($('#fontToItems', body)) $('#fontToItems', body).onclick = () => { state.ff.cat = 'Design'; state.ff.q = ''; state.ff.sev = ''; renderSite(); };

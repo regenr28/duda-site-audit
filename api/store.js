@@ -991,6 +991,7 @@ async function handler(req, res) {
         const items = (Array.isArray(b.items) ? b.items : []).slice(0, 1000).map((x) => (x && typeof x === 'object' ? {
           id: String(x.id || '').slice(0, 40), k: LKIND.test(x.k) ? x.k : 'manual', why: String(x.why || '').slice(0, 160), name: String(x.name || '').slice(0, 120),
           ...(Array.isArray(x.paths) && x.paths.length ? { paths: x.paths.map((q) => String(q).slice(0, 300)).slice(0, 300) } : {}),
+          ...(x.files ? { files: 1 } : {}),
           ...(x.seo && typeof x.seo === 'object' ? { seo: { site: String(x.seo.site || '').slice(0, 64), pub: String(x.seo.pub || '').slice(0, 40), name: String(x.seo.name || '').slice(0, 120) } } : {}),
         } : null)).filter((x) => x && x.id && !seen.has(x.id) && seen.add(x.id));
         if (!items.length) return res.status(200).json(Object.assign(await lineState(), { ok: [], taken: [], already: [] }));

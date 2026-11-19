@@ -4,6 +4,24 @@
 
 export const NEWS = [
   {
+    id: '2026-11-19-nap-profiles', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'NAP tab: "?" when a profile detail was not read, and ≈ for addresses written differently',
+    what: 'Google, Facebook, Instagram and the other profiles are found by web search, which often does not bring back every detail. A detail the search did not return now shows <b>? Not read by the search</b> with a link to open the profile, instead of "Not there". And an address that is the same place but written differently (Court / Ct, a <i>Suite D</i> on one and not the other) shows <b>≈</b> and says what differs, because NAP should be written the same everywhere.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>📇 NAP</b>.'],
+  },
+  {
+    id: '2026-11-19-files-reread', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'llms.txt items show the line they came from, and the files can be read again',
+    what: 'Duda rebuilds robots.txt, sitemap.xml and llms.txt every time the website is published, so they can change after a scan. An llms.txt item now quotes the line it found and the day it was read, and the <b>📇 NAP</b> tab says when the files were read. <b>🛠 Technical SEO → ↻ Read the files again</b> reads just those three files (and the home page) and updates their items, with no full rescan and no AI.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>🛠 Technical SEO</b> → <b>↻ Read the files again</b>.'],
+  },
+  {
+    id: '2026-11-19-label-ai', date: '2026-11-19', audience: 'all', tag: 'Audits',
+    title: 'Fixed: hidden gallery "Button" labels reported by the AI as notes left in the text',
+    what: 'The AI reads each page\'s text, and that text still carried the gallery\'s hidden "Button" labels, so it reported "Button Button A properly applied…" as a note left in the copy. Duda\'s default labels are now taken out of everything the AI reads, and an AI item about a "Button" label is never kept: the default-label check alone decides (a visible "Button" is still critical, a hidden one is left out). Real notes left in the copy or a meta description are still reported.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b> (re-reads only the pages with these items; the AI is asked again only about those pages).'],
+  },
+  {
     id: '2026-11-19-live-words', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: 'Fixed: AI items said "✓ Live" when the live website had the same mistake',
     what: 'The live comparison runs the scan\'s rules on the published website, but not every AI check, so an AI item (a misspelt business name in an SEO title, a proofreading slip) was never raised there and was wrongly called fine on live. Now an item that is not raised the same way on live is looked for <b>by its words</b> on the live page (title, description, text, alt texts, phone and email links): still there means <b>✗ Live</b>, gone means <b>✓ Live</b>, and an AI item with nothing exact to look for says <b>? Live</b>. Click the <b>Live</b> pill on any item to check that page on the live website again.',

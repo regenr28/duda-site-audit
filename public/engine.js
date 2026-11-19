@@ -490,6 +490,17 @@
         'A gallery caption\u2019s "Button" hidden by the website\u2019s stylesheet (not written on the element itself) is no longer reported: the check that opens each page in a browser sees it is hidden on every device and leaves it out',
       ],
     },
+    {
+      v: 41,
+      date: '2026-11-19',
+      title: 'Duda\u2019s "Button" labels never reach the AI',
+      fixes: ['AI_PAGE_NOTE', 'TEXT_INCOMPLETE', 'TEXT_GRAMMAR', 'TEXT_SPELLING'],
+      scope: { fixes: ['AI_PAGE_NOTE', 'TEXT_INCOMPLETE', 'TEXT_GRAMMAR', 'TEXT_SPELLING'], ai: true },
+      items: [
+        'A gallery keeps a hidden "Button" label per picture, and the AI read them in the page\u2019s text ("Button Button A properly applied ceramic coating") and reported them as a note left in the copy. The text sent to the AI now leaves Duda\u2019s default labels out, and an AI item about a "Button" label is never kept: the default-label check alone judges them (a visible one is still critical)',
+        'Real notes left in the copy or in a meta description ("Do not alter page until \u2026") are still reported',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -587,6 +598,12 @@
     [/\binsert (?:the |a |an |your |their )?(?:[\w-]+ ){0,3}here\b/i, 'Placeholder ("insert … here") left in the text'],
   ];
   // A Duda element whose own default label was never changed: a button that just says "Button".
+  // Duda's default labels ("Button", "Heading"…) are the default-label rule's alone: it reports a visible one
+  // and leaves out one the page hides (a gallery keeps a hidden "Button" per picture). Text sent to the AI
+  // never carries them, so the AI cannot report the same hidden "Button" again as "a note left in the text".
+  const LABEL_WORDS = /\b(?:New Button|Button Text|Button Label|Button)\b/g;
+  // An AI item about a "Button" label: the words include "Button" and its reason or fix is about that label.
+  const AI_LABEL_ONLY = (quote, reason) => /\bButton\b/.test(String(quote || '')) && /\bbuttons?\b|default label|ui label|ui element/i.test(String(reason || ''));
   const DEFAULT_LABEL = /^(?:Button|New Button|Button Text|Button Label|Heading|New Heading|Subtitle|Sub Title|Paragraph|New Paragraph|Caption|Image Caption|Image Title|Title Here|Your Title|Text Here|Your Text Here|Link Text|Label)$/;
 
   // Characters that look like the keyboard pipe "|", dashes used as title separators, and invisible characters.
@@ -1663,7 +1680,9 @@
   }
   function fileFindings(files, truth) {
     const raw = []; const info = { domain: files.domain || '', at: new Date().toISOString() };
-    const item = (code, severity, location, message, found, expected) => raw.push({ code, severity, category: TECH, message, found: found || '', expected: expected || '', path: '/', selector: '(page)', location, visible: true, hiddenBy: '', snippet: '' });
+    const item = (code, severity, location, message, found, expected, snippet) => raw.push({ code, severity, category: TECH, message, found: found || '', expected: expected || '', path: '/', selector: '(page)', location, visible: true, hiddenBy: '', snippet: snippet || '' });
+    // The line of the file a value was found on, so the item shows where it is (and when it was read).
+    const lineOf = (t, test) => { const l = String(t || '').split(/\r?\n/).find(test) || ''; return l.trim().slice(0, 220); };
     const ok = (f) => f && f.status === 200 && String(f.text || '').trim() && !looksHtml(f.text);
     const own = String(files.domain || '').replace(/^www\./, '').toLowerCase();
     const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return ''; } };
@@ -1712,10 +1731,12 @@
         if (!/^\s*#\s+\S/.test(t)) item('LLMS_FORMAT', 'warning', 'llms.txt', 'llms.txt does not start with the business name as a "# " heading, as the llms.txt format expects', t.trim().split(/\n/)[0].slice(0, 120), `# ${truth.businessName || 'Business name'}`);
         if (truth.businessName && !nameIn) item('LLMS_NAME', 'warning', 'llms.txt', 'llms.txt never names the business as it is in Business Info', h1.slice(0, 120) || '(no name)', truth.businessName);
         const tp = truth.phones || [];
-        phones.filter((d) => tp.length && !tp.includes(d)).forEach((d) => item('LLMS_PHONE', 'critical', 'llms.txt', 'llms.txt gives AI assistants a phone number that is not in Business Info', fmtPhone(d), tp.map(fmtPhone).join(', ')));
+        phones.filter((d) => tp.length && !tp.includes(d)).forEach((d) => item('LLMS_PHONE', 'critical', 'llms.txt', 'llms.txt gives AI assistants a phone number that is not in Business Info', fmtPhone(d), tp.map(fmtPhone).join(', '),
+          `In llms.txt as read on ${new Date().toISOString().slice(0, 10)}: “${lineOf(t, (l) => l.replace(/\D/g, '').includes(d))}”`));
         emails.forEach((e) => {
-          if (isAutomationEmail(e)) item('EMAIL_AUTOMATION', 'critical', 'llms.txt', 'llms.txt gives AI assistants an automation email address (it is for Zapier or a form parser, not for customers)', e, (truth.emails || []).join(', ') || 'Remove it');
-          else if ((truth.emails || []).length && !truth.emails.includes(e)) item('LLMS_EMAIL', 'critical', 'llms.txt', 'llms.txt gives AI assistants an email that is not in Business Info', e, truth.emails.join(', '));
+          const ln = `In llms.txt as read on ${new Date().toISOString().slice(0, 10)}: “${lineOf(t, (l) => l.toLowerCase().includes(e))}”`;
+          if (isAutomationEmail(e)) item('EMAIL_AUTOMATION', 'critical', 'llms.txt', 'llms.txt gives AI assistants an automation email address (it is for Zapier or a form parser, not for customers)', e, (truth.emails || []).join(', ') || 'Remove it', ln);
+          else if ((truth.emails || []).length && !truth.emails.includes(e)) item('LLMS_EMAIL', 'critical', 'llms.txt', 'llms.txt gives AI assistants an email that is not in Business Info', e, truth.emails.join(', '), ln);
         });
       }
     }
@@ -2192,7 +2213,7 @@
       body.querySelectorAll(PROSE).forEach((el) => {
         if (prose.length >= 400 || el.closest('script, style, noscript, nav, form, [id="hcontainer"], .dmHeader')) return;
         if (el.querySelector(PROSE)) return;          // its inner paragraphs are read on their own
-        const t = clean(el.textContent);
+        const t = textNoLabels(el);
         if (t.length < 12 || seenP.has(t)) return;
         seenP.add(t);
         prose.push({ el, text: t.slice(0, 3000) });
@@ -2602,7 +2623,7 @@
         // The whole paragraph a piece of text sits in, when the piece is only part of it: "our team at"
         // is cut where the link "86 Auto Lab" starts, and read alone it looks unfinished or nameless.
         const box = x.el.closest && x.el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, .dmNewParagraph, [data-element-type="paragraph"]');
-        const para = box ? clean(box.textContent) : '';
+        const para = box ? textNoLabels(box) : '';
         return { text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '', ...(hd ? { heading: hd.tagName } : {}), ...(para && para.length > x.text.length + 2 && para.length < 3000 ? { para } : {}) };
       }),
       prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
@@ -2620,6 +2641,14 @@
     };
   }
 
+  /** An element's text without the default labels inside it ("Button Button A properly applied…" → "A properly applied…"). */
+  function textNoLabels(el) {
+    const t = clean(el.textContent);
+    if (!/\b(Button|Heading|Caption|Paragraph|Subtitle|Label)\b/.test(t)) return t;
+    const c = el.cloneNode(true);
+    c.querySelectorAll('*').forEach((x) => { if (x.parentNode && DEFAULT_LABEL.test(clean(x.textContent))) x.remove(); });
+    return clean(c.textContent);
+  }
   function normalizePath(p) {
     p = safeDecode(String(p || '/')).split('?')[0].split('#')[0];
     p = '/' + p.replace(/^\/+/, '').replace(/\/+$/, '');
@@ -3417,7 +3446,7 @@
 
     // Does each page say what its address promises (service and town)?
     const bodyOf = {};
-    textIdx.forEach((x) => { if (x.device !== devices[0] || x.location !== 'Body' || x.heading) return; const b = bodyOf[x.path] || (bodyOf[x.path] = []); if (b.length < 400) b.push(x.text); });
+    textIdx.forEach((x) => { if (x.device !== devices[0] || x.location !== 'Body' || x.heading || DEFAULT_LABEL.test(String(x.text || '').trim())) return; const b = bodyOf[x.path] || (bodyOf[x.path] = []); if (b.length < 400) b.push(x.text); });
     const fitPages = Object.values(pageInfo).filter((p) => !p.notFound && !p.error).map((p) => ({
       path: p.path, title: p.title || '', description: p.description || '', h1: (p.fit && p.fit.h1) || (p.h1 ? [{ text: p.h1, selector: 'h1' }] : []),
       heads: (p.fit && p.fit.heads) || [], body: (bodyOf[p.path] || []).join(' \n '),
@@ -3698,6 +3727,8 @@
       const pg = fit[v.i];
       const rule = RULES[v.type];
       if (!pg || !rule || Number(v.confidence) < 0.7) return;
+      // A Duda "Button" label is the default-label rule's to judge (visible: reported; hidden: left out).
+      if (AI_LABEL_ONLY(v.quote, [v.reason, v.suggestion].join(' '))) return;
       // "Wrong town" about words that name the town in the page's OWN address is backwards: a
       // /brentwood-window-tinting page saying "…in Brentwood, TN" is right even though the shop is in
       // Franklin. Kept only when the AI's fix keeps the address's town too (another town named beside it).
@@ -3746,6 +3777,7 @@
     issues.forEach((v) => {
       const blk = texts[v.i];
       if (!blk || !RULES[v.type] || Number(v.confidence) < (v.type === 'spelling' ? 0.75 : 0.85)) return;
+      if (AI_LABEL_ONLY(v.quote, [v.reason, v.suggestion].join(' '))) return;
       const q = String(v.quote || '').trim();
       // The words have to really be there: an answer about text the block does not contain is dropped.
       if (q && blk.text.toLowerCase().indexOf(q.toLowerCase()) < 0) return;

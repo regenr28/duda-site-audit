@@ -402,3 +402,17 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `liveRead` keeps each live page's text (desktop: title, meta/og, alt, tel/mailto hrefs, JSON-LD, body) in `res.liveText` (Map path → `liveNorm` text, ≤60k). `liveResults`: no vKey match → `liveQuote(f)` (found without quotes; phones by digits) on the live text → 't' / 'o'; nothing to look for → 'u' for AI and `LIVE_UNCHECKED` codes (checks liveRead doesn't run), else 'o'. Bug: AI name_variant item said ✓ Live while live title still said "Denver Auto Spa".
 - Live pill is a `data-livecmp` button for any state (except not published / AUTO_LIVE): re-reads that item's pages on live.
 - Test: e2e_livecmp (AI items aiT/aiO).
+
+## 192 — "Button" labels and the AI
+- Third path for the same hidden gallery "Button": the AI page-fit read (`editor_note` → AI_PAGE_NOTE) and proofreading got the labels in the page text (fit excerpt from textIdx, `prose`, textIndex `para`). Now: `textNoLabels(el)` (clone, drop descendants whose text is a DEFAULT_LABEL) for prose and para; fit body skips DEFAULT_LABEL pieces; `AI_LABEL_ONLY(quote, reason)` drops AI page-fit / proof results about a "Button" label. The default-label rule (+ markHiddenText) is the only judge.
+- Release v41 (fixes AI_PAGE_NOTE + proof codes, ai). Test `tests/tk/e2e_labelai.py` (stand-in AI; fails on the old engine).
+- Lesson: when a value is wrong, fix it where text is collected for EVERY check (rules, hidden-text check, AI inputs, AI outputs), not one check at a time.
+
+## 193 — llms.txt line context, read the files again
+- `fileFindings` items take a `snippet`: LLMS_PHONE / LLMS_EMAIL / EMAIL_AUTOMATION (llms) quote the line and the read date.
+- Line item `{k:'update', files:1}` (store lineAdd keeps `files`) → `scanOpts.files` → plan `{files, keepCv, codes: ROBOTS_/SITEMAP_/LLMS_/EMAIL_AUTOMATION, pages: []}` (only '/' read); `scan.cv` is kept (not marked up to date). Button `#techReread` on the Technical SEO header. NAP llms column shows the read date and links the file.
+- Why: a user saw "(719) 873-7834" in the NAP llms column but the live llms.txt no longer had it (Duda rebuilds llms.txt from page descriptions on every publish).
+
+## 194 — NAP profile cells
+- Profile columns (presence listings) pass `{profile, unconf, url}` to `cell`: an empty detail is "? Not read by the search" (or "Seen, but not confirmed word for word" when in `l.unconfirmed`), never "Not there" (Instagram showed "Not there" for an address that is in its bio).
+- `addrNote(v)`: same ZIP but written differently (abbreviations normalised; a suite/unit on one side only) → `≈` cell (`.nap-fmt`) with what differs. Test in e2e_techseo (mocked presence).
