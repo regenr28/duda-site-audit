@@ -4,6 +4,18 @@
 
 export const NEWS = [
   {
+    id: '2026-11-20-own-towns', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'Fixed: "different town" on pages that are not about a town',
+    what: 'A page whose address names no town (like <span class="mono">/tesla-window-tinting</span> or a blog post) may name the business\'s own town, its service-area towns, or the place in its own name ("Denver" for Denver Auto Shield): "Premier window tinting for Teslas in Denver, CO" or "our Parker-based ceramic coating services" are no longer reported. A car make in the address (Tesla, Porsche) is no longer mistaken for a town. A town the business does not serve is still reported, and so is a town page that names a different town.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>.'],
+  },
+  {
+    id: '2026-11-20-service-towns', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'Service-area towns: no more "wrong location" in blog posts, and links to the town\'s own service pages',
+    what: 'The app now knows which towns a business serves, from its own town pages (like <span class="mono">/paint-protection-film-in-littleton-co</span>) and its own town. A blog post about "a Littleton driver" is fine when Littleton is one of them; a town the business does not serve is still reported. New check: when a page is about one of those towns and links a service ("paint protection film") to the general service page, the item says to link that town\'s service page instead, or that the town has no page for that service yet.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>⚡ Apply check updates</b> → look for items "This page is about … but the link goes to the general … page".'],
+  },
+  {
     id: '2026-11-19-nap-profiles', date: '2026-11-19', audience: 'all', tag: 'Audits',
     title: 'NAP tab: "?" when a profile detail was not read, and ≈ for addresses written differently',
     what: 'Google, Facebook, Instagram and the other profiles are found by web search, which often does not bring back every detail. A detail the search did not return now shows <b>? Not read by the search</b> with a link to open the profile, instead of "Not there". And an address that is the same place but written differently (Court / Ct, a <i>Suite D</i> on one and not the other) shows <b>≈</b> and says what differs, because NAP should be written the same everywhere.',

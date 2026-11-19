@@ -501,6 +501,19 @@
         'Real notes left in the copy or in a meta description ("Do not alter page until \u2026") are still reported',
       ],
     },
+    {
+      v: 42,
+      date: '2026-11-20',
+      title: 'Service-area towns: allowed in blog posts, and linked to their own service pages',
+      fixes: ['AI_TEXT_LOCATION', 'AI_PAGE_CITY'],
+      scope: { fixes: ['AI_TEXT_LOCATION', 'AI_PAGE_CITY'], adds: ['LINK_TOWN_SERVICE'], ai: true },
+      items: [
+        'The towns a business serves are read from its own town pages (/paint-protection-film-in-littleton-co) and its own town. A blog post or service page that names one of them ("a Littleton driver") is no longer "a location that doesn\u2019t match this business"; a town it does not serve still is, and a town page that names another town still is',
+        'A page whose address names no town (/tesla, a blog post) may name any of those towns, Business Info\u2019s town, or the place in the business\u2019s own name ("Denver" for Denver Auto Shield) in its title, H1 or copy: "\u2026 for Teslas in Denver, CO" is no longer "a different town than the one in its address"',
+        'The AI is told those towns too',
+        'New: a page about one of those towns (named at least twice, or in its title or H1) that links a service ("paint protection film") to the general service page is told to link that town\u2019s page instead (/paint-protection-film-in-littleton-co). When the town has no page for that service yet, it says so',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -2815,6 +2828,38 @@
     }
     return [];
   }
+  /** The towns a website serves: every town it has its own page for (/paint-protection-film-in-littleton-co), and the shop's own town. Map compact key → { key, name }. */
+  function serviceAreas(paths, truth) {
+    const m = new Map();
+    const put = (t) => { const k = compact(t); if (k.length >= 3 && !m.has(k)) m.set(k, { key: t.toLowerCase(), name: titleCase(t.toLowerCase()) }); };
+    [].concat(paths || []).forEach((p) => { const t = placeOfPath(p); if (t) put(t); });
+    ((truth && truth.addresses) || []).forEach((a) => { if (a && a.city) put(String(a.city)); });
+    return m;
+  }
+  /** The towns a business may name on a page that is not about a town: Business Info's towns, its service-area towns, and the place its name starts with. */
+  function ownTowns(truth) {
+    const t = truth || {};
+    const out = new Set();
+    ((t.addresses || []).map((a) => a && a.city).concat(t.serviceAreas || [])).forEach((x) => { const c = compact(x || ''); if (c.length >= 3) out.add(c); });
+    // "Denver Auto Shield", "Austin Tint Pros": the first word of the name, when it is not a trade word, is the area they trade in.
+    [t.businessName || ''].concat(t.names || []).forEach((n) => {
+      const w = String(n || '').trim().split(/\s+/)[0] || '';
+      const c = compact(w);
+      if (c.length >= 4 && !GENERIC.has(c) && !SLUG_FILLER.has(c) && !SERVICES.some((sv) => sv.slug.test(c))) out.add(c);
+    });
+    return out;
+  }
+  const namesOwnTown = (quote, truth) => { const q = compact(quote || ''); return !!q && [...ownTowns(truth)].some((t) => q.includes(t)); };
+  /** The one service-area town a page is about: named at least twice, more than twice as often as any other, or in its title / H1. */
+  function focusTown(head, body, areas) {
+    const count = (t, x) => { const re = new RegExp('\\b' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s-]+') + '\\b', 'gi'); return (String(x || '').match(re) || []).length; };
+    const rows = [...areas.values()].map((a) => ({ key: a.key, name: a.name, inTitle: count(a.key, head) > 0, n: count(a.key, head) + count(a.key, body) })).filter((r) => r.n).sort((a, b) => b.n - a.n);
+    if (!rows.length) return null;
+    const [top, next] = rows;
+    if (next && next.inTitle && !top.inTitle) return null;
+    if (top.inTitle && (!next || !next.inTitle)) return top;
+    return top.n >= 2 && (!next || top.n >= next.n * 2) ? top : null;
+  }
   /** Words with the business's own name(s) taken out. */
   function withoutNames(text, truth) {
     let t = ' ' + String(text || '') + ' ';
@@ -3312,7 +3357,8 @@
     // but Duda serves the mobile HTML separately and often leaves the <link> out of it. So we
     // remember whether ANY page on ANY device carried one, and judge the website once (below).
     const siteIcon = { favicon: false, touchIcon: false };
-    let siteSchema = null;   // the business as the home page's structured data describes it (for the NAP tab)
+    let siteSchema = null;
+    const pageLinks = [];    // every link in the body of each page (desktop), for the town → town-page check   // the business as the home page's structured data describes it (for the NAP tab)
     const pageInfo = {};
     const external = new Map();
     const images = new Map();
@@ -3392,6 +3438,7 @@
           });
           r.textIndex.forEach((x) => textIdx.push(Object.assign({ path, device }, x)));
           if (proseIdx.length < 6000) (r.prose || []).forEach((x) => proseIdx.push(Object.assign({ path, device }, x)));
+          if (device === devices[0] && pageLinks.length < 8000) (r.links || []).forEach((x) => { if (x.location === 'Body' && x.to) pageLinks.push(Object.assign({ path }, x)); });
           if (device === devices[0]) (r.links || []).forEach((x) => {
             const k = [x.text.toLowerCase(), x.to, x.context.toLowerCase()].join('|');
             let m = linkMap.get(k);
@@ -3444,6 +3491,40 @@
     const titleRows = Object.values(pageInfo).filter((p) => p.title && !p.notFound).map((p) => ({ text: p.title, path: p.path, device: devices[0], selector: 'head > title', location: 'Head / Meta', heading: 'TITLE', hiddenBy: '' }));
     nameVariants(textIdx.concat(titleRows), truth).forEach((f) => raw.push(f));
 
+    // ---- Service areas: the towns the website has its own pages for (and the shop's own town) ----
+    const allPaths = [...new Set(Object.keys(pagesMeta).concat(Object.keys(pageInfo)))];
+    const areaMap = serviceAreas(allPaths, truth);
+    // ---- A page about one of those towns should link to that town's service pages ----
+    // A blog post about "a Littleton driver" that links "PPF" to the general PPF page sends the reader
+    // (and Google) away from the Littleton PPF page. Flagged whether that page exists yet or not.
+    if (areaMap.size) {
+      const bodyText = {};
+      textIdx.forEach((x) => { if (x.device !== devices[0] || x.location !== 'Body') return; const b = bodyText[x.path] || (bodyText[x.path] = []); if (b.length < 600) b.push(x.text); });
+      const linksOf = {}; pageLinks.forEach((x) => (linksOf[x.path] = linksOf[x.path] || []).push(x));
+      Object.values(pageInfo).forEach((p) => {
+        if (p.notFound || p.error || placeOfPath(p.path) || p.path === '/' || isThankYouPath(p.path)) return;
+        const focus = focusTown([p.title || '', ...((p.fit && p.fit.h1) || []).map((h) => h.text || '')].join(' \n '), (bodyText[p.path] || []).join(' \n '), areaMap);
+        if (!focus) return;
+        const seen = new Set();
+        (linksOf[p.path] || []).forEach((x) => {
+          const to = normalizePath(x.to);
+          if (!to || to === p.path || placeOfPath(to) || isBlogPath(to) || (pageInfo[to] && pageInfo[to].blog)) return;
+          const svcs = servicesOfPath(to); if (!svcs.length) return;
+          if (!pageInfo[to] && !pagesMeta[to]) return;   // only links to this website's own pages
+          svcs.forEach((sv) => {
+            const key = [p.path, to, sv].join('|'); if (seen.has(key)) return; seen.add(key);
+            const label = (SERVICES.find((z) => z.key === sv) || {}).label || sv;
+            const target = allPaths.find((q) => compact(placeOfPath(q)) === compact(focus.key) && servicesOfPath(q).includes(sv));
+            raw.push({ code: 'LINK_TOWN_SERVICE', severity: 'warning', category: 'Links',
+              message: target ? `This page is about ${focus.name}, but the "${cut(x.text, 40)}" link goes to the general ${label} page instead of the ${focus.name} one`
+                : `This page is about ${focus.name}, but there is no ${label} page for ${focus.name} yet: the "${cut(x.text, 40)}" link goes to the general one`,
+              found: `"${cut(x.text, 60)}" → ${to}`, expected: target ? `Link to ${target}` : `Make a ${label} page for ${focus.name}, then link "${cut(x.text, 40)}" to it`,
+              path: p.path, device: devices[0], selector: x.selector, location: x.location || 'Body', visible: !x.hiddenBy, hiddenBy: x.hiddenBy || '',
+              snippet: `${focus.name} is named ${focus.n} time${focus.n === 1 ? '' : 's'} on this page${focus.inTitle ? ', in its title or H1 too' : ''}.` });
+          });
+        });
+      });
+    }
     // Does each page say what its address promises (service and town)?
     const bodyOf = {};
     textIdx.forEach((x) => { if (x.device !== devices[0] || x.location !== 'Body' || x.heading || DEFAULT_LABEL.test(String(x.text || '').trim())) return; const b = bodyOf[x.path] || (bodyOf[x.path] = []); if (b.length < 400) b.push(x.text); });
@@ -3552,7 +3633,7 @@
     const counts = { critical: 0, outdated: 0, warning: 0, info: 0 };
     merged.forEach((f) => { counts[f.severity]++; });
     return {
-      truth,
+      truth: truth ? Object.assign({}, truth, { serviceAreas: [...areaMap.values()].map((x) => x.name) }) : truth,
       checks: CHECKS_VERSION,
       files, schemaBiz: siteSchema,
       fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 14) } : null,
@@ -3565,7 +3646,7 @@
       buttons: Object.fromEntries(Object.values(pageInfo).filter((p) => p.buttons).map((p) => [p.path, p.buttons])),
       // keepCopy: each page's own copy, in reading order (headings and paragraphs). Not saved with the audit.
       ...(opts.keepCopy ? { copy: Object.fromEntries(Object.values(pageInfo).filter((p) => p.copy).map((p) => [p.path, p.copy])) } : {}),
-      fit: fitPages.map((p) => ({ path: p.path, title: p.title, description: p.description, h1: p.h1.map((h) => h.text), h1Sel: (p.h1[0] && p.h1[0].selector) || '', heads: p.heads.slice(0, 14), excerpt: p.body.slice(0, 2400), urlServices: servicesOfPath(p.path), urlPlace: placeOfPath(p.path) || slugTown(p) })),
+      fit: fitPages.map((p) => ({ path: p.path, title: p.title, description: p.description, h1: p.h1.map((h) => h.text), h1Sel: (p.h1[0] && p.h1[0].selector) || '', heads: p.heads.slice(0, 14), excerpt: p.body.slice(0, 2400), urlServices: servicesOfPath(p.path), urlPlace: placeOfPath(p.path) || slugTown(p, areaMap) })),
       externalLinks: external.size,
       images: images.size,
       alts: Array.from(altMap.values()),
@@ -3601,11 +3682,24 @@
   }
   /** "brentwood" from /brentwood-window-tinting: the words of the address that are not a service and
    *  that the page's own title or H1 also says. Used to tell the AI which town the page is for. */
-  function slugTown(p) {
-    const said = compact([p.title || '', ...(p.h1 || []).map((h) => h.text || h)].join(' '));
+  // Car makes and models are in many page addresses (/tesla, /porsche-ppf) and are never a town.
+  const CAR_WORDS = new Set(('tesla bmw porsche ferrari audi rivian ford toyota lexus mercedes benz chevy chevrolet corvette lamborghini mclaren jeep dodge ' +
+    'honda nissan subaru hyundai volkswagen cadillac lucid polestar mazda acura infiniti volvo jaguar bentley maserati genesis mini rover range ' +
+    'lotus aston martin bugatti rolls royce alfa romeo fiat chrysler lincoln buick ram gmc kia scion pagani koenigsegg hummer cybertruck model ' +
+    'exotic exotics luxury classic fleet boat boats marine motorcycle motorcycles rv rvs suv suvs truck trucks').split(' '));
+  /** "brentwood" from /brentwood-window-tinting: the words of the address that are not a service and that the page's own
+   *  title or H1 presents as a place ("in Brentwood", "Brentwood, TN"), or that are one of the website's service-area towns.
+   *  A car make ("Tesla Window Tinting") is never a town. Used to tell the AI which town the page is for. */
+  function slugTown(p, areas) {
+    const heads = [p.title || '', ...(p.h1 || []).map((h) => h.text || h)].join(' \n ');
+    const said = compact(heads);
     const seg = String(p.path || '').toLowerCase().split('/').filter(Boolean).pop() || '';
-    const w = seg.split('-').filter((x) => x.length >= 4 && !GENERIC.has(x) && !PLACE_STOP.has(x) && !SLUG_FILLER.has(x) && !/\d/.test(x));
-    return w.length && w.length <= 3 && said.includes(compact(w.join(' '))) ? w.join(' ') : '';
+    const w = seg.split('-').filter((x) => x.length >= 4 && !GENERIC.has(x) && !PLACE_STOP.has(x) && !SLUG_FILLER.has(x) && !CAR_WORDS.has(x) && !/\d/.test(x));
+    if (!w.length || w.length > 3 || !said.includes(compact(w.join(' ')))) return '';
+    const town = w.join(' ');
+    if (areas && areas.has && areas.has(compact(town))) return town;
+    const pat = town.replace(/\s+/g, '[\\s-]+');
+    return new RegExp('\\b(?:in|near|serving)\\s+' + pat + '\\b|\\b' + pat + ',\\s*[A-Z]{2}\\b', 'i').test(heads) ? town : '';
   }
   function pathNamesPlace(paths, text, truth) {
     const hay = compact(text);
@@ -3680,6 +3774,11 @@
       // A location page can still wrongly claim a different town somewhere in its copy, and that
       // has to keep coming through.
       if (v.type === 'wrong_location' && pathNamesPlace(blk.pages, v.quote || blk.text || '', truth)) return;
+      // A town the business serves (it has its own pages for it, or it is the shop's town) is fine on any
+      // page that is not about a different town: a blog post may talk about "a Littleton driver".
+      if (v.type === 'wrong_location' && !blk.pages.some((p) => placeOfPath(p))) {
+        if (namesOwnTown(v.quote, truth)) return;
+      }
       const [code, severity, category, message] = RULES[v.type];
       // Already caught by a rule on the same element? Attach the AI opinion instead of duplicating
       const existing = findings.find((f) => f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)) && /OTHER_BUSINESS|COPYRIGHT_NAME/.test(f.code) && v.type === 'other_business');
@@ -3735,11 +3834,10 @@
       if (v.type === 'wrong_city' && pathNamesPlace([pg.path], v.quote || '', truth) && !(v.suggestion && pathNamesPlace([pg.path], v.suggestion, truth))) return;
       // A page whose address names no town (/paint-protection-film) may name the business's own town
       // from Business Info ("Franklin, TN's top choice"): that is where the shop is, not a mistake.
-      if (v.type === 'wrong_city' && !pg.urlPlace) {
-        const towns = ((truth && truth.addresses) || []).map((x) => compact(x.city || '')).filter((x) => x.length >= 3);
-        const q = compact(v.quote || '');
-        if (towns.some((t) => q.includes(t))) return;
-      }
+      // A page whose address names no town (/tesla, a blog post) may name any town the business is in or
+      // serves: Business Info's town, its service-area towns, and the place in its own name ("Denver" in
+      // "Denver Auto Shield"). Only a town it does not serve is reported there.
+      if (v.type === 'wrong_city' && !pg.urlPlace && namesOwnTown(v.quote, truth)) return;
       const [code, category, sameRe, message] = rule;
       const part = PART[v.part] ? v.part : 'body';
       const ai = { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote };
@@ -3964,7 +4062,7 @@
   }
 
   global.DudaAudit = {
-    POLISH_CODES, isPolish, LENGTH_CODES, isLength, isTech, groupOf, isAutomationEmail, fileFindings, robotsGroups,
+    POLISH_CODES, isPolish, LENGTH_CODES, isLength, isTech, groupOf, serviceAreas, focusTown, isAutomationEmail, fileFindings, robotsGroups,
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince, updatePlan, codeIn,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,

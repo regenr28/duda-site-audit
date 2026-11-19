@@ -416,3 +416,13 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 ## 194 — NAP profile cells
 - Profile columns (presence listings) pass `{profile, unconf, url}` to `cell`: an empty detail is "? Not read by the search" (or "Seen, but not confirmed word for word" when in `l.unconfirmed`), never "Not there" (Instagram showed "Not there" for an address that is in its bio).
 - `addrNote(v)`: same ZIP but written differently (abbreviations normalised; a suite/unit on one side only) → `≈` cell (`.nap-fmt`) with what differs. Test in e2e_techseo (mocked presence).
+
+## 195 — Service-area towns
+- engine `serviceAreas(paths, truth)` (towns from `placeOfPath` of every page in pagesMeta + pageInfo, plus Business Info cities) → `res.truth.serviceAreas`. `applyTextIssues`: AI `wrong_location` dropped when the quote names a service-area town and the block's pages have no town in their address (town pages keep the stricter rules).
+- New LINK_TOWN_SERVICE (warning, Links): `focusTown(head, body, areas)` (in title/H1, or ≥2 mentions and ≥2× any other town); body links (`pageLinks`, desktop) to an own non-town, non-blog service page → the town's page for that service (`placeOfPath` + `servicesOfPath`) or "no page yet".
+- AI business header gets `areas` (towns) and town pages first in `areaPages`. Release v42. Test `tests/tk/e2e_towns.py` (stand-in AI).
+
+## 196 — Own towns on pages without a town
+- `ownTowns(truth)` = Business Info cities + `truth.serviceAreas` + the first word of the business name when not a trade word ("Denver" in Denver Auto Shield); `namesOwnTown(quote, truth)`. Used by `applyPageFit` (wrong_city on a page with no `urlPlace`) and `applyTextIssues` (wrong_location on pages with no town in the address).
+- `slugTown(p, areas)` no longer takes a car make (CAR_WORDS: /tesla, /porsche…) for a town; a slug word counts as a town only if it is a service-area town or the title/H1 says "in X" / "X, ST". (/tesla-window-tinting had urlPlace "tesla", so "…in Denver, CO" looked like the wrong town.)
+- Release v42 now also fixes AI_PAGE_CITY. Test e2e_towns extended.

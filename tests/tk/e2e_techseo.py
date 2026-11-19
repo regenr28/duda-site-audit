@@ -99,7 +99,7 @@ try:
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.reload(); pg.wait_for_selector('#ckApply', timeout=15000); time.sleep(0.5)
         plan = pg.inner_text('.upd-plan')
         print('  plan:', plan.replace('\n', ' | ')[:400], flush=True)
-        check('What ⚡ Apply check updates will do' in plan and 'robots.txt' in plan and 'Left alone' in plan and 'no AI credits' in plan, 'the note says what Apply check updates will do and what it leaves alone')
+        check('What ⚡ Apply check updates will do' in plan and 'robots.txt' in plan and 'Left alone' in plan, 'the note says what Apply check updates will do and what it leaves alone')
         pg.screenshot(path=os.path.join(OUT, 'apply-plan.png'))
         calls.update({'ai': 0, 'capture': 0, 'check': 0, 'fetch': []})
         pg.click('#ckApply')

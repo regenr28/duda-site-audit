@@ -7457,7 +7457,9 @@
     const addr = (t.addresses || [])[0] || {};
     return {
       name: t.businessName, names: t.names || [], street: addr.street || '', city: addr.city || '', region: addr.region || '', zip: addr.zip || '',
-      areaPages: (res.pages || []).map((p) => p.path).filter((p) => p !== '/').slice(0, 60),
+      // Town pages first, so the AI sees which towns the business serves even on a big website.
+      areaPages: (res.pages || []).map((p) => p.path).filter((p) => p !== '/').sort((a, b) => (A.placeOfPath(b) ? 1 : 0) - (A.placeOfPath(a) ? 1 : 0)).slice(0, 60),
+      areas: (t.serviceAreas || []).slice(0, 40),
       foreignNames: [...new Set(res.findings.filter((f) => f.foreignName).map((f) => f.foreignName))],
     };
   }

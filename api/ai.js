@@ -561,7 +561,7 @@ function businessHeader(b) {
   return `THIS BUSINESS
 Name: ${b.name || 'unknown'}${b.names && b.names.length > 1 ? ` (also: ${b.names.slice(1).join(', ')})` : ''}
 Location: ${[b.street, b.city, b.region, b.zip].filter(Boolean).join(', ') || 'unknown'}
-Service-area / location pages on the site: ${(b.areaPages || []).slice(0, 40).join(', ') || 'none found'}
+Service-area / location pages on the site: ${(b.areaPages || []).slice(0, 40).join(', ') || 'none found'}${(b.areas || []).length ? `\nTowns this business serves (it has its own pages for them; naming any of them is fine except on a page whose URL names a different town): ${b.areas.slice(0, 40).join(', ')}` : ''}
 ${b.foreignNames && b.foreignNames.length ? `Names already found on this site that belong to another business: ${b.foreignNames.slice(0, 10).join(', ')}\n` : ''}`;
 }
 // The page an alt text sits on matters as much as the words: on /detailing-in-aberdeen, "Aberdeen"
