@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-20-relative-links', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'Relative links are no longer "Link points to a Duda editor/preview domain"',
+    what: 'On a page whose links are written as short addresses ("/", "/contact"), every link in the header, footer and side panel was reported as pointing at the Duda editor, sometimes more than a hundred items on one page. A short address opens on whatever website the page is on, so on the published website it is the client\'s own domain: it is fine. Only a link written out in full to an editor or preview address is reported now.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: those items close.'],
+  },
+  {
     id: '2026-11-20-gallery-button', date: '2026-11-20', audience: 'all', tag: 'Audits',
     title: 'A photo gallery\'s hidden "Button" is no longer reported',
     what: 'Duda\'s photo gallery keeps a caption button labelled "Button" for every picture in its code, even when visitors never see it. The scan read the code before the gallery\'s pictures and script had finished, so it kept reporting them. Now a gallery caption button with no link is never reported, and every other "Button" is checked in a real browser on desktop and phone after the page has fully loaded: only one a visitor can see is reported.',

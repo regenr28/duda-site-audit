@@ -577,6 +577,15 @@
         'Every other "Button" label is checked in a real browser on desktop and phone once the page, its pictures and its scripts have finished: one that is not shown on either is left out, one that is shown is still critical',
       ],
     },
+    {
+      v: 49,
+      date: '2026-11-20',
+      title: 'A relative link is not a link to the Duda editor',
+      scope: { fixes: ['LINK_EDITOR_URL'] },
+      items: [
+        'A link written as a relative address ("/", "/contact", "/contact#quickform") opens on whatever website the page is on, so on the published website it opens the client\u2019s own domain. It was read as pointing at the editor when a page\u2019s links were written that way. Only a link written out in full to an editor or preview address is reported now',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -2675,7 +2684,14 @@
         noteLink(a, normalizePath(siteMatch[2] || '/'), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
         return;
       }
-      if (EDITOR_HOSTS.test(u.hostname) || (isAbs && sameHost)) {
+      // A relative address ("/", "/contact") opens on whatever website the page is on: on the published
+      // website that is the client's own domain. Only an address written out in full can point at the editor.
+      if (!isAbs) {
+        internal.add(normalizePath(u.pathname)); btnTo(normalizePath(u.pathname));
+        noteLink(a, normalizePath(u.pathname), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
+        return;
+      }
+      if (EDITOR_HOSTS.test(u.hostname) || sameHost) {
         add(a, { code: 'LINK_EDITOR_URL', severity: 'critical', category: 'Links', message: 'Link points to a Duda editor/preview domain', found: href });
         return;
       }

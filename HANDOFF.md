@@ -451,3 +451,4 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `api/_proof.js visibleCheck(url, device, selectors)` + `capture.js op 'visible'`: real Chrome, page settled (scrolled through, network quiet), each selector: '' shown, a reason when hidden (display/visibility/opacity chain, no size, cut off by an overflow container), null when not found.
 - app `buttonSeenCheck` (after markHiddenText): remaining "Button" default-label items, ≤12 pages, desktop + mobile; hidden on both → dropped (scan note). Not found (null) decides nothing. Test: e2e_gallerybtn.py (fixsite `/ppf-vs-ceramic`).
 - engine v30, app v76.
+- Also in 201: engine link check — a relative href (not starting with http(s):// or //) that is not /site/<id>/… is an internal link to its path, never LINK_EDITOR_URL (one client page wrote every header/footer link as "/…", 176 false criticals). Release v49. Test: engine_links.py.
