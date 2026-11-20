@@ -9,6 +9,7 @@
 // POST /api/capture { op:'contrast', site, path, devices:[…] }   → the team, during a scan: text, button and form contrast on that page (see _contrast.js)
 // POST /api/capture { op:'proof', site, path, device, items:[{id, selector}], why } → the team: proof pictures of audit items (see _proof.js)
 // GET  /api/capture?op=proofImg&site=&f=          → one proof picture
+// POST /api/capture { op:'visible', site, path, device, selectors:[…] } → the team, during a scan: is each element shown in a real browser once the page has loaded
 // POST /api/capture { op:'test', site? }                         → admins: check pictures work on this server
 // GET  /api/capture?op=thumb&site=<duda id>                      → the team: a website's small thumbnail (image)
 // POST /api/capture { op:'thumb', site:<duda id>, pub }          → the team: take it if missing, or older than its last publish / a week
@@ -20,7 +21,7 @@ import { metered, redis, P, newId, now, globalLog, readBody, can } from './_lib.
 import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today, cleanPath, siteRec, previewUrl, getTickets, putTicketCmd, keepCapCmds, cleanReplay } from './_tickets.js';
 import { shoot, DEVICES } from './_shoot.js';
 import { contrastScan } from './_contrast.js';
-import { proofShots } from './_proof.js';
+import { proofShots, visibleCheck } from './_proof.js';
 
 const CLIENT_SHOTS_PER_DAY = 60;
 const MAX_UPLOAD = 3 * 1024 * 1024;   // a request body can be at most about 4.5 MB once encoded
@@ -116,6 +117,21 @@ async function handler(req, res) {
       });
       if (cmds.length) await redis(...cmds, ['EXPIRE', P + 'proofs:' + site, KEEP]);
       return res.status(200).json({ done, failed });
+    }
+    if (op === 'visible') {
+      if (!w.team || !(await can(w.me, 'site.scan'))) return res.status(403).json({ error: 'Your role does not allow running scans.' });
+      const site = String(b.site || '');
+      if (!mayseeSite(w, site)) return res.status(404).json({ error: 'Not found' });
+      const path = cleanPath(b.path);
+      if (!path) return res.status(400).json({ error: 'That page address is not valid.' });
+      const rec = await siteRec(site);
+      if (!rec) return res.status(404).json({ error: 'Not found' });
+      const device = DEVICES[b.device] ? b.device : 'desktop';
+      const selectors = [].concat(b.selectors || []).map((x) => String(x || '').slice(0, 400)).filter(Boolean).slice(0, 60);
+      if (!selectors.length) return res.status(200).json({ seen: [] });
+      const { url } = await previewUrl(rec, path, device);
+      const r = await visibleCheck(url, device, selectors, { timeout: 80000 });
+      return res.status(200).json({ seen: r.seen });
     }
     if (op === 'contrast') {
       // Part of a scan: only someone who may scan, on a website they can open.

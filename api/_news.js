@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-20-gallery-button', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'A photo gallery\'s hidden "Button" is no longer reported',
+    what: 'Duda\'s photo gallery keeps a caption button labelled "Button" for every picture in its code, even when visitors never see it. The scan read the code before the gallery\'s pictures and script had finished, so it kept reporting them. Now a gallery caption button with no link is never reported, and every other "Button" is checked in a real browser on desktop and phone after the page has fully loaded: only one a visitor can see is reported.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b> (or <b>⟳ Rescan</b>): the gallery items close.'],
+  },
+  {
     id: '2026-11-20-photos-redirects', date: '2026-11-20', audience: 'all', tag: 'Audits',
     title: 'Photos that don\'t fit the page, phone watermarks, missing redirects, form options and policy template text',
     what: 'Five new checks. <b>Photos</b>: the AI looks at every photo the way a visitor sees it on the page (images, column backgrounds and parallax backgrounds) and raises one that does not belong there, like a car interior on the RV page, or a phone watermark such as "Shot on iPhone". <b>Old addresses</b> that now give "page not found" with no redirect are raised with the page to send them to, and broken, looping or temporary redirects too. <b>Form options</b> that leave out a service the website has a page for. <b>Privacy Policy and Terms</b> are read after they load (Termageddon too), so "USA County" and other template text left in is caught. The scan panel also lists <b>which pages had their colour contrast measured</b> and how many form fields were typed into on each.',

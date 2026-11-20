@@ -66,6 +66,20 @@ body{margin:0;font-family:Arial,sans-serif;color:#222}.sec{padding:40px}.cols{di
 <div class="para" id="para"><h2>Ready for the road</h2></div>
 <div class="sec"><p>Book your RV detail today.</p></div>
 </body></html>`;
+// Duda's photo gallery, the way a real client's page had it: every picture keeps a caption button labelled
+// "Button" with no link; a second "Button" with a link that the page's script hides once it has loaded;
+// and a real button somebody forgot to rename.
+const GALLERY_PAGE = `<!doctype html><html><head><title>PPF vs Ceramic | Buff &amp; Beyond</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<div id="dmcontent"><h1>Paint protection film vs ceramic coating</h1><p>Two of the most talked-about options.</p>
+<div class="dmPhotoGallery newPhotoGallery" data-element-type="dPhotoGalleryId" data-widget-type="photoGallery" id="1534393666"><ul class="dmPhotoGalleryHolder">
+<li class="photoGalleryThumbs" id="1272254484"><div class="caption-container" id="1926492348"><span class="caption-inner"><h3 class="caption-title"></h3>
+<a class="caption-button dmWidget" href="" id="1626888154"><span class="text" id="1889388497">Button</span></a></span></div></li>
+<li class="photoGalleryThumbs" id="1903544282"><div class="caption-container" id="1863401669"><span class="caption-inner"><h3 class="caption-title">Beyond Boundaries</h3>
+<a class="caption-button dmWidget" href="" id="1233015223"><span class="text" id="1775854035">Button</span></a></span></div></li></ul></div>
+<div class="promo" id="promo1"><a class="dmButtonLink" href="/contact" id="2001"><span class="text" id="2002">Button</span></a></div>
+<div class="cta" id="cta1"><a class="dmButtonLink" href="/contact" id="3001"><span class="text" id="3002">Button</span></a></div></div>
+<script>window.addEventListener('load', () => setTimeout(() => { document.getElementById('promo1').style.display = 'none'; }, 300));</script>
+</body></html>`;
 http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const ph = u.pathname.match(/^\/photos\/([\w-]+)\.png$/);
@@ -76,6 +90,7 @@ http.createServer((req, res) => {
   const m = u.pathname.match(/^\/site\/abc123(\/.*)?$/);
   if (!m) { res.statusCode = 404; return res.end('nope'); }
   const p = (m[1] || '/').replace(/\/+$/, '') || '/';
+  if (p === '/ppf-vs-ceramic') { res.setHeader('Content-Type', 'text/html'); return res.end(GALLERY_PAGE); }
   if (p === '/rv-rentals') { res.setHeader('Content-Type', 'text/html'); return res.end(RV_PAGE); }
   if (p === '/contrast-test') { res.setHeader('Content-Type', 'text/html'); return res.end(CONTRAST_PAGE); }
   if (!['/', '/about'].includes(p)) { res.statusCode = 404; return res.end('<h1>Not found</h1>'); }

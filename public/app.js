@@ -7371,6 +7371,7 @@
       // Text that is in the page code but hidden by the page's own styles: kept, as information.
       state.scanning[id] = Object.assign({}, state.scanning[id], { message: 'Checking which text visitors actually see…' }); renderProgress(id);
       await markHiddenText(res, async (path, device) => sApi('/api/fetch?' + new URLSearchParams({ host, site: site.siteId, path, device })), log, host).catch((e) => log.push('Visibility check: ' + e.message));
+      await buttonSeenCheck(res, id, log).catch((e) => log.push('"Button" label check: ' + e.message));
       let aiSummary = null;
       if (aiAlt || aiText) {
         const used = [...new Set([].concat((aiAlt && aiAlt.used) || [], (aiText && aiText.used) || [], (aiMore && aiMore.used) || []))];
@@ -7750,6 +7751,43 @@
       frame.srcdoc = '<!doctype html>' + doc.documentElement.outerHTML;
       document.body.appendChild(frame);
     });
+  }
+  /**
+   * Duda's default "Button" label, checked in a real browser once the page, its pictures and its scripts
+   * have finished: a photo gallery keeps a spare caption button per picture in its code, which its own
+   * script hides (or never builds) — the code alone, read before that, seems to show it. Not shown on any
+   * device a visitor uses → not reported. Shown anywhere → still critical, with where.
+   */
+  async function buttonSeenCheck(res, id, log) {
+    const items = res.findings.filter((f) => f.code === 'PLACEHOLDER' && String(f.found || '').trim() === 'Button' && /default label/i.test(f.message || '') && f.selector && f.selector !== '(page)');
+    if (!items.length) return;
+    const byPage = new Map();
+    items.forEach((f) => { const pg = (f.pages && f.pages[0]) || f.path || '/'; (byPage.get(pg) || byPage.set(pg, []).get(pg)).push(f); });
+    const verdict = new Map(); let pages = 0, failed = 0;
+    for (const [pg, list] of [...byPage].slice(0, 12)) {
+      const sels = [...new Set(list.map((f) => f.selector))];
+      pages++;
+      state.scanning[id] = Object.assign({}, state.scanning[id], { message: `Checking the "Button" labels in a real browser ${pages}/${Math.min(12, byPage.size)}` }); renderProgress(id);
+      for (const device of ['desktop', 'mobile']) {
+        try {
+          const r = await post('/api/capture', { op: 'visible', site: id, path: pg, device, selectors: sels });
+          sels.forEach((sel, k) => { const v = (r.seen || [])[k]; const key = pg + '|' + sel; const was = verdict.get(key) || []; if (v === null || v === undefined) return; /* not found: the code and the page differ, so nothing is decided */ was.push({ device, why: v }); verdict.set(key, was); });
+        } catch (e) { failed++; }
+      }
+    }
+    let dropped = 0;
+    items.forEach((f) => {
+      const v = verdict.get(((f.pages && f.pages[0]) || f.path || '/') + '|' + f.selector) || [];
+      if (v.length < 2) return; // not checked on both: left as it is
+      if (v.every((x) => x.why)) { f.dropSeen = true; dropped++; return; }
+      const hid = v.filter((x) => x.why);
+      if (hid.length) { f.hiddenOn = (f.hiddenOn || []).concat(hid.map((x) => `${A.DEVICE_LABEL[x.device]} (${x.why})`)); f.visibleOn = (f.visibleOn || []).filter((d) => !hid.some((x) => x.device === d) && !(d === 'tablet' && hid.some((x) => x.device === 'desktop'))); }
+    });
+    if (dropped) {
+      res.findings = res.findings.filter((f) => !f.dropSeen);
+      log.push(`${dropped} "Button" label${dropped === 1 ? '' : 's'} in the page code ${dropped === 1 ? 'is' : 'are'} not shown to visitors once the page has loaded (checked in a real browser on desktop and phone: usually a photo gallery's spare caption buttons), so ${dropped === 1 ? 'it was' : 'they were'} left out.`);
+    }
+    if (failed) log.push(`The "Button" label check could not open ${failed} page view${failed === 1 ? '' : 's'}; those labels are kept as found.`);
   }
   async function markHiddenText(res, fetchPage, log, host) {
     const items = res.findings.filter((f) => TEXTISH.test(f.code) && f.selector && f.location !== 'Head / Meta' && (f.visibleOn || []).length);

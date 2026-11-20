@@ -567,6 +567,16 @@
         'Pages that were on the website in an earlier scan and now give 404 without a redirect, with the closest current page suggested',
       ],
     },
+    {
+      v: 48,
+      date: '2026-11-20',
+      title: 'A photo gallery\u2019s spare "Button" is checked the way visitors see the page',
+      scope: { fixes: ['PLACEHOLDER'] },
+      items: [
+        'A photo gallery keeps a caption button labelled "Button" for every picture in its code, and shows it only when a link is set: one with no link is no longer reported',
+        'Every other "Button" label is checked in a real browser on desktop and phone once the page, its pictures and its scripts have finished: one that is not shown on either is left out, one that is shown is still critical',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1951,6 +1961,19 @@
   }
 
   /**
+   * A photo gallery's caption button that was never set up: Duda keeps one in the code for every picture
+   * (labelled "Button", with no link) and shows it only once a link is given. It is not on the page a
+   * visitor sees, whatever the styles in the code say before the gallery's own script has run.
+   */
+  function galleryCaptionButton(el) {
+    const a = el.closest && el.closest('a.caption-button, .caption-button');
+    if (!a || !a.closest('.caption-container, .caption-inner')) return false;
+    if (!a.closest('[data-widget-type="photoGallery"], .dmPhotoGallery, [data-element-type="dPhotoGalleryId"]')) return false;
+    const href = String(a.getAttribute('href') || '').trim();
+    return !href || href === '#' || /^javascript:/i.test(href);
+  }
+
+  /**
    * The agency's own logo in the footer — the "website by us" badge every client site carries.
    *
    * It is our image, not the client's, and its alt text is ours to decide, so an audit of the
@@ -2474,7 +2497,7 @@
       // A hidden "Button" (display:none or visibility:hidden) is part of Duda's widget kept in the code
       // (a gallery with captions switched off keeps one per picture): visitors never see it and screen
       // readers skip it. Every other default label is still reported, hidden or not.
-      if (DEFAULT_LABEL.test(t) && !(t === 'Button' && hiddenReason(el, device))) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: `Duda's default label left on the page ("${t}")`, found: t, expected: 'Real wording, or remove the element' });
+      if (DEFAULT_LABEL.test(t) && !(t === 'Button' && (hiddenReason(el, device) || galleryCaptionButton(el)))) add(el, { code: 'PLACEHOLDER', severity: 'critical', category: 'Content', message: `Duda's default label left on the page ("${t}")`, found: t, expected: 'Real wording, or remove the element' });
       const cm = t.match(/(?:©|\(c\)|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})\s*(.{0,70})/i);
       if (cm) {
         const yr = parseInt(cm[1], 10);
