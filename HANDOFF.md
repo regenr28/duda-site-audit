@@ -426,3 +426,15 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `ownTowns(truth)` = Business Info cities + `truth.serviceAreas` + the first word of the business name when not a trade word ("Denver" in Denver Auto Shield); `namesOwnTown(quote, truth)`. Used by `applyPageFit` (wrong_city on a page with no `urlPlace`) and `applyTextIssues` (wrong_location on pages with no town in the address).
 - `slugTown(p, areas)` no longer takes a car make (CAR_WORDS: /tesla, /porsche…) for a town; a slug word counts as a town only if it is a service-area town or the title/H1 says "in X" / "X, ST". (/tesla-window-tinting had urlPlace "tesla", so "…in Denver, CO" looked like the wrong town.)
 - Release v42 now also fixes AI_PAGE_CITY. Test e2e_towns extended.
+
+## 197 — Vendor schema and the word "copyright"
+- `_watch.js bizSchema`: a `provider` counts as the business only under a Service/Product/Offer (SpamKill names itself as a WebPage's provider). Copyright regex: © / (c) / "Copyright" + year only. FIXES `copyright-word-1`, `vendor-provider-1` close existing auto-audit items (tests: watch_unit.mjs, e2e_fix.py).
+- engine `extractSchema` walk skips everything inside WebPage / WebSite / app blocks (`NOT_BIZ_PARENT`). Release v43 (fixes SCHEMA_*). Test `tests/tk/engine_vendor.py`.
+
+## 198 — Auto audit items open on the page
+- app `itemView(s, f)`: AUTO_LIVE items (no selector) → `autoTwin` (a scan item on the same page whose found contains the value; phones by digits) gives selector/path/devices + `twin` (#num); otherwise `pageOnly` with `snippet = autoWords(f)` (the quoted words from `detail`). Used by `rowActs`, `bindRows` data-inspect, `bindSelLinks` find, and the drawer (`fv`; drSnip, drInspect).
+- HIGHLIGHT_BM: no selector + words → no clipboard/prompt, finds the element by its text. Test: e2e_livecmp (al-phone / al-words).
+
+## 199 — Placeholder samples, form pages first for contrast
+- engine `sampleValue(v)`: placeholder / data-placeholder-original attributes with only sample emails (name@, you@, …@email.com/example.com…) or sample phones (555, repeated digits) are not scanned for contact details. Release v44.
+- auditDocument `meta.forms` → `pages[].forms`; `contrastCheck` orders pages: home, pages with a form, then shortest path (CONTRAST_MAX_PAGES 40). Test: engine_vendor.py.

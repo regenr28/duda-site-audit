@@ -28,22 +28,24 @@ try:
     svc = {'k': 'name:mobile car detailing', 'type': 'name', 'value': 'Mobile Car Detailing in Kansas City, MO', 'sev': 'critical', 'label': 'Google business data (schema) names a different business', 'ctx': 'Service', 'pages': ['/mobile-detailing'], 'n': 1}
     real = {'k': 'name:joes auto spa', 'type': 'name', 'value': "Joe's Auto Spa", 'sev': 'critical', 'label': 'Copyright line names a different business', 'ctx': "© 2024 Joe's Auto Spa", 'pages': ['/'], 'n': 1}
     lbiz = {'k': 'name:other shine llc', 'type': 'name', 'value': 'Other Shine LLC', 'sev': 'critical', 'label': 'Google business data (schema) names a different business', 'ctx': 'LocalBusiness', 'pages': ['/'], 'n': 1}
-    result = {'at': int(time.time() * 1000), 'pub': '2026-10-01T00:00:00Z', 'domain': 'buffandbeyond.com', 'name': 'Buff & Beyond', 'pages': 3, 'issues': [svc, real, lbiz]}
+    cw = {'k': 'name:please contact us and include', 'type': 'name', 'value': ', please contact us and include:', 'sev': 'critical', 'label': 'Copyright line names a different business', 'ctx': 'copyright, please contact us and include:', 'pages': ['/terms-of-service'], 'n': 1}
+    sk = {'k': 'name:spamkill', 'type': 'name', 'value': 'SpamKill', 'sev': 'critical', 'label': 'Google business data (schema) names a different business', 'ctx': 'Organization', 'pages': ['/contact'], 'n': 1}
+    result = {'at': int(time.time() * 1000), 'pub': '2026-10-01T00:00:00Z', 'domain': 'buffandbeyond.com', 'name': 'Buff & Beyond', 'pages': 3, 'issues': [svc, real, lbiz, cw, sk]}
     item = lambda iid, i: {'id': iid, 'code': 'AUTO_LIVE', 'manual': True, 'liveKey': i['k'], 'liveType': 'name', 'severity': 'critical', 'category': 'Auto audit (live website)',
                            'message': 'Business name that is not theirs: ' + i['value'], 'found': i['value'], 'detail': i['label'], 'path': i['pages'][0], 'pages': i['pages'],
                            'autoLive': {'at': '2026-10-13T00:00:00Z', 'pub': '', 'first': '2026-10-13T00:00:00Z'}, 'by': '', 'byName': 'Auto audit', 'at': '2026-10-13T00:00:00Z'}
     site = {'id': 's1', 'siteId': 'abc123', 'host': 'ed.multiscreensite.com', 'businessName': 'Buff & Beyond', 'findings': [item('live-svc', svc), item('live-real', real), item('live-lb', lbiz)]}
     redis(['SET', 'dsa:cw:abc123', json.dumps(result)],
-          ['HSET', 'dsa:cwsum', 'abc123', json.dumps({'v': 3, 'at': result['at'], 'pubAt': 1, 'n': 3, 'c': 3, 't': {'name': 3}, 'pages': 3}),
+          ['HSET', 'dsa:cwsum', 'abc123', json.dumps({'v': 3, 'at': result['at'], 'pubAt': 1, 'n': 5, 'c': 5, 't': {'name': 5}, 'pages': 3}),
            'zzz999', json.dumps({'v': 3, 'at': result['at'], 'pubAt': 1, 'n': 1, 'c': 1, 't': {'phone': 1}, 'pages': 2})],
-          ['HSET', 'dsa:cwnew', 'abc123', json.dumps({'name': 'Buff & Beyond', 'n': 3, 'c': 3, 't': {'name': 3}, 'recId': 's1'})],
+          ['HSET', 'dsa:cwnew', 'abc123', json.dumps({'name': 'Buff & Beyond', 'n': 5, 'c': 5, 't': {'name': 5}, 'recId': 's1'})],
           ['SET', 'dsa:site:s1', json.dumps(site)], ['HSET', 'dsa:fnum:s1', 'live-svc', '1', 'live-real', '2', 'live-lb', '3'], ['SET', 'dsa:seq:s1', '3'],
           ['HSET', 'dsa:fstate:s1', 'live-svc', json.dumps({'status': 'open', 'assignee': 'dev@8bitcreative.com'}), 'live-real', json.dumps({'status': 'open'}), 'live-lb', json.dumps({'status': 'open'})],
           ['SET', 'dsa:cwcfg', json.dumps({'off': True})])
     st, live = api('GET', '/api/watch?op=live')
     check(st == 200, 'the status panel answers')
     r = json.loads(redis(['GET', 'dsa:cw:abc123'])[0])
-    check([x['k'] for x in r['issues']] == ['name:joes auto spa', 'name:other shine llc'], 'the "Service" finding is gone from the result; the real ones stay: ' + ','.join(x['k'] for x in r['issues']))
+    check([x['k'] for x in r['issues']] == ['name:joes auto spa', 'name:other shine llc'], 'the "Service", copyright-word and SpamKill findings are gone from the result; the real ones stay: ' + ','.join(x['k'] for x in r['issues']))
     sm = json.loads(redis(['HGET', 'dsa:cwsum', 'abc123'])[0])
     check(sm['n'] == 2 and sm['c'] == 2 and sm['t'] == {'name': 2} and sm.get('relook'), 'the DR Websites counts are corrected and the website is lined up for a re-read: ' + json.dumps(sm))
     nw = json.loads(redis(['HGET', 'dsa:cwnew', 'abc123'])[0])
@@ -58,9 +60,10 @@ try:
     check(not other.get('relook') and other['t'] == {'phone': 1}, 'websites without the mistake are untouched')
     # Running again changes nothing.
     redis(['HSET', 'dsa:fstate:s1', 'live-real', json.dumps({'status': 'done'})])
+    n_logs = len([a for a in redis(['LRANGE', 'dsa:act:s1', 0, 20])[0] if 'own mistake' in a])
     api('GET', '/api/watch?op=live')
     fs2 = {k: json.loads(v) for k, v in zip(*[iter(redis(['HGETALL', 'dsa:fstate:s1'])[0])] * 2)}
-    check(fs2['live-real']['status'] == 'done' and len([a for a in redis(['LRANGE', 'dsa:act:s1', 0, 20])[0] if 'own mistake' in a]) == 1, 'it runs once')
+    check(fs2['live-real']['status'] == 'done' and len([a for a in redis(['LRANGE', 'dsa:act:s1', 0, 20])[0] if 'own mistake' in a]) == n_logs, 'it runs once')
     with sync_playwright() as pw:
         br = pw.chromium.launch(); ctx = br.new_context(viewport={'width': 1280, 'height': 900})
         ctx.add_cookies([{'name': 'dsa_sess', 'value': TOK, 'domain': 'localhost', 'path': '/'}])

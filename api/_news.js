@@ -4,6 +4,24 @@
 
 export const NEWS = [
   {
+    id: '2026-11-20-placeholder-forms', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'Form hints are not contact details; form pages get their contrast checked first',
+    what: 'A form field\'s placeholder that shows the format ("name@email.com", "(555) 555-5555") is no longer "Email not in Business Info". And on big websites, where colour contrast is measured on up to 40 pages, the home page and every page with a form now come first, so text typed into a form that is hard to read is caught.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b> for the placeholder items; <b>⟳ Rescan</b> to measure the form pages\' contrast.'],
+  },
+  {
+    id: '2026-11-20-auto-open', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'Auto audit items open on the page too',
+    what: 'Items from the auto audit are read from the published page\'s text, so they have no element of their own and had no buttons. Now, when the scan found the same thing on that page (the same phone, the same name), the item uses that element, says which item it is (#number), and has <b>👁 Show on page</b>, <b>Show on preview</b>, <b>Show on live</b> and <b>Show in editor</b>. When there is no match, <b>Show on preview</b>, <b>Show on live</b> and <b>Show in editor</b> open the page scrolled to the item\'s words, and <b>⌖ DSA Highlight</b> finds them by their text (drag the bookmark again to get this).',
+    where: ['<b>Walkthrough:</b> open an audit → an item marked <b>Auto audit (live website)</b>.'],
+  },
+  {
+    id: '2026-11-20-vendor-copyright', date: '2026-11-20', audience: 'all', tag: 'Auto audit',
+    title: 'Fixed: SpamKill and the word "copyright" reported as another business',
+    what: 'A form-protection or widget vendor that names itself in a page\'s structured data (SpamKill on a protected contact form) is not the business, so it is no longer "a business name that is not theirs". And the word "copyright" in a sentence ("…infringes your copyright, please contact us") is not a copyright line: only "© 2025 Name", "(c) Name" or "Copyright 2025 Name" are read as one. Items the auto audit already made for these close by themselves as False alarm (the app\'s mistake).',
+    where: ['Nothing to do: they close on their own. On an audit, <b>⚡ Apply check updates</b> clears the same thing from the scan.'],
+  },
+  {
     id: '2026-11-20-own-towns', date: '2026-11-20', audience: 'all', tag: 'Audits',
     title: 'Fixed: "different town" on pages that are not about a town',
     what: 'A page whose address names no town (like <span class="mono">/tesla-window-tinting</span> or a blog post) may name the business\'s own town, its service-area towns, or the place in its own name ("Denver" for Denver Auto Shield): "Premier window tinting for Teslas in Denver, CO" or "our Parker-based ceramic coating services" are no longer reported. A car make in the address (Tesla, Porsche) is no longer mistaken for a town. A town the business does not serve is still reported, and so is a town page that names a different town.',

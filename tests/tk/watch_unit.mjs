@@ -123,6 +123,18 @@ ok(JSON.stringify(o2) === '["a"]', 'only websites with an old-rules business nam
   const o = vc.find((x) => x.video === 'OTHER123');
   ok(o && o.sev === 'warning' && /another channel: Glossy Garage TV/.test(o.label), 'a video on another channel is a warning that names it: ' + (o && o.label));
 }
+// A form-protection vendor in the page's schema (SpamKill names itself as the WebPage's provider), and the
+// word "copyright" in a sentence, are not another business.
+{
+  const page = `<html><head><title>Contact | Shine Pro Detailing</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Page with SpamKill Protected Form","provider":{"@type":"Organization","name":"SpamKill","url":"https://spamkill.co"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Service","name":"Ceramic Coating","provider":{"@type":"AutoRepair","name":"Glossy Garage LLC"}}</script>
+</head><body><p>If you believe any material on this Website infringes your copyright, please contact us and include:</p><p>© 2025 Glossy Garage LLC</p></body></html>`;
+  const o2 = W.checkPage(page, truth, '/contact');
+  ok(!o2.some((x) => /SpamKill/.test(x.value)), 'a vendor named as a web page\'s provider (SpamKill) is not another business');
+  ok(!o2.some((x) => /please contact us/i.test(x.value)), 'the word "copyright" in a sentence is not a copyright line');
+  ok(o2.some((x) => x.type === 'name' && /Glossy Garage/.test(x.value)), 'a Service\'s provider and a real © line naming another business still are');
+}
 console.log(fail ? 'SOME FAILED' : 'ALL PASS', out.length, 'findings on the blog page');
 if (fail || process.env.SHOW) console.log(JSON.stringify(out, null, 1));
 process.exit(fail ? 1 : 0);

@@ -95,6 +95,20 @@ try:
         print('  ai items on live:', res.get('aiT'), res.get('aiO'), flush=True)
         check(res.get('aiT') == 't', 'an AI item whose words are still on the live page is marked "on live too"')
         check(res.get('aiO') == 'o', 'one whose words are gone from the live page is "fine on live"')
+        # Auto audit items have no element: one opens with the scan's matching element, the other at its words.
+        d = unpack(redis(['GET', 'dsa:site:s1'])[0])
+        al = lambda iid, typ, val, detail: {'id': iid, 'code': 'AUTO_LIVE', 'manual': True, 'liveKey': typ + ':' + val, 'liveType': typ, 'severity': 'critical', 'category': 'Auto audit (live website)',
+            'message': 'x that is not theirs: ' + val, 'found': val, 'detail': detail, 'path': '/', 'pages': ['/'], 'liveDomain': 'www.buffandbeyond.com',
+            'autoLive': {'at': '2026-11-19T00:00:00Z', 'pub': '', 'first': '2026-11-19T00:00:00Z'}, 'by': '', 'byName': 'Auto audit', 'at': '2026-11-19T00:00:00Z'}
+        d['findings'] += [al('al-phone', 'phone', '(469) 555-0199', 'Phone number that is not theirs'), al('al-words', 'name', 'Glossy Garage', 'Copyright line names a different business\n\u201c\u00a9 2024 Glossy Garage\u201d')]
+        redis(['SET', 'dsa:site:s1', pack(d)], ['HSET', 'dsa:fnum:s1', 'al-phone', '911', 'al-words', '912'])
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/item/911'); pg.reload(); pg.wait_for_selector('#drawer', timeout=15000); time.sleep(0.5)
+        dt = pg.inner_text('#drawer')
+        check('The scan found the same thing on this page' in dt and 'Show on page' in dt and 'Show in editor' in dt, 'an auto audit phone item uses the scan\'s element for the same number')
+        pg.goto(f'http://localhost:{APORT}/#/site/s1/item/912'); pg.wait_for_selector('#drawer', timeout=15000); time.sleep(0.5)
+        dt = pg.inner_text('#drawer')
+        href = pg.evaluate("() => { const b = document.querySelector('#drawer [data-liveat]'); return b ? 'ok' : '' }")
+        check('Show on preview' in dt and 'Show in editor' in dt and href == 'ok' and '\u00a9 2024 Glossy Garage' in dt, 'one with no match opens the page at its words: preview, live and editor')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()
 except Exception:

@@ -514,6 +514,27 @@
         'New: a page about one of those towns (named at least twice, or in its title or H1) that links a service ("paint protection film") to the general service page is told to link that town\u2019s page instead (/paint-protection-film-in-littleton-co). When the town has no page for that service yet, it says so',
       ],
     },
+    {
+      v: 43,
+      date: '2026-11-20',
+      title: 'A web page\u2019s own schema parts are not the business',
+      fixes: ['SCHEMA_NAME', 'SCHEMA_PHONE', 'SCHEMA_EMAIL', 'SCHEMA_ADDRESS'],
+      scope: { fixes: ['SCHEMA_NAME', 'SCHEMA_PHONE', 'SCHEMA_EMAIL', 'SCHEMA_ADDRESS'] },
+      items: [
+        'A form-protection or widget vendor that names itself in a web page\u2019s structured data (SpamKill as the "provider" of a protected contact form) is no longer "structured data names a different business". Anything inside a WebPage, WebSite or app block is skipped; a Service\u2019s provider is still checked',
+      ],
+    },
+    {
+      v: 44,
+      date: '2026-11-20',
+      title: 'A form field\u2019s format hint is not contact details',
+      fixes: ['EMAIL_MISMATCH', 'PHONE_MISMATCH'],
+      scope: { fixes: ['EMAIL_MISMATCH', 'PHONE_MISMATCH'] },
+      items: [
+        'A placeholder that shows the format to type ("name@email.com", "you@example.com", "(555) 555-5555") is no longer "Email / phone not in Business Info". A real address or number in a placeholder still is',
+        'Colour contrast is measured on the home page first, then on every page with a form (typed text and placeholders), then the rest, up to 40 pages',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1571,13 +1592,17 @@
         const j = JSON.parse(s.textContent);
         // Nested objects are walked too: a Service page's schema usually names the business one
         // level down, as its "provider", and that is the part worth checking.
-        const walk = (o, depth) => {
+        // A web page's own parts are not the business: a form-protection or widget vendor names itself as the
+        // page's "provider" (SpamKill on a protected contact form). Nothing inside a WebPage, WebSite or app is read.
+        const NOT_BIZ_PARENT = /^(WebPage|WebPageElement|WebSite|SoftwareApplication|WebApplication|ContactPage|AboutPage|FAQPage|CollectionPage|ItemPage|SearchResultsPage)$/i;
+        const walk = (o, depth, parentType) => {
           if (!o || typeof o !== 'object' || depth > 6) return;
-          if (Array.isArray(o)) return o.forEach((x) => walk(x, depth + 1));
+          if (Array.isArray(o)) return o.forEach((x) => walk(x, depth + 1, parentType));
+          if ([].concat(parentType || []).some((t) => NOT_BIZ_PARENT.test(String(t).replace(/^https?:\/\/schema\.org\//i, '')))) return;
           if (o.telephone || o.address || (o.name && o['@type'] && !/WebPage|BreadcrumbList|WebSite/i.test(String(o['@type'])))) out.push({ node: s, data: o, biz: isBusinessType(o['@type']) });
-          Object.keys(o).forEach((k) => { if (k !== '@context' && o[k] && typeof o[k] === 'object') walk(o[k], depth + 1); });
+          Object.keys(o).forEach((k) => { if (k !== '@context' && o[k] && typeof o[k] === 'object') walk(o[k], depth + 1, k === '@graph' ? null : o['@type']); });
         };
-        walk(j, 0);
+        walk(j, 0, null);
       } catch (e) { /* invalid JSON-LD handled elsewhere */ }
     });
     return out;
@@ -1756,6 +1781,16 @@
     return { raw, info };
   }
 
+  /** A sample value written to show the format: "name@email.com", "you@example.com", "(555) 555-5555", "123-456-7890". */
+  function sampleValue(v) {
+    const t = String(v || '').toLowerCase();
+    const em = t.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || [];
+    const phones = (t.match(/\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g) || []).map((x) => x.replace(/\D/g, ''));
+    const sampleEmail = (e) => /^(name|your\.?name|you|your|yourname|youremail|email|example|john|jane|john\.?doe|jane\.?doe|johndoe|janedoe|first\.?last|firstname|user|username|someone|me|test|hello)@/.test(e)
+      || /@(email|example|domain|yourdomain|yourcompany|company|mail|test|website|yoursite|address)\.(com|org|net)$/.test(e);
+    const samplePhone = (d) => /^(\d)\1{9}$/.test(d) || /^(1234567890|0123456789)$/.test(d) || /^\d{3}555\d{4}$/.test(d) || /^555/.test(d);
+    return (em.length || phones.length) && em.every(sampleEmail) && phones.every(samplePhone);
+  }
   // ---------- DOM helpers ----------
   function hiddenReason(el, device) {
     const rule = HIDE_RULES[device] || HIDE_RULES.desktop;
@@ -2283,7 +2318,8 @@
       for (const a of el.attributes) {
         const n = a.name;
         if (n === 'alt' || n === 'title' || n === 'aria-label' || n === 'placeholder' || (n.startsWith('data-') && a.value.length < 200 && !/^data-(src|bg|image|img|dm-image|anim|layout|element|display|link|rss|widget|video|type)/.test(n))) {
-          if (a.value && /\d{3}|@/.test(a.value)) scanValue(el, a.value, 'Contact info', n);
+          // A form field's placeholder is a format hint ("name@email.com", "(555) 555-5555"), not contact details.
+          if (a.value && /\d{3}|@/.test(a.value) && !((n === 'placeholder' || n === 'data-placeholder-original') && sampleValue(a.value))) scanValue(el, a.value, 'Contact info', n);
         }
       }
     });
@@ -2642,7 +2678,7 @@
       prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       ...(ctx.copy ? { copy: pageCopy(body, device) } : {}),
       fonts,
-      meta: { title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon, ...(schemaBiz ? { schemaBiz } : {}),
+      meta: { forms: realForms.length, title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon, ...(schemaBiz ? { schemaBiz } : {}),
         // What the page says it is about, for the "does the page match its address" checks: every H1
         // (a hidden one still tells Google what the page is), and the section headings under it.
         buttons: btnList.map((b) => (b.to ? b : Object.assign(b, { to: /^https?:/i.test(b.href) ? b.href : '' }))),
@@ -3416,6 +3452,7 @@
           info.description = info.description || r.meta.description;
           if (device === devices[0] && r.meta.fit) info.fit = r.meta.fit;
           if (device === devices[0] && r.meta.buttons) info.buttons = r.meta.buttons;
+          if (r.meta.forms) info.forms = Math.max(info.forms || 0, r.meta.forms);
           if (r.copy) info.copy = r.copy;
           if (r.meta.favicon) siteIcon.favicon = true;
           if (r.meta.touchIcon) siteIcon.touchIcon = true;
@@ -3639,7 +3676,7 @@
       fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 14) } : null,
       photos: photoSys,
       findings: merged,
-      pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', h1: p.h1 || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [], ...(p.blog ? { blog: true } : {}) })),
+      pages: Object.values(pageInfo).map((p) => ({ path: p.path, title: p.title || '', h1: p.h1 || '', notFound: !!p.notFound, error: p.error || '', devices: p.devices || [], ...(p.blog ? { blog: true } : {}), ...(p.forms ? { forms: p.forms } : {}) })),
       links: Array.from(linkMap.values()),
       // For the AI read of whether each page fits its address. Not saved with the audit.
       // Buttons on each page, in order (desktop). Not saved with the audit.

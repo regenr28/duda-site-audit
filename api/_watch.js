@@ -101,7 +101,10 @@ function bizSchema(html) {
   const out = [];
   jsonLd(html).forEach((o) => {
     if (isBiz(o)) out.push(o);
-    [].concat(o.provider || []).forEach((p) => { if (isBiz(p) && !out.includes(p)) out.push(p); });
+    // The business behind something it sells (a Service, a Product, an Offer). A web page's "provider" is
+    // a vendor (a form-protection script such as SpamKill names itself there), never the business.
+    if ([].concat(o['@type'] || []).some((t) => /(^|[/:])(Service|Product|Offer|[A-Za-z]*Service)$/.test(String(t))))
+      [].concat(o.provider || []).forEach((p) => { if (isBiz(p) && !out.includes(p)) out.push(p); });
   });
   return out;
 }
@@ -210,7 +213,9 @@ export function checkPage(html, truth, path) {
   }
   // The business name: the copyright line, and the business data Google reads (JSON-LD).
   if (truth.businessName) {
-    const cm = /(?:©|\(c\)|copyright)\s*(?:\d{4}\s*(?:[-–]\s*\d{2,4})?)?\s*(?:by\s+)?([^\n|•·]{3,70})/i.exec(text);
+    // A copyright LINE: "© 2025 Name", "(c) Name", "Copyright 2025 Name", "Copyright © Name". The word in a
+    // sentence ("…infringes your copyright, please contact us") is not one.
+    const cm = /(?:(?:copyright\s*)?(?:©|\(c\))|copyright(?=\s*(?:19|20)\d{2}))\s*(?:(?:19|20)\d{2}\s*(?:[-–]\s*\d{2,4})?)?\s*(?:by\s+)?([^\n|•·]{3,70})/i.exec(text);
     if (cm) {
       const tail = cm[1].replace(/all rights reserved.*$/i, '').replace(/[.,\s]+$/, '').trim();
       if (/[a-z]{3}/i.test(tail) && !NOT_A_NAME.test(tail) && !A2.matchesBusiness(tail, truth)) add('name', tail, 'critical', 'Copyright line names a different business', cm[0].slice(0, 120));
@@ -593,6 +598,11 @@ export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}
 const FIXES = [
   { id: 'svc-schema-1', why: 'a "Service" in Google business data names the service, not the business',
     wrong: (x) => x.type === 'name' && /^Google business data \(schema\) names/.test(x.label || '') && !String(x.ctx || '').split(/\s+/).some((t) => BIZ_TYPE.test(t)) },
+  { id: 'copyright-word-1', why: 'the word "copyright" in a sentence ("…infringes your copyright, please contact us") is not a copyright line',
+    wrong: (x) => x.type === 'name' && x.label === 'Copyright line names a different business' && !/©|\(c\)|copyright\s*(19|20)\d{2}/i.test(String(x.ctx || '')) },
+  { id: 'vendor-provider-1', why: 'a form-protection or review widget names itself in the page\'s Google data (as the web page\'s provider); it is not the business',
+    wrong: (x) => x.type === 'name' && /^Google business data \(schema\) names/.test(x.label || '') && /^Organization$/i.test(String(x.ctx || '').trim())
+      && /spam ?kill|recaptcha|hcaptcha|turnstile|cloudflare|trustpilot|birdeye|podium|yext|elfsight|powr|tidio|hubspot|mailchimp|jotform|typeform|calendly|wordfence|akismet/i.test(String(x.value || '')) },
 ];
 const WFIX = (id) => P + 'cwfix:' + id;
 // Findings that a re-read under the newer rules may judge differently. These websites are read again

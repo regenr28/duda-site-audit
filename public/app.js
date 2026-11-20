@@ -7543,13 +7543,17 @@
    * placeholders, typed text and field edges. Each page is drawn in a real Chrome on the server and
    * the colour behind every piece of text is read off a picture of it, so text over a photo, a
    * gradient or an overlay that belongs to another element is measured as a visitor sees it.
-   * Blog posts share one template, so they are left out; very large websites stop at 40 pages.
+   * Blog posts share one template, so they are left out; very large websites stop at 40 pages, with the home page and every page with a form measured first.
    * Pages that could not be measured are sent back as "not checked", so their earlier contrast
    * items are kept as they are rather than closed as fixed.
    */
   const CONTRAST_MAX_PAGES = 40;
   async function contrastCheck(res, id, log) {
-    const pages = (res.pages || []).filter((p) => !p.notFound && !p.error && !/\/(blog|blogs|post|posts|news)\//i.test(p.path) && !A.isThankYouPath(p.path)).map((p) => p.path);
+    const ok = (res.pages || []).filter((p) => !p.notFound && !p.error && !/\/(blog|blogs|post|posts|news)\//i.test(p.path) && !A.isThankYouPath(p.path));
+    // The pages most likely to have a contrast problem visitors meet first: the home page, then every page
+    // with a form (typed text and placeholders are where it goes wrong), then the shortest addresses.
+    const depth = (p) => String(p.path).split('/').filter(Boolean).length;
+    const pages = ok.slice().sort((a, b) => (b.path === '/') - (a.path === '/') || (b.forms ? 1 : 0) - (a.forms ? 1 : 0) || depth(a) - depth(b)).map((p) => p.path);
     const todo = pages.slice(0, CONTRAST_MAX_PAGES);
     const failed = []; let measured = 0, done = 0, stop = '';
     const raw = [];
@@ -10321,7 +10325,7 @@
     return previewUrl(site, f.path, dev) + '#dsa=' + encodeURIComponent(f.selector || '') + (txt ? '&t=' + encodeURIComponent(txt).replace(/[-:]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + ':~:text=' + encodeURIComponent(txt).replace(/-/g, '%2D') : '');
   }
   // One-time bookmark that outlines an element on the preview or in the editor (both are other websites, so the app can't reach in)
-  const HIGHLIGHT_BM = `javascript:(async()=>{let s=decodeURIComponent((location.hash.match(/dsa=([^&:]+)/)||[])[1]||'');const tx=decodeURIComponent((location.hash.match(/[&]t=([^&:]+)/)||[])[1]||'');if(!s){try{s=(await navigator.clipboard.readText()).trim()}catch(e){}}if(!s||s.length>400||/\\s{2}|\\n/.test(s))s=prompt('Paste the CSS selector to highlight:',s||'');if(!s)return;const D=[document];const walk=d=>d.querySelectorAll('iframe').forEach(f=>{try{const c=f.contentDocument;if(c){D.push(c);walk(c)}}catch(e){}});walk(document);let el=null;for(const d of D){try{el=d.querySelector(s)}catch(e){alert('That is not a valid CSS selector.');return}if(el)break}if(!el&&tx){for(const d of D){const w=d.createTreeWalker(d.body,4);let n;while((n=w.nextNode())){if(n.nodeValue&&n.nodeValue.replace(/\\s+/g,' ').includes(tx)){el=n.parentElement;break}}if(el)break}}if(!el){alert('Not found on this view. Switch to the device this item is on (Desktop, Tablet or Mobile), or open the side panel, then click the bookmark again.');return}el.scrollIntoView({block:'center',behavior:'smooth'});const o=el.style.outline,oo=el.style.outlineOffset;el.style.outline='4px solid %23e11d48';el.style.outlineOffset='3px';let n=0;const t=setInterval(()=>{el.style.outline=(n++%252?'4px solid %23e11d48':'4px solid %23fbbf24');if(n>7){clearInterval(t);el.style.outline='4px solid %23e11d48'}},350);setTimeout(()=>{el.style.outline=o;el.style.outlineOffset=oo},15000);const r=el.getBoundingClientRect();if(!r.width&&!r.height)alert('Found it, but it is hidden on this view (e.g. inside the side panel or a closed section). Open it, then click the bookmark again.')})()`;
+  const HIGHLIGHT_BM = `javascript:(async()=>{let s=decodeURIComponent((location.hash.match(/dsa=([^&:]+)/)||[])[1]||'');const tx=decodeURIComponent((location.hash.match(/[&]t=([^&:]+)/)||[])[1]||'');if(!s&&!tx){try{s=(await navigator.clipboard.readText()).trim()}catch(e){}if(!s||s.length>400||/\\s{2}|\\n/.test(s))s=prompt('Paste the CSS selector to highlight:',s||'');if(!s)return}const D=[document];const walk=d=>d.querySelectorAll('iframe').forEach(f=>{try{const c=f.contentDocument;if(c){D.push(c);walk(c)}}catch(e){}});walk(document);let el=null;if(s)for(const d of D){try{el=d.querySelector(s)}catch(e){alert('That is not a valid CSS selector.');return}if(el)break}if(!el&&tx){for(const d of D){const w=d.createTreeWalker(d.body,4);let n;while((n=w.nextNode())){if(n.nodeValue&&n.nodeValue.replace(/\\s+/g,' ').includes(tx)){el=n.parentElement;break}}if(el)break}}if(!el){alert('Not found on this view. Switch to the device this item is on (Desktop, Tablet or Mobile), or open the side panel, then click the bookmark again.');return}el.scrollIntoView({block:'center',behavior:'smooth'});const o=el.style.outline,oo=el.style.outlineOffset;el.style.outline='4px solid %23e11d48';el.style.outlineOffset='3px';let n=0;const t=setInterval(()=>{el.style.outline=(n++%252?'4px solid %23e11d48':'4px solid %23fbbf24');if(n>7){clearInterval(t);el.style.outline='4px solid %23e11d48'}},350);setTimeout(()=>{el.style.outline=o;el.style.outlineOffset=oo},15000);const r=el.getBoundingClientRect();if(!r.width&&!r.height)alert('Found it, but it is hidden on this view (e.g. inside the side panel or a closed section). Open it, then click the bookmark again.')})()`;
   function openHighlighterHelp() {
     modal(`<header><h2>One-click highlighter</h2><button class="btn ghost" data-close>✕</button></header>
       <div class="body">
@@ -10378,9 +10382,34 @@
     // selector); :~:text= makes the browser itself scroll to those words and mark them, no bookmark needed.
     return `https://${dom}${!f.path || f.path === '/' ? '/' : f.path}#dsa=${encodeURIComponent(f.selector || '')}${txt ? '&t=' + encodeURIComponent(txt).replace(/[-:]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + ':~:text=' + encodeURIComponent(txt).replace(/-/g, '%2D') : ''}`;
   }
+  /**
+   * What to open for an item. An auto audit item (read from the published website) has no element of its own:
+   * when the scan found the same thing on that page, its element is used; otherwise the page opens at the
+   * item's words (the browser scrolls to them, and ⌖ DSA Highlight finds them by their text).
+   */
+  function autoTwin(s, f) {
+    if (!f || f.code !== 'AUTO_LIVE' || !s) return null;
+    const v = String(f.found || '').trim(); if (!v) return null;
+    const digits = v.replace(/\D/g, ''); const phone = f.liveType === 'phone' && digits.length >= 10;
+    const low = v.toLowerCase();
+    return (s.findings || []).find((x) => x && !x.manual && !x.gone && x.selector && x.selector !== '(page)'
+      && (x.pages && x.pages.length ? x.pages : [x.path || '/']).some((p) => A.normalizePath(p) === A.normalizePath(f.path || '/'))
+      && (phone ? String(x.found || '').replace(/\D/g, '').includes(digits.slice(-10)) : low.length >= 4 && String(x.found || '').toLowerCase().includes(low))) || null;
+  }
+  function autoWords(f) {
+    if (f.snippet) return f.snippet;
+    const m = String(f.detail || '').match(/\n\u201c([^\u201d]{4,200})\u201d/);
+    return m ? m[1] : '';
+  }
+  function itemView(s, f) {
+    if (!f || f.code !== 'AUTO_LIVE' || (f.selector && f.selector !== '(page)')) return f;
+    const tw = autoTwin(s, f);
+    if (tw) return Object.assign({}, f, { selector: tw.selector, path: tw.path, visibleOn: tw.visibleOn, devices: tw.devices, location: tw.location, snippet: tw.snippet || autoWords(f), twin: tw.num });
+    return Object.assign({}, f, { selector: '', visibleOn: ['desktop'], devices: ['desktop'], snippet: autoWords(f), pageOnly: true });
+  }
   const selLinks = (f) => `<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Show on preview</button>${liveAtItem(state.current, f) ? `<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website, as visitors see it">🌐 Show on live</button>` : ''}<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Show in editor</button><button class="linkbtn faint" data-hlhelp title="How to outline the element on the preview or in the editor">?</button>`;
   function bindSelLinks(root, site, list) {
-    const find = (id) => (list || site.findings || []).find((x) => x.id === id);
+    const find = (id) => itemView(site, (list || site.findings || []).find((x) => x.id === id));
     $$('[data-prevat]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const f = find(b.dataset.prevat); if (f) openItemPreview(site, f); }));
     $$('[data-editat]', root).forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const f = find(b.dataset.editat); if (f) openItemEditor(site, f); }));
     $$('[data-liveat]', root).forEach((b) => (b.onclick = (e) => {
@@ -11629,12 +11658,18 @@
       return `<span title="${esc(devs.filter((d) => !on.includes(d)).map((d) => 'Hidden on ' + A.DEVICE_LABEL[d]).join(', ') || 'Not on the other devices')}">${esc(on.map((d) => A.DEVICE_LABEL[d]).join(', '))} only</span>`;
     };
     // The quick actions, one line, under the item's details (full selector and longer labels are in the item's panel).
-    const rowActs = (f) => {
+    const rowActs = (f0) => {
+      const f = itemView(s, f0);
       // Something in the page's head (title, favicon, tags) has nothing to point at on the page.
       const hasSel = f.selector && f.selector !== '(page)' && !/^\s*(head|meta|link|title)\b/i.test(f.selector);
       const b = [];
+      if (f.pageOnly) {
+        b.push(`<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the preview at this page, scrolled to the words">▶ Preview</button>`);
+        if (liveAtItem(s, f)) b.push(`<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website, scrolled to the words">🌐 Live</button>`);
+        b.push(`<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor">✎ Editor</button>`);
+      }
       if (hasSel) {
-        b.push(`<button class="linkbtn" data-inspect="${esc(f.id)}" title="Open the page with this element highlighted">👁 Page</button>`);
+        b.push(`<button class="linkbtn" data-inspect=""${esc(f.id)}" title="Open the page with this element highlighted">👁 Page</button>`);
         b.push(`<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Preview</button>`);
         if (liveAtItem(s, f)) b.push(`<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website, as visitors see it">🌐 Live</button>`);
         b.push(`<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Editor</button>`);
@@ -11750,7 +11785,7 @@
     // Everything a row's buttons do, for the rows drawn with the page and for each batch drawn after.
     function bindRows(root) {
     $$('[data-copy]', root).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
-    $$('[data-inspect]', root).forEach((c) => (c.onclick = () => { const f = s.findings.find((x) => x.id === c.dataset.inspect); if (f) openInspector(s, f); }));
+    $$('[data-inspect]', root).forEach((c) => (c.onclick = () => { const f = itemView(s, s.findings.find((x) => x.id === c.dataset.inspect)); if (f) openInspector(s, f); }));
     // Each place a repeated photo turns up opens on its own element and its own page, from the row.
     $$('[data-dupsel]', root).forEach((b) => (b.onclick = (e) => {
       e.stopPropagation();
@@ -13056,6 +13091,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
     const s = state.current; if (!s) return;
     const f = (s.findings || []).find((x) => x.num === num);
     if (!f) { toast(`Audit item #${num} not found`); return; }
+    const fv = itemView(s, f);   // an auto audit item opens with the scan's matching element, or at its words
     const prevScroll = $('#drawer .dr-body') ? $('#drawer .dr-body').scrollTop : 0;
     const keep = drawerComposer && drawerComposer.busy() && $('#drawer') && Number($('#drawer').dataset.num) === num;
     if (keep) return; // don't wipe a comment someone is typing
@@ -13095,10 +13131,11 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}${pvLivePills(s, f)}${(pvLive(s, f) || {}).say ? `<div class="small faint pvl-say">${esc(pvLive(s, f).say)}</div>` : ''}</div>
-          <div class="span2"><div class="k">Unique CSS selector</div>${f.selector && f.selector !== '(page)' ? `<code class="sel inspect" id="drInspect2" title="Click to open the page with this element highlighted">${esc(f.selector)}</code>
-            <button class="btn sm primary" id="drInspect">👁 Show on page</button> <button class="btn sm ghost" data-copy="${esc(f.selector)}">Copy selector</button>
+          <div class="span2"><div class="k">Unique CSS selector</div>${fv.twin ? `<div class="small muted" style="margin-bottom:4px">The scan found the same thing on this page: <a class="item-ref" href="#/site/${esc(s.id)}/item/${fv.twin}">#${fv.twin}</a>. Its element:</div>` : ''}${fv.selector && fv.selector !== '(page)' ? `<code class="sel inspect" id="drInspect2" title="Click to open the page with this element highlighted">${esc(fv.selector)}</code>
+            <button class="btn sm primary" id="drInspect">👁 Show on page</button> <button class="btn sm ghost" data-copy="${esc(fv.selector)}">Copy selector</button>
             <button class="btn sm ghost" id="drSnip" title="Copy a console snippet that scrolls to and highlights this element">⌖ Console snippet</button>
-            <div class="sel-actions dr-open">${selLinks(f)}</div>` : '<span class="faint">(whole page)</span>'}</div>
+            <div class="sel-actions dr-open">${selLinks(fv)}</div>` : fv.pageOnly ? `<div class="small muted">Read from the published page's text by the auto audit, so there is no element to point at. These open the page scrolled to the words${autoWords(f) ? `: “${esc(autoWords(f).slice(0, 80))}”` : ''}.</div>
+            <div class="sel-actions dr-open">${selLinks(fv)}</div>` : '<span class="faint">(whole page)</span>'}</div>
         </div>
         ${aiPendingList(f)}
         <div class="k" style="margin-top:14px">Status</div>
@@ -13126,7 +13163,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
     $('#drNext').onclick = () => { if (idx < list.length - 1) location.hash = `#/site/${s.id}/item/${list[idx + 1].num}`; };
     $('#drLink').onclick = () => copy(`${location.origin}/#/site/${s.id}/item/${f.num}`, 'Link to #' + f.num + ' copied');
     $$('[data-copy]', d).forEach((c) => (c.onclick = () => copy(c.dataset.copy, c.closest('.ai-sugg') ? 'Suggestion copied' : 'Selector copied')));
-    ['#drInspect', '#drInspect2'].forEach((sel) => { const b = $(sel, d); if (b) b.onclick = () => openInspector(s, f); });
+    ['#drInspect', '#drInspect2'].forEach((sel) => { const b = $(sel, d); if (b) b.onclick = () => openInspector(s, fv); });
     bindSelLinks(d, s, [f]);
     $$('.dr-detail.rich img', d).forEach((im) => (im.onclick = () => window.open(im.src, '_blank')));
     $$('[data-pshow]', d).forEach((b) => (b.onclick = () => { const x = f.aiPending.items[Number(b.dataset.pshow)]; openInspector(s, Object.assign({}, f, { selector: x.selector, path: (x.pages || [f.path])[0], pages: x.pages || [f.path], devices: x.devices || f.devices, visibleOn: x.visibleOn || f.visibleOn, location: x.location })); }));
@@ -13137,7 +13174,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
     }));
     if ($('#drAiNow')) $('#drAiNow').onclick = () => aiResume(s.id, true);
     if ($('#drSnip')) $('#drSnip').onclick = () => {
-      const snip = `(s=>{const e=document.querySelector(s);if(!e)return console.warn('Not found on this device view:',s);let p=e;while(p){if(p.id==='hamburger-drawer'){console.log('This element is inside the side panel (hamburger menu), so open it to see.');}p=p.parentElement;}e.scrollIntoView({block:'center'});e.style.outline='4px solid #e11d48';e.style.outlineOffset='2px';console.log(e);})(${JSON.stringify(f.selector)})`;
+      const snip = `(s=>{const e=document.querySelector(s);if(!e)return console.warn('Not found on this device view:',s);let p=e;while(p){if(p.id==='hamburger-drawer'){console.log('This element is inside the side panel (hamburger menu), so open it to see.');}p=p.parentElement;}e.scrollIntoView({block:'center'});e.style.outline='4px solid #e11d48';e.style.outlineOffset='2px';console.log(e);})(${JSON.stringify(fv.selector)})`;
       copy(snip, `Snippet copied. Paste it in the ${A.DEVICE_LABEL[dev]} preview's console.`);
     };
     $$('[data-set]', d).forEach((b) => (b.onclick = () => { if (b.dataset.set !== f.status) setFinding(s, [f.id], { status: b.dataset.set }); }));
