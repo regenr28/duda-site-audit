@@ -665,7 +665,9 @@ async function handler(req, res) {
         const normQ = (x) => '/' + String(x || '/').replace(/^https?:\/\/[^/]+/i, '').replace(/[?#].*$/, '').replace(/^\/+|\/+$/g, '').toLowerCase();
         const partial = Array.isArray(b.partial) && b.partial.length ? new Set(b.partial.map(normQ)) : null;
         const SITE_WIDE = /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR|PAGE_WRONG_CITY)/;
-        const inPartial = (f) => partial && !SITE_WIDE.test(String(f.code)) && (f.pages && f.pages.length ? f.pages : [f.path || '/']).every((pg) => partial.has(normQ(pg)));
+        // robots.txt / sitemap / llms.txt and redirects are read whole on every scan, chosen pages or not.
+        const EVERY_SCAN = /^(ROBOTS_|SITEMAP_|LLMS_|REDIRECT_)/;
+        const inPartial = (f) => partial && (EVERY_SCAN.test(String(f.code)) || (!SITE_WIDE.test(String(f.code)) && (f.pages && f.pages.length ? f.pages : [f.path || '/']).every((pg) => partial.has(normQ(pg)))));
         // "Apply check updates": only these checks ran. Everything else (other checks, on every page) stays as it was.
         const codes = Array.isArray(b.codes) && b.codes.length ? b.codes.map((c) => String(c).slice(0, 60)).slice(0, 200) : null;
         const codeIn = (f) => !codes || codes.some((x) => (x.endsWith('_') ? String(f.code).startsWith(x) : String(f.code) === x));
@@ -695,6 +697,8 @@ async function handler(req, res) {
         }
         // files: what robots.txt, sitemap.xml and llms.txt say; schemaBiz: the business as the home page's schema describes it.
         if (r.files && typeof r.files === 'object' && JSON.stringify(r.files).length > 20000) ['robots', 'llms'].forEach((k) => { if (r.files[k]) delete r.files[k].text; });
+        // Every page address the website has had: a page that disappears later and gives 404 needs a redirect.
+        site.pastPaths = [...new Set([].concat(site.pastPaths || [], (site.pages || []).map((pg) => pg && pg.path), (r.pages || []).map((pg) => pg && pg.path)).filter((x) => typeof x === 'string' && x.length < 300))].slice(-600);
         ['host', 'editorUrl', 'businessName', 'truth', 'profiles', 'pages', 'scan', 'fonts', 'photos', 'files', 'schemaBiz'].forEach((k) => { if (r[k] !== undefined) site[k] = r[k]; });
         if (site.scan && Array.isArray(site.scan.log)) site.scan.log = site.scan.log.slice(0, 40).map((l) => String(l).slice(0, 300));
         // A rescan replaces what the SCANNER found. An item a person typed in is not the scanner's

@@ -39,10 +39,11 @@ async function handler(req, res) {
       return res.status(200).json({ siteId, domain, publishStatus: d.publish_status || '', publishedAt: d.last_published_date || '', firstPublishedAt: d.first_published_date || '' });
     } catch (e) { return res.status(502).json({ error: String(e.message || e) }); }
   }
-  const [site, content, pages] = await Promise.allSettled([
+  const [site, content, pages, rules] = await Promise.allSettled([
     duda(`/sites/multiscreen/${siteId}`),
     duda(`/sites/multiscreen/${siteId}/content`),
     duda(`/sites/multiscreen/${siteId}/pages`),
+    duda(`/sites/multiscreen/${siteId}/urlrules`),
   ]);
   const errors = [];
   const val = (p, label) => { if (p.status === 'fulfilled') return p.value; errors.push(`${label}: ${p.reason && p.reason.message}`); return null; };
@@ -63,7 +64,10 @@ async function handler(req, res) {
     hidden: p.header_html === undefined ? undefined : undefined,
   })).filter((p) => p.path);
 
+  // The website's URL redirects (Duda "URL Redirect" rules). Not being able to read them is not an error for the scan.
+  const ruleArr = rules.status === 'fulfilled' ? (Array.isArray(rules.value) ? rules.value : (rules.value && (rules.value.results || rules.value.rules)) || []) : null;
+  const redirects = ruleArr ? ruleArr.slice(0, 500).map((r) => ({ source: String(r.source_url || r.source || '').slice(0, 300), target: String(r.target_url || r.target || '').slice(0, 300), code: Number(r.response_code || r.type || 301) || 301 })).filter((r) => r.source) : null;
   res.setHeader('Cache-Control', 'no-store');
-  res.status(200).json({ host, siteId, site: siteJson, content: contentJson, pages: pageList, errors });
+  res.status(200).json({ host, siteId, site: siteJson, content: contentJson, pages: pageList, errors, ...(redirects ? { redirects } : {}) });
 }
 export default metered('site', handler);

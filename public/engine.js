@@ -535,6 +535,38 @@
         'Colour contrast is measured on the home page first, then on every page with a form (typed text and placeholders), then the rest, up to 40 pages',
       ],
     },
+    {
+      v: 45,
+      date: '2026-11-20',
+      title: 'Photos judged by the AI as they look on the page; camera watermarks',
+      scope: { adds: ['PHOTO_'], photos: true },
+      items: [
+        'Every photo a visitor sees (an image, a column or section with a photo background, a parallax background) is pictured where it sits on the page and shown to the AI with the page and the section around it: a photo that does not fit the page (a passenger car on the RV page, a bus on the truck page) or its section is reported',
+        'The photo file is also looked at whole, so a phone or stock watermark ("Galaxy S21 Ultra 5G", "Shot on iPhone") in a corner the layout crops off is found: one item per photo, wherever it is used',
+        'On the same pages as the colour contrast (the home page and pages with a form first, up to 40)',
+      ],
+    },
+    {
+      v: 46,
+      date: '2026-11-20',
+      title: 'Form service choices, and privacy / terms text left as a template',
+      scope: { adds: ['FORM_SERVICE_MISSING', 'POLICY_', 'EMAIL_AUTOMATION'] },
+      items: [
+        'A form\u2019s service choices (a drop-down or tick boxes) that leave out services the website has its own page for',
+        'Privacy policy and terms loaded by Termageddon are read as visitors see them (not the "Please wait while the policy is loaded" text): template fields left unfilled ("USA County", [Company Name], {{state}}, XXX-XXX-XXXX), another business\u2019s name, and a phone, email or notice address that is not in Business Info',
+        'The same template fields on privacy and terms pages written on the page itself',
+      ],
+    },
+    {
+      v: 47,
+      date: '2026-11-20',
+      title: 'Redirects and old addresses that now give 404',
+      scope: { adds: ['REDIRECT_'], files: true },
+      items: [
+        'The website\u2019s URL redirects in Duda: loops, chains, redirects that land on a page that does not exist, redirects over a page that still exists, and temporary (302) redirects',
+        'Pages that were on the website in an earlier scan and now give 404 without a redirect, with the closest current page suggested',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -547,26 +579,26 @@
    * those items need reading again), `adds` = new checks (every page, but only those checks), and whether
    * the AI, the colour-contrast pictures or the link checks are needed. A release without a scope (older
    * ones) can only be caught up with a full rescan.
-   * Returns { releases, full: [releases that need a full rescan], codes, pages: 'all' | [paths], ai, contrast, links, steps: [...] }.
+   * Returns { releases, full: [releases that need a full rescan], codes, pages: 'all' | [paths], ai, contrast, photos (photos are pictured on the contrast visit: only when the AI is on), links, steps: [...] }.
    */
   function codeIn(codes, code) { const c = String(code || ''); return codes.some((x) => (x.endsWith('_') ? c.startsWith(x) : c === x)); }
   function updatePlan(v, findings) {
     const rel = checksSince(v);
     const full = rel.filter((r) => !r.scope);
     const live = (findings || []).filter((f) => f && !f.gone && !f.manual);
-    const codes = new Set(); const paths = new Set(); let all = false, ai = false, contrast = false, links = false;
+    const codes = new Set(); const paths = new Set(); let all = false, ai = false, contrast = false, links = false, photos = false;
     const steps = rel.filter((r) => r.scope).map((r) => {
       const sc = r.scope; const fx = sc.fixes || [], ad = sc.adds || [];
       const items = live.filter((f) => codeIn(fx, f.code));
       items.forEach((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).forEach((p) => paths.add(normalizePath(p))));
       const used = items.length > 0 || ad.length > 0;
-      if (used) { fx.concat(ad).forEach((c) => codes.add(c)); if (sc.ai) ai = true; if (sc.contrast) contrast = true; if (sc.links) links = true; }
+      if (used) { fx.concat(ad).forEach((c) => codes.add(c)); if (sc.ai) ai = true; if (sc.contrast) contrast = true; if (sc.photos) photos = true; if (sc.links) links = true; }
       if (ad.length && !sc.files) all = true;
-      return { v: r.v, title: r.title, kind: ad.length ? 'adds' : 'fixes', files: !!sc.files, codes: fx.concat(ad), items, pages: sc.files ? [] : ad.length ? 'all' : [...new Set(items.flatMap((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).map(normalizePath)))], ai: !!sc.ai, contrast: !!sc.contrast, skip: !used };
+      return { v: r.v, title: r.title, kind: ad.length ? 'adds' : 'fixes', files: !!sc.files, codes: fx.concat(ad), items, pages: sc.files ? [] : ad.length ? 'all' : [...new Set(items.flatMap((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).map(normalizePath)))], ai: !!sc.ai, contrast: !!sc.contrast, photos: !!sc.photos, skip: !used };
     });
     // Checks that compare the whole website (duplicate titles, fonts, duplicate photos…) read every page.
     if ([...codes].some((c) => /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|LINK_BROKEN_INTERNAL|PAGE_WRONG_CITY)/.test(c))) all = true;
-    return { releases: rel, full, codes: [...codes], pages: all ? 'all' : [...paths], ai, contrast, links, steps };
+    return { releases: rel, full, codes: [...codes], pages: all ? 'all' : [...paths], ai, contrast, photos, links, steps };
   }
 
   // Words that don't identify a specific business (used for name/handle matching)
@@ -1791,6 +1823,117 @@
     const samplePhone = (d) => /^(\d)\1{9}$/.test(d) || /^(1234567890|0123456789)$/.test(d) || /^\d{3}555\d{4}$/.test(d) || /^555/.test(d);
     return (em.length || phones.length) && em.every(sampleEmail) && phones.every(samplePhone);
   }
+  // ---------- Forms: service choices ----------
+  const UTILITY_PAGE = /^\/(home|contact|contact-us|about|about-us|our-story|team|meet-the-team|blog|news|reviews|testimonials|gallery|portfolio|projects|our-work|faq|faqs|privacy|privacy-policy|terms|terms-of-service|terms-and-conditions|accessibility|sitemap|thank-you|thanks|careers|jobs|financing|specials|deals|offers|promotions|coupons|locations|service-areas|areas-we-serve|learn|resources|warranty|warranties|shop|store|cart|book|booking|schedule|quote|get-a-quote|estimate|pricing|packages|services|our-services)\/?$/i;
+  /** The services a website has its own page for: { key, name, words } from each such page's title and address. */
+  function serviceCatalog(allPaths, pagesMeta, pageInfo) {
+    const out = []; const seen = new Set();
+    allPaths.forEach((path) => {
+      if (path === '/' || UTILITY_PAGE.test(path) || isBlogPath(path) || placeOfPath(path) || isThankYouPath(path) || (pageInfo[path] && pageInfo[path].blog)) return;
+      const seg = String(path).toLowerCase().split('/').filter(Boolean);
+      if (seg.length > 2 || seg.some((x) => CAR_WORDS.has(x))) return;
+      const title = String((pagesMeta[path] && pagesMeta[path].title) || (pageInfo[path] && (pageInfo[path].h1 || pageInfo[path].title)) || '').split('|')[0].trim();
+      const name = title && title.length <= 60 ? title : titleCase(seg[seg.length - 1].replace(/-/g, ' '));
+      const words = [...new Set((name + ' ' + seg.join(' ').replace(/-/g, ' ')).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !GENERIC.has(w) && !SLUG_FILLER.has(w)))];
+      const key = compact(name); if (!words.length || seen.has(key)) return; seen.add(key);
+      out.push({ key, name, words, svc: servicesOfPath(path) });
+    });
+    return out.slice(0, 40);
+  }
+  /** Does a form choice ("Paint Protection Film / Clear Bra") cover a service page? Same known service, or a shared word. */
+  function choiceCovers(option, sp) {
+    const o = String(option || '').toLowerCase();
+    if (sp.svc.some((k) => { const sv = SERVICES.find((z) => z.key === k); return sv && new RegExp(sv.re.source, 'i').test(o); })) return true;
+    const ow = o.split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
+    return sp.words.some((w) => ow.some((x) => x === w || x.replace(/s$/, '') === w.replace(/s$/, '')));
+  }
+  // ---------- Privacy policy / terms: template fields left unfilled, and details that are not the business's ----------
+  const LEGAL_PATH = /(privacy|terms|policy|policies|legal|disclaimer|cookie|conditions|sms-terms)/i;
+  const TEMPLATE_FIELDS = [
+    [/\bUSA County\b/i, 'the county left as "USA County"'],
+    [/\[[^\]\n]{0,30}\b(company|business|name|address|state|county|city|e-?mail|phone|date|website|url|zip)\b[^\]\n]{0,30}\]/i, 'a [placeholder] field'],
+    [/\{\{[^}\n]{1,40}\}\}/, 'a {{placeholder}} field'],
+    [/\b(your|the) (company|business) name\b/i, '"your company name"'],
+    [/\binsert\b[^.\n]{1,40}\bhere\b/i, '"insert … here"'],
+    [/\(?\bXXX\)?[\s.-]?XXX[\s.-]?XXXX\b|\bXX\/XX\/XXXX\b/, 'a phone or date left as X\'s'],
+    [/lorem ipsum/i, 'lorem ipsum'],
+    [/\b(example\.com|yourdomain\.com|yourwebsite\.com|yoursite\.com)\b/i, 'an example web address'],
+    [/\b123 Main St(reet)?\b/i, 'a sample address'],
+  ];
+  function htmlText(html) {
+    try { const d = new DOMParser().parseFromString(String(html || ''), 'text/html'); d.querySelectorAll('script, style, noscript').forEach((x) => x.remove()); return clean(d.body ? d.body.textContent : ''); }
+    catch (e) { return String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
+  }
+  /** Problems in a policy's text. embedded: the text was loaded from Termageddon, so its contact details are checked here too. */
+  function policyFindings(text, truth, embedded) {
+    const out = []; const t = String(text || '');
+    const ctx = (at, len) => '…' + t.slice(Math.max(0, at - 70), at + len + 70).replace(/\s+/g, ' ').trim() + '…';
+    const seen = new Set();
+    TEMPLATE_FIELDS.forEach(([re, what]) => {
+      const m = re.exec(t); if (!m || seen.has(m[0].toLowerCase())) return; seen.add(m[0].toLowerCase());
+      out.push({ code: 'POLICY_TEMPLATE', severity: 'critical', category: 'Content', message: `The ${embedded ? 'policy (loaded by Termageddon)' : 'policy / terms page'} still has ${what}`,
+        found: cut(m[0], 80), expected: embedded ? 'Fill it in Termageddon (the policy\u2019s settings), then it updates on the website by itself' : 'The real value', snippet: ctx(m.index, m[0].length) });
+    });
+    const op = /\b(?:operated by|owned by|provided by|property of)\s+(?:the\s+)?([A-Z][A-Za-z0-9&'\u2019. -]{2,60}?)(?=\s*[,.(\u201c"]|\s+\(|\s+and\b|\s*$)/.exec(t);
+    if (op && truth.businessName && !/^(us|we|our|this website|the website|company)$/i.test(op[1].trim()) && !matchesBusiness(op[1], truth))
+      out.push({ code: 'POLICY_NAME', severity: 'critical', category: 'Business name', message: `The ${embedded ? 'policy (loaded by Termageddon)' : 'policy / terms page'} names a different business`, found: cut(op[1], 70), expected: truth.businessName, snippet: ctx(op.index, op[0].length) });
+    if (embedded) {
+      const phones = new Set(truth.phones || []);
+      if (phones.size) [...t.matchAll(/(?:\+?1[\s.-]?)?\(?\b([2-9]\d{2})\)?[\s.-]?(\d{3})[\s.-](\d{4})\b/g)].forEach((m) => { const d = m[1] + m[2] + m[3]; if (!phones.has(d) && !seen.has(d)) { seen.add(d); out.push({ code: 'POLICY_CONTACT', severity: 'warning', category: 'Contact info', message: 'The policy (loaded by Termageddon) gives a phone number that is not in Business Info', found: fmtPhone(d), expected: [...phones].map(fmtPhone).join(', '), snippet: ctx(m.index, m[0].length) }); } });
+      const emails = (truth.emails || []).map((e) => e.toLowerCase());
+      if (emails.length) [...t.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].forEach((m) => { const e = m[0].toLowerCase(); if (!emails.includes(e) && !/termageddon|example\.com/.test(e) && !seen.has(e)) { seen.add(e); out.push({ code: isAutomationEmail(e) ? 'EMAIL_AUTOMATION' : 'POLICY_CONTACT', severity: isAutomationEmail(e) ? 'critical' : 'warning', category: 'Contact info', message: isAutomationEmail(e) ? 'The policy (loaded by Termageddon) shows an automation email address' : 'The policy (loaded by Termageddon) gives an email that is not in Business Info', found: e, expected: emails.join(', '), snippet: ctx(m.index, m[0].length) }); } });
+      const zips = new Set((truth.addresses || []).map((a) => a && a.zip).filter(Boolean));
+      if (zips.size) [...t.matchAll(/\b([A-Z][A-Za-z .'-]{2,30}),?\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/g)].forEach((m) => { if (!zips.has(m[3]) && !seen.has(m[3])) { seen.add(m[3]); out.push({ code: 'POLICY_ADDRESS', severity: 'warning', category: 'Contact info', message: 'The policy (loaded by Termageddon) gives an address (notice address) that is not in Business Info', found: cut(m[0], 80), expected: (truth.addresses || []).map((a) => [a.street, a.city, [a.region || a.state, a.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ')).join(' | '), snippet: ctx(m.index, m[0].length) }); } });
+    }
+    return out;
+  }
+  // ---------- Redirects ----------
+  /**
+   * rd = { rules: [{ source, target, code }], past: [paths that existed in an earlier scan], domain }.
+   * liveStatus(path) → the HTTP status of that address on the published website (after following redirects), or 0.
+   */
+  async function redirectFindings(rd, allPaths, liveStatus) {
+    const out = []; const pages = new Set(allPaths.map(normalizePath));
+    const pathOf = (u) => { const x = String(u || '').trim(); if (!x) return ''; if (/^https?:\/\//i.test(x)) { try { const q = new URL(x); return rd.domain && q.hostname.replace(/^www\./, '').toLowerCase() !== String(rd.domain).replace(/^www\./, '').toLowerCase() ? '' : normalizePath(q.pathname); } catch (e) { return ''; } } return normalizePath(x); };
+    const rules = [].concat(rd.rules || []).filter((r) => r && r.source).slice(0, 300).map((r) => ({ src: normalizePath(r.source), target: String(r.target || ''), to: pathOf(r.target), code: Number(r.code) || 301 }));
+    const bySrc = new Map(rules.map((r) => [r.src, r]));
+    let budget = 40;
+    const status = async (p) => { if (!liveStatus || budget <= 0) return 0; budget--; try { return Number(await liveStatus(p)) || 0; } catch (e) { return 0; } };
+    for (const r of rules) {
+      const base = { category: TECH, path: r.src, found: `${r.src} → ${r.target}` };
+      if (r.to && bySrc.has(r.to)) {
+        const seenR = new Set([r.src]); let cur = r.to; let loop = false;
+        while (bySrc.has(cur)) { if (seenR.has(cur)) { loop = true; break; } seenR.add(cur); cur = bySrc.get(cur).to; if (!cur) break; }
+        out.push(Object.assign({}, base, loop ? { code: 'REDIRECT_LOOP', severity: 'critical', message: `Redirect loop: ${r.src} leads back to itself`, expected: 'Point it straight at the page that replaced it' }
+          : { code: 'REDIRECT_CHAIN', severity: 'warning', message: `Redirect chain: ${r.src} → ${r.to} → ${bySrc.get(r.to).to || bySrc.get(r.to).target}`, expected: `Redirect ${r.src} straight to ${bySrc.get(r.to).to || bySrc.get(r.to).target}` }));
+        continue;
+      }
+      if (r.to && pages.has(r.src) && r.src !== '/') out.push(Object.assign({}, base, { code: 'REDIRECT_SHADOWS_PAGE', severity: 'warning', message: `A redirect sends ${r.src} away, but the website still has a page there`, expected: 'Remove the redirect, or the page if it was replaced' }));
+      if (r.to && !pages.has(r.to) && !isBlogPath(r.to)) {
+        const st = await status(r.src);
+        if (st >= 400 || (!st && !liveStatus)) out.push(Object.assign({}, base, { code: 'REDIRECT_BROKEN', severity: st >= 400 ? 'critical' : 'warning', message: st >= 400 ? `Redirect ${r.src} lands on a page that does not exist (${st})` : `Redirect ${r.src} points to ${r.to}, which is not one of the website's pages`, expected: 'Point it at a page that exists' }));
+      }
+      if (r.code === 302 || r.code === 307) out.push(Object.assign({}, base, { code: 'REDIRECT_TEMPORARY', severity: 'info', message: `Redirect ${r.src} is temporary (${r.code}): Google keeps the old address`, expected: 'Use a permanent 301 redirect for a page that moved for good' }));
+    }
+    // Pages that existed in an earlier scan, are gone now, and have no redirect: visitors and Google get a 404.
+    const gone = [...new Set([].concat(rd.past || []).map(normalizePath))].filter((p) => p && p !== '/' && !pages.has(p) && !bySrc.has(p) && !isBlogPath(p)).slice(0, 30);
+    for (const p of gone) {
+      const st = await status(p);
+      if (st && st < 400) continue;
+      if (!st && liveStatus) continue;
+      const near = bestMatch(p, [...pages]);
+      out.push({ code: 'REDIRECT_MISSING', severity: 'warning', category: TECH, path: p, found: `${p} → ${st || 'not published, not checked'}`,
+        message: `${p} was a page in an earlier scan; it is gone now and has no redirect${st ? ` (it gives ${st})` : ''}`, expected: near ? `A 301 redirect to ${near} (or the page that replaced it)` : 'A 301 redirect to the page that replaced it, or leave it gone if nothing did' });
+    }
+    return out;
+  }
+  function bestMatch(p, pages) {
+    const w = (x) => new Set(String(x).toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !SLUG_FILLER.has(t)));
+    const a = w(p); let best = '', score = 0;
+    pages.forEach((q) => { if (q === '/') return; const b = w(q); let n = 0; a.forEach((t) => { if (b.has(t)) n++; }); const sc = n / Math.max(1, Math.max(a.size, b.size)); if (sc > score) { score = sc; best = q; } });
+    return score >= 0.4 ? best : '';
+  }
+
   // ---------- DOM helpers ----------
   function hiddenReason(el, device) {
     const rule = HIDE_RULES[device] || HIDE_RULES.desktop;
@@ -2176,6 +2319,39 @@
       return false;
     }
     const realForms = [...doc.querySelectorAll('form')].filter((f) => f.querySelector('textarea, input[type="email" i], input[name*="email" i]'));
+    // The choices a form offers (a drop-down, or a set of tick boxes / round buttons), for the "service choices" check.
+    const formChoices = [];
+    const labelOf = (el, form) => {
+      const id = el.getAttribute('id');
+      const l = (id && form.querySelector(`label[for="${(window.CSS && CSS.escape ? CSS.escape(id) : id)}"]`)) || el.closest('label');
+      if (l) return clean(l.textContent);
+      for (let e = el.parentElement, k = 0; e && e !== form && k < 3; e = e.parentElement, k++) { const lab = e.querySelector('label, .dmform-label, legend'); if (lab && !lab.contains(el)) return clean(lab.textContent); }
+      return clean(el.getAttribute('aria-label') || el.getAttribute('name') || '');
+    };
+    realForms.forEach((form) => {
+      form.querySelectorAll('select').forEach((sel) => {
+        const options = [...sel.options].map((o) => clean(o.textContent)).filter((t) => t && !/^(select|choose|pick|please|--|-)/i.test(t)).slice(0, 60);
+        if (options.length >= 2) formChoices.push({ selector: uniqueSelector(sel), label: cut(labelOf(sel, form), 80), options });
+      });
+      const groups = new Map();
+      form.querySelectorAll('input[type="checkbox" i], input[type="radio" i]').forEach((i) => { const n = i.getAttribute('name') || ''; if (!groups.has(n)) groups.set(n, []); groups.get(n).push(i); });
+      groups.forEach((list) => {
+        if (list.length < 2) return;
+        const options = list.map((i) => { const id = i.getAttribute('id'); const l = (id && form.querySelector(`label[for="${(window.CSS && CSS.escape ? CSS.escape(id) : id)}"]`)) || i.closest('label'); return clean(l ? l.textContent : (i.getAttribute('value') || '')); }).filter(Boolean).slice(0, 60);
+        const box = list[0].closest('.dmforminput, .dmform-field, fieldset, div') || list[0];
+        const head = box.querySelector('.dmform-label, legend, label:not([for])');
+        formChoices.push({ selector: uniqueSelector(box), label: cut(clean(head ? head.textContent : '') || labelOf(list[0], form), 80), options });
+      });
+    });
+    // A privacy policy or terms page loaded by a script (Termageddon): the page itself only says "Please wait
+    // while the policy is loaded". The policy's own address is kept, so the scan can read the real text.
+    const policies = [];
+    doc.querySelectorAll('[data-policy-key]').forEach((el) => {
+      const key = el.getAttribute('data-policy-key'); if (!/^[A-Za-z0-9=_-]{8,200}$/.test(key || '')) return;
+      const extra = String(el.getAttribute('data-extra') || '').replace(/&amp;/g, '&');
+      policies.push({ url: `https://app.termageddon.com/api/policy/${key}${extra ? '?' + extra : ''}`, selector: uniqueSelector(el) });
+    });
+    if (!policies.length) doc.querySelectorAll('a[href*="app.termageddon.com/api/policy/"]').forEach((a) => { if (policies.length < 3) policies.push({ url: a.getAttribute('href'), selector: uniqueSelector(a.parentElement || a) }); });
     if (realForms.length > 1) {
       add(realForms[1], { code: 'FORM_MULTIPLE', severity: 'warning', category: 'Content', message: `${realForms.length} contact forms on this page — there should be one, on the contact page`, found: `${realForms.length} forms` });
     }
@@ -2678,7 +2854,7 @@
       prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       ...(ctx.copy ? { copy: pageCopy(body, device) } : {}),
       fonts,
-      meta: { forms: realForms.length, title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon, ...(schemaBiz ? { schemaBiz } : {}),
+      meta: { forms: realForms.length, ...(formChoices.length ? { formChoices } : {}), ...(policies.length ? { policies } : {}), title, description: desc, h1: h1s.map((h) => clean(h.textContent)), favicon: hasFavicon, touchIcon: hasTouchIcon, ...(schemaBiz ? { schemaBiz } : {}),
         // What the page says it is about, for the "does the page match its address" checks: every H1
         // (a hidden one still tells Google what the page is), and the section headings under it.
         buttons: btnList.map((b) => (b.to ? b : Object.assign(b, { to: /^https?:/i.test(b.href) ? b.href : '' }))),
@@ -3453,6 +3629,8 @@
           if (device === devices[0] && r.meta.fit) info.fit = r.meta.fit;
           if (device === devices[0] && r.meta.buttons) info.buttons = r.meta.buttons;
           if (r.meta.forms) info.forms = Math.max(info.forms || 0, r.meta.forms);
+          if (device === devices[0] && r.meta.formChoices) info.formChoices = r.meta.formChoices;
+          if (device === devices[0] && r.meta.policies) info.policies = r.meta.policies;
           if (r.copy) info.copy = r.copy;
           if (r.meta.favicon) siteIcon.favicon = true;
           if (r.meta.touchIcon) siteIcon.touchIcon = true;
@@ -3651,6 +3829,50 @@
       for (let i = raw.length - 1; i >= 0; i--) if (raw[i].code === code && i !== keep) raw.splice(i, 1);
     });
 
+    // ---- A form's service choices should cover the services the website has pages for ----
+    try {
+      const svcPages = serviceCatalog(allPaths, pagesMeta, pageInfo);
+      const seenForm = new Set();
+      Object.values(pageInfo).forEach((p) => (p.formChoices || []).forEach((fc) => {
+        const sig = fc.options.join('|').toLowerCase(); if (seenForm.has(sig)) { const prev = raw.find((x) => x.code === 'FORM_SERVICE_MISSING' && x._sig === sig); if (prev && !prev._pages.includes(p.path)) prev._pages.push(p.path); return; }
+        seenForm.add(sig);
+        const covered = (sp) => fc.options.some((o) => choiceCovers(o, sp));
+        const hits = svcPages.filter(covered);
+        const looksLikeServices = /service|interest|help|looking|need|package|type of/i.test(fc.label) || hits.length >= 2;
+        if (!looksLikeServices || svcPages.length < 2) return;
+        const missing = svcPages.filter((sp) => !covered(sp));
+        if (!missing.length) return;
+        devices.forEach((d) => raw.push({ code: 'FORM_SERVICE_MISSING', severity: 'warning', category: 'Content', _sig: sig, _pages: [p.path],
+          message: `The form's ${fc.label ? `"${cut(fc.label, 50)}" ` : ''}choices leave out ${missing.length === 1 ? 'a service' : missing.length + ' services'} this website has a page for`,
+          found: 'Choices: ' + cut(fc.options.join(', '), 220), expected: 'Add: ' + missing.slice(0, 10).map((x) => x.name).join(', ') + (missing.length > 10 ? ` (+${missing.length - 10})` : '') + ', or group them and add "Other"',
+          path: p.path, device: d, selector: fc.selector, location: 'Body', visible: true, hiddenBy: '', snippet: '' }));
+      }));
+    } catch (e) { log.push('Form choices: ' + e.message); }
+    // ---- Privacy policy and terms: the real text (loaded by Termageddon), and template fields left unfilled ----
+    try {
+      const done = new Set();
+      for (const p of Object.values(pageInfo)) {
+        for (const pol of p.policies || []) {
+          if (done.has(pol.url) || !opts.fetchPolicy) continue; done.add(pol.url);
+          progress({ done: doneFetches, total: doneFetches, message: 'Reading the privacy policy / terms text…' });
+          let text = '';
+          try { const r = await opts.fetchPolicy(pol.url); text = r && r.status < 400 ? htmlText(r.html || r.text || '') : ''; } catch (e) { text = ''; }
+          if (!text) { log.push(`The policy loaded on ${p.path} (Termageddon) could not be read.`); continue; }
+          policyFindings(text, truth || {}, true).forEach((x) => devices.forEach((d) => raw.push(Object.assign({ path: p.path, device: d, selector: pol.selector, location: 'Body (policy loaded by Termageddon)', visible: true, hiddenBy: '', snippet: x.snippet || '' }, x))));
+        }
+        if (LEGAL_PATH.test(p.path) && !(p.policies || []).length) {
+          const body = textIdx.filter((x) => x.path === p.path && x.device === devices[0] && x.location === 'Body').map((x) => x.text).join(' \n ');
+          if (body) policyFindings(body, truth || {}, false).forEach((x) => devices.forEach((d) => raw.push(Object.assign({ path: p.path, device: d, selector: '(page)', location: 'Body', visible: true, hiddenBy: '', snippet: x.snippet || '' }, x))));
+        }
+      }
+    } catch (e) { log.push('Policy text: ' + e.message); }
+    // ---- Redirects: the website's URL redirects, and pages that existed before and now give 404 ----
+    if (opts.redirects) {
+      try {
+        progress({ done: doneFetches, total: doneFetches, message: 'Checking redirects and old addresses…' });
+        (await redirectFindings(opts.redirects, allPaths, opts.liveStatus)).forEach((x) => devices.forEach((d) => raw.push(Object.assign({ device: d, selector: '(page)', location: 'Redirects', visible: true, hiddenBy: '', snippet: '' }, x))));
+      } catch (e) { log.push('Redirects: ' + e.message); }
+    }
     // robots.txt, sitemap.xml and llms.txt on the published website (the browser says how to read them).
     let files = null;
     if (opts.fetchFile) {
@@ -3899,6 +4121,46 @@
   }
 
   /**
+   * Photos judged by the AI from pictures of the page ({ photo, v }): photo = { path, sel, kind, src, alt,
+   * heading }, v = { subject, fits_page, fits_section, watermark, confidence, reason, suggestion }.
+   * A camera watermark is one item per photo file, wherever it is used.
+   */
+  function applyPhotoVerdicts(findings, entries, truth) {
+    const fileOf = (u) => { try { return decodeURIComponent(new URL(u).pathname.split('/').pop() || '').slice(0, 90); } catch (e) { return String(u || '').slice(-60); } };
+    const fileKey = (u) => String(u || '').split('?')[0].replace(/-\d+w(\.\w+)$/, '$1');
+    const where = (k) => (k === 'parallax' ? 'parallax background' : k === 'background' ? 'background photo' : 'photo');
+    const marks = new Map();
+    (entries || []).forEach(({ photo: x, v }) => {
+      if (!x || !v) return;
+      const conf = Number(v.confidence) || 0;
+      const base = { path: x.path, pages: [x.path], devices: ['desktop'], visibleOn: ['desktop'], hiddenOn: [], selector: x.sel || '(page)', location: 'Body', category: 'Images / Photos',
+        ai: { verdict: 'photo', confidence: conf, reason: v.reason || '', suggestion: v.suggestion || '', quote: v.subject || '' }, photo: { src: x.src, kind: x.kind } };
+      const wm = String(v.watermark || '').trim();
+      if (wm && conf >= 0.6) {
+        const k = fileKey(x.src); const m = marks.get(k);
+        if (m) { if (!m.pages.includes(x.path)) m.pages.push(x.path); }
+        else marks.set(k, Object.assign({}, base, { code: 'PHOTO_WATERMARK', severity: 'warning',
+          message: `Camera watermark on a ${where(x.kind)}: "${cut(wm, 60)}"`, found: `"${cut(wm, 60)}" on ${fileOf(x.src)}`,
+          expected: 'The same photo without the watermark: re-export or crop the original, then replace it in Duda', snippet: v.subject || '' }));
+      }
+      const head = String(x.heading || '').trim();
+      if (v.fits_page === false && conf >= 0.75) {
+        findings.push(Object.assign({}, base, { code: 'PHOTO_WRONG_PAGE', severity: 'warning',
+          message: `${where(x.kind).replace(/^./, (c) => c.toUpperCase())} doesn't fit this page: ${cut(v.subject || 'the photo shows something else', 80)}`,
+          found: `${cut(v.subject || '', 80)} (${fileOf(x.src)})`, expected: v.suggestion ? 'A photo of: ' + cut(v.suggestion, 120) : 'A photo of this page\u2019s service', snippet: cut(v.reason || '', 200) }));
+      } else if (v.fits_section === false && conf >= 0.8) {
+        findings.push(Object.assign({}, base, { code: 'PHOTO_WRONG_SECTION', severity: 'info',
+          message: `${where(x.kind).replace(/^./, (c) => c.toUpperCase())} doesn't fit its section${head ? ` "${cut(head, 60)}"` : ''}: ${cut(v.subject || '', 60)}`,
+          found: `${cut(v.subject || '', 80)} (${fileOf(x.src)})`, expected: v.suggestion ? 'A photo of: ' + cut(v.suggestion, 120) : 'A photo that suits the section', snippet: cut(v.reason || '', 200) }));
+      }
+    });
+    marks.forEach((f) => { f.pages.sort(); f.path = f.pages[0]; findings.push(f); });
+    findings.forEach((f) => { if (/^PHOTO_/.test(f.code) && !f.id) f.id = hash([f.code, f.code === 'PHOTO_WATERMARK' ? fileKey(f.photo && f.photo.src) : f.selector, f.code === 'PHOTO_WATERMARK' ? '' : f.path].join('|')); });
+    const seen = new Set();
+    return sortFindings(findings.filter((f) => !/^PHOTO_/.test(f.code) || (!seen.has(f.id) && seen.add(f.id))));
+  }
+
+  /**
    * Proofreading by the AI: spelling, grammar, and copy left unfinished. Only what it is sure of
    * (75%+) becomes an audit item, and only the exact words, so the item says what to change.
    */
@@ -4005,7 +4267,7 @@
    * Wrong business details INSIDE the schema (name, phone, email, address) stay with the audit items: they
    * are contact details, just in another place.
    */
-  const TECH_RE = /^(ROBOTS_|SITEMAP_|LLMS_|SCHEMA_(INVALID_JSON|NO_TYPE|NO_CONTEXT|MULTI_BUSINESS|REQUIRED|RECOMMENDED|TYPE_GENERIC|RATING|SELF_REVIEW|URL|FAQ_EMPTY|LOCALBUSINESS_OFF)$|FAQ_SCHEMA_|META_NOINDEX$|META_CANONICAL_DOMAIN$|META_THANKYOU_INDEXED$|MIXED_CONTENT$|ANALYTICS_|FAVICON_MISSING$|HOMESCREEN_ICON_MISSING$|META_OG_IMAGE$)/;
+  const TECH_RE = /^(ROBOTS_|SITEMAP_|LLMS_|REDIRECT_|SCHEMA_(INVALID_JSON|NO_TYPE|NO_CONTEXT|MULTI_BUSINESS|REQUIRED|RECOMMENDED|TYPE_GENERIC|RATING|SELF_REVIEW|URL|FAQ_EMPTY|LOCALBUSINESS_OFF)$|FAQ_SCHEMA_|META_NOINDEX$|META_CANONICAL_DOMAIN$|META_THANKYOU_INDEXED$|MIXED_CONTENT$|ANALYTICS_|FAVICON_MISSING$|HOMESCREEN_ICON_MISSING$|META_OG_IMAGE$)/;
   const isTech = (f) => !!f && TECH_RE.test(String(f.code || ''));
   const groupOf = (f) => (isPolish(f) ? 'polish' : isLength(f) ? 'length' : isTech(f) ? 'tech' : 'must');
 
@@ -4103,6 +4365,6 @@
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince, updatePlan, codeIn,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, LEAD_WORDS,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -131,9 +131,12 @@ async function handler(req, res) {
       for (const device of devices) {
         try {
           const { url } = await previewUrl(rec, path, device);
-          const r = await contrastScan(url, device, { timeout: Math.floor(100000 / devices.length) });
+          // The photos are read once, on desktop, when the scan asks for them (the AI judges them afterwards).
+          const r = await contrastScan(url, device, { timeout: Math.floor(100000 / devices.length), photos: !!b.photos && device === 'desktop' });
           r.items.forEach((f) => { f.path = path; });
           out.items.push(...r.items); out.measured += r.measured;
+          if (device === 'desktop') out.fields = r.fields || 0;
+          if (r.photos) out.photos = r.photos.map((x) => Object.assign(x, { path }));
         } catch (e) { out.errors.push(`${device}: ${e.message}`); }
       }
       return res.status(200).json(out);

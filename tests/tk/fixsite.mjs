@@ -1,5 +1,15 @@
 // Fake Duda preview pages for the ticket tests. node fixsite.mjs <port>
 import http from 'node:http';
+import zlib from 'node:zlib';
+// A plain one-colour PNG (the photo tests need real raster photos: SVGs are icons, not photos).
+function png(w, h, rgb) {
+  const crc = (b) => { const c = Buffer.alloc(4); c.writeUInt32BE(zlib.crc32(b) >>> 0); return c; };
+  const chunk = (t, d) => { const len = Buffer.alloc(4); len.writeUInt32BE(d.length); const td = Buffer.concat([Buffer.from(t), d]); return Buffer.concat([len, td, crc(td)]); };
+  const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2;
+  const row = Buffer.alloc(1 + w * 3); for (let x = 0; x < w; x++) { row[1 + x * 3] = rgb[0]; row[2 + x * 3] = rgb[1]; row[3 + x * 3] = rgb[2]; }
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(Buffer.concat(Array.from({ length: h }, () => row)))), chunk('IEND', Buffer.alloc(0))]);
+}
+const PHOTO_COL = { 'sedan-interior': [120, 40, 40], 'rv-exterior': [40, 120, 60], 'shop-bg': [60, 60, 120], 'parallax-road': [90, 90, 90], 'iphone-shot': [200, 150, 60] };
 const port = Number(process.argv[2] || 8093);
 let version = 1;
 const page = (p, dev) => `<!doctype html><html><head><title>${p === '/' ? 'Home' : 'About'} | Buff &amp; Beyond</title>
@@ -41,14 +51,32 @@ body{margin:0;font-family:Arial,sans-serif;color:#222}.ok{padding:30px;backgroun
 <div class="photo"><div class="wrap"><p id="overphoto">This is a very long text over a photo with no background of its own.</p></div></div>
 <div class="layered"><div class="bg"></div><div class="overlay"></div><div class="content"><p id="sibling">Text over a sibling overlay layer, not a parent.</p></div></div>
 </body></html>`;
+// Photos: a car interior on the RV page, a photo with a phone watermark, a column background and a
+// parallax background (background-attachment: fixed).
+const RV_PAGE = `<!doctype html><html><head><title>RV Detailing | Buff &amp; Beyond</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+body{margin:0;font-family:Arial,sans-serif;color:#222}.sec{padding:40px}.cols{display:flex;gap:20px}.col{flex:1}
+.bgcol{min-height:320px;background:url('/photos/shop-bg.png') center/cover;color:#fff;padding:30px}
+.para{height:420px;background:url('/photos/parallax-road.png') center/cover fixed;color:#fff;display:flex;align-items:center;justify-content:center;font-size:40px}
+</style></head><body><header class="dmHeader"><b>Buff &amp; Beyond</b></header>
+<div class="sec"><h1>RV Detailing in Wilmington</h1><p>We wash, polish and protect motorhomes and travel trailers of every size.</p>
+<img width="600" height="340" alt="RV detailing" src="/photos/sedan-interior.png"></div>
+<div class="sec"><h2>Full RV wash</h2><div class="cols"><div class="col"><p>Roof, sides and awning cleaned by hand. Black streaks removed from the fibreglass.</p>
+<img width="500" height="300" alt="RV wash" src="/photos/rv-exterior.png"></div><div class="col bgcol" id="bgcol"><h3>Our shop</h3><p>Indoor bays big enough for a Class A motorhome.</p></div></div></div>
+<div class="sec"><h2>Before and after</h2><img width="500" height="300" alt="Before and after" src="/photos/iphone-shot.png"></div>
+<div class="para" id="para"><h2>Ready for the road</h2></div>
+<div class="sec"><p>Book your RV detail today.</p></div>
+</body></html>`;
 http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
+  const ph = u.pathname.match(/^\/photos\/([\w-]+)\.png$/);
+  if (ph && PHOTO_COL[ph[1]]) { res.setHeader('Content-Type', 'image/png'); return res.end(png(ph[1] === 'parallax-road' ? 1200 : 600, ph[1] === 'parallax-road' ? 700 : 360, PHOTO_COL[ph[1]])); }
   if (u.pathname === '/__version') { version = Number(u.searchParams.get('v')); return res.end('ok'); }
   if (u.pathname === '/photo.svg') { res.setHeader('Content-Type', 'image/svg+xml'); return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="300"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#e8e2d0"/><stop offset="1" stop-color="#20304a"/></linearGradient></defs><rect width="800" height="300" fill="url(#g)"/></svg>'); }
   if (u.pathname === '/img.svg') { res.setHeader('Content-Type', 'image/svg+xml'); return setTimeout(() => res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#${(Number(u.searchParams.get('i')) * 1234567 % 0xffffff).toString(16).padStart(6, '0')}"/><text x="20" y="100" font-size="30">IMG ${u.searchParams.get('i')}</text></svg>`), 150); }
   const m = u.pathname.match(/^\/site\/abc123(\/.*)?$/);
   if (!m) { res.statusCode = 404; return res.end('nope'); }
   const p = (m[1] || '/').replace(/\/+$/, '') || '/';
+  if (p === '/rv-rentals') { res.setHeader('Content-Type', 'text/html'); return res.end(RV_PAGE); }
   if (p === '/contrast-test') { res.setHeader('Content-Type', 'text/html'); return res.end(CONTRAST_PAGE); }
   if (!['/', '/about'].includes(p)) { res.statusCode = 404; return res.end('<h1>Not found</h1>'); }
   res.setHeader('Content-Type', 'text/html'); res.end(page(p, u.searchParams.get('dm_device')));

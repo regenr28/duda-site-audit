@@ -25,6 +25,62 @@ import { DEVICES, chromePath, Pipe, sleep, within, SETTLE } from './_shoot.js';
 const MAX_H = 12000;           // CSS pixels of page measured
 const MAX_ITEMS = 700;         // pieces of text per page
 
+/**
+ * Runs in the page: the photos a visitor sees, as drawn (an <img>, a column or section whose background is a
+ * photo, a parallax background), with what is around each one: the section's heading and words. Logos,
+ * icons, the header and the footer are left out.
+ */
+const PHOTOS = `((MAXH, MAXP) => {
+  const sx = scrollX, sy = scrollY;
+  const sel = (el) => {
+    const parts = [];
+    for (let e = el; e && e.nodeType === 1 && e !== document.documentElement; e = e.parentElement) {
+      if (e.id && /^[A-Za-z0-9][\\w-]*$/.test(e.id) && document.querySelectorAll('[id="' + e.id + '"]').length === 1) { parts.unshift('[id="' + e.id + '"]'); break; }
+      let i = 1; for (let s = e.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === e.tagName) i++;
+      parts.unshift(e.tagName.toLowerCase() + ':nth-of-type(' + i + ')');
+      if (parts.length > 7) break;
+    }
+    return parts.join(' > ');
+  };
+  const chrome = (el) => { for (let e = el; e; e = e.parentElement) { const c = String(e.className || '') + ' ' + (e.id || ''); if (/\\b(dmHeader|hcontainer|hamburger-header|dmFooter|fcontainer|dmFooterContainer|dmPopup|popup)\\b/i.test(c) || /^(HEADER|FOOTER|NAV)$/.test(e.tagName)) return true; } return false; };
+  const shown = (el) => { for (let e = el; e && e.nodeType === 1; e = e.parentElement) { const c = getComputedStyle(e); if (c.display === 'none' || c.visibility === 'hidden' || parseFloat(c.opacity || '1') < 0.1) return false; } return true; };
+  const urlOf = (bg) => { const m = String(bg || '').match(/url\\(["']?([^"')]+)["']?\\)/); return m ? m[1] : ''; };
+  const clean = (t) => String(t || '').replace(/\\s+/g, ' ').trim();
+  // The section a photo belongs to: the nearest ancestor with a heading or enough words, and those words.
+  // The heading is the last one ABOVE the photo in that section (a heading of the next column is not the
+  // photo's); for a background, the heading on it comes first.
+  const around = (el, over) => {
+    if (over) { const h = el.querySelector('h1, h2, h3, h4'); if (h) return { heading: clean(h.innerText).slice(0, 140), text: clean(el.innerText || '').slice(0, 600) }; }
+    let text = '', heading = '';
+    for (let e = el.parentElement, k = 0; e && k < 8 && e !== document.body && !heading; e = e.parentElement, k++) {
+      const h = [...e.querySelectorAll('h1, h2, h3, h4')].filter((x) => !el.contains(x) && (x.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)).pop();
+      const words = clean(e.innerText || '');
+      if (!text && (h || words.length > 120)) text = words.slice(0, 600);
+      if (h) heading = clean(h.innerText).slice(0, 140);
+      if (e.matches('section, .dmRespRow, .dmSection')) break; // never the heading of an earlier section
+    }
+    return { heading, text };
+  };
+  const out = []; const seenSrc = new Set();
+  const add = (el, kind, src, alt, over) => {
+    if (out.length >= MAXP || !src || /^data:|\\.svg(\\?|$)|logo|icon|favicon|sprite|badge/i.test(src) || seenSrc.has(src + '|' + kind)) return;
+    const r = el.getBoundingClientRect(); if (r.width < 240 || r.height < 140 || r.top + sy > MAXH) return;
+    if (chrome(el) || !shown(el)) return;
+    seenSrc.add(src + '|' + kind);
+    const a = around(el, over);
+    out.push({ sel: sel(el), kind, src: new URL(src, location.href).href, alt: clean(alt).slice(0, 200), heading: a.heading, text: over ? clean(el.innerText || '').slice(0, 400) || a.text : a.text,
+      box: { x: Math.round(r.left + sx), y: Math.round(r.top + sy), w: Math.round(r.width), h: Math.round(r.height) } });
+  };
+  document.querySelectorAll('img').forEach((im) => { if (!/logo/i.test((im.alt || '') + ' ' + (im.className || ''))) add(im, 'image', im.currentSrc || im.src, im.alt, false); });
+  document.querySelectorAll('body *').forEach((el) => {
+    if (out.length >= MAXP) return;
+    const c = getComputedStyle(el); const u = urlOf(c.backgroundImage); if (!u) return;
+    const parallax = c.backgroundAttachment === 'fixed' || /parallax/i.test(String(el.className || '') + ' ' + Object.keys(el.dataset || {}).join(' '));
+    add(el, parallax ? 'parallax' : 'background', u, el.getAttribute('aria-label') || '', true);
+  });
+  return out;
+})`;
+
 /** Runs in the page: list what to measure. */
 const COLLECT = `((MAXH, MAXN) => {
   const out = [];
@@ -212,7 +268,18 @@ export function judge(items, m, device) {
 }
 
 /** Open one page, measure everything, return failing items. */
-export async function contrastScan(url, device = 'desktop', { timeout = 90000 } = {}) {
+/** In the page: scroll an element to the middle of the screen and say where it is now (for a parallax photo, where it shows). */
+const CENTER = `((sel) => { let el = null; try { el = document.querySelector(sel); } catch (e) { return null; } if (!el) return null;
+  const r0 = el.getBoundingClientRect(); window.scrollTo(0, Math.max(0, r0.top + scrollY - Math.max(0, (innerHeight - r0.height) / 2)));
+  const r = el.getBoundingClientRect(); return { x: Math.max(0, r.left + scrollX), y: Math.max(0, r.top + scrollY), w: Math.min(r.width, innerWidth), h: r.height, vy: scrollY, vh: innerHeight }; })`;
+/** In the page: show one picture file on its own, whole, on top of everything (to read a watermark in a corner a layout crops off). */
+const ORIGINAL = `(async (src) => { const o = document.createElement('div'); o.id = '__dsa_orig'; o.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff';
+  const im = new Image(); im.style.cssText = 'display:block;width:960px;height:auto'; o.appendChild(im); document.documentElement.appendChild(o); window.scrollTo(0, 0);
+  await new Promise((ok) => { im.onload = ok; im.onerror = ok; im.src = src; setTimeout(ok, 6000); });
+  return im.naturalWidth ? { w: 960, h: Math.round(960 * im.naturalHeight / im.naturalWidth) } : null; })`;
+const UNORIGINAL = `(() => { const o = document.getElementById('__dsa_orig'); if (o) o.remove(); return true; })`;
+
+export async function contrastScan(url, device = 'desktop', { timeout = 90000, photos = false } = {}) {
   const D0 = DEVICES[device]; if (!D0) throw new Error('Unknown device');
   const D = Object.assign({}, D0, { dsf: 1 });   // one picture pixel per CSS pixel: what is measured is the page, not the screen
   const t0 = Date.now();
@@ -256,6 +323,45 @@ export async function contrastScan(url, device = 'desktop', { timeout = 90000 } 
     await quiet(4000, 0);
     // Pop-ups that open on their own would cover the page: closed for the measuring.
     await ev(`(() => { document.querySelectorAll('#dmPopup, .dmPopup, [class*="popup"][style*="display: block"]').forEach((e) => { e.style.display = 'none'; }); return true; })`).catch(() => {});
+    // The photos, as a visitor sees them (before anything on the page is changed for the measuring):
+    // each one where it sits on the page, and its picture file whole (a phone watermark can sit in a
+    // corner the layout crops off).
+    const pics = [];
+    if (photos) {
+      try {
+        const list = await ev(PHOTOS, MAX_H, 10);
+        const origDone = new Set();
+        for (const ph of list) {
+          if (Date.now() - t0 > timeout * 0.45) break;
+          const b = await ev(CENTER, ph.sel).catch(() => null); if (!b || b.w < 50 || b.h < 50) continue;
+          await sleep(350);
+          const vis = { x: b.x, y: Math.max(b.y, b.vy), w: b.w, h: Math.min(b.h, b.vh, 900) };
+          const k = Math.min(1, 560 / vis.w);
+          const shot = await within(call('Page.captureScreenshot', { format: 'jpeg', quality: 62, fromSurface: true, captureBeyondViewport: false, clip: { x: vis.x, y: vis.y, width: vis.w, height: vis.h, scale: k } }), 20000, 'slow').catch(() => null);
+          if (!shot) continue;
+          const pic = Object.assign({}, ph, { img: shot.data, w: Math.round(vis.w * k), h: Math.round(vis.h * k) });
+          const key = String(ph.src).split('?')[0].replace(/-\d+w(\.\w+)$/, '$1');
+          if (!origDone.has(key) && origDone.size < 8) {
+            origDone.add(key);
+            const o = await ev(ORIGINAL, ph.src).catch(() => null);
+            if (o && o.h) {
+              await sleep(150);
+              const H = Math.min(o.h, 960);
+              const full = await within(call('Page.captureScreenshot', { format: 'jpeg', quality: 70, fromSurface: true, clip: { x: 0, y: 0, width: 960, height: H, scale: 0.8 } }), 20000, 'slow').catch(() => null);
+              if (full) { pic.full = full.data; pic.fullKey = key; }
+            }
+            await ev(UNORIGINAL).catch(() => {});
+          }
+          pics.push(pic);
+        }
+        await ev('(() => { window.scrollTo(0, 0); return true; })').catch(() => {});
+        await sleep(200);
+      } catch (e) { /* photos are a bonus: the contrast measuring goes on */ }
+    }
+    // A parallax background (background-attachment: fixed) is drawn against the window, so in a picture of
+    // the whole page it would come out blank and white text on it would read as white on white. For the
+    // measuring it is drawn behind its section, which is what a visitor sees as they scroll past.
+    await ev(`(() => { document.querySelectorAll('body *').forEach((e) => { if (getComputedStyle(e).backgroundAttachment.includes('fixed')) e.style.setProperty('background-attachment', 'scroll', 'important'); }); return true; })`).catch(() => {});
     const { items, h: pageH } = await ev(COLLECT, MAX_H, MAX_ITEMS);
     await sleep(250);
     await ev(HIDE, true);
@@ -279,7 +385,7 @@ export async function contrastScan(url, device = 'desktop', { timeout = 90000 } 
       Object.assign(m, await ev(MEASURE, shot.data, y, D.w, sh, here));
     }
     await ev(HIDE, false).catch(() => {});
-    return { items: judge(items, m, device), measured: items.length, ms: Date.now() - t0, status };
+    return { items: judge(items, m, device), measured: items.length, fields: items.filter((x) => x.kind === 'field').length, ms: Date.now() - t0, status, ...(photos ? { photos: pics } : {}) };
   } catch (e) {
     if (/browser (stopped|could not start|did not start)/.test(String(e.message)) && errText.trim()) e.message = `${e.message} (${errText.trim().split('\n').slice(-3).join(' | ').slice(0, 400)})`;
     throw e;

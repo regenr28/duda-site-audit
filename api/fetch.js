@@ -1,6 +1,7 @@
 // GET /api/fetch?host=<editor host>&site=<siteId>&path=/about-us&device=desktop|tablet|mobile
 // Proxies Duda's per-device preview HTML (the same thing the editor's Desktop/Tablet/Mobile preview shows).
 import { metered, requireUser, allowedHost, fetchWithTimeout, UA_DESKTOP, redis, P } from './_lib.js';
+import { fetchPublic } from './_net.js';
 
 const UAS = {
   desktop: UA_DESKTOP,
@@ -10,6 +11,18 @@ const UAS = {
 
 async function handler(req, res) {
   if (!(await requireUser(req, res))) return;
+  // ?policy=<Termageddon policy address>: the text a policy script loads into a privacy / terms page. Only
+  // Termageddon's own policy addresses are read, never anything else.
+  if (req.query.policy) {
+    let u; try { u = new URL(String(req.query.policy)); } catch (e) { return res.status(400).json({ error: 'Bad policy address' }); }
+    if (u.protocol !== 'https:' || u.hostname !== 'app.termageddon.com' || !/^\/api\/policy\/[A-Za-z0-9=_-]{8,200}$/.test(u.pathname)) return res.status(400).json({ error: 'Not a policy address' });
+    try {
+      const r = await fetchPublic(u.href, { headers: { 'User-Agent': UAS.desktop, Accept: 'text/html,application/json' } }, 15000);
+      const html = (await r.text()).slice(0, 600000);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ status: r.status, url: u.href, html });
+    } catch (e) { return res.status(200).json({ status: 0, url: u.href, html: '', error: String(e.message || e).slice(0, 160) }); }
+  }
   const { host, site, device = 'desktop' } = req.query;
   let path = String(req.query.path || '/');
   // live=1: the PUBLISHED page on the site's own domain (only the domain Duda reported for this site)

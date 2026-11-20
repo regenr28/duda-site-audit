@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-20-photos-redirects', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'Photos that don\'t fit the page, phone watermarks, missing redirects, form options and policy template text',
+    what: 'Five new checks. <b>Photos</b>: the AI looks at every photo the way a visitor sees it on the page (images, column backgrounds and parallax backgrounds) and raises one that does not belong there, like a car interior on the RV page, or a phone watermark such as "Shot on iPhone". <b>Old addresses</b> that now give "page not found" with no redirect are raised with the page to send them to, and broken, looping or temporary redirects too. <b>Form options</b> that leave out a service the website has a page for. <b>Privacy Policy and Terms</b> are read after they load (Termageddon too), so "USA County" and other template text left in is caught. The scan panel also lists <b>which pages had their colour contrast measured</b> and how many form fields were typed into on each.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⟳ Rescan</b> (photos and contrast need a rescan; <b>⚡ Apply check updates</b> covers forms, policies and redirects). Photo items are under the <b>Images / Photos</b> category, redirects on <b>🛠 Technical SEO</b>.'],
+  },
+  {
     id: '2026-11-20-placeholder-forms', date: '2026-11-20', audience: 'all', tag: 'Audits',
     title: 'Form hints are not contact details; form pages get their contrast checked first',
     what: 'A form field\'s placeholder that shows the format ("name@email.com", "(555) 555-5555") is no longer "Email not in Business Info". And on big websites, where colour contrast is measured on up to 40 pages, the home page and every page with a form now come first, so text typed into a form that is hard to read is caught.',

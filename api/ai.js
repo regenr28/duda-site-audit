@@ -619,6 +619,91 @@ async function visionCheck(list, business, items) {
   return out;
 }
 
+// ---------- Photos: does each photo fit its page and its section, and does it carry a camera watermark? ----------
+// The pictures come from the page browser: each photo as it sits on the page (an <img>, a column or section
+// with a photo background, a parallax background), and its file whole. Any model that can see images.
+const PHOTO_SYSTEM = `You review the PHOTOS on one page of a car-care business's website, the way a careful client would. ${CONTEXT}
+You get the page (its address, title, main heading, the service and town it is about) and, for each photo: where it is (an image, a column or section background, or a parallax background), the heading and words of the section it sits in or behind, and pictures: "as shown" (how a visitor sees it on the page) and sometimes "whole file" (the full picture, to read anything in its corners).
+For each photo decide:
+- "fits_page": does the photo's subject belong on THIS page? A passenger-car interior on an RV page, a city bus on a semi-truck page, a boat on a window-tint page, aircraft on a truck page: false. Any car on a general car-care page, the shop, the team, tools or products for the service: true. A background behind text only has to suit the page's topic loosely (a car, a road, a shop); abstract textures, gradients and patterns always fit.
+- "fits_section": does it suit the section it sits in or behind (its heading and words)? false only when it clearly shows something else (a ceramic-coating bottle beside a paragraph about window tint).
+- "watermark": text burned into the photo by a phone or camera ("Shot on iPhone", "Galaxy S21 Ultra 5G", "Xiaomi", a date stamp), or a stock-photo watermark (Shutterstock, Adobe Stock, iStock, "Preview"). Copy it exactly; empty if none. A business's own logo or a sign in the scene is NOT a watermark.
+- "subject": what the photo shows, in a few words.
+Be conservative: only say false when it clearly does not fit. Do not judge photo quality or style.
+Respond with JSON only: {"results":[{"i":<number>,"subject":"<max 10 words>","fits_page":true|false,"fits_section":true|false,"watermark":"<text or empty>","confidence":<0..1>,"reason":"<max 25 words>","suggestion":"<what photo would fit, max 15 words, only when something does not fit>"}]}`;
+async function callVision(p, system, parts) {
+  let r, j = {}, text = '';
+  try {
+    if (p.kind === 'gemini') {
+      const gp = parts.map((x) => (x.text !== undefined ? { text: x.text } : { inlineData: { mimeType: x.image.mime, data: x.image.data } }));
+      r = await fetchWithTimeout(`${p.base}/models/${encodeURIComponent(p.model)}:generateContent`, { method: 'POST', headers: { 'x-goog-api-key': p.key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: gp }], generationConfig: { temperature: 0, maxOutputTokens: 4096, responseMimeType: 'application/json' } }) }, 60000);
+      j = await r.json().catch(() => ({}));
+      if (r.ok) text = ((((j.candidates || [])[0] || {}).content || {}).parts || []).map((x) => x.text || '').join('');
+    } else if (p.kind === 'anthropic') {
+      const content = parts.map((x) => (x.text !== undefined ? { type: 'text', text: x.text } : { type: 'image', source: { type: 'base64', media_type: x.image.mime, data: x.image.data } }));
+      r = await fetchWithTimeout(`${p.base}/messages`, { method: 'POST', headers: { 'x-api-key': p.key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: p.model, max_tokens: 3000, temperature: 0, system, messages: [{ role: 'user', content }] }) }, 60000);
+      j = await r.json().catch(() => ({}));
+      if (r.ok) text = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+    } else {
+      const content = parts.map((x) => (x.text !== undefined ? { type: 'text', text: x.text } : { type: 'image_url', image_url: { url: `data:${x.image.mime};base64,${x.image.data}` } }));
+      r = await fetchWithTimeout(`${p.base}/chat/completions`, { method: 'POST', headers: { Authorization: `Bearer ${p.key}`, 'Content-Type': 'application/json' }, body: JSON.stringify(openaiBody(p, system, content)) }, 60000);
+      j = await r.json().catch(() => ({}));
+      if (r.ok) text = (((j.choices || [])[0] || {}).message || {}).content || '';
+    }
+  } catch (e) { return { fail: { reason: 'cooling', until: Date.now() + 60000, note: 'Network error: ' + String(e.message || e).slice(0, 120) } }; }
+  if (!r.ok) return { fail: classify(p, r, j) };
+  try { const u = j.usage || {}; const g = j.usageMetadata || {}; aiUsage(p.id, j.model || p.model, (u.input_tokens || 0) || u.prompt_tokens || g.promptTokenCount || 0, u.output_tokens || u.completion_tokens || g.candidatesTokenCount || 0, 0); } catch (e) { /* counting never gets in the way */ }
+  const m = String(text).match(/\{[\s\S]*\}/); const parsed = m ? jparse(m[0], null) : null;
+  if (!parsed) return { fail: { reason: 'cooling', until: Date.now() + 60000, note: 'Returned an answer that could not be read.' } };
+  return { parsed };
+}
+/** Models that can see pictures: Anthropic, OpenAI itself and Gemini (in the team's order). */
+async function visionChain(list, system, parts) {
+  const status = await loadStatus(list);
+  const can = list.filter((p, k) => status[k].ready && (p.kind === 'anthropic' || p.kind === 'gemini' || p.id === 'openai'));
+  for (const p of can) {
+    const out = await callVision(p, system, parts);
+    if (out.parsed) { const [u] = await redis(['INCR', useKey(p)]); if (u === 1) await redis(['EXPIRE', useKey(p), 3 * 86400]); return { parsed: out.parsed, p }; }
+    await park(p, out.fail.reason, out.fail.until, out.fail.note);
+  }
+  const err = new Error(can.length ? 'The AI models that can see pictures did not answer.' : 'No AI model that can see pictures is available right now.'); err.status = 429; err.allBusy = true; throw err;
+}
+async function photoCheck(req, res, b, list) {
+  const business = b.business || {}; const page = b.page || {};
+  const items = [].concat(b.items || []).slice(0, 10).filter((x) => x && Number.isFinite(Number(x.i)) && typeof x.img === 'string' && x.img.length < 900000 && (!x.full || (typeof x.full === 'string' && x.full.length < 1400000)));
+  if (!items.length) return res.status(200).json({ results: [] });
+  // Remembered per photo + place + page, so a rescan asks only about photos that changed or moved.
+  const cacheKey = P + 'aiph:' + sha(String(business.name || '')).slice(0, 16);
+  const keyOf = (x) => 'p1' + sha([x.src || '', page.path || '', x.heading || '', x.kind || ''].join('|')).slice(0, 20);
+  const [raw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
+  const results = []; const todo = [];
+  items.forEach((x, k) => { const c = raw && raw[k] ? jparse(raw[k], null) : null; if (c) results.push(Object.assign({ i: x.i, cached: true }, c)); else todo.push(x); });
+  let used = null;
+  if (todo.length) {
+    const parts = [{ text: `${businessHeader(business)}
+THIS PAGE: ${String(page.path || '/').slice(0, 120)} | title: ${String(page.title || '').slice(0, 120)} | main heading: ${String(page.h1 || '').slice(0, 120)}${page.services ? ' | about: ' + String(page.services).slice(0, 80) : ''}${page.town ? ' | town: ' + String(page.town).slice(0, 40) : ''}
+PHOTOS:` }];
+    todo.forEach((x) => {
+      parts.push({ text: `[${x.i}] ${x.kind === 'parallax' ? 'parallax background' : x.kind === 'background' ? 'background of a column/section' : 'image'}${x.alt ? ` · alt "${String(x.alt).slice(0, 120)}"` : ''} · section heading: "${String(x.heading || '-').slice(0, 140)}" · words in the section: "${String(x.text || '-').replace(/\s+/g, ' ').slice(0, 400)}" · as shown:` });
+      parts.push({ image: { mime: 'image/jpeg', data: x.img } });
+      if (x.full) { parts.push({ text: `[${x.i}] whole file:` }); parts.push({ image: { mime: 'image/jpeg', data: x.full } }); }
+    });
+    const { parsed, p } = await visionChain(list, PHOTO_SYSTEM, parts);
+    used = p;
+    const byI = new Map(todo.map((x) => [Number(x.i), x])); const save = [];
+    [].concat(parsed.results || []).forEach((v) => {
+      const x = byI.get(Number(v && v.i)); if (!x) return;
+      const c = { subject: String(v.subject || '').slice(0, 80), fits_page: v.fits_page !== false, fits_section: v.fits_section !== false, watermark: String(v.watermark || '').slice(0, 80),
+        confidence: Math.max(0, Math.min(1, Number(v.confidence) || 0)), reason: String(v.reason || '').slice(0, 200), suggestion: String(v.suggestion || '').slice(0, 160), wmChecked: !!x.full };
+      results.push(Object.assign({ i: x.i }, c)); save.push(keyOf(x), JSON.stringify(c));
+    });
+    if (save.length) await redis(['HSET', cacheKey, ...save], ['EXPIRE', cacheKey, 120 * 86400]);
+  }
+  return res.status(200).json({ results, used: used ? aliasOf(used.id) : '' });
+}
+
 // ---------- Help assistant ----------
 const HELP_LIMIT = 40; // questions per person per day
 const HELP_SYSTEM = (role, guide) => `You are the Help assistant inside "Duda Site Auditor", a team web app that audits Duda websites (car-care businesses built by a marketing agency) against their Business Info.
@@ -701,6 +786,7 @@ async function handler(req, res) {
     const b = readBody(req);
     if (b.op === 'proof' || b.op === 'links' || b.op === 'pagefit') return await extraCheck(req, res, b, list, owner);
     if (b.op === 'docread' || b.op === 'docmatch') return await docAI(req, res, b, list, owner);
+    if (b.op === 'photos') return await photoCheck(req, res, b, list);
     if (!['alt', 'text'].includes(b.op)) return res.status(400).json({ error: 'Unknown op' });
     const business = b.business || {};
     const field = b.op === 'alt' ? 'alt' : 'text';

@@ -7338,6 +7338,11 @@
       const pubDom = pub && pub.domain && /PUBLISHED/i.test(pub.publishStatus || '') && !/NOT_PUBLISHED|UNPUBLISHED/i.test(pub.publishStatus || '') ? pub.domain : '';
       const wantFiles = !plan || plan.codes.some((c) => /^(ROBOTS_|SITEMAP_|LLMS_|EMAIL_AUTOMATION)/.test(c));
       const res = await A.runScan({
+        // Privacy / terms text a script loads (Termageddon): read from the policy's own address.
+        fetchPolicy: (url) => sApi('/api/fetch?' + new URLSearchParams({ policy: url })).then((r) => ({ status: r.status, html: r.html || '' })),
+        // Redirects and pages that existed before (full scans, or check updates that ask for them).
+        ...(meta ? { redirects: { rules: (meta && meta.redirects) || [], past: (site.pastPaths || []).concat((site.pages || []).map((p) => p.path)), domain: pubDom } } : {}),
+        ...(pubDom ? { liveStatus: (path) => sApi('/api/fetch?' + new URLSearchParams({ live: '1', domain: pubDom, site: site.siteId, path, device: 'desktop' })).then((r) => r.status || 0) } : {}),
         ...(pubDom && wantFiles ? { fileDomain: pubDom, fetchFile: (path) => sApi('/api/fetch?' + new URLSearchParams({ live: '1', domain: pubDom, site: site.siteId, path, device: 'desktop' })).then((r) => ({ status: r.status, text: r.html || '' })) }
           : { fileNote: pubDom ? '' : 'robots.txt, sitemap.xml and llms.txt are checked once the website is published.' }),
         siteId: site.siteId, allow: site.allow || [], host, truth: scanTruth, pagesMeta, seedPaths: only || Object.keys(pagesMeta), ...(only ? { maxPages: only.length + (only.includes('/') ? 0 : 1) } : {}), concurrency: 4,
@@ -7362,7 +7367,7 @@
       const aiText = useAI ? await aiTextCheck(res, id, log, aiAlt && aiAlt.paused) : null;
       const aiMore = useAI ? await aiDeepCheck(res, id, log, (aiText && aiText.paused) || (aiAlt && aiAlt.paused)) : null;
       // Colour contrast, read off a real picture of each page (server-side Chrome).
-      const ctr = !plan || plan.contrast ? await contrastCheck(res, id, log) : { notChecked: [], summary: { skipped: true } };
+      const ctr = !plan || plan.contrast || (plan.photos && state.ai && state.ai.enabled) ? await contrastCheck(res, id, log) : { notChecked: [{ prefix: 'PHOTO_', pages: '*' }], summary: { skipped: true } };
       // Text that is in the page code but hidden by the page's own styles: kept, as information.
       state.scanning[id] = Object.assign({}, state.scanning[id], { message: 'Checking which text visitors actually see…' }); renderProgress(id);
       await markHiddenText(res, async (path, device) => sApi('/api/fetch?' + new URLSearchParams({ host, site: site.siteId, path, device })), log, host).catch((e) => log.push('Visibility check: ' + e.message));
@@ -7389,6 +7394,7 @@
       const lastDone = (site.scan && site.scan.finishedAt) || '';
       Object.values(state.fixedChecks || {}).forEach((x) => { if (x && x.code && lastDone && x.at > lastDone && !corrected.includes(x.code)) corrected.push(x.code); });
       if (plan) res.findings = res.findings.filter((f) => A.codeIn(plan.codes, f.code));
+      if (!meta) ctr.notChecked = [].concat(ctr.notChecked || [], [{ prefix: 'REDIRECT_', pages: '*' }]);
       const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, ...(only ? { partial: only } : {}), ...(plan ? { codes: plan.codes } : {}), bulk: !!((state.scanning[id] && state.scanning[id].bulk) || opts0.bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, ...(res.files ? { files: res.files } : {}), ...(res.schemaBiz ? { schemaBiz: res.schemaBiz } : {}), findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
         scan: { state: 'complete', cv: plan && plan.keepCv ? ((site.scan && site.scan.cv) || 1) : A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
@@ -7557,11 +7563,16 @@
     const todo = pages.slice(0, CONTRAST_MAX_PAGES);
     const failed = []; let measured = 0, done = 0, stop = '';
     const raw = [];
+    // The photos are read on the same visit (desktop), when the AI is on: it judges whether each one fits.
+    const wantPhotos = !!(state.ai && state.ai.enabled);
+    const photos = []; const measuredList = [];
     const one = async (path) => {
       if (stop) { failed.push(path); return; }
       try {
-        const r = await post('/api/capture', { op: 'contrast', site: id, path, devices: ['desktop', 'mobile'] });
+        const r = await post('/api/capture', { op: 'contrast', site: id, path, devices: ['desktop', 'mobile'], ...(wantPhotos ? { photos: true } : {}) });
         (r.items || []).forEach((f) => raw.push(f));
+        (r.photos || []).forEach((x) => photos.push(x));
+        if (!(r.errors || []).length) measuredList.push({ p: path, f: r.fields || 0 });
         measured += r.measured || 0;
         if ((r.errors || []).length) {
           failed.push(path);
@@ -7581,7 +7592,42 @@
     else if (failed.length) log.push(`Colour contrast: ${failed.length} page(s) could not be measured (${failed.slice(0, 5).join(', ')}${failed.length > 5 ? '…' : ''}); their earlier contrast items are kept as they were.`);
     if (pages.length > todo.length) log.push(`Colour contrast was measured on the first ${todo.length} of ${pages.length} pages.`);
     const notChecked = stop ? [{ prefix: 'CONTRAST_', pages: '*' }] : failed.length ? [{ prefix: 'CONTRAST_', pages: failed }] : [];
-    return { notChecked, summary: { pages: todo.length - failed.length, of: pages.length, items: raw.length, pieces: measured, skipped: stop || '' } };
+    // Photos: judged by the AI; pages whose photos could not be judged keep their earlier photo items.
+    const judged = wantPhotos && !stop ? await photoAI(res, id, photos, log, todo.filter((p) => !failed.includes(p))) : null;
+    if (!judged) notChecked.push({ prefix: 'PHOTO_', pages: '*' });
+    else { const miss = todo.filter((p) => !judged.has(p)); if (miss.length) notChecked.push({ prefix: 'PHOTO_', pages: miss }); }
+    // Which pages were measured (and how many form fields were typed into on each), so the audit can say so.
+    return { notChecked, summary: { pages: todo.length - failed.length, of: pages.length, items: raw.length, pieces: measured, skipped: stop || '',
+      list: measuredList.slice(0, 60), notList: pages.filter((p) => !measuredList.some((x) => x.p === p)).slice(0, 200) } };
+  }
+  /**
+   * Does each photo fit its page and its section, and does it carry a camera watermark? The page browser
+   * pictured each photo where it sits (backgrounds and parallax included) and its file whole; the AI looks
+   * at both. Returns the pages whose photos were judged (null when the AI could not be used).
+   */
+  async function photoAI(res, id, photos, log, visited) {
+    const judged = new Set((visited || []).filter((p) => !photos.some((x) => x.path === p)));
+    if (!photos.length) return judged;
+    const business = aiBusiness(res);
+    const byPage = new Map(); photos.forEach((x) => (byPage.get(x.path) || byPage.set(x.path, []).get(x.path)).push(x));
+    const pageOf = new Map((res.pages || []).map((p) => [p.path, p]));
+    const out = []; let n = 0, asked = 0, cached = 0, fail = '';
+    for (const [path, list] of byPage) {
+      if (fail) break;
+      n++; state.scanning[id] = Object.assign({}, state.scanning[id], { message: `✨🖼 Checking the photos ${n}/${byPage.size} pages` }); renderProgress(id);
+      const pg = pageOf.get(path) || {};
+      const svc = A.servicesOfPath(path); const town = A.placeOfPath(path);
+      try {
+        const r = await post('/api/ai', { op: 'photos', business, page: { path, title: pg.title || '', h1: pg.h1 || '', services: svc.join(', '), town },
+          items: list.map((x, i) => ({ i, kind: x.kind, src: x.src, alt: x.alt, heading: x.heading, text: x.text, img: x.img, ...(x.full ? { full: x.full } : {}) })) });
+        (r.results || []).forEach((v) => { const x = list[Number(v.i)]; if (x) { out.push({ photo: x, v }); if (v.cached) cached++; else asked++; } });
+        judged.add(path);
+      } catch (e) { fail = e.message || String(e); }
+    }
+    res.findings = A.applyPhotoVerdicts(res.findings, out, res.truth);
+    const bad = res.findings.filter((f) => /^PHOTO_/.test(f.code)).length;
+    log.push(`Photos: ${photos.length} photo${photos.length === 1 ? '' : 's'} on ${byPage.size} page${byPage.size === 1 ? '' : 's'} looked at by the AI (${cached} remembered from earlier scans): ${bad} item${bad === 1 ? '' : 's'}.${fail ? ' Stopped early: ' + fail : ''}`);
+    return fail && !judged.size ? null : judged;
   }
   async function aiDeepCheck(res, id, log, pausedAlready) {
     if (!state.ai || !state.ai.enabled) return null;
@@ -11261,7 +11307,7 @@
     return `<details class="upd-plan" ${plan.full.length ? '' : 'open'}><summary class="small"><b>${plan.full.length ? 'Why a full rescan' : 'What ⚡ Apply check updates will do'}</b>${plan.full.length ? '' : ` · ${touched.length ? `${total} existing item${total === 1 ? '' : 's'} rechecked · ${plan.pages === 'all' ? `every page (${nPages})` : `${plan.pages.length} of ${nPages} pages`} read` : 'nothing to read again'}`}</summary>
       ${plan.full.length ? `<div class="small" style="margin-top:6px">${plan.full.length === 1 ? 'One update' : `${plan.full.length} updates`} since this scan (${plan.full.map((r) => esc(r.title)).join('; ')}) came before updates said which checks they touched, so only a full rescan applies ${plan.full.length === 1 ? 'it' : 'them'}.</div>` : `
       <ul class="upd-steps">${plan.steps.map(step).join('')}</ul>
-      <div class="small muted">Left alone: every other check and every other item (statuses, numbers, comments and assignees too)${plan.ai ? '' : ', the AI (nothing here needs it, so no AI credits are used)'}${plan.contrast ? '' : ', the colour-contrast pictures'}${plan.codes.some((c) => /^LINK_/.test(c)) ? '' : ', the link checks'}. No backup in Duda is made, because nothing in Duda changes. ${touched.length ? 'Afterwards the audit counts as up to date with the checks.' : 'It only marks the audit as up to date with the checks.'}</div>`}
+      <div class="small muted">Left alone: every other check and every other item (statuses, numbers, comments and assignees too)${plan.ai ? '' : ', the AI (nothing here needs it, so no AI credits are used)'}${plan.contrast ? '' : plan.photos && state.ai && state.ai.enabled ? ' (the pages are pictured again only to show the photos to the AI)' : ', the colour-contrast pictures'}${plan.codes.some((c) => /^LINK_/.test(c)) ? '' : ', the link checks'}. No backup in Duda is made, because nothing in Duda changes. ${touched.length ? 'Afterwards the audit counts as up to date with the checks.' : 'It only marks the audit as up to date with the checks.'}</div>`}
     </details>`;
   }
   function bindNewChecks(body, s) {
@@ -11598,6 +11644,10 @@
       ${sc.state === 'complete' ? verifyPanel(s) : ''}
       <div class="panel panel-pad" style="margin-bottom:16px"><div class="row-between" style="align-items:flex-start"><div class="grow">${state.scanning[s.id] || otherClaim(s.id) ? '<span class="small muted">The scan’s progress is at the top of the page.</span>' : scanBadge(s)}</div>${state.scanning[s.id] || otherClaim(s.id) ? '' : `<div id="aiCredits">${aiCreditsHtml()}</div>`}</div>
         ${sc.state === 'complete' ? `<span class="small muted" style="margin-left:8px">3 devices each · ${sc.externalLinks || 0} external links · ${sc.images || 0} images checked · ${sc.contrast ? (sc.contrast.skipped ? '<span title="' + esc(sc.contrast.skipped) + '">contrast not checked</span> · ' : `contrast on ${sc.contrast.pages}${sc.contrast.of > sc.contrast.pages ? '/' + sc.contrast.of : ''} pages · `) : ''}<span title="How long the scan took, from start to saved">⏱ took ${fmtTook(sc.durationMs) || '—'}</span>${sc.updAt ? ` · ⚡ check updates ${esc(ago(sc.updAt))}${sc.updMs ? `, took ${fmtTook(sc.updMs)}` : ''}` : ''}${sc.by ? ' · by ' + esc(nameOf(sc.by)) : ''}</span>` : ''}
+        ${sc.contrast && sc.contrast.list ? `<details class="scan-more"${uiOpen('scanctr') ? ' open' : ''} data-ui="scanctr"><summary class="small">🎨 Colour contrast measured on ${sc.contrast.list.length} page${sc.contrast.list.length === 1 ? '' : 's'}${sc.contrast.of > sc.contrast.list.length ? ` of ${sc.contrast.of}` : ''} · ${sc.contrast.list.filter((x) => x.f).length} with a form (every field typed into) <span class="faint">· which pages</span></summary>
+          <div class="small" style="margin-top:6px">Measured: ${sc.contrast.list.map((x) => `<span class="mono">${esc(x.p)}</span>${x.f ? ` <span class="badge subtle" title="Form fields typed into and measured">📝 ${x.f} field${x.f === 1 ? '' : 's'}</span>` : ''}`).join(' · ')}</div>
+          ${(sc.contrast.notList || []).length ? `<div class="small faint" style="margin-top:6px">Not measured (only ${CONTRAST_MAX_PAGES} pages per scan; the home page and pages with a form go first; blog posts share one design and are left out): ${sc.contrast.notList.slice(0, 60).map((p) => `<span class="mono">${esc(p)}</span>`).join(' · ')}${sc.contrast.notList.length > 60 ? ` +${sc.contrast.notList.length - 60} more` : ''}. Use <b>⋯ → Scan chosen pages</b> to measure any of them.</div>` : ''}
+        </details>` : ''}
         ${sc.ai ? `<details class="scan-more"${uiOpen('scanai') ? ' open' : ''} data-ui="scanai"><summary class="small">${aiShort(sc.ai)} <span class="faint">· details</span></summary><div class="small" style="margin-top:6px">✨ AI reviewed <b>${sc.ai.checked}</b> alt texts${sc.ai.cached ? ` (${sc.ai.cached} from cache)` : ''}: <b>${sc.ai.flagged}</b> flagged${sc.ai.softened ? `, ${sc.ai.softened} logo warning(s) softened` : ''}.
             ${sc.ai.text ? ` Business name and location: <b>${sc.ai.text.blocks}</b> blocks that mention a name, a place or contact details checked${sc.ai.text.skipped ? ` <span class="faint" title="These blocks contain no business name, place or contact detail, so there is nothing in them for this check to get wrong. They are still proofread.">(the other ${sc.ai.text.skipped} have none)</span>` : ''}${sc.ai.text.truncated ? ', the rest left for later' : ''}, <b>${sc.ai.text.flagged}</b> flagged.` : ''}
             ${sc.ai.fit ? ` Read <b>${sc.ai.fit.pages}</b> pages against their address (service, town, name): <b>${sc.ai.fit.flagged}</b> new item${sc.ai.fit.flagged === 1 ? '' : 's'}.` : ''}
