@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-20-gallery-nolink', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'A photo gallery\'s spare buttons are not "Button has no link" either',
+    what: 'The same hidden caption buttons a photo gallery keeps for every picture were also reported as "Button has no link", four or so on every page with a gallery. They are not any more, and neither is any button that is hidden on the page (checked in a real browser once the page has loaded): nobody can click it. A button visitors see that goes nowhere is still reported.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: those items close.'],
+  },
+  {
     id: '2026-11-20-relative-links', date: '2026-11-20', audience: 'all', tag: 'Audits',
     title: 'Relative links are no longer "Link points to a Duda editor/preview domain"',
     what: 'On a page whose links are written as short addresses ("/", "/contact"), every link in the header, footer and side panel was reported as pointing at the Duda editor, sometimes more than a hundred items on one page. A short address opens on whatever website the page is on, so on the published website it is the client\'s own domain: it is fine. Only a link written out in full to an editor or preview address is reported now.',

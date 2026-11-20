@@ -586,6 +586,16 @@
         'A link written as a relative address ("/", "/contact", "/contact#quickform") opens on whatever website the page is on, so on the published website it opens the client\u2019s own domain. It was read as pointing at the editor when a page\u2019s links were written that way. Only a link written out in full to an editor or preview address is reported now',
       ],
     },
+    {
+      v: 50,
+      date: '2026-11-20',
+      title: 'A photo gallery\u2019s spare caption button is not a "Button has no link"',
+      scope: { fixes: ['BUTTON_NO_LINK'] },
+      items: [
+        'The same spare caption buttons a photo gallery keeps for every picture were also reported as "Button has no link": they are not any more',
+        'A button hidden on the page (by its own style, or by the page\u2019s styles and scripts once it has loaded, checked in a real browser) is not reported either: nobody can click it',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -2607,7 +2617,11 @@
           || raw == null
           || MENU_ISH.test(widgetName(a)) || MENU_ISH.test(cls(a))
           || a.hasAttribute('aria-expanded') || a.hasAttribute('aria-controls') || a.hasAttribute('data-toggle')
-          || (CONTROL_WORD.test(label) && inMenu(a));
+          || (CONTROL_WORD.test(label) && inMenu(a))
+          // A photo gallery's spare caption button: Duda shows it only once it has a link.
+          || galleryCaptionButton(a)
+          // Hidden on purpose: nobody can click it.
+          || SNEAKY_HIDE.test(hiddenReason(a, device) || '');
         if (isButton && !hasPopup && !control) add(a, { code: 'BUTTON_NO_LINK', severity: 'warning', category: 'Links', message: 'Button has no link (href is empty, # or javascript:)', found: label });
         return;
       }

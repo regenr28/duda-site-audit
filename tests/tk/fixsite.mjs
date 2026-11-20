@@ -77,8 +77,10 @@ const GALLERY_PAGE = `<!doctype html><html><head><title>PPF vs Ceramic | Buff &a
 <li class="photoGalleryThumbs" id="1903544282"><div class="caption-container" id="1863401669"><span class="caption-inner"><h3 class="caption-title">Beyond Boundaries</h3>
 <a class="caption-button dmWidget" href="" id="1233015223"><span class="text" id="1775854035">Button</span></a></span></div></li></ul></div>
 <div class="promo" id="promo1"><a class="dmButtonLink" href="/contact" id="2001"><span class="text" id="2002">Button</span></a></div>
-<div class="cta" id="cta1"><a class="dmButtonLink" href="/contact" id="3001"><span class="text" id="3002">Button</span></a></div></div>
-<script>window.addEventListener('load', () => setTimeout(() => { document.getElementById('promo1').style.display = 'none'; }, 300));</script>
+<div class="cta" id="cta1"><a class="dmButtonLink" href="/contact" id="3001"><span class="text" id="3002">Button</span></a></div>
+<div class="promo" id="promo2"><a class="dmButtonLink" href="" id="4001"><span class="text">Book now</span></a></div>
+<div class="cta" id="cta2"><a class="dmButtonLink" href="" id="5001"><span class="text">Get a quote</span></a></div></div>
+<script>window.addEventListener('load', () => setTimeout(() => { document.getElementById('promo1').style.display = 'none'; document.getElementById('promo2').style.display = 'none'; }, 300));</script>
 </body></html>`;
 http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');

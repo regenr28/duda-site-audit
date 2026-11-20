@@ -7759,7 +7759,7 @@
    * device a visitor uses → not reported. Shown anywhere → still critical, with where.
    */
   async function buttonSeenCheck(res, id, log) {
-    const items = res.findings.filter((f) => f.code === 'PLACEHOLDER' && String(f.found || '').trim() === 'Button' && /default label/i.test(f.message || '') && f.selector && f.selector !== '(page)');
+    const items = res.findings.filter((f) => ((f.code === 'PLACEHOLDER' && String(f.found || '').trim() === 'Button' && /default label/i.test(f.message || '')) || f.code === 'BUTTON_NO_LINK') && f.selector && f.selector !== '(page)');
     if (!items.length) return;
     const byPage = new Map();
     items.forEach((f) => { const pg = (f.pages && f.pages[0]) || f.path || '/'; (byPage.get(pg) || byPage.set(pg, []).get(pg)).push(f); });
@@ -7785,7 +7785,7 @@
     });
     if (dropped) {
       res.findings = res.findings.filter((f) => !f.dropSeen);
-      log.push(`${dropped} "Button" label${dropped === 1 ? '' : 's'} in the page code ${dropped === 1 ? 'is' : 'are'} not shown to visitors once the page has loaded (checked in a real browser on desktop and phone: usually a photo gallery's spare caption buttons), so ${dropped === 1 ? 'it was' : 'they were'} left out.`);
+      log.push(`${dropped} "Button" label${dropped === 1 ? '' : 's'} or button${dropped === 1 ? '' : 's'} with no link in the page code ${dropped === 1 ? 'is' : 'are'} not shown to visitors once the page has loaded (checked in a real browser on desktop and phone: usually a photo gallery's spare caption buttons), so ${dropped === 1 ? 'it was' : 'they were'} left out.`);
     }
     if (failed) log.push(`The "Button" label check could not open ${failed} page view${failed === 1 ? '' : 's'}; those labels are kept as found.`);
   }

@@ -42,6 +42,11 @@ try:
         check(not any(x in ' '.join(sels) for x in ('1889388497', '1775854035', '1626888154', '1233015223')), 'the photo gallery\'s caption buttons with no link are not reported')
         check(not any('200' in (s or '') for s in sels), 'a "Button" the page\'s script hides once it has loaded is not reported (checked in a real browser)')
         check(any('300' in (s or '') for s in sels) and all(f['severity'] == 'critical' for f in btn), 'a "Button" visitors see is still critical')
+        nl = [f.get('selector') or '' for f in S.get('findings') or [] if f['code'] == 'BUTTON_NO_LINK' and not f.get('gone')]
+        print('  no link:', nl, flush=True)
+        check(not any(x in ' '.join(nl) for x in ('1626888154', '1233015223', '1889388497', '1775854035')), 'the gallery\'s caption buttons are not "Button has no link" either')
+        check(not any('4001' in x for x in nl), 'a button with no link that the page\'s script hides is not reported (real browser)')
+        check(any('5001' in x for x in nl), 'a visible button with no link still is')
         check(any('real browser' in l for l in (S['scan'].get('log') or [])), 'the scan notes say a label was left out after the real-browser check')
         check(not errors, 'no script errors ' + ' | '.join(errors[:3]))
         br.close()

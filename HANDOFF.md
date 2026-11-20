@@ -452,3 +452,7 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - app `buttonSeenCheck` (after markHiddenText): remaining "Button" default-label items, ≤12 pages, desktop + mobile; hidden on both → dropped (scan note). Not found (null) decides nothing. Test: e2e_gallerybtn.py (fixsite `/ppf-vs-ceramic`).
 - engine v30, app v76.
 - Also in 201: engine link check — a relative href (not starting with http(s):// or //) that is not /site/<id>/… is an internal link to its path, never LINK_EDITOR_URL (one client page wrote every header/footer link as "/…", 176 false criticals). Release v49. Test: engine_links.py.
+
+## 202 — Gallery caption buttons are not BUTTON_NO_LINK
+- engine BUTTON_NO_LINK `control` also true for `galleryCaptionButton(a)` and an inline-hidden button (SNEAKY_HIDE). Release v50 (fixes BUTTON_NO_LINK).
+- app `buttonSeenCheck` also takes BUTTON_NO_LINK items: hidden on desktop and phone in a real browser → dropped. e2e_gallerybtn.py covers both. engine v31, app v77.
