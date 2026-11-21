@@ -4,6 +4,30 @@
 
 export const NEWS = [
   {
+    id: '2026-11-21-redirected-pages', date: '2026-11-21', audience: 'all', tag: 'Audits',
+    title: 'Pages that now redirect are not audited as themselves',
+    what: 'A page that redirects to another one (a URL Redirect in Duda, or a page that sends the browser on) was still audited with its old content, so an old town in its address or its old SEO title was reported even though visitors land on the new page. Those pages are now skipped, the page they redirect to is audited instead, and the redirect itself is still checked on Technical SEO. The client report also groups the same finding on several pages into one, with a table of the pages, and every page address in the PDF is a link.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⟳ Rescan</b> (a full rescan is needed for this one): items on redirected pages close.'],
+  },
+  {
+    id: '2026-11-21-client-pdf', date: '2026-11-21', audience: 'all', tag: 'Audits',
+    title: 'Client report as a PDF, with every finding explained',
+    what: 'A PDF to send to the business owner, laid out like a printed audit: a cover with what was checked and what to fix first, then each finding written up the way you would explain it: the page and its address, what is there now (the exact SEO title, H1 or words, and the Business Info detail they conflict with), and what to do, with the options when it depends on the business. It ends with what was corrected since the scan before, the pages reviewed, and what was not checked. Every scan has its own PDF.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>📊 Audit Report</b> → <b>📄 Client report (PDF)</b> (today), or <b>📄 PDF</b> on any scan in the history.'],
+  },
+  {
+    id: '2026-11-21-always-preview', date: '2026-11-21', audience: 'all', tag: 'Audits',
+    title: 'Every audit item opens the page',
+    what: 'Items with no element of their own (an SEO title, a meta description, an AI note about the page\'s copy) had no buttons. Now every item has <b>▶ Preview</b>, <b>🌐 Live</b> and <b>✎ Editor</b>, and an AI item about words in the copy opens the page scrolled to those words. After a rescan, those AI items also point at the paragraph that holds the words, so <b>👁 Page</b> outlines it. <b>👁 Page</b> on the list itself works again too.',
+    where: ['<b>Walkthrough:</b> open any audit: the buttons are there now. <b>⟳ Rescan</b> to have AI items point at their paragraph.'],
+  },
+  {
+    id: '2026-11-20-gmaps-short', date: '2026-11-20', audience: 'all', tag: 'Audits',
+    title: 'Google Maps short links are followed to where they open',
+    what: 'A link like maps.app.goo.gl/… says nothing about the place in its address, so it was reported as "doesn\'t point to a specific place", even when it opened the business\'s own Google listing or one of its reviews (a testimonial\'s name linking to the review). The scan now follows each short link the way a browser does, reads which place Google opens, and compares it with the business. The business\'s own place is fine; another business is a warning that names it; a place Google does not name is only a note to open it.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: those items close or change.'],
+  },
+  {
     id: '2026-11-20-gallery-nolink', date: '2026-11-20', audience: 'all', tag: 'Audits',
     title: 'A photo gallery\'s spare buttons are not "Button has no link" either',
     what: 'The same hidden caption buttons a photo gallery keeps for every picture were also reported as "Button has no link", four or so on every page with a gallery. They are not any more, and neither is any button that is hidden on the page (checked in a real browser once the page has loaded): nobody can click it. A button visitors see that goes nowhere is still reported.',

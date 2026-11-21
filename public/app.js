@@ -7354,6 +7354,7 @@
           }
         },
         ...(wants(/^(LINK_|IMAGE_BROKEN)/) || (plan && plan.links) ? { checkUrls: (urls) => sPost('/api/check', { urls }) } : {}),
+        googlePlaces: (urls) => sPost('/api/check', { places: urls }),
         // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
         ...(wants(/^IMAGE_DUPLICATE/) ? { imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}), saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }) } : {}),
         onProgress: (p) => { state.scanning[id] = plan ? Object.assign({}, p, { message: '⚡ Check updates · ' + p.message }) : p; renderProgress(id); },
@@ -7556,7 +7557,7 @@
    */
   const CONTRAST_MAX_PAGES = 40;
   async function contrastCheck(res, id, log) {
-    const ok = (res.pages || []).filter((p) => !p.notFound && !p.error && !/\/(blog|blogs|post|posts|news)\//i.test(p.path) && !A.isThankYouPath(p.path));
+    const ok = (res.pages || []).filter((p) => !p.notFound && !p.error && !p.redirectTo && !/\/(blog|blogs|post|posts|news)\//i.test(p.path) && !A.isThankYouPath(p.path));
     // The pages most likely to have a contrast problem visitors meet first: the home page, then every page
     // with a form (typed text and placeholders are where it goes wrong), then the shortest addresses.
     const depth = (p) => String(p.path).split('/').filter(Boolean).length;
@@ -7634,7 +7635,7 @@
     if (!state.ai || !state.ai.enabled) return null;
     if (pausedAlready) { log.push('Proofreading and the button check were skipped because the AI is paused; they run on the next rescan.'); return { skipped: true }; }
     const business = aiBusiness(res);
-    const pages = (res.pages || []).filter((p) => !p.notFound).map((p) => ({ path: p.path, title: p.title }));
+    const pages = (res.pages || []).filter((p) => !p.notFound && !p.redirectTo).map((p) => ({ path: p.path, title: p.title }));
     const byPath = new Map((res.pages || []).map((p) => [p.path, p]));
     // Proofreading: every block of text, real pages first (the blocks come sorted that way). The
     // only limit is a very large one (a website with hundreds of blog posts), said in the scan notes.
@@ -7686,7 +7687,7 @@
       out.fit = { pages: fitItems.length, of: (res.fit || []).length, flagged: 0 };
       const verdicts = await run('pagefit', batches(fitItems, 18000, 6, (x) => (x.excerpt || '').length + 600), 'reading each page against its address', { pages });
       const before = res.findings.length;
-      res.findings = A.applyPageFit(res.findings, res.fit, verdicts, res.truth);
+      res.findings = A.applyPageFit(res.findings, res.fit, verdicts, res.truth, wordsLocator(res));
       out.fit.flagged = res.findings.length - before;
     }
     if (proofItems.length && !out.paused) {
@@ -7751,6 +7752,24 @@
       frame.srcdoc = '<!doctype html>' + doc.documentElement.outerHTML;
       document.body.appendChild(frame);
     });
+  }
+  /**
+   * Which element on a page holds some words (an AI item's quote), from the blocks of text the scan read:
+   * the smallest block on that page that contains them. Returns { selector, location } or null.
+   */
+  function wordsLocator(res) {
+    const norm = (t) => String(t || '').toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[^a-z0-9'"$%&@.,:;!?#-]+/g, ' ').trim();
+    const blocks = [].concat(res.prose || [], res.texts || []).filter((b) => b && b.selector && b.selector !== '(page)' && b.text && !/^Head/.test(b.location || ''));
+    return (path, quote) => {
+      const q = norm(String(quote || '').replace(/^["\u201c]|["\u201d]$/g, '')).slice(0, 80); if (q.length < 3) return null;
+      let best = null;
+      blocks.forEach((b) => {
+        if (b.pages && b.pages.length && !b.pages.includes(path)) return;
+        const t = norm(b.text); if (!t.includes(q)) return;
+        if (!best || t.length < best.n) best = { n: t.length, selector: b.selector, location: b.location && !/^(Head|Image)/.test(b.location) ? b.location.split(' ·')[0] : '' };
+      });
+      return best;
+    };
   }
   /**
    * Duda's default "Button" label, checked in a real browser once the page, its pictures and its scripts
@@ -10392,6 +10411,9 @@
   }
   /** Text the browser can jump to and highlight by itself (Chrome/Edge/Safari "text fragments"). */
   function fragmentText(f) {
+    // An AI item: its snippet is the AI's reason, not words on the page; the words it quoted are.
+    if (f.ai && f.ai.quote && !/^Head/.test(f.location || '')) { const q = String(f.ai.quote).replace(/\s+/g, ' ').trim().split(' ').slice(0, 8).join(' '); if (q.length >= 3) return q; }
+    if (/^Head/.test(f.location || '')) return '';
     // No usable snippet: the words found (a phone number, a name) are on the page too, so the browser can find those.
     if (!f.snippet || /^<(img|meta|iframe)\b/i.test(f.snippet)) {
       const w = String(f.found || '').replace(/^"|"$/g, '').replace(/\s+/g, ' ').trim();
@@ -10518,7 +10540,10 @@
     if (!P || P.loading) return '<div class="small faint gbp-note">Checking with Google…</div>';
     const L = P.result && (P.result.listings || []).find((l) => l.platform === 'google' && l.found && l.source === 'places');
     const want = String(f.found || '');
-    const cid = (/[?&]cid=(\d+)/.exec(want) || [])[1] || '';
+    // A short link followed to where it opens carries the place as a feature ID (…!1s0x…:0x825f…): its second half is the cid.
+    const fid = (/0x[0-9a-f]+(?::|%3a)(0x[0-9a-f]+)/i.exec(want + ' ' + (f.expected || '')) || [])[1];
+    let cid = (/[?&]cid=(\d+)/.exec(want + ' ' + (f.expected || '')) || [])[1] || '';
+    if (!cid && fid) { try { cid = BigInt(fid).toString(); } catch (e) { /* not a number */ } }
     const pid = (/(ChIJ[\w-]{10,})/.exec(want) || [])[1] || '';
     if (!L) return `<div class="small faint gbp-note">${!P.result ? `Not checked against Google yet: run <a href="#/site/${esc(s.id)}/profile/presence">🌐 Online presence</a> on the profile${P.maps === false ? ' (exact once the Google Maps key is added)' : ''}.`
       : P.maps === false ? 'Confirming it automatically needs the Google Maps key (System health → Connections and keys). Until then, open it and compare the name with Business Info.'
@@ -11756,8 +11781,15 @@
         if (liveAtItem(s, f)) b.push(`<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website, scrolled to the words">🌐 Live</button>`);
         b.push(`<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor">✎ Editor</button>`);
       }
+      // No element of its own (the SEO title, a description, the page's copy as a whole): the page still opens,
+      // scrolled to the item's words when there are any.
+      if (!hasSel && !f.pageOnly && f.path && !/^(Redirects|Files)$/.test(f.location || '')) {
+        b.push(`<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the preview at this page${fragmentText(f) ? ', scrolled to the words' : ''}">▶ Preview</button>`);
+        if (liveAtItem(s, f)) b.push(`<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website">🌐 Live</button>`);
+        b.push(`<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor">✎ Editor</button>`);
+      }
       if (hasSel) {
-        b.push(`<button class="linkbtn" data-inspect=""${esc(f.id)}" title="Open the page with this element highlighted">👁 Page</button>`);
+        b.push(`<button class="linkbtn" data-inspect="${esc(f.id)}" title="Open the page with this element highlighted">👁 Page</button>`);
         b.push(`<button class="linkbtn" data-prevat="${esc(f.id)}" title="Open the ${esc(A.DEVICE_LABEL[(f.visibleOn && f.visibleOn[0]) || 'desktop'])} preview at this page">▶ Preview</button>`);
         if (liveAtItem(s, f)) b.push(`<button class="linkbtn" data-liveat="${esc(f.id)}" title="Open this page on the published website, as visitors see it">🌐 Live</button>`);
         b.push(`<button class="linkbtn" data-editat="${esc(f.id)}" title="Open this page in the Duda editor (selector copied)">✎ Editor</button>`);
@@ -12816,7 +12848,7 @@
       <div class="db-tiles rep-tiles">${[['Items found', r.items.length], ['⛔ Critical', r.counts.critical || 0], ['⚠ Warning', r.counts.warning || 0], ['ⓘ Info', r.counts.info || 0]].map(([l, n]) => `<div class="db-tile"><span class="db-tile-n">${n}</span><span class="db-tile-l">${l}</span></div>`).join('')}</div>
       <section class="db-card"><h3>By severity</h3>${dbSevBar(r.counts)}<div class="db-status small">${[['open', 'Open'], ['clarification', 'For clarification'], ['hold', 'On hold'], ['done', 'Done'], ['false', 'False alarm']].map(([v, l]) => `<span>${l} <b>${st(v)}</b></span>`).join('')}<span class="faint">status ${x.now ? 'now' : 'at the time of the scan'}</span></div></section>
       <section class="db-card"><h3>By category</h3>${dbHBars(Object.values(cats).sort((a, b) => b.n - a.n), null, 'No items.')}</section>
-      <div class="rep-acts"><button class="btn sm" id="repDl" type="button">⬇ Download this report</button>
+      <div class="rep-acts"><button class="btn sm primary" id="repPdf" type="button" title="A PDF for the business owner, as of this scan">📄 Client report (PDF)</button><button class="btn sm" id="repDl" type="button">⬇ Download this report</button>
         ${others.length ? `<span class="rep-cmp"><label class="small muted" for="repWith">Compare with</label><select id="repWith">${others.map((y) => `<option value="${scans.indexOf(y)}" ${y === def ? 'selected' : ''}>${esc(y.now ? 'Today (now)' : dbDate(y.at) + ' · ' + new Date(y.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</option>`).join('')}</select><button class="btn sm primary" id="repCmp" type="button">Compare</button></span>` : '<span class="small faint">Scan again to have something to compare with.</span>'}</div>
       ${x.seo ? `<section class="db-card"><h3>🔍 Pages created by ${esc(x.seo.by)} (${(x.seo.pages || []).length})</h3>${x.seo.error ? `<div class="small faint">Duda's activity log could not be read: ${esc(x.seo.error)}</div>` : ''}${(x.seo.pages || []).length ? `<div class="rep-list">${x.seo.pages.map((p) => { const path = p.path ? A.normalizePath(String(p.path).replace(/^https?:\/\/[^/]+/i, '')) : ''; const n = path ? r.items.filter((i) => i.p === path).length : null; return `<div class="rep-row seo-pg"><span class="small faint">${esc(p.at ? dbDate(p.at) : '')}</span><span></span><div class="rep-main"><b>${esc(p.title || path || 'Page')}</b>${path ? ` <span class="mono small faint">${esc(path)}</span>` : ''}</div><span class="small ${n ? 'db-worse' : 'muted'} rep-where">${n === null ? '' : n ? `${n} item${n === 1 ? '' : 's'} on this page` : '✓ nothing found'}</span></div>`; }).join('')}</div>` : '<div class="small faint">None in Duda\'s activity log.</div>'}</section>` : ''}
       <section class="db-card"><div class="rep-filter"><h3>Every item (${r.items.length})</h3><input id="repQ" type="search" placeholder="Search items, pages, #number"><select id="repSev"><option value="">All severities</option>${DB_SEV.map((k) => `<option value="${k.k}">${k.label}</option>`).join('')}</select></div><div id="repList"></div></section></div>`;
@@ -12824,6 +12856,7 @@
     draw();
     $('#repQ', body).oninput = (e) => { q = e.target.value.trim().toLowerCase(); limit = 150; draw(); };
     $('#repSev', body).onchange = (e) => { sev = e.target.value; limit = 150; draw(); };
+    $('#repPdf', body).onclick = () => downloadClientPdf(s, x, scans);
     $('#repDl', body).onclick = async () => { repImgs = await proofImages(s, r.items); repDownload(`scan-report-${slug(s.businessName || s.siteId)}-${String(r.at).slice(0, 10)}.html`, reportHtml(s, x, r)); repImgs = {}; };
     if ($('#repCmp', body)) $('#repCmp', body).onclick = () => { const y = scans[Number($('#repWith', body).value)]; if (y) openCompare(s, String(x.at) <= String(y.at) || y.now ? x : y, String(x.at) <= String(y.at) || y.now ? y : x, scans); };
   }
@@ -12864,6 +12897,232 @@
           <div class="cmp-t"><span class="cmp-f cmp-after" style="width:${Math.max(n(b, k) ? 1 : 0, Math.round((n(b, k) / mx) * 100))}%"></span><b>${n(b, k)}</b></div></div><span class="cmp-c">${chg(n(a, k), n(b, k))}</span></div>`).join('')}</div></section>
       <section class="db-card"><h3>By category</h3><div class="table-wrap"><table class="grid db-table"><thead><tr><th>Category</th><th>Earlier</th><th>Later</th><th>Change</th></tr></thead>
         <tbody>${c.cats.map((x) => `<tr><td>${esc(x.k)}</td><td>${x.a}</td><td>${x.b}</td><td>${chg(x.a, x.b)}</td></tr>`).join('')}</tbody></table></div></section>${inFile ? '' : ''}`;
+  }
+  // ---------- Client report: a PDF for the business owner ----------
+  // Each finding is written up the way a reviewer would explain it to the client (the page, its
+  // address, the exact words found, the Business Info detail that conflicts, and what to do), by the
+  // AI from the facts the scan collected; without the AI, a plainer write-up from the same facts.
+  // Laid out like a printed audit: a cover page with the summary, then one section per subject.
+  const CR_SECTIONS = [
+    { k: 'biz', letter: 'B', title: 'Business details and locations', sub: 'Business name, phone, email, address, the towns each page targets, and links to Google and social profiles',
+      test: (f) => !/^(CONTRAST_|ALT_|IMAGE_|PHOTO_|META_|FONT_)/.test(f.code) && (/(^|_)(CITY|TOWN|PLACE|AREA|NAME|PHONE|EMAIL|ADDRESS|MAILTO|TEL|SMS|GMB|SOCIAL|MAP|NAP)(_|$)/.test(f.code) || /^POLICY_(CONTACT|ADDRESS)|^EMAIL_AUTOMATION/.test(f.code) || ['Contact info', 'Business name', 'Location', 'Social'].includes(f.category)) },
+    { k: 'copy', letter: 'C', title: 'Page content and wording', sub: 'Copy that is about the wrong service, unfinished, or left over from a template',
+      test: (f) => /^(PAGE_|AI_PAGE_TOPIC|AI_PAGE_NOTE|AI_TEXT|PLACEHOLDER|LOREM|TEXT_|SPELL|POLICY_|COPYRIGHT|PROOF)/.test(f.code) || f.category === 'Content' },
+    { k: 'photos', letter: 'P', title: 'Photos and images', sub: 'Photos that do not fit their page, watermarks, broken images and image descriptions',
+      test: (f) => /^(PHOTO_|IMAGE_|ALT_)/.test(f.code) || /^Images/.test(f.category || '') },
+    { k: 'links', letter: 'L', title: 'Links, buttons and forms', sub: 'Where links and buttons go, and what the forms ask',
+      test: (f) => /^(LINK_|BUTTON_|FORM_|HIDDEN_LINK)/.test(f.code) || f.category === 'Links' },
+    { k: 'google', letter: 'G', title: 'How Google sees the website', sub: 'SEO titles, descriptions, headings, business data for Google, and redirects',
+      test: (f) => /^(META_|H1_|SCHEMA_|ROBOTS_|SITEMAP_|LLMS_|REDIRECT_|NOINDEX|CANONICAL|FAVICON|HOMESCREEN|ANALYTICS)/.test(f.code) || ['Meta / SEO', 'Schema'].includes(f.category) },
+    { k: 'read', letter: 'R', title: 'Easy to read', sub: 'Text and form fields whose colours are too close to their background', test: (f) => /^CONTRAST_/.test(f.code) || f.category === 'Accessibility' },
+    { k: 'design', letter: 'D', title: 'Design consistency', sub: 'Fonts and photos used in more than one place', test: (f) => /^(FONT_|IMAGE_DUPLICATE)/.test(f.code) || f.category === 'Design' },
+    { k: 'other', letter: 'O', title: 'Other findings', sub: '', test: () => true },
+  ];
+  const CR_SKIP = /^(AI_PENDING|PAGE_FETCH_ERROR|SCAN_)/;
+  const CR_PLACE = /^(?!CONTRAST_).*(^|_)(CITY|TOWN|PLACE)(_|$)/; const CR_TOPIC = /(^|_)TOPIC(_|$)/;
+  const CR_RANK = { critical: 0, outdated: 1, warning: 2, info: 3 };
+  const crPage = (s, path) => (s.pages || []).find((p) => p.path === path) || {};
+  const crName = (s, path) => { const p = crPage(s, path); const t = String(p.title || '').split(/\s+[|│–—-]\s+/)[0].trim(); return path === '/' ? 'Home page' : t || path; };
+  const crH1 = (p) => (Array.isArray(p.h1) ? p.h1.map((h) => (h && h.text) || h).join(' · ') : String(p.h1 || ''));
+  // The published page when the website is live; before that, its preview, so every page address in the PDF opens something.
+  const crUrl = (s, path) => { const d = liveDomain(s) || (s.truth && s.truth.domain) || ''; return d ? `https://${d.replace(/^https?:\/\//, '').replace(/\/$/, '')}${path === '/' ? '/' : path}` : previewUrl(s, path, 'desktop'); };
+  const crUnq = (t) => String(t || '').replace(/^["“]|["”]$/g, '').trim();
+  /** The items a client should see: open, not hidden on purpose, not about the scan itself. */
+  function crItems(s, list) {
+    return list.filter((f) => f && !f.gone && (f.status === 'open' || f.status === 'clarification' || !f.status) && !CR_SKIP.test(f.code) && f.category !== 'Scan');
+  }
+  /** Items that belong together become one finding: a page's town (title, H1, copy), a page's topic, or the same thing on many pages. */
+  function crEntries(s, items) {
+    const map = new Map();
+    items.forEach((f) => {
+      const sec = CR_SECTIONS.find((x) => x.test(f));
+      const path = (f.pages && f.pages[0]) || f.path || '/';
+      const fam = CR_PLACE.test(f.code) ? 'place' : CR_TOPIC.test(f.code) ? 'topic' : '';
+      const k = fam ? fam + '|' + path : sec.k === 'read' ? 'read' : [f.code.replace(/^AI_/, ''), crUnq(f.found).toLowerCase().slice(0, 80)].join('|');
+      let e = map.get(k);
+      if (!e) { e = { k: 'e' + (map.size + 1), sec: sec.k, path, items: [], pages: [] }; map.set(k, e); }
+      e.items.push(f);
+      (f.pages && f.pages.length ? f.pages : [path]).forEach((p) => { if (!e.pages.includes(p)) e.pages.push(p); });
+    });
+    let out = [...map.values()];
+    // The same kind of finding on several pages is ONE finding with a table of the pages ("pages 1, 2 and 3
+    // have this"), not the same paragraph written again for each page.
+    const kindOf = (e) => { const f = e.items[0]; return e.sec + '|' + (CR_PLACE.test(f.code) ? 'place' : CR_TOPIC.test(f.code) ? 'topic' : f.code.replace(/^AI_/, '') + '|' + String(f.message || '').replace(/"[^"]*"|\u201c[^\u201d]*\u201d|\d+/g, '').replace(/\(.*?\)/g, '').trim().toLowerCase()); };
+    const kinds = new Map();
+    out.forEach((e) => { if (e.sec === 'read') return; const k = kindOf(e); (kinds.get(k) || kinds.set(k, []).get(k)).push(e); });
+    kinds.forEach((list) => {
+      if (list.length < 2) return;
+      const first = list[0];
+      first.rows = list.map((e) => ({ path: e.path, pages: e.pages, items: e.items }));
+      list.slice(1).forEach((e) => { e.items.forEach((f) => first.items.push(f)); e.pages.forEach((p) => { if (!first.pages.includes(p)) first.pages.push(p); }); e.merged = true; });
+    });
+    out = out.filter((e) => !e.merged);
+    out.forEach((e) => { e.sev = e.items.reduce((m, f) => (CR_RANK[f.severity] < CR_RANK[m] ? f.severity : m), 'info'); e.n = Math.min(...e.items.map((f) => f.num || 1e9)); });
+    return out.sort((a, b) => CR_RANK[a.sev] - CR_RANK[b.sev] || b.items.length - a.items.length || a.n - b.n);
+  }
+  /** What the AI is given for one finding: the page, its title, H1 and description, and what each check found. */
+  function crFacts(s, e) {
+    if (e.rows) {
+      return { k: e.k, page: `${e.rows.length} pages`, url: '', pages: e.pages.slice(0, 6), facts: {}, many: e.rows.length,
+        checks: e.rows.slice(0, 12).map((r) => { const f = r.items[0]; const p = crPage(s, r.path); return { message: String(f.message || '').replace(/^AI: /, ''), where: `${crName(s, r.path)} (${crUrl(s, r.path)})${f.location && f.location !== 'Body' ? ' · ' + f.location : ''}`,
+          found: crUnq(f.found), expected: crUnq(f.expected).replace(/^Suggested: /, ''), reason: [(f.ai && f.ai.reason) || '', /CITY|TOWN|TOPIC|NAME|META_|H1_/.test(f.code) ? `SEO title "${p.title || ''}", H1 "${crH1(p)}"` : ''].filter(Boolean).join(' · ') }; }) };
+    }
+    const p = crPage(s, e.path);
+    const head = e.items.some((f) => /^Head/.test(f.location || '') || /CITY|TOWN|TOPIC|NAME|META_|H1_/.test(f.code));
+    return {
+      k: e.k, page: crName(s, e.path), url: crUrl(s, e.path), pages: e.pages.slice(0, 6),
+      facts: head ? { 'SEO title': p.title || '', 'Main heading (H1)': crH1(p), 'Meta description': p.description || '' } : { 'Main heading (H1)': crH1(p) },
+      checks: e.items.slice(0, 8).map((f) => ({ message: String(f.message || '').replace(/^AI: /, ''), where: f.location || '', found: crUnq(f.found), expected: crUnq(f.expected).replace(/^Suggested: /, ''), reason: (f.ai && f.ai.reason) || '' })),
+    };
+  }
+  /** Without the AI: the same facts, written plainly. */
+  function crPlain(s, e) {
+    const f = e.items[0]; const found = crUnq(f.found); const exp = crUnq(f.expected).replace(/^Suggested: /, '');
+    if (e.rows) return { title: String(f.message || '').replace(/^AI: /, '').replace(/\s*\((SEO title|H1 heading|page copy|meta description)\)$/, ''), current: `Found on ${e.rows.length} pages, listed below with what each one says now.`, recommendation: exp ? 'Correct each page as shown in the table.' : 'Review each page in the table and correct it, or confirm it is intended.', priority: e.sev === 'critical' ? 'now' : e.sev === 'info' ? 'later' : 'soon' };
+    const where = `${crName(s, e.path)} (${crUrl(s, e.path)})${e.pages.length > 1 ? ` and ${e.pages.length - 1} more page${e.pages.length === 2 ? '' : 's'}` : ''}`;
+    return {
+      title: String(f.message || '').replace(/^AI: /, '').replace(/\s*\((SEO title|H1 heading|page copy|meta description)\)$/, ''),
+      current: `On ${where}${f.location && !/^Body$/.test(f.location) ? `, in the ${f.location.toLowerCase().replace('head / meta', 'page title and description')}` : ''}${found ? `: “${found}”.` : '.'}${e.items.length > 1 ? ` ${e.items.length} related places were found.` : ''}`,
+      recommendation: exp ? `Change it to: ${exp}.` : 'Review and correct it, or confirm it is intended.',
+      priority: e.sev === 'critical' ? 'now' : e.sev === 'info' ? 'later' : 'soon',
+    };
+  }
+  /** The write-ups, from the AI in small batches (remembered for 60 days), the plain version where it could not answer. */
+  async function crWrite(s, entries, onStep) {
+    const use = entries.filter((e) => e.sec !== 'read').slice(0, 70);
+    let aiOk = !!(state.ai && state.ai.enabled), done = 0;
+    const business = Object.assign(aiBusiness({ truth: s.truth || {}, pages: s.pages || [], findings: s.findings || [] }), {
+      phone: ((s.truth || {}).phones || []).map(A.fmtPhone).join(', '), email: ((s.truth || {}).emails || []).join(', '), domain: liveDomain(s) || (s.truth || {}).domain || '' });
+    for (let i = 0; i < use.length && aiOk; i += 8) {
+      const batch = use.slice(i, i + 8);
+      try {
+        const r = await post('/api/ai', { op: 'report', business, items: batch.map((e) => crFacts(s, e)) });
+        (r.results || []).forEach((v) => { const e = batch.find((x) => x.k === v.k); if (e) e.w = v; });
+      } catch (er) { aiOk = false; }
+      done += batch.length; if (onStep) onStep(done, use.length);
+    }
+    entries.forEach((e) => { if (!e.w) e.w = crPlain(s, e); });
+    return aiOk;
+  }
+  const CR_CSS = `@page{size:letter;margin:0.78in 0 0.72in}*{box-sizing:border-box}
+html{-webkit-print-color-adjust:exact;print-color-adjust:exact}body{margin:0;font:10.5pt/1.5 'Source Sans 3','Source Sans Pro',Arial,sans-serif;color:#1d2433;background:#fff}
+main{padding:0 0.72in}h1,h2,h3,h4,.kick{font-family:'Archivo',Arial,sans-serif}
+.kick{font-size:8.5pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#1b6b9a;margin:0 0 6px}
+h1{font-size:30pt;line-height:1.08;margin:4px 0 10px;color:#14263d;font-weight:800;letter-spacing:-.01em}
+.lede{font:700 13pt/1.35 'Archivo',Arial,sans-serif;color:#14263d;margin:0 0 6px}
+.meta{font-size:9pt;color:#5b6475}.meta a{color:#1b6b9a;text-decoration:none}
+.box{background:#eef3f7;border:1px solid #d3dde6;border-radius:3px;padding:14px 16px;margin:16px 0}.box h3{margin:0 0 6px;font-size:11.5pt;color:#14263d}.box p{margin:0}
+table{border-collapse:collapse;width:100%;margin:10px 0 16px;font-size:9.5pt}th{background:#14263d;color:#fff;text-align:left;font:700 8.5pt 'Archivo',Arial,sans-serif;padding:8px 10px}
+td{padding:8px 10px;border-bottom:1px solid #dfe5ec;vertical-align:top}tr:nth-child(even) td{background:#f4f7fa}
+h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size:8.5pt;color:#5b6475;margin:0 0 14px;text-transform:uppercase;letter-spacing:.04em}
+.sec{break-before:page}.fix ol{margin:4px 0 0;padding-left:18px}.fix li{margin:2px 0}
+.it{break-inside:avoid;margin:0 0 16px}.it h4{font-size:11.5pt;margin:0 0 2px;color:#14263d}.it h4 .n{color:#14263d;margin-right:6px}
+.where{font-size:9pt;color:#5b6475;margin:0 0 6px}.where a{color:#1b6b9a;text-decoration:none}
+.it p{margin:0 0 6px}.it b.lb{color:#14263d}.tag{display:inline-block;font:700 7.5pt 'Archivo',Arial,sans-serif;letter-spacing:.05em;text-transform:uppercase;padding:1px 6px;border-radius:2px;margin-left:8px;vertical-align:2px}
+.t-now{background:#fde8e7;color:#a8251c}.t-soon{background:#fdf0dc;color:#8a4b06}.t-later{background:#eef0f3;color:#4a5466}
+.foot{font-size:8.5pt;color:#7a8394}.grid3{columns:3;column-gap:18px;font-size:9pt}.grid3 div{break-inside:avoid;padding:4px 0;border-bottom:1px solid #e3e8ee;color:#1b6b9a}
+.note{font-size:8.5pt;color:#5b6475}a{color:#1b6b9a;text-decoration:none}.grid3 a{color:#1b6b9a}table.rows{margin:6px 0 4px;font-size:9pt}table.rows th{padding:6px 8px}table.rows td{padding:6px 8px}.it.many{break-inside:auto}.proof img{max-width:340px;width:100%;border:1px solid #d3dde6;margin:2px 0 6px;display:block}`;
+  function crHtml(s, ctx) {
+    const { entries, fixed, prevAt, at, items } = ctx;
+    const biz = s.businessName || (s.truth || {}).businessName || s.siteId;
+    const date = new Date(at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const dom = liveDomain(s) || (s.truth || {}).domain || '';
+    const by = (k) => entries.filter((e) => e.sec === k);
+    const now = entries.filter((e) => e.w && e.w.priority === 'now');
+    const sc = s.scan || {};
+    const pages = (s.pages || []).filter((p) => !p.notFound && !p.error && !p.redirectTo);
+    const crit = items.filter((f) => f.severity === 'critical').length;
+    const head = crit ? 'The website needs a correction pass.' : entries.length ? 'A few things to tidy up.' : 'The website is in good shape.';
+    const secs = CR_SECTIONS.filter((x) => by(x.k).length);
+    const topNames = secs.slice().sort((a, b) => by(b.k).filter((e) => e.sev === 'critical').length - by(a.k).filter((e) => e.sev === 'critical').length).slice(0, 3).map((x) => x.title.toLowerCase());
+    const link = (path) => `<a href="${esc(crUrl(s, path))}">${esc(crName(s, path))}</a> <span class="note">${esc(path)}</span>`;
+    const num = (sec, i) => sec.letter + String(i + 1).padStart(2, '0');
+    const proof = (e) => { const f = e.items.find((x) => repImgs[x.id]); return f ? `<div class="proof"><img src="${repImgs[f.id].src}" alt=""></div>` : ''; };
+    // Web addresses in the written text become links.
+    const lk = (t) => esc(t).replace(/https?:\/\/[^\s<"\u201d)]+[^\s<"\u201d).,;:!?]/g, (u) => `<a href="${u}">${u}</a>`);
+    const rowsTable = (e) => !e.rows ? '' : `<table class="rows"><thead><tr><th style="width:34%">Page</th><th>What is there now</th>${e.rows.some((r) => r.items[0].expected) ? '<th style="width:30%">Should be</th>' : ''}</tr></thead><tbody>${e.rows.slice(0, 25).map((r) => { const f = r.items[0]; return `<tr><td><a href="${esc(crUrl(s, r.path))}">${esc(crName(s, r.path))}</a><div class="note">${esc(r.path)}${r.pages.length > 1 ? ` +${r.pages.length - 1}` : ''}</div></td><td>${f.found ? `\u201c${esc(crUnq(f.found).slice(0, 160))}\u201d` : esc(String(f.message || '').replace(/^AI: /, ''))}${f.location && f.location !== 'Body' ? `<div class="note">${esc(String(f.location).replace('Head / Meta', 'page title and description'))}</div>` : ''}</td>${e.rows.some((x) => x.items[0].expected) ? `<td>${esc(crUnq(f.expected).replace(/^Suggested: /, '').slice(0, 140))}</td>` : ''}</tr>`; }).join('')}</tbody></table>${e.rows.length > 25 ? `<p class="note">And ${e.rows.length - 25} more pages.</p>` : ''}`;
+    const itemHtml = (sec, e, i) => `<div class="it${e.rows ? ' many' : ''}"><h4><span class="n">${num(sec, i)}</span>${esc(e.w.title)}<span class="tag t-${esc(e.w.priority)}">${e.w.priority === 'now' ? 'Fix now' : e.w.priority === 'later' ? 'When convenient' : 'Fix soon'}</span></h4>
+      <div class="where">${e.rows ? `${e.rows.length} pages, listed below` : link(e.path)}${!e.rows && e.pages.length > 1 ? ` and ${e.pages.length - 1} more page${e.pages.length === 2 ? '' : 's'}` : ''}${e.items[0].location && e.items[0].location !== 'Body' ? ` → ${esc(String(e.items[0].location).replace('Head / Meta', 'page title and description'))}` : ''}</div>
+      <p><b class="lb">Current:</b> ${lk(e.w.current)}</p><p><b class="lb">Recommendation:</b> ${lk(e.w.recommendation)}</p>${rowsTable(e)}${e.rows ? '' : proof(e)}
+      ${!e.rows && e.pages.length > 3 ? `<div class="foot">Pages: ${e.pages.slice(0, 8).map(esc).join(', ')}${e.pages.length > 8 ? ` and ${e.pages.length - 8} more` : ''}</div>` : ''}</div>`;
+    const readTable = () => {
+      const rows = {}; by('read').forEach((e) => e.items.forEach((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).forEach((p) => { const r = rows[p] || (rows[p] = { n: 0, ex: [] }); r.n++; if (r.ex.length < 2 && f.found) r.ex.push(crUnq(f.found).slice(0, 50)); })));
+      const list = Object.entries(rows).sort((a, b) => b[1].n - a[1].n);
+      return `<p>On these pages, some text or form fields are hard to read because their colour is too close to the background behind them (the web accessibility standard asks for a contrast of at least 4.5 to 1 for normal text). Visitors with weaker eyesight, or on a phone in sunlight, may not be able to read them.</p>
+        <table><thead><tr><th>Page</th><th>Hard-to-read pieces</th><th>For example</th></tr></thead><tbody>${list.slice(0, 40).map(([p, r]) => `<tr><td>${link(p)}</td><td>${r.n}</td><td>${esc(r.ex.join(' · '))}</td></tr>`).join('')}</tbody></table>
+        ${list.length > 40 ? `<p class="note">And ${list.length - 40} more pages.</p>` : ''}<p><b class="lb">Recommendation:</b> darken the text (or lighten its background) on these pieces, starting with buttons and form fields; the website team can apply one colour change to fix most of them at once.</p>`;
+    };
+    let secN = 1;
+    const body = `<main>
+      <div class="kick">${esc(biz)} / ${esc(date)}</div>
+      <h1>${prevAt ? 'Updated website audit' : 'Website audit'}</h1>
+      <p class="lede">${entries.length ? `${entries.length} finding${entries.length === 1 ? '' : 's'} across ${pages.length} pages${fixed.length ? `, and ${fixed.length} correction${fixed.length === 1 ? '' : 's'} confirmed since the last check` : ''}.` : 'Nothing open on the website at this check.'}</p>
+      <div class="meta">${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a> • ` : ''}Prepared for ${esc(biz)} and the website team.</div>
+      <div class="box"><h3>${esc(head)}</h3><p>${crit ? `The most important remaining issues concern ${esc(topNames.join(', '))}. ` : ''}${now.length ? `${now.length} finding${now.length === 1 ? ' needs' : 's need'} fixing first; the rest can follow in the order of this report.` : 'Nothing needs urgent attention.'}${fixed.length ? ` ${fixed.length} earlier finding${fixed.length === 1 ? ' has' : 's have'} been corrected since ${esc(new Date(prevAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric' }))}.` : ''}</p></div>
+      <table><thead><tr><th style="width:32%">Review coverage</th><th>What was checked</th></tr></thead><tbody>
+        <tr><td>${pages.length} pages</td><td>Every page of the website, on desktop, tablet and phone, compared with the business details on file.</td></tr>
+        ${sc.externalLinks ? `<tr><td>${sc.externalLinks} links to other websites</td><td>Each one opened to confirm it still works, plus every link between the website's own pages.</td></tr>` : ''}
+        ${sc.images ? `<tr><td>${sc.images} images</td><td>Image descriptions for Google, broken images${(sc.contrast || {}).pages ? ', and the photos on each page looked at as visitors see them' : ''}.</td></tr>` : ''}
+        ${(sc.contrast || {}).pages ? `<tr><td>${sc.contrast.pages} pages measured</td><td>How readable the text and form fields are, measured in a real browser on desktop and phone.</td></tr>` : ''}
+        <tr><td>Search and Google</td><td>SEO titles, descriptions, headings, the business data Google reads${(s.files || {}).robots ? ', robots.txt and the sitemap' : ''}, and redirects.</td></tr>
+      </tbody></table>
+      ${now.length ? `<div class="fix"><h3 style="margin:14px 0 4px;color:#14263d">Fix first</h3><ol>${now.slice(0, 5).map((e) => `<li>${esc(e.w.title)}</li>`).join('')}</ol></div>` : ''}
+      <h3 style="margin:18px 0 4px;color:#14263d">How to use this report</h3>
+      <p class="note">Findings are grouped by subject${secs.length ? ': ' + secs.map((x) => `${x.letter} — ${esc(x.title)}`).join('; ') : ''}. Each one names the page, shows what is there now, and recommends what to change. Page addresses open the published page.</p>
+      ${secs.map((sec) => `<section class="sec"><div class="kick">${String(++secN).padStart(2, '0')} / Website review</div><h2 class="st">${esc(sec.title)}</h2><div class="sub">${esc(sec.sub)}</div>
+        ${sec.k === 'read' ? readTable() : by(sec.k).map((e, i) => itemHtml(sec, e, i)).join('')}</section>`).join('')}
+      <section class="sec"><div class="kick">${String(++secN).padStart(2, '0')} / Website review</div><h2 class="st">Completed corrections and coverage</h2>
+        ${fixed.length ? `<div class="sub">Corrected since the check on ${esc(new Date(prevAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }))}</div>
+          <table><thead><tr><th>Corrected</th><th style="width:34%">Page</th></tr></thead><tbody>${fixed.slice(0, 40).map((i) => `<tr><td>${esc(String(i.m || '').replace(/^AI: /, ''))}${i.f ? `<div class="note">Was: “${esc(crUnq(i.f).slice(0, 120))}”</div>` : ''}</td><td>${link(i.p || '/')}</td></tr>`).join('')}</tbody></table>${fixed.length > 40 ? `<p class="note">And ${fixed.length - 40} more.</p>` : ''}` : '<div class="sub">This is the first check on record.</div>'}
+        <h3 style="color:#14263d;margin:16px 0 6px">Pages included in this review</h3>
+        <div class="grid3">${pages.slice(0, 150).map((p) => `<div><a href="${esc(crUrl(s, p.path))}">${esc(crName(s, p.path))}</a></div>`).join('')}</div>${pages.length > 150 ? `<p class="note">And ${pages.length - 150} more.</p>` : ''}
+        <h3 style="color:#14263d;margin:16px 0 6px">Verification limits</h3>
+        <p class="note">This review reads every page as published (or as drafted, before publishing), checks links and images, and measures readability in a real browser. It does not submit forms, test email routing or phone forwarding, measure conversion tracking, or certify accessibility. Business hours, prices and service areas should still be confirmed with the business.</p>
+      </section></main>`;
+    const doc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(biz)} — Website audit</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+      <style>${CR_CSS}</style></head><body>${body}</body></html>`;
+    const header = `<style>#header,#footer{padding:0!important}</style><div style="width:100%;height:0.46in;background:#14263d;color:#fff;font:700 7.5px Arial,sans-serif;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between;padding:0 0.72in;-webkit-print-color-adjust:exact;print-color-adjust:exact"><span>${esc(biz.toUpperCase())}</span><span>WEBSITE AUDIT • ${esc(date.toUpperCase())}</span></div>`;
+    const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>Current findings • Recommendations • Completed corrections</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
+    return { doc, header, footer, name: `website-audit-${slug(biz)}-${String(at).slice(0, 10)}.pdf` };
+  }
+  /** Build the client report for one scan (x.now: the audit as it is today) and download it as a PDF. */
+  async function downloadClientPdf(s, x, scans) {
+    modal(`<header><h2>📄 Client report</h2><button class="btn ghost" data-close>✕</button></header><div class="body"><p id="crMsg">Reading the audit…</p><div class="small faint">The findings are written up for the business owner: the page, what is there now and what to change. Items marked False alarm, On hold, Exempt or Done are left out.</div></div>`);
+    const msg = (t) => { const m = $('#crMsg'); if (m) m.textContent = t; };
+    try {
+      const r = await dbReport(s, x); if (!r) throw new Error('This scan was made before scan reports were kept.');
+      const byId = new Map((s.findings || []).map((f) => [f.id, f]));
+      const list = x.now ? (s.findings || []) : r.items.map((i) => Object.assign({ id: i.id, num: i.n, code: i.c, severity: i.s, category: i.g, message: i.m, path: i.p, found: i.f, expected: i.e, location: i.l, status: i.st }, byId.has(i.id) ? { pages: byId.get(i.id).pages, ai: byId.get(i.id).ai } : {}));
+      const items = crItems(s, list);
+      const entries = crEntries(s, items);
+      // What was fixed since the scan before this one.
+      // "Today" is the latest scan with the statuses set since, so it is compared with the scan before that one.
+      const idx = scans.indexOf(x); const before = scans.slice(0, idx < 0 ? scans.length : idx).filter((y) => y.rep && !y.now);
+      if (x.now && before.length) before.pop();
+      const prevX = before.pop();
+      let fixed = []; let prevAt = '';
+      if (prevX) { try { const pr = await dbReport(s, prevX); if (pr) { fixed = compareReports(pr, r).fixed.filter((i) => !CR_SKIP.test(i.c) && i.st !== 'false'); prevAt = prevX.at; } } catch (e) { /* no comparison */ } }
+      msg(`Writing up ${entries.length} finding${entries.length === 1 ? '' : 's'}…`);
+      const aiOk = await crWrite(s, entries, (d, n) => msg(`Writing up the findings ${d}/${n}…`));
+      msg('Adding proof pictures…');
+      repImgs = await proofImages(s, entries.slice(0, 40).map((e) => e.items[0]));
+      const out = crHtml(s, { entries, fixed, prevAt, at: x.now ? new Date().toISOString() : x.at, items });
+      repImgs = {};
+      msg('Making the PDF…');
+      let blob = null;
+      try {
+        const res = await fetch('/api/capture', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': 'application/json' }, viewHeaders()), body: JSON.stringify({ op: 'pdf', site: s.id, html: out.doc, header: out.header, footer: out.footer, name: out.name }) });
+        if (res.ok && /pdf/.test(res.headers.get('content-type') || '')) blob = await res.blob();
+      } catch (e) { blob = null; }
+      if (blob) {
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = out.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        msg(`Downloaded ${out.name}.${aiOk ? '' : ' The AI was not available, so the findings are written more plainly.'}`);
+      } else {
+        repDownload(out.name.replace(/\.pdf$/, '.html'), out.doc);
+        msg('The PDF could not be made on the server right now, so the report was downloaded as a page instead: open it and print it (Ctrl/Cmd + P) to save it as a PDF.');
+      }
+    } catch (e) { msg(e.message || String(e)); }
   }
   // ---------- downloaded reports: one HTML file that opens in any browser and prints to PDF ----------
   function repDownload(name, html) {
@@ -12951,8 +13210,8 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
               <td>${(x.counts || {}).critical || 0}${(x.counts || {}).outdated ? ` <span class="small faint">+${x.counts.outdated} outdated</span>` : ''}</td><td>${(x.counts || {}).warning || 0}</td><td>${(x.counts || {}).info || 0}</td><td><b>${tot(x)}</b></td>
               <td>${dbChange(p ? tot(p) : 0, tot(x))}${x.auto && (x.fixed || x.added) ? `<div class="small faint">${x.fixed ? `${x.fixed} fixed` : ''}${x.fixed && x.added ? ' · ' : ''}${x.added ? `${x.added} new` : ''}</div>` : ''}</td>
               <td>${x.pages || '—'}</td><td class="nowrap">${x.ms ? fmtTook(x.ms) : '<span class="faint">—</span>'}</td><td>${esc(x.byName || nameOf(x.by, '—'))}</td>
-              <td class="db-row-acts">${x.rep ? `<button class="btn sm" data-dbview="${i}" title="Every item this scan found, to look through, download or compare">📋 View</button>` : x.auto ? '<span class="small faint" title="Scanned before scan reports were kept">numbers only</span>' : ''}${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
-          <div class="db-acts"><button class="btn sm" id="dbNow" type="button" title="Every item open or closed on this audit today">📋 Today's report</button>${scans.some((x) => x.rep) ? `<button class="btn sm" id="dbFirstNow" type="button" title="What was fixed, what is new and what is still there since the first scan with a report">⇄ ${scans.filter((x) => x.rep).length > 1 ? 'First scan vs today' : 'Scan vs today'}</button>` : ''}${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
+              <td class="db-row-acts">${x.rep ? `<button class="btn sm" data-dbview="${i}" title="Every item this scan found, to look through, download or compare">📋 View</button><button class="btn sm" data-dbpdf="${i}" title="The client report (PDF) as of this scan">📄 PDF</button>` : x.auto ? '<span class="small faint" title="Scanned before scan reports were kept">numbers only</span>' : ''}${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
+          <div class="db-acts"><button class="btn sm primary" id="dbPdf" type="button" title="A PDF for the business owner: each finding explained (the page, what is there now, what to change), what was fixed since the last scan, and what was checked">📄 Client report (PDF)</button><button class="btn sm" id="dbNow" type="button" title="Every item open or closed on this audit today">📋 Today's report</button>${scans.some((x) => x.rep) ? `<button class="btn sm" id="dbFirstNow" type="button" title="What was fixed, what is new and what is still there since the first scan with a report">⇄ ${scans.filter((x) => x.rep).length > 1 ? 'First scan vs today' : 'Scan vs today'}</button>` : ''}${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
             <span class="small faint">Each tool counts differently, so a result is only compared with an earlier result from the same tool.</span></div>
           <form class="db-form" id="dbForm" hidden>
             <label class="field">Tool<input id="dbTool" list="dbTools" required maxlength="60" placeholder="Semrush, Ahrefs…"><datalist id="dbTools">${DB_TOOLS.map((t) => `<option value="${esc(t)}">`).join('')}</datalist></label>
@@ -12999,6 +13258,8 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
     const withNow = scans.concat({ now: true, at: new Date().toISOString(), tool: 'Site Auditor', auto: true });
     $$('[data-dbview]', body).forEach((b) => (b.onclick = () => openScanReport(s, scans[Number(b.dataset.dbview)], withNow)));
     $('#dbNow', body).onclick = () => openScanReport(s, withNow[withNow.length - 1], withNow);
+    $('#dbPdf', body).onclick = () => downloadClientPdf(s, withNow[withNow.length - 1], withNow);
+    $$('[data-dbpdf]', body).forEach((b) => (b.onclick = () => downloadClientPdf(s, scans[Number(b.dataset.dbpdf)], withNow)));
     if ($('#dbFirstNow', body)) $('#dbFirstNow', body).onclick = () => openCompare(s, scans.find((x) => x.rep), withNow[withNow.length - 1], withNow);
     $('#dbCsv', body).onclick = () => {
       const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
@@ -13223,6 +13484,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
             <button class="btn sm primary" id="drInspect">👁 Show on page</button> <button class="btn sm ghost" data-copy="${esc(fv.selector)}">Copy selector</button>
             <button class="btn sm ghost" id="drSnip" title="Copy a console snippet that scrolls to and highlights this element">⌖ Console snippet</button>
             <div class="sel-actions dr-open">${selLinks(fv)}</div>` : fv.pageOnly ? `<div class="small muted">Read from the published page's text by the auto audit, so there is no element to point at. These open the page scrolled to the words${autoWords(f) ? `: “${esc(autoWords(f).slice(0, 80))}”` : ''}.</div>
+            <div class="sel-actions dr-open">${selLinks(fv)}</div>` : fv.path ? `<div class="small muted">${/^Head/.test(fv.location || '') ? 'In the page\'s head (what Google reads), not an element on the page.' : 'No single element: it is about the page as a whole.'} These open the page${fragmentText(fv) ? ' scrolled to the words' : ''}.</div>
             <div class="sel-actions dr-open">${selLinks(fv)}</div>` : '<span class="faint">(whole page)</span>'}</div>
         </div>
         ${aiPendingList(f)}

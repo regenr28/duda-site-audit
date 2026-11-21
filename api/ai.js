@@ -704,6 +704,54 @@ PHOTOS:` }];
   return res.status(200).json({ results, used: used ? aliasOf(used.id) : '' });
 }
 
+// ---------- Client report: each finding written up the way a careful reviewer would explain it ----------
+const REPORT_SYSTEM = `You write the findings of a WEBSITE AUDIT REPORT that a web agency sends to its client, a car-care business owner. The owner is not technical.
+For each FINDING you get: the page (its name, full web address, SEO title, main heading H1, meta description), what the audit checks found there (messages, the words found, what was expected, the check's own reasoning), and the business's details from its Business Info.
+Write each finding like this example (a page whose SEO title names a different town than its heading):
+  title: "Confirm the target area of the Home & Office Coating page"
+  current: "The page at https://www.example.com/service/residential-coating has the SEO title \\"Residential Coatings Philadelphia, PA | Example Detailing\\", but its H1 reads \\"Warminster, PA's Best Option for Residential Ceramic Coatings\\". The business is based at 125 Industrial Dr, Warminster, PA 18974."
+  recommendation: "Confirm which area this page should target. If it is Philadelphia, say so in the H1 and the page copy; if it is Warminster, update the SEO title to match. Targeting Philadelphia is fine if the business serves it, but the page should say so clearly."
+Rules:
+- Dig into the facts given: quote the exact words (title, H1, the text found) in double quotes, name the page by its name and give its full address once, and bring in the Business Info detail that shows the conflict (address, phone, name, towns served).
+- Use ONLY the facts given. Never invent numbers, towns, services or reasons. If something is unclear, recommend confirming it with the business.
+- "title": an action, at most 12 words, plain words ("Remove the editor note left in the RV FAQ", "Correct the phone number in the footer").
+- "current": what is on the website now, 1 to 3 sentences.
+- "recommendation": what to do, 1 to 3 sentences; give the options when the right answer depends on the business.
+- When one finding covers several pages ("Page: N pages", one check line per page), write ONE title, ONE current and ONE recommendation for all of them: what they have in common, how many pages, and the pattern (for example "8 pages name Warminster in their meta description while their address names another town"). A table listing each page and its words is printed under your text, so do not go through the pages one by one and do not repeat the same sentence per page.
+- Do not repeat the same background (the business's address, its name) in every finding: bring it in only where it is the point.
+- No jargon: say "SEO title (the page's title in Google)" the first time, "main heading" for H1, "link", "photo". No CSS selectors, no code, no check names, no severity words, no "AI".
+- "priority": "now" for wrong business details, another business's name or town, notes left in the copy, broken pages or links; "soon" for wording, SEO titles and descriptions, photos; "later" for polish.
+Respond with JSON only: {"results":[{"k":"<the finding's key>","title":"…","current":"…","recommendation":"…","priority":"now|soon|later"}]}`;
+async function reportWrite(req, res, b, list) {
+  const business = b.business || {};
+  const items = [].concat(b.items || []).filter((x) => x && x.k).slice(0, 10);
+  if (!items.length) return res.status(200).json({ results: [] });
+  const cacheKey = P + 'airep:' + sha(String(business.name || '')).slice(0, 16);
+  const keyOf = (x) => 'r1' + sha(JSON.stringify([x.page, x.facts, x.checks])).slice(0, 22);
+  const [raw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
+  const results = []; const todo = [];
+  items.forEach((x, k) => { const c = raw && raw[k] ? jparse(raw[k], null) : null; if (c) results.push(Object.assign({ k: x.k, cached: true }, c)); else todo.push(x); });
+  if (todo.length) {
+    const user = `${businessHeader(business)}${business.phone ? `Phone: ${business.phone}\n` : ''}${business.email ? `Email: ${business.email}\n` : ''}${business.domain ? `Website: https://${business.domain}\n` : ''}
+FINDINGS:
+${todo.map((x) => `=== key ${x.k}
+Page: ${String(x.page || '').slice(0, 120)}${x.url ? ' · ' + String(x.url).slice(0, 200) : ''}${x.pages && x.pages.length > 1 ? ` (also on ${x.pages.length - 1} more pages: ${x.pages.slice(1, 4).join(', ')})` : ''}
+${Object.entries(x.facts || {}).filter(([, v]) => v).map(([k, v]) => `${k}: "${String(v).slice(0, 300)}"`).join('\n')}
+Checks found:
+${[].concat(x.checks || []).slice(0, 8).map((c) => `- ${String(c.message || '').slice(0, 200)}${c.where ? ` [${String(c.where).slice(0, 60)}]` : ''}${c.found ? ` | found: ${String(c.found).slice(0, 300)}` : ''}${c.expected ? ` | expected: ${String(c.expected).slice(0, 200)}` : ''}${c.reason ? ` | why: ${String(c.reason).slice(0, 200)}` : ''}`).join('\n')}`).join('\n')}`;
+    const { parsed } = await callChain(list, REPORT_SYSTEM, user);
+    const byK = new Map(todo.map((x) => [String(x.k), x])); const save = [];
+    [].concat(parsed.results || []).forEach((v) => {
+      const x = byK.get(String(v && v.k)); if (!x) return;
+      const c = { title: String(v.title || '').slice(0, 140), current: String(v.current || '').slice(0, 900), recommendation: String(v.recommendation || '').slice(0, 900), priority: /^(now|soon|later)$/.test(v.priority) ? v.priority : 'soon' };
+      if (!c.title || !c.current) return;
+      results.push(Object.assign({ k: x.k }, c)); save.push(keyOf(x), JSON.stringify(c));
+    });
+    if (save.length) await redis(['HSET', cacheKey, ...save], ['EXPIRE', cacheKey, 60 * 86400]);
+  }
+  return res.status(200).json({ results });
+}
+
 // ---------- Help assistant ----------
 const HELP_LIMIT = 40; // questions per person per day
 const HELP_SYSTEM = (role, guide) => `You are the Help assistant inside "Duda Site Auditor", a team web app that audits Duda websites (car-care businesses built by a marketing agency) against their Business Info.
@@ -787,6 +835,7 @@ async function handler(req, res) {
     if (b.op === 'proof' || b.op === 'links' || b.op === 'pagefit') return await extraCheck(req, res, b, list, owner);
     if (b.op === 'docread' || b.op === 'docmatch') return await docAI(req, res, b, list, owner);
     if (b.op === 'photos') return await photoCheck(req, res, b, list);
+    if (b.op === 'report') return await reportWrite(req, res, b, list);
     if (!['alt', 'text'].includes(b.op)) return res.status(400).json({ error: 'Unknown op' });
     const business = b.business || {};
     const field = b.op === 'alt' ? 'alt' : 'text';

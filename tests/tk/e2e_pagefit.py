@@ -104,6 +104,7 @@ try:
         check(any(f['found'] == 'Button' for f in ph), 'a Duda button left saying "Button" is critical')
         ai = has('AI_PAGE_TOPIC', '/locations/belton-tx/window-tint')
         check(ai and ai[0]['severity'] == 'warning' and ai[0].get('ai'), 'the AI catches a page the rules cannot match word for word (tint page describing a coating)')
+        check(ai and ai[0].get('selector') not in ('(page)', '', None), 'the AI item about words in the copy points at the element holding them: ' + str(ai and ai[0].get('selector')))
         check(not has('AI_PAGE_TOPIC', n1) and any(f.get('ai') for f in has('PAGE_TOPIC_MISMATCH', n1)), 'when a rule already raised it, the AI\'s opinion joins that item instead of doubling it')
         sent = dict(SEEN['fit'])
         check(sent.get(n1, '').startswith('service = ceramic') and 'town = nolanville' in sent.get(n1, '') and 'town = nolanville' in sent.get('/locations/nolanville-tx', '') and 'none (location' in sent.get('/locations/nolanville-tx', ''), 'the AI is told what each address promises (service and town; town only for a location page)')
@@ -113,6 +114,11 @@ try:
         txt = pg.inner_text('#tabBody')
         check('against their address' in txt, 'the scan panel says the pages were read against their address')
         check('SEO Lengths' in pg.inner_text('body'), 'the Lengths tab is called "SEO Lengths"')
+        rows = pg.evaluate("""() => [...document.querySelectorAll('table.findings tbody tr')].map((tr) => ({ t: tr.innerText, prev: !!tr.querySelector('[data-prevat]') }))""")
+        head = [r for r in rows if 'Head / Meta' in r['t']]
+        print('   head rows:', len(head), 'with preview:', len([r for r in head if r['prev']]))
+        check(head and all(r['prev'] for r in head), 'every item in the page\'s head (SEO title, description) still has ▶ Preview')
+        check(all(r['prev'] for r in rows if r['t'].strip()), 'every audit item row has a way to open the preview')
         pg.screenshot(path=os.path.join(OUT, 'pagefit.png'))
         calls = SEEN['calls']
         pg.click('#sRescan')

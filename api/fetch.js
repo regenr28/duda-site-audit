@@ -43,7 +43,8 @@ async function handler(req, res) {
     const r = await fetchWithTimeout(url, { headers: { 'User-Agent': UAS[device], Accept: 'text/html' }, redirect: 'follow' }, 25000);
     const html = await r.text();
     res.setHeader('Cache-Control', 'no-store');
-    res.status(200).json({ status: r.status, url, html });
+    // finalUrl: where the page ended up after any redirect, so a scan knows a page now opens another one.
+    res.status(200).json({ status: r.status, url, ...(r.url && r.url !== url ? { finalUrl: r.url } : {}), html });
   } catch (e) {
     res.status(200).json({ status: 0, url, html: '', error: e.name === 'AbortError' ? 'timeout' : String(e.message || e) });
   }

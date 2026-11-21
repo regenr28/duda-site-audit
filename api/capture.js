@@ -10,6 +10,7 @@
 // POST /api/capture { op:'proof', site, path, device, items:[{id, selector}], why } → the team: proof pictures of audit items (see _proof.js)
 // GET  /api/capture?op=proofImg&site=&f=          → one proof picture
 // POST /api/capture { op:'visible', site, path, device, selectors:[…] } → the team, during a scan: is each element shown in a real browser once the page has loaded
+// POST /api/capture { op:'pdf', site, html, header, footer, name } → the team: a client report (HTML the app built) as a PDF file
 // POST /api/capture { op:'test', site? }                         → admins: check pictures work on this server
 // GET  /api/capture?op=thumb&site=<duda id>                      → the team: a website's small thumbnail (image)
 // POST /api/capture { op:'thumb', site:<duda id>, pub }          → the team: take it if missing, or older than its last publish / a week
@@ -22,6 +23,7 @@ import { who, mayseeSite, getCap, capPublic, storeCap, capMap, settings, today, 
 import { shoot, DEVICES } from './_shoot.js';
 import { contrastScan } from './_contrast.js';
 import { proofShots, visibleCheck } from './_proof.js';
+import { htmlToPdf } from './_print.js';
 
 const CLIENT_SHOTS_PER_DAY = 60;
 const MAX_UPLOAD = 3 * 1024 * 1024;   // a request body can be at most about 4.5 MB once encoded
@@ -132,6 +134,19 @@ async function handler(req, res) {
       const { url } = await previewUrl(rec, path, device);
       const r = await visibleCheck(url, device, selectors, { timeout: 80000 });
       return res.status(200).json({ seen: r.seen });
+    }
+    if (op === 'pdf') {
+      // The client report: the app builds the page from the audit, Chrome prints it.
+      if (!w.team) return res.status(403).json({ error: 'Your role does not allow this.' });
+      const site = String(b.site || '');
+      if (!mayseeSite(w, site)) return res.status(404).json({ error: 'Not found' });
+      const html = String(b.html || '');
+      if (!html || html.length > MAX_UPLOAD + 400000) return res.status(400).json({ error: 'The report is too large to make into a PDF. Leave out the proof pictures and try again.' });
+      const pdf = await htmlToPdf(html, { header: String(b.header || '').slice(0, 4000), footer: String(b.footer || '').slice(0, 4000) });
+      const name = String(b.name || 'website-audit.pdf').replace(/[^\w.-]+/g, '-').slice(0, 120);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+      return res.status(200).end(pdf);
     }
     if (op === 'contrast') {
       // Part of a scan: only someone who may scan, on a website they can open.
