@@ -7473,6 +7473,9 @@
   }
   /** AI reads the page text (service pages first, then blog posts) looking for another business's name, a wrong city, or a misspelled business name. */
   async function aiTextCheck(res, id, log, pausedAlready) {
+    // A block that is the words of a link to one of the website's own pages: the AI is told where it leads.
+    const lnorm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const linkTo = (b) => { const t = lnorm(b.text); const l = t.length >= 6 && (res.links || []).find((x) => x.to && String(x.to).startsWith('/') && lnorm(x.text) === t); return l ? l.to : ''; };
     if (!state.ai || !state.ai.enabled || !(res.texts || []).length) return null;
     const skip = res.aiSkip || new Set();
     const todoTexts = res.texts.filter((b) => !skip.has('text|' + ((b.pages || [])[0] || '/')));
@@ -7493,7 +7496,7 @@
     res.texts.forEach((b, i) => {
       if (skip.has('text|' + ((b.pages || [])[0] || '/'))) return;
       if (!worth(b)) { skipped++; return; }
-      if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, CUT), location: b.location, page: b.pages[0], ...(b.para ? { in: b.para.slice(0, 1500) } : {}) }); total += Math.min(CUT, b.text.length) + (b.para ? Math.min(1500, b.para.length) / 3 : 0); }
+      if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, CUT), location: b.location, page: b.pages[0], ...(b.para ? { in: b.para.slice(0, 1500) } : {}), ...(linkTo(b) ? { to: linkTo(b) } : {}) }); total += Math.min(CUT, b.text.length) + (b.para ? Math.min(1500, b.para.length) / 3 : 0); }
     });
     const batches = []; let cur = [], size = 0;
     blocks.forEach((b) => { if (cur.length && (size + b.text.length > BATCH_CHARS || cur.length >= BATCH_ITEMS)) { batches.push(cur); cur = []; size = 0; } cur.push(b); size += b.text.length; });
@@ -7518,7 +7521,7 @@
       }
     }
     const before = res.findings.length;
-    res.findings = A.applyTextIssues(res.findings, res.texts, issues, res.truth);
+    res.findings = A.applyTextIssues(res.findings, res.texts, issues, res.truth, res.links);
     return { blocks: sent, of: res.texts.length, skipped, truncated: sent + skipped < res.texts.length, cached, flagged: res.findings.length - before, errors, used: [...used], paused, pending };
   }
   /**
@@ -7760,8 +7763,14 @@
   function wordsLocator(res) {
     const norm = (t) => String(t || '').toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[^a-z0-9'"$%&@.,:;!?#-]+/g, ' ').trim();
     const blocks = [].concat(res.prose || [], res.texts || []).filter((b) => b && b.selector && b.selector !== '(page)' && b.text && !/^Head/.test(b.location || ''));
-    return (path, quote) => {
+    const prose = (res.prose || []).filter((b) => b && b.text && !/^Head/.test(b.location || ''));
+    return (path, quote, checkCont) => {
       const q = norm(String(quote || '').replace(/^["\u201c]|["\u201d]$/g, '')).slice(0, 80); if (q.length < 3) return null;
+      // Does a whole paragraph on that page go on after these words (more than a full stop)?
+      if (checkCont) {
+        const hit = prose.find((b) => (!b.pages || !b.pages.length || b.pages.includes(path)) && norm(b.text).includes(q) && /[a-z0-9]/.test(norm(b.text).slice(norm(b.text).indexOf(q) + q.length)));
+        if (hit) return { selector: hit.selector, location: '', continues: true };
+      }
       let best = null;
       blocks.forEach((b) => {
         if (b.pages && b.pages.length && !b.pages.includes(path)) return;

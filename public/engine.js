@@ -605,6 +605,17 @@
         'A Google Maps short link (maps.app.goo.gl/\u2026, g.page/\u2026) says nothing about the place in its address, so it was reported as "doesn\u2019t point to a specific place". It is now followed to where it opens, the way a browser does, and the place Google names there is compared with the business: the business\u2019s own place (a link to one of its reviews too) is fine, another name is a warning to check',
       ],
     },
+    {
+      v: 52,
+      date: '2026-11-23',
+      title: 'A town in a link to the business\u2019s own page is not a wrong location',
+      scope: { fixes: ['AI_TEXT_LOCATION', 'AI_PAGE_NOTE'], ai: true },
+      items: [
+        'The AI reported \u201cWe also offer auto detailing in Hamilton, NJ\u201d (a link to the business\u2019s own NJ page) as a location that does not match the business. A town in the words of a link to one of the website\u2019s own pages is a cross-reference to another service or area the business has a page for: it is no longer reported',
+        'The AI now reads the whole paragraph first: \u201cwe also serve\u201d, \u201cour other location\u201d and similar mentions are fine; only text that presents this page or this business as being somewhere it is not is reported',
+        'A sentence the AI called unfinished (\u201cBy applying PPF,\u201d) is no longer reported when the paragraph on the page goes on after it: the AI was shown the copy in pieces cut at bold words and links. It now reads each page\u2019s copy as whole paragraphs',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -3836,8 +3847,12 @@
       });
     }
     // Does each page say what its address promises (service and town)?
+    // Whole paragraphs (links and bold words in place): pieces cut at a link or a bold word read as
+    // unfinished sentences ("By applying PPF," then the rest in bold) and were reported as notes left in.
     const bodyOf = {};
-    textIdx.forEach((x) => { if (x.device !== devices[0] || x.location !== 'Body' || x.heading || DEFAULT_LABEL.test(String(x.text || '').trim())) return; const b = bodyOf[x.path] || (bodyOf[x.path] = []); if (b.length < 400) b.push(x.text); });
+    proseIdx.forEach((x) => { if (x.device !== devices[0] || x.location !== 'Body' || DEFAULT_LABEL.test(String(x.text || '').trim())) return; const b = bodyOf[x.path] || (bodyOf[x.path] = []); if (b.length < 400) b.push(x.text); });
+    const hasProse = new Set(Object.keys(bodyOf));
+    textIdx.forEach((x) => { if (hasProse.has(x.path)) return; if (x.device !== devices[0] || x.location !== 'Body' || x.heading || DEFAULT_LABEL.test(String(x.text || '').trim())) return; const b = bodyOf[x.path] || (bodyOf[x.path] = []); if (b.length < 400) b.push(x.text); });
     const fitPages = Object.values(pageInfo).filter((p) => !p.notFound && !p.error).map((p) => ({
       path: p.path, title: p.title || '', description: p.description || '', h1: (p.fit && p.fit.h1) || (p.h1 ? [{ text: p.h1, selector: 'h1' }] : []),
       heads: (p.fit && p.fit.heads) || [], body: (bodyOf[p.path] || []).join(' \n '),
@@ -4132,8 +4147,22 @@
     return sortFindings(findings);
   }
 
+  /** Is the quoted text (part of) the words of a link to a page of this website, on the block's page? */
+  function ownPageLink(blk, quote, links) {
+    const n = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const q = n(quote); if (!q) return false;
+    // Only a link that leads to another service or area page counts: "Copperas Cove's top shop" linking to
+    // the contact page is still a claim about this business.
+    const other = (to) => to && String(to).startsWith('/') && to !== '/' && !/contact|quote|estimate|book|appointment|schedul|about|review|gallery|thank/i.test(to) && !(blk.pages || []).includes(to);
+    if (/(^|> )a(:nth-of-type\(\d+\))?$/.test(String(blk.selector || '')) && n(blk.text).includes(q) && (links || []).some((l) => other(l.to) && n(l.text) === n(blk.text))) return true;
+    return (links || []).some((l) => {
+      if (!other(l.to)) return false;
+      if (l.pages && blk.pages && !l.pages.some((p) => blk.pages.includes(p))) return false;
+      const t = n(l.text); return t.length >= 6 && (t.includes(q) || q.includes(t));
+    });
+  }
   /** Apply AI page-text issues ({ i, type, quote, confidence, reason, suggestion }, i = index into texts). */
-  function applyTextIssues(findings, texts, issues, truth) {
+  function applyTextIssues(findings, texts, issues, truth, links) {
     const RULES = {
       other_business: ['AI_TEXT_OTHER_BUSINESS', 'critical', 'Business name', 'AI: text names a different business'],
       wrong_location: ['AI_TEXT_LOCATION', 'critical', 'Location', "AI: text mentions a location that doesn't match this business"],
@@ -4156,6 +4185,10 @@
       // A location page can still wrongly claim a different town somewhere in its copy, and that
       // has to keep coming through.
       if (v.type === 'wrong_location' && pathNamesPlace(blk.pages, v.quote || blk.text || '', truth)) return;
+      // A town in the words of a link to one of the website's own pages ("We also offer auto detailing in
+      // Hamilton, NJ" linking to /car-detailing-nj) points visitors to another service or area the business
+      // has a page for: a cross-reference, not a claim that this page is about that town.
+      if (v.type === 'wrong_location' && ownPageLink(blk, v.quote, links)) return;
       // A town the business serves (it has its own pages for it, or it is the shop's town) is fine on any
       // page that is not about a different town: a blog post may talk about "a Littleton driver".
       if (v.type === 'wrong_location' && !blk.pages.some((p) => placeOfPath(p))) {
@@ -4227,6 +4260,11 @@
       const same = findings.find((f) => sameRe.test(f.code) && (f.pages || [f.path]).includes(pg.path)
         && (v.type !== 'name_variant' && v.type !== 'editor_note' ? true : quote && String(f.found || '').toLowerCase().includes(quote.slice(0, 30))));
       if (same) { same.ai = ai; return; }
+      // "Cut off mid-thought": when the page's own paragraph goes on after the quoted words, the sentence
+      // is not unfinished (the AI was shown it in pieces): nothing to report.
+      if (v.type === 'editor_note' && locate && /incomplete|cut off|fragment|unfinished|trailing|mid-thought|mid thought/i.test([v.reason, v.suggestion].join(' '))) {
+        const el = locate(pg.path, v.quote, true); if (el && el.continues) return;
+      }
       const [selector, location, what] = PART[part];
       const top = part !== 'body' || v.type === 'editor_note';
       const f = {

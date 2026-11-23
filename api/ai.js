@@ -373,7 +373,7 @@ Respond with JSON only: {"results":[{"i":<number>,"verdict":"<verdict>","confide
 const TEXT_SYSTEM = `You proofread WEBSITE TEXT for one business and report ONLY real problems about its business name and location. ${CONTEXT}
 Report these problem types:
 - "other_business": the text names a different business as if it were this one ("here at Smith's Detailing", "call Joe's Auto Spa today", "© 2023 Shine Pros LLC"). Usually leftover from a previous client.
-- "wrong_location": the text says this business is in, or serves, a city/state that conflicts with its location. Its own city, nearby towns in the same metro/state, and places that have their own service-area page on this site are fine, EXCEPT on a page whose URL names a different town: on /locations/temple-tx/..., a title or heading presenting the shop as "Copperas Cove's top provider" is wrong_location (left over from the Copperas Cove page). A page whose own URL names a town (e.g. /auto-detailing-located-in-aberdeen) IS a location page for that town, so its title, headings and copy are SUPPOSED to name it — never report that. Be conservative; mentions of where a customer or car came from are fine.
+- "wrong_location": the text says this business is in, or serves, a city/state that conflicts with its location. Its own city, nearby towns in the same metro/state, and places that have their own service-area page on this site are fine, EXCEPT on a page whose URL names a different town: on /locations/temple-tx/..., a title or heading presenting the shop as "Copperas Cove's top provider" is wrong_location (left over from the Copperas Cove page). A page whose own URL names a town (e.g. /auto-detailing-located-in-aberdeen) IS a location page for that town, so its title, headings and copy are SUPPOSED to name it — never report that. Be conservative; mentions of where a customer or car came from are fine. Read the WHOLE paragraph ("in:") and its meaning before judging a town: a sentence pointing visitors to the business's OTHER services or areas ("We also offer auto detailing in Hamilton, NJ and caliper painting in Bucks County", "we also serve…", "visit our other location in…", "see our Bucks County page") is a cross-reference, never wrong_location, even when the town is not in the business's address. Report wrong_location only when the text presents THIS page or THIS business as being in a town that conflicts with it (a heading or title claiming another town, "our shop in Dallas" for a Philadelphia business, a town clearly left over from another client's site).
 - "name_variant": this business's own name written in a clearly different way (different or missing words, e.g. "Upscale Detailing Co" vs "Upscale Detail Co."). Ignore capitalization, punctuation, "&" vs "and", and adding/removing LLC/Inc/Co.
 A block can be only PART of a paragraph: the words up to a link or a bold word. Then "in" gives the whole paragraph. Read the block inside it: a block that stops before a link ("our team at" + the link "86 Auto Lab") is not cut off and does not name another business. Report only what the block itself says.
 "other_business" needs another business's NAME in the quote. A missing name, an unfinished sentence or generic words ("our team", "the shop") are never "other_business".
@@ -450,7 +450,7 @@ function minimalFix(quote, suggestion, type) {
 }
 const proofPrompt = (b, items) => `${businessHeader(b)}
 TEXT BLOCKS (each starts with [i] then where it appears)
-${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n')}`;
+${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'})${x.to ? ` (link to ${String(x.to).slice(0, 120)})` : ''} ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}`).join('\n')}`;
 const linkPrompt = (b, pages, items) => `${businessHeader(b)}
 THE SITE'S PAGES (address | title)
 ${[].concat(pages || []).slice(0, 80).map((p) => `${String(p.path || '/').slice(0, 90)} | ${String(p.title || '').slice(0, 90)}`).join('\n')}
@@ -570,7 +570,7 @@ const altPrompt = (b, items) => `${businessHeader(b)}
 ALT TEXTS (i | page | where | logo type | alt text | image file)
 ${items.map((x) => `${x.i} | ${String((x.pages && x.pages[0]) || x.page || '/').slice(0, 80)} | ${x.location || 'Body'} | ${x.isLogo ? 'site-logo' : x.brandLogo ? `brand-logo${x.logoRow >= 3 ? ` (in a row of ${x.logoRow} logos)` : ''}` : '-'} | ${String(x.alt).replace(/\s+/g, ' ').slice(0, 300)} | ${String(x.file || '').slice(0, 80)}`).join('\n')}`;
 const textPrompt = (b, items) => `${businessHeader(b)}
-TEXT BLOCKS (each starts with [i] then where it appears; "in:" is the whole paragraph when the block is only part of it)
+TEXT BLOCKS (each starts with [i] then where it appears; "in:" is the whole paragraph when the block is only part of it; "(link to /…)" when the block is the words of a link to one of the website's own pages)
 ${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}${x.in ? `\n    in: ${String(x.in).replace(/\s+/g, ' ').slice(0, 1500)}` : ''}`).join('\n')}`;
 
 // ---------- look at the actual image (Gemini can see images; used only for alts flagged as another business) ----------

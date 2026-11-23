@@ -4,6 +4,18 @@
 
 export const NEWS = [
   {
+    id: '2026-11-23-whole-paragraphs', date: '2026-11-23', audience: 'all', tag: 'Audits',
+    title: 'Sentences with a bold word or a link are no longer "unfinished"',
+    what: 'The AI that reads each page against its address was given the copy in pieces, cut wherever a word was bold or linked. \u201cBy applying PPF,\u201d followed by bold words read like a sentence that stops mid-thought, and was reported as a note left in the copy. It now reads whole paragraphs, and an \u201cunfinished\u201d sentence is only reported when the paragraph on the page really ends there.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: those items close. The next rescan reads every page again as whole paragraphs.'],
+  },
+  {
+    id: '2026-11-23-link-towns', date: '2026-11-23', audience: 'all', tag: 'Audits',
+    title: 'A town in a link to another of the business\'s pages is not a wrong location',
+    what: '\u201cWe also offer <u>auto detailing in Hamilton, NJ</u>\u201d, linking to the business\'s own NJ page, was reported by the AI as a location that does not match the business. A town in the words of a link to one of the website\'s own service or area pages is a cross-reference, and is no longer reported. The AI also reads the whole paragraph first now: \u201cwe also serve\u201d and \u201cour other location\u201d are fine; only text that puts this page or the shop somewhere it is not is reported.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: those items close.'],
+  },
+  {
     id: '2026-11-23-progress-report', date: '2026-11-23', audience: 'all', tag: 'Audits',
     title: 'Two reports: Findings and Progress, and you choose what to leave out',
     what: '<b>📄 Make a report</b> now opens a window with two reports. The <b>Findings report</b> is the one for what is on the website now and how to fix it. The new <b>Progress report</b> shows what the team fixed since the scan you choose, grouped (“Corrected the outdated phone number on 5 pages”, with the pages) and with why each fix matters to the business or in Google, then what is still to do. Before making either, tick what to leave out: false alarms and exempt items are always out; For clarification, On hold and colour contrast are out by default.',
