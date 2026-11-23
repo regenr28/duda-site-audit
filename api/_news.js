@@ -4,6 +4,18 @@
 
 export const NEWS = [
   {
+    id: '2026-11-23-location-sense', date: '2026-11-23', audience: 'all', tag: 'Audits',
+    title: 'Locations: where the shop is vs. where it works',
+    what: 'The AI now tells a shop\'s physical location from its service area, and knows which towns lie inside the county or region a page targets (Willow Grove on the Montgomery County page is relevant). Only an explicit claim about where the shop is (\u201cVisit our Willow Grove shop\u201d) that conflicts with the business\'s location is a critical wrong location. Wording that is only ambiguous (\u201cAuto Detailing Experts in Willow Grove, PA\u201d) becomes a warning, <b>location wording to confirm</b>, that starts as For clarification with a suggestion and what is uncertain.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: towns flagged before are judged again.'],
+  },
+  {
+    id: '2026-11-23-retired-pages', date: '2026-11-23', audience: 'all', tag: 'Audits',
+    title: 'Old pages that redirect on the live website are not audited any more',
+    what: 'An old page can still open in the Duda preview while the published website sends visitors to another page. The scan now checks the published website\'s redirects before reading any page: a page that redirects is not audited (its template text and old wording are not reported), the page visitors land on is audited instead, once, and the redirect is noted on <b>🛠 Technical SEO</b> under <b>Retired page / preview cleanup</b> (\u201cRedirect detected: /old-page redirects to /new-page…\u201d). Items that were on the old page close as <b>\u21aa Page now redirects</b>, not as fixes, and are not counted in the Progress report. A redirect loop on the published website is reported on its own.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⟳ Rescan</b> (the website must be published).'],
+  },
+  {
     id: '2026-11-23-service-judgement', date: '2026-11-23', audience: 'all', tag: 'Audits',
     title: 'Pages are judged by what they say, not by what kind of business it is',
     what: 'The AI called a detailer\'s towing page \u201cnot a car-care service the business offers\u201d. Now it checks whether the page\'s SEO title, H1, description and copy agree on one service, with the address as a clue and the website\'s own pages and menu as the evidence of what the business offers: towing, storage or powder coating is fine on a page that is consistent about it. Only a clear mismatch is reported, and when the AI cannot tell what a page is meant to offer, the item starts as <b>For clarification</b> with what is unclear.',

@@ -21,12 +21,15 @@ with sync_playwright() as p:
       const issues = [
         { i: 0, type: 'wrong_location', quote: 'auto detailing in Hamilton, NJ', confidence: 0.85, reason: 'Hamilton, NJ is not in the service areas', suggestion: '' },
         { i: 1, type: 'wrong_location', quote: 'our shop in Dallas, TX', confidence: 0.9, reason: 'Dallas is not where the shop is', suggestion: '' },
+        { i: 2, type: 'wrong_location', quote: 'Auto Detailing Experts in Willow Grove, PA', confidence: 0.7, reason: 'Willow Grove is in Montgomery County; wording may read as a shop location', suggestion: 'Auto Detailing Experts in Montgomery County, PA', clarify: true },
       ];
-      return A.applyTextIssues([], texts, issues, truth, links).map((f) => f.code + ' | ' + f.found);
+      texts.push({ text: 'Auto Detailing Experts in Willow Grove, PA', selector: '[id="1849358642"] > h2 > span', location: 'Body', pages: ['/car-detailing-montgomery-county-pa'], devices: ['desktop'], visibleOn: ['desktop'], hiddenOn: [] });
+      return A.applyTextIssues([], texts, issues, truth, links).map((f) => [f.code, f.found, f.severity, f.clarify ? 'clarify' : ''].join(' | '));
     }""")
     print('  ', r)
     check(not any('Hamilton' in x for x in r), 'a town in a link to the business’s own page ("We also offer auto detailing in Hamilton, NJ") is not reported')
-    check(any('Dallas' in x for x in r), 'text that puts the shop in another town is still reported')
+    check(any('Dallas' in x and 'critical' in x for x in r), 'text that puts the shop in another town is still reported (critical)')
+    check(any('Willow Grove' in x and 'warning' in x and 'clarify' in x for x in r), 'ambiguous location wording ("Experts in Willow Grove" on the Montgomery County page) is a warning to clarify, not a critical error')
     r2 = pg.evaluate("""() => {
       const A = window.DudaAudit;
       const truth = A.buildTruth({ site: { site_business_info: { business_name: 'Menard Premium Detailing' } }, content: {} }, null, null);

@@ -754,10 +754,11 @@ async function handler(req, res) {
         const closing = []; let fixedN = 0; let correctedN = 0;
         // 'recheck-gone': closed by a quick recheck of selected items. It is the same claim as a rescan
         // closing it, so if a full scan finds it again it reopens the same way.
-        const autoClosed = (st) => st && st.status === 'done' && ['rescan-gone', 'check-corrected', 'recheck-gone'].includes(st.auto);
+        const autoClosed = (st) => st && st.status === 'done' && ['rescan-gone', 'check-corrected', 'recheck-gone', 'retired-page'].includes(st.auto);
         // Checks that could not run this time (the contrast check needs a page browser, which can be
         // busy or switched off): their items stay exactly as they were, never closed as fixed.
         const notChecked = [].concat(b.notChecked || []).filter((x) => x && x.prefix);
+        const retiredPages = new Set([].concat(b.retiredPages || []).slice(0, 300).map((x) => normP(String(x || ''))));
         // A scan of chosen pages leaves everything outside them alone.
         if (partial) notChecked.push({ prefix: '', pages: '*', unless: true });
         const keptAsIs = new Set();
@@ -769,7 +770,8 @@ async function handler(req, res) {
           if (f.gone) { if (Date.now() - Date.parse(f.gone.at) < KEEP_GONE_MS) site.findings.push(f); return; }
           const where = (f.pages && f.pages.length ? f.pages : [f.path || '/']).map(normP);
           if (!where.every((x) => scanned.has(x))) return;
-          const why = corrected.has(String(f.code)) ? 'check-corrected' : 'gone';
+          // Every page it was on now redirects: closed as "retired page", not as fixed.
+          const why = corrected.has(String(f.code)) ? 'check-corrected' : where.every((x) => retiredPages.has(x)) ? 'retired-page' : 'gone';
           const carried = Object.assign({}, f, { gone: { at: now(), by: me.email, byName: me.name, why } });
           ['status', 'assignee', 'num', 'comments', 'statusBy', 'statusAt', 'done', 'auto'].forEach((k) => delete carried[k]);
           site.findings.push(carried);
@@ -777,7 +779,7 @@ async function handler(req, res) {
           // A decision somebody already made stands. Only items still open are closed.
           if (cur.status === 'done' || cur.status === 'false') return;
           closing.push(f.id, JSON.stringify(Object.assign({}, cur, { status: 'done', updatedBy: me.email, updatedAt: now(),
-            auto: why === 'check-corrected' ? 'check-corrected' : 'rescan-gone', rc: undefined })));
+            auto: why === 'check-corrected' ? 'check-corrected' : why === 'retired-page' ? 'retired-page' : 'rescan-gone', rc: undefined })));
           if (why === 'check-corrected') correctedN++; else fixedN++;
         });
         // The other way round: an item this mechanism closed is back on the website. The fix didn't

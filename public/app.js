@@ -7342,6 +7342,7 @@
         fetchPolicy: (url) => sApi('/api/fetch?' + new URLSearchParams({ policy: url })).then((r) => ({ status: r.status, html: r.html || '' })),
         // Redirects and pages that existed before (full scans, or check updates that ask for them).
         ...(meta ? { redirects: { rules: (meta && meta.redirects) || [], past: (site.pastPaths || []).concat((site.pages || []).map((p) => p.path)), domain: pubDom } } : {}),
+        ...(pubDom && !plan ? { liveRoutes: { domain: pubDom, check: (paths) => sPost('/api/check', { routes: { domain: pubDom, paths } }) } } : {}),
         ...(pubDom ? { liveStatus: (path) => sApi('/api/fetch?' + new URLSearchParams({ live: '1', domain: pubDom, site: site.siteId, path, device: 'desktop' })).then((r) => r.status || 0) } : {}),
         ...(pubDom && wantFiles ? { fileDomain: pubDom, fetchFile: (path) => sApi('/api/fetch?' + new URLSearchParams({ live: '1', domain: pubDom, site: site.siteId, path, device: 'desktop' })).then((r) => ({ status: r.status, text: r.html || '' })) }
           : { fileNote: pubDom ? '' : 'robots.txt, sitemap.xml and llms.txt are checked once the website is published.' }),
@@ -7397,7 +7398,7 @@
       Object.values(state.fixedChecks || {}).forEach((x) => { if (x && x.code && lastDone && x.at > lastDone && !corrected.includes(x.code)) corrected.push(x.code); });
       if (plan) res.findings = res.findings.filter((f) => A.codeIn(plan.codes, f.code));
       if (!meta) ctr.notChecked = [].concat(ctr.notChecked || [], [{ prefix: 'REDIRECT_', pages: '*' }]);
-      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, ...(only ? { partial: only } : {}), ...(plan ? { codes: plan.codes } : {}), bulk: !!((state.scanning[id] && state.scanning[id].bulk) || opts0.bulk), result: {
+      const sum = await store({ op: 'saveScan', id, corrected, notChecked: ctr.notChecked, retiredPages: (res.retired || []).slice(0, 300), ...(only ? { partial: only } : {}), ...(plan ? { codes: plan.codes } : {}), bulk: !!((state.scanning[id] && state.scanning[id].bulk) || opts0.bulk), result: {
         host: fixHost || host, ...(fixHost ? { editorUrl: `https://${fixHost}/home/site/${site.siteId}/home` } : {}), businessName: (truth || res.truth).businessName || site.businessName, truth: truth || res.truth, profiles, ...(res.files ? { files: res.files } : {}), ...(res.schemaBiz ? { schemaBiz: res.schemaBiz } : {}), findings: res.findings, pages: res.pages, fonts: res.fonts || null, photos: res.photos || null,
         scan: { state: 'complete', cv: plan && plan.keepCv ? ((site.scan && site.scan.cv) || 1) : A.CHECKS_VERSION, startedAt, finishedAt: new Date().toISOString(), durationMs: Date.now() - t0, pages: res.pages.length, externalLinks: res.externalLinks, images: res.images, counts: res.counts, log, by: state.me.email, ai: aiSummary, contrast: ctr.summary },
       } });
@@ -11315,7 +11316,7 @@
 
   /** Closed by a rescan: the thing is no longer on the website (or the check behind it was corrected). */
   const goneBadge = (f) => {
-    if (f.gone) return `<div style="margin-bottom:4px"><span class="badge v-ok" title="${esc((f.gone.byName || '') + ' rescanned ' + fmtWhen(Date.parse(f.gone.at)))}">${f.gone.why === 'check-corrected' ? '\u2713 Check corrected \u2014 closed' : '\u2713 Fixed on rescan'}</span></div>`;
+    if (f.gone) return `<div style="margin-bottom:4px"><span class="badge v-ok" title="${esc((f.gone.byName || '') + ' rescanned ' + fmtWhen(Date.parse(f.gone.at)))}">${f.gone.why === 'check-corrected' ? '\u2713 Check corrected \u2014 closed' : f.gone.why === 'retired-page' ? '\u21aa Page now redirects \u2014 closed' : '\u2713 Fixed on rescan'}</span></div>`;
     if (f.auto && f.auto.why === 'still-there') return `<div style="margin-bottom:4px"><span class="badge v-still" title="${esc('Marked Done by ' + nameOf(f.auto.ref, 'someone') + (f.auto.at ? ' on ' + fmtWhen(Date.parse(f.auto.at)) : '') + ', but the next rescan still found it')}">\u26A0 Still there after rescan \u2014 reopened</span></div>`;
     if (f.auto && f.auto.why === 'came-back') return `<div style="margin-bottom:4px"><span class="badge v-still" title="It was closed on an earlier rescan, then showed up again">\u21BA Back after a rescan \u2014 reopened</span></div>`;
     return '';
@@ -13119,6 +13120,8 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const t0 = crTime(since);
     return (s.findings || []).filter((f) => {
       if (!f || CR_SKIP.test(f.code) || f.category === 'Scan' || f.status === 'false' || f.status === 'exempt' || f.manualOnly) return false;
+      // A page that now redirects took its items with it: that is not a fix to report.
+      if (f.gone && f.gone.why === 'retired-page') return false;
       const at = f.gone ? crTime(f.gone.at) : f.status === 'done' ? crTime(f.statusAt) : 0;
       return at && at >= t0 && !crLeft(f, ex || {});
     });
@@ -13288,7 +13291,8 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
         const pr = await dbReport(s, prevX);
         if (pr) {
           const cur = new Map((s.findings || []).map((f) => [f.id, f]));
-          fixed = compareReports(pr, r).fixed.filter((i) => !CR_SKIP.test(i.c) && i.st !== 'false' && !((cur.get(i.id) || {}).status === 'false') && !crLeft({ code: i.c, category: i.g, severity: i.s, status: '' }, ex));
+          const moved = new Set((s.pages || []).filter((p) => p.redirectTo).map((p) => p.path));
+          fixed = compareReports(pr, r).fixed.filter((i) => !moved.has(i.p) && !CR_SKIP.test(i.c) && i.st !== 'false' && !((cur.get(i.id) || {}).status === 'false') && !crLeft({ code: i.c, category: i.g, severity: i.s, status: '' }, ex));
           prevAt = prevX.at;
         }
       } catch (e) { /* no comparison */ }
@@ -13638,8 +13642,8 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
       <div class="dr-body">
         <h2 class="dr-title">${esc(f.message)}</h2>${gbpIdNote(s, f)}
         ${f.hiddenLive ? `<div class="note" style="margin:6px 0 10px"><b>👁 Hidden on the page.</b> Visitors don't see this: the page's own styles hide it (${esc(f.hiddenLive)}). It is still in the page's code, which Google and SEO tools such as Ahrefs and Semrush read, so it counts. Find it in the editor (hidden blocks, the element's settings or custom code) and fix or remove it.</div>` : ''}
-        ${f.gone ? `<div class="note ${f.gone.why === 'check-corrected' ? 'known-note' : 'good'}" style="margin:8px 0"><b>${f.gone.why === 'check-corrected' ? 'Closed: the check that raised this was changed' : '\u2713 Fixed \u2014 no longer on the website'}</b>
-          <div class="small">${f.gone.why === 'check-corrected' ? 'The check that raised it was changed, so this item was closed. If it still needs fixing, the changed check raises it again, possibly as one new item instead of several.' : 'It was there on the previous scan and gone on this one, so it was closed as Done.'} ${esc(f.gone.byName || nameOf(f.gone.by))} rescanned ${esc(fmtWhen(Date.parse(f.gone.at)))}.</div></div>` : ''}
+        ${f.gone ? `<div class="note ${f.gone.why === 'check-corrected' || f.gone.why === 'retired-page' ? 'known-note' : 'good'}" style="margin:8px 0"><b>${f.gone.why === 'check-corrected' ? 'Closed: the check that raised this was changed' : f.gone.why === 'retired-page' ? '\u21aa Closed: this page now redirects' : '\u2713 Fixed \u2014 no longer on the website'}</b>
+          <div class="small">${f.gone.why === 'retired-page' ? `Visitors are sent on to ${esc(((s.pages || []).find((p) => p.path === f.path) || {}).redirectTo || 'another page')}, so this old page is no longer checked: the page they land on is. It is not counted as a fix in reports.` : f.gone.why === 'check-corrected' ? 'The check that raised it was changed, so this item was closed. If it still needs fixing, the changed check raises it again, possibly as one new item instead of several.' : 'It was there on the previous scan and gone on this one, so it was closed as Done.'} ${esc(f.gone.byName || nameOf(f.gone.by))} rescanned ${esc(fmtWhen(Date.parse(f.gone.at)))}.</div></div>` : ''}
         ${!f.gone && f.auto && f.auto.why === 'still-there' ? `<div class="note unk" style="margin:8px 0"><b>\u26A0 Marked Done, but still on the website</b><div class="small">${esc(nameOf(f.auto.ref, 'Someone'))} marked this Done${f.auto.at ? ' on ' + esc(fmtWhen(Date.parse(f.auto.at))) : ''}. ${esc(nameOf(f.statusBy, 'The next rescan'))} rescanned${f.statusAt ? ' on ' + esc(fmtWhen(Date.parse(f.statusAt))) : ''} and it was still there, so it was reopened. If the scan is wrong about it, mark it <b>False alarm</b> instead.</div></div>` : ''}
         ${!f.gone && f.auto && f.auto.why === 'came-back' ? `<div class="note unk" style="margin:8px 0"><b>\u21BA Back on the website</b><div class="small">This was closed as Done on an earlier rescan, then the latest scan found it again, so it was reopened.</div></div>` : ''}
         ${f.code === 'AUTO_LIVE' ? autoItemNote(f) : f.manual ? `<div class="small faint">Written by ${esc(nameOf(f.by, f.byName))} · ${esc(fmtWhen(Date.parse(f.at)))}${f.device ? ' · ' + esc(A.DEVICE_LABEL[f.device] || f.device) : ''}</div>` : ''}
@@ -13656,7 +13660,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
         ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${dupPlaces(f)}${reportNote(f)}${knownNote(f, s)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
-          <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}${pvLivePills(s, f)}${(pvLive(s, f) || {}).say ? `<div class="small faint pvl-say">${esc(pvLive(s, f).say)}</div>` : ''}</div>
+          <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}${pvLivePills(s, f)}${(pvLive(s, f) || {}).say ? `<div class="small faint pvl-say">${esc(pvLive(s, f).say)}</div>` : ''}${((s.pages || []).find((p) => p.path === f.path) || {}).via ? `<div class="small faint">Visitors also land on this page from ${esc(((s.pages || []).find((p) => p.path === f.path).via).join(', '))} (redirected).</div>` : ''}</div>
           <div class="span2"><div class="k">Unique CSS selector</div>${fv.twin ? `<div class="small muted" style="margin-bottom:4px">The scan found the same thing on this page: <a class="item-ref" href="#/site/${esc(s.id)}/item/${fv.twin}">#${fv.twin}</a>. Its element:</div>` : ''}${fv.selector && fv.selector !== '(page)' ? `<code class="sel inspect" id="drInspect2" title="Click to open the page with this element highlighted">${esc(fv.selector)}</code>
             <button class="btn sm primary" id="drInspect">👁 Show on page</button> <button class="btn sm ghost" data-copy="${esc(fv.selector)}">Copy selector</button>
             <button class="btn sm ghost" id="drSnip" title="Copy a console snippet that scrolls to and highlights this element">⌖ Console snippet</button>

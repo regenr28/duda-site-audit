@@ -626,6 +626,16 @@
         'Only a clear mismatch is reported (a title about one service on a page about another). When the AI cannot tell what a page is meant to offer, the item is set to For clarification with what is unclear, instead of being called a mistake',
       ],
     },
+    {
+      v: 54,
+      date: '2026-11-23',
+      title: 'Locations: where the shop is, where it works, and which towns belong to an area',
+      scope: { fixes: ['AI_TEXT_LOCATION', 'AI_PAGE_CITY'], ai: true },
+      items: [
+        'The AI now tells a shop\u2019s physical location from its service area, and knows which towns lie inside the county or region a page targets (Willow Grove on the Montgomery County page). Service-area towns are fine even when they are not in the address or the URL',
+        'Only an explicit claim about where the shop is (\u201cVisit our Willow Grove shop\u201d) that conflicts with the business\u2019s location is reported as a wrong location. Ambiguous wording (\u201cAuto Detailing Experts in Willow Grove, PA\u201d) is a warning that starts as For clarification, with a wording suggestion and what is uncertain. Towns flagged before are asked again',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -3635,6 +3645,7 @@
    *   siteId, host, truth (from buildTruth or null), seedPaths: ['/','/about'], pagesMeta: {path:{noIndex, title}},
    *   fetchPage: async (path, device) => ({ status, html, url }),
    *   checkUrls: async (urls) => [{url,status,error}] (optional),
+   *   liveRoutes: { domain, check: async (paths) => [{path, chain, final, finalStatus, loop?, error?}] } (optional): the published website's redirects,
    *   googlePlaces: async (urls) => [{url, finalUrl, id, name, address}] (optional): Google Maps short links followed,
    *   onProgress: ({done,total,message}) => void, maxPages (default 150), concurrency (default 3),
    *   devices (default all three), shouldStop: () => bool
@@ -3716,13 +3727,16 @@
         // the target. Its old content is not audited (an old town in its address is not a mistake); the
         // target is audited instead. The redirect itself is judged with the other redirects.
         const ruleTo = redirectTarget(path);
-        if (ruleTo) { pageInfo[path].redirectTo = ruleTo; if (ruleTo !== path && /^\//.test(ruleTo)) enqueue(ruleTo, path); continue; }
+        if (ruleTo) { pageInfo[path].redirectTo = ruleTo; if (ruleTo !== path && /^\//.test(ruleTo)) { enqueue(ruleTo, path); viaFrom(ruleTo, path); } continue; }
+        // …or the published website sends visitors on (the page may still open in the Duda preview).
+        const live = liveMap.get(normalizePath(path).toLowerCase());
+        if (live && live.to) { Object.assign(pageInfo[path], { redirectTo: live.to, redirectLive: live }); if (/^\//.test(live.to)) { enqueue(live.to, path); viaFrom(live.to, path); } continue; }
         for (const device of devices) {
           let res;
           try { res = await opts.fetchPage(path, device); } catch (e) { res = { status: 0, html: '', error: String(e && e.message || e) }; }
           // …and a page that redirects when it is opened (the address it ends at is another page).
           const landed = landedPath(res);
-          if (landed && landed !== path) { pageInfo[path].redirectTo = landed; enqueue(landed, path); doneFetches++; break; }
+          if (landed && landed !== path) { pageInfo[path].redirectTo = landed; enqueue(landed, path); viaFrom(landed, path); doneFetches++; break; }
           doneFetches++;
           progress({ done: doneFetches, total: queued.size * devices.length, message: `${path} · ${DEVICE_LABEL[device]}` });
           const info = pageInfo[path];
@@ -3785,9 +3799,49 @@
         }
       }
     }
+    // The published website's own redirects, checked before any content is read: a retired page can still
+    // open in the Duda preview while visitors are sent on to another page. Its content is not audited;
+    // the page visitors land on is, and the redirect is noted once under "Retired page / preview cleanup".
+    const liveMap = new Map();
+    if (opts.liveRoutes) {
+      const dom = String(opts.liveRoutes.domain || '').toLowerCase().replace(/^www\./, '');
+      const paths = [...new Set(queue.concat(Object.keys(pagesMeta || {})).map(normalizePath))].slice(0, 300);
+      progress({ done: 0, total: queued.size * devices.length, message: `Checking the published website's redirects (${paths.length} pages)` });
+      for (let i = 0; i < paths.length; i += 25) {
+        let out = [];
+        try { out = await opts.liveRoutes.check(paths.slice(i, i + 25)); } catch (e) { log.push('The published website\'s redirects could not be checked: ' + (e.message || e)); break; }
+        (out || []).forEach((r) => {
+          if (!r || !r.path) return;
+          const k = normalizePath(r.path).toLowerCase(); const first = (r.chain || [])[0] || {};
+          if (r.loop) { liveMap.set(k, { loop: true, chain: r.chain || [] }); return; }
+          if (r.error) { if (first.status >= 300 && first.status < 400) liveMap.set(k, { error: r.error, chain: r.chain || [] }); return; }
+          if (!(first.status >= 300 && first.status < 400) || !r.final) return;
+          let u; try { u = new URL(r.final); } catch (e) { return; }
+          const same = u.hostname.toLowerCase().replace(/^www\./, '') === dom;
+          const to = same ? normalizePath(u.pathname) : u.href;
+          if (same && to.toLowerCase() === k) return; // http → https, www, a trailing slash: the same page
+          liveMap.set(k, { to, status: first.status, chain: r.chain || [], finalStatus: r.finalStatus || 0 });
+        });
+      }
+    }
+    // Pages visitors also reach through a redirect: noted on what is found there.
+    const viaOf = new Map();
+    function viaFrom(to, from) { const k = normalizePath(to); const l = viaOf.get(k) || []; if (!l.includes(from)) l.push(from); viaOf.set(k, l); }
     // Home page first so nav links get queued, then parallel
     await (async () => { const first = queue.splice(1); await worker(); first.forEach((p) => queue.push(p)); })();
     await Promise.all(Array.from({ length: conc }, worker));
+    // Redirects found on the published website (or when a preview page sends the browser on).
+    Object.values(pageInfo).forEach((p) => {
+      const lv = liveMap.get(normalizePath(p.path).toLowerCase());
+      const base = { path: p.path, device: 'desktop', selector: '(page)', location: 'Redirects', visible: true, hiddenBy: '', snippet: '' };
+      if (lv && lv.loop) raw.push(Object.assign({ code: 'REDIRECT_LIVE_LOOP', severity: 'critical', category: 'Links', message: `On the published website, ${p.path} redirects in a loop: visitors never reach a page`, found: (lv.chain || []).map((c) => c.url.replace(/^https?:\/\/[^/]+/, '') + ' (' + c.status + ')').join(' \u2192 ') }, base));
+      else if (lv && lv.error) raw.push(Object.assign({ code: 'REDIRECT_UNVERIFIED', severity: 'info', category: 'Links', message: `${p.path} redirects on the published website, but where it ends could not be checked (${lv.error}): open it to confirm`, found: (lv.chain || []).map((c) => c.url + ' (' + c.status + ')').join(' \u2192 ') }, base));
+      if (!p.redirectTo || redirectTarget(p.path)) return; // a Duda URL Redirect rule is judged with the other rules
+      const how = p.redirectLive ? `${p.redirectLive.status} on the published website` : 'the page sends the browser on';
+      raw.push(Object.assign({ code: 'REDIRECT_RETIRED_PAGE', severity: 'info', category: 'Retired page / preview cleanup',
+        message: `Redirect detected: ${p.path} redirects to ${p.redirectTo}. Content checks run on the destination page, and any findings are listed there. The original page remains accessible in Duda preview.`,
+        found: `${p.path} \u2192 ${p.redirectTo} (${how})`, expected: 'Nothing to fix for visitors. To tidy up: hide or delete the old page in Duda.' }, base));
+    });
 
     // Broken internal links
     Object.values(pageInfo).forEach((p) => {
@@ -4046,7 +4100,8 @@
       fonts: fontSys ? { roles: fontSys.roles, fromTheme: fontSys.fromTheme, all: fontSys.all.slice(0, 14) } : null,
       photos: photoSys,
       findings: merged,
-      pages: Object.values(pageInfo).map((p) => ({ path: p.path, ...(p.redirectTo ? { redirectTo: p.redirectTo } : {}), title: p.title || '', h1: p.h1 || '', ...(p.description ? { description: String(p.description).slice(0, 320) } : {}), notFound: !!p.notFound, error: p.error || '', devices: p.devices || [], ...(p.blog ? { blog: true } : {}), ...(p.forms ? { forms: p.forms } : {}) })),
+      retired: Object.values(pageInfo).filter((p) => p.redirectTo).map((p) => p.path),
+      pages: Object.values(pageInfo).map((p) => ({ path: p.path, ...(p.redirectTo ? { redirectTo: p.redirectTo } : {}), ...(viaOf.get(p.path) ? { via: viaOf.get(p.path).slice(0, 10) } : {}), title: p.title || '', h1: p.h1 || '', ...(p.description ? { description: String(p.description).slice(0, 320) } : {}), notFound: !!p.notFound, error: p.error || '', devices: p.devices || [], ...(p.blog ? { blog: true } : {}), ...(p.forms ? { forms: p.forms } : {}) })),
       links: Array.from(linkMap.values()),
       // For the AI read of whether each page fits its address. Not saved with the audit.
       // Buttons on each page, in order (desktop). Not saved with the audit.
@@ -4204,7 +4259,11 @@
       if (v.type === 'wrong_location' && !blk.pages.some((p) => placeOfPath(p))) {
         if (namesOwnTown(v.quote, truth)) return;
       }
-      const [code, severity, category, message] = RULES[v.type];
+      const [code, severity0, category, message] = RULES[v.type];
+      // Uncertain location wording ("Detailing experts in Willow Grove" on a Montgomery County page) is a
+      // question for the team, not a confirmed wrong location: a warning that starts as For clarification.
+      const unsure = v.type === 'wrong_location' && (v.clarify || Number(v.confidence) < 0.8);
+      const severity = unsure ? 'warning' : severity0;
       // Already caught by a rule on the same element? Attach the AI opinion instead of duplicating
       const existing = findings.find((f) => f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)) && /OTHER_BUSINESS|COPYRIGHT_NAME/.test(f.code) && v.type === 'other_business');
       if (existing) { existing.ai = { verdict: 'other_business', confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote }; return; }
@@ -4228,6 +4287,7 @@
       };
       // The spelling as written, picked out of the quote, so reports can group by it.
       if (v.type === 'name_variant' && truth) { const nv = nameVariants([{ text: v.quote || t }], truth)[0]; if (nv) f.variant = nv.found; }
+      if (unsure) Object.assign(f, { clarify: true, message: 'AI: location wording to confirm (the town may be a service area, not a claim about where the shop is)' });
       f.id = hash([f.code, f.selector, f.found, f.message, pages.length > 1 ? '*' : f.path].join('|'));
       if (!findings.some((x) => x.id === f.id)) findings.push(f);
     });

@@ -1,4 +1,5 @@
 // POST /api/check  { urls: [...] }  → [{ url, status, finalUrl, error }]
+// POST /api/check  { routes: { domain, paths } } → [{ path, chain:[{url,status}], final, finalStatus, loop?, error? }] — redirects on the published website
 // POST /api/check  { places: [...] } → [{ url, finalUrl, id, name, address }] — Google Maps short links
 //      (maps.app.goo.gl, goo.gl/maps, g.page, share.google) followed to where they open, and the place named.
 // Checks external links and images for 404 / server errors. Social networks are skipped (they block bots).
@@ -88,9 +89,36 @@ async function place(url) {
   return Object.assign({ url }, out);
 }
 
+// ---- Where a page's public address really goes (redirects followed hop by hop) ----
+async function liveRoute(domain, path) {
+  const start = `https://${domain}${path === '/' ? '/' : path}`;
+  const chain = []; const seen = new Set(); let cur = start;
+  try {
+    for (let hop = 0; hop < 8; hop++) {
+      if (seen.has(cur)) return { path, chain, loop: true };
+      seen.add(cur);
+      if (!(await publicAddress(cur))) return { path, chain, error: 'address not allowed' };
+      let r = await fetchWithTimeout(cur, { method: 'HEAD', redirect: 'manual', headers: { 'User-Agent': UA_DESKTOP } }, 8000);
+      if ([403, 405, 501].includes(r.status)) r = await fetchWithTimeout(cur, { method: 'GET', redirect: 'manual', headers: { 'User-Agent': UA_DESKTOP, Accept: 'text/html' } }, 8000);
+      const loc = r.status >= 300 && r.status < 400 && r.headers.get('location');
+      chain.push({ url: cur, status: r.status });
+      if (!loc) return { path, chain, final: cur, finalStatus: r.status };
+      cur = new URL(loc, cur).href;
+    }
+    return { path, chain, loop: true };
+  } catch (e) { return { path, chain, error: e.name === 'AbortError' ? 'timeout' : 'could not be opened' }; }
+}
+
 async function handler(req, res) {
   if (!(await requireUser(req, res))) return;
   const body = readBody(req) || {};
+  // { routes: { domain, paths } }: where each page's public address goes (the published website's redirects).
+  if (body.routes && typeof body.routes === 'object') {
+    const domain = String(body.routes.domain || '').toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return res.status(400).json({ error: 'domain required' });
+    const paths = [].concat(body.routes.paths || []).map((p) => '/' + String(p || '').replace(/^\/+/, '')).slice(0, 25);
+    return res.status(200).json(await Promise.all(paths.map((p) => liveRoute(domain, p))));
+  }
   if (Array.isArray(body.places)) return res.status(200).json(await Promise.all(body.places.slice(0, 20).map((u) => place(String(u || '')))));
   const { urls } = body;
 
