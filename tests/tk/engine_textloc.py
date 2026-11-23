@@ -64,5 +64,14 @@ with sync_playwright() as p:
     check(not any('towing' in x for x in r3), 'a towing page whose title and H1 agree is fine (no "not a service they offer")')
     check(any('nolanville' in x and 'critical' in x for x in r3), 'a title about another service than the page is still reported')
     check(any('/specials' in x and 'clarify' in x and 'warning' in x for x in r3), 'when the AI cannot tell what a page offers, the item is a question (For clarification), not a critical mistake')
+    r4 = pg.evaluate("""() => {
+      const A = window.DudaAudit;
+      const t = 'Wheel barrels and full glass coating available for an additional charge';
+      const texts = [{ text: t, selector: 'li', location: 'Body', pages: ['/ceramic-coating'], devices: ['desktop'], visibleOn: ['desktop'], hiddenOn: [] }];
+      const issues = [{ i: 0, type: 'spelling', quote: 'Wheel barrels', confidence: 0.6, reason: 'Unfamiliar term; may mean wheel wells or wheel barrels', suggestion: 'Wheel barrel coating', clarify: true }];
+      return A.applyProofIssues([], texts, issues).map((f) => [f.code, f.severity, f.message, f.clarify ? 'clarify' : ''].join(' | '));
+    }""")
+    print('  ', r4)
+    check(r4 and 'info' in r4[0] and 'clarify' in r4[0] and 'Wording to confirm' in r4[0], 'a term the AI is unsure about is an Info item to confirm, not a spelling mistake')
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED'); sys.exit(0 if ok else 1)

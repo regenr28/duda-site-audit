@@ -390,7 +390,7 @@ Respond with JSON only: {"results":[{"i":<block number>,"type":"<type>","quote":
 
 const PROOF_SYSTEM = `You proofread the WEBSITE COPY of one small business, the way a careful editor would before it goes live. ${CONTEXT}
 Report ONLY clear mistakes a visitor would notice:
-- "spelling": a misspelled ordinary word ("recieve", "proffesional", "detialing", "teh"). Never brand, product, car, place or people names, trade words (PPF, ceramic, detailing, tint, vinyl, graphene, paint correction, decon), or deliberate marketing spellings.
+- "spelling": a word whose LETTERS are wrong ("recieve", "proffesional", "detialing", "teh"); the fix is the same word spelled right. Never brand, product, car, place or people names, or deliberate marketing spellings. Automotive and detailing terms are real words even when unfamiliar: wheel barrels (the inner cylinder of a wheel), wheel wells, wheel faces, lug nuts, calipers, rotors, door jambs, A-pillars, rocker panels, headliner, trim, emblems, PPF, ceramic, graphene, decon, clay bar, iron remover, compound, polish, glaze, sealant, paint correction, swirl marks, holograms, water spots, overspray, tint, VLT, vinyl, wrap, satin, matte, gloss, hydrophobic, self-healing, ballistic, IR film. Read the whole sentence: an uncommon term that makes sense there is not a mistake. A correction must keep the same component, product or service: never replace a valid word with a different valid word ("wheel barrels" → "wheel wells" changes the part; it is NOT a spelling fix). If you are not sure the word is wrong, do not report it as spelling: report it only with "clarify": true and say in "reason" what is uncertain; never give high confidence without clear evidence.
 - "grammar": an OBJECTIVE grammar error that any editor would fix: a wrong word (your/you're, its/it's, then/than, there/their, loose/lose), a verb that does not agree with its own subject ("the films is"), a missing or doubled word that breaks the sentence ("we we offer", "to the your car"). Sentences that are correct but could be written differently are NOT errors: "it is easy to end up with…", "there are…", long lists, passive voice, starting with "And"/"But", informal or salesy wording.
 - "punctuation": punctuation that is plainly wrong: a missing full stop between two sentences that run together ("call us today we are open"), a doubled mark ("today!!", "services,,"), a missing closing bracket or quote, a stray mark ("car ."). Never a missing Oxford comma, dashes vs hyphens, or a list without full stops.
 - "incomplete": a sentence or paragraph that stops mid-thought, a heading or button left as a template placeholder ("Add your text here", "Lorem ipsum", "Title goes here", "[City]"), or copy that clearly belongs to a template and was never filled in.
@@ -398,7 +398,8 @@ Do NOT report: style, tone, word choice, clarity, rephrasing, capitalisation, ti
 The "suggestion" must be the quoted words with the SMALLEST change that fixes them (usually one or two words), never a rewrite, a longer version or added content. If the fix would be a rewrite, it is a style opinion: do not report it.
 Each block is one whole paragraph, heading or list item, with the words of its links in place: judge it as written, and never call a block unfinished because it ends with a link's words.
 Blocks marked "Image alt text" are the descriptions of pictures: proofread their spelling and punctuation, but a short phrase without a full stop is normal there.
-Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|punctuation|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 15 words>","suggestion":"<the corrected words>"}]}. Use {"results":[]} when there is nothing to fix.`;
+Keep the types apart: "spelling" is only wrong letters in a word; "grammar" only a real grammar error; optional rewording is never reported.
+Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|punctuation|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 20 words>","suggestion":"<the corrected words>","clarify":<true when the wording is only uncertain, not a confirmed mistake>}]}. Use {"results":[]} when there is nothing to fix.`;
 
 const LINK_SYSTEM = `You check that the BUTTONS and LINKS on a small business website open the page a visitor expects. ${CONTEXT}
 Each item gives the words on the button or link, the heading of the section it sits in, the text around it, the page it is on, and the page it opens (its address, title and main heading).
@@ -456,7 +457,17 @@ function minimalFix(quote, suggestion, type) {
   const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
   for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
   const changed = Math.max(a.length, b.length) - L[0][0];
-  return type === 'spelling' ? changed <= 2 && b.length <= a.length + 1 : changed <= 3 && b.length <= a.length + 2;
+  if (type === 'spelling') return changed <= 2 && b.length <= a.length + 1 && spellingEdit(a, b);
+  return changed <= 3 && b.length <= a.length + 2;
+}
+/** A spelling fix changes the letters of a word, not the word: "detialing" → "detailing" yes, "barrels" → "wells" no. */
+function spellingEdit(a, b) {
+  const lev = (x, y) => { const d = Array.from({ length: x.length + 1 }, (_, i) => [i]); for (let j = 1; j <= y.length; j++) d[0][j] = j;
+    for (let i = 1; i <= x.length; i++) for (let j = 1; j <= y.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1)); return d[x.length][y.length]; };
+  const onlyA = a.filter((w) => !b.includes(w)); const onlyB = b.filter((w) => !a.includes(w));
+  if (!onlyA.length || !onlyB.length) return onlyA.join('') === '' ? false : onlyB.join('') === '' && onlyA.length === 1 && onlyA[0].length <= 2;
+  // Each changed word has a close partner (a word run together or split counts too).
+  return onlyA.every((w) => onlyB.some((v) => lev(w, v) <= Math.max(2, Math.floor(Math.max(w.length, v.length) / 3)))) || lev(onlyA.join(''), onlyB.join('')) <= 2;
 }
 const proofPrompt = (b, items) => `${businessHeader(b)}
 TEXT BLOCKS (each starts with [i] then where it appears)
@@ -491,6 +502,8 @@ async function extraCheck(req, res, b, list, owner) {
     if (raw == null) return todo.push(x);
     if (raw === '0') return;
     const c = jparse(raw); if (!c) return todo.push(x);
+    // A spelling flag from before the industry-terms rules is asked again (only those blocks).
+    if (proof && (c.r || []).some((r) => r.type === 'spelling' && r.sv !== 2)) return todo.push(x);
     (c.r || []).forEach((r) => results.push(Object.assign({}, r, { i: Number(x.i), cached: true })));
   });
   let used = null;
@@ -515,11 +528,11 @@ async function extraCheck(req, res, b, list, owner) {
       const r = fit
         ? (FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240), ...(x.clarify === true ? { clarify: true } : {}) } : null)
         : proof
-        ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200) } : null)
+        ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200), sv: 2, ...(x.clarify === true ? { clarify: true } : {}) } : null)
         : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 200), expected: String(x.expected || '').slice(0, 160) } : null);
       if (!r) return;
       // A "correction" that rewrites the words or adds to them is a style opinion, not a mistake.
-      if (proof && r.type !== 'incomplete' && !minimalFix(r.quote, r.suggestion, r.type)) return;
+      if (proof && r.type !== 'incomplete' && !r.clarify && !minimalFix(r.quote, r.suggestion, r.type)) return;
       found.push(Object.assign({ i }, r));
     });
     // Grammar and unfinished-copy flags get a second, stricter read before they become audit items.

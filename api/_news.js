@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-23-spelling-terms', date: '2026-11-23', audience: 'all', tag: 'Audits',
+    title: 'Spelling: detailing terms are words, and a fix keeps the same part',
+    what: 'The AI \u201ccorrected\u201d \u201cwheel barrels\u201d (the inner part of a wheel) to \u201cwheel wells\u201d (the body cavity around it). Now a spelling item needs a word with wrong letters and a fix that is the same word spelled right: swapping one real word for another is never a spelling fix. Automotive and detailing terms are read in their sentence first, and a term the AI is not sure about becomes an Info item, <b>wording to confirm</b>, that starts as For clarification.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: spelling items are checked again.'],
+  },
+  {
     id: '2026-11-23-location-sense', date: '2026-11-23', audience: 'all', tag: 'Audits',
     title: 'Locations: where the shop is vs. where it works',
     what: 'The AI now tells a shop\'s physical location from its service area, and knows which towns lie inside the county or region a page targets (Willow Grove on the Montgomery County page is relevant). Only an explicit claim about where the shop is (\u201cVisit our Willow Grove shop\u201d) that conflicts with the business\'s location is a critical wrong location. Wording that is only ambiguous (\u201cAuto Detailing Experts in Willow Grove, PA\u201d) becomes a warning, <b>location wording to confirm</b>, that starts as For clarification with a suggestion and what is uncertain.',
