@@ -2455,3 +2455,19 @@ table.findings .rw-status select { max-width: 150px; }
 .dev.pvl-btn { cursor: pointer; font-family: inherit; font-size: 10.5px; font-weight: 700; line-height: inherit; }
 .dev.pvl-btn:hover { outline: 1px solid currentColor; }
 .nap-fmt { background: var(--warn-soft); } .nap-fmt .nap-m { background: var(--warn); color: #fff; }
+
+/* Make a report: pick Findings or Progress, then what to leave out */
+.rm-types { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.rm-type { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
+.rm-type:has(input:checked) { border-color: var(--accent, #2a78d6); box-shadow: 0 0 0 1px var(--accent, #2a78d6) inset; }
+.rm-type > span { display: flex; flex-direction: column; gap: 4px; }
+.rm-type.off { opacity: .55; cursor: default; }
+.rm-since { margin: 0 0 12px; }
+.rm-leave { display: grid; gap: 6px; margin: 4px 0 12px; }
+.rm-l { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
+.rm-l.off { cursor: default; opacity: .8; }
+.rm-n { font-size: 12px; color: var(--muted); margin-left: 4px; }
+.rm-n::before { content: "· "; }
+.rm-sum { margin: 8px 0 12px; }
+.rm-acts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 640px) { .rm-types { grid-template-columns: 1fr; } }

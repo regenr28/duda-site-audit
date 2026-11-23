@@ -14,7 +14,11 @@ class AI(BaseHTTPRequestHandler):
         user = ''.join(m['content'] if isinstance(m['content'], str) else ''.join(c.get('text', '') for c in m['content']) for m in body.get('messages', []))
         SEEN['calls'] += 1
         results = []
-        if 'WEBSITE AUDIT REPORT' in system:
+        if 'WHAT WE FIXED' in system:
+            SEEN['fixed'] = SEEN.get('fixed', 0) + 1; SEEN['fprompt'] = SEEN.get('fprompt', '') + user
+            for m in re.finditer(r'^=== key (\S+)\nPage: ([^\n]*)', user, re.M):
+                results.append({'k': m.group(1), 'title': f'Removed the note left for the writer on {m.group(2).split(" · ")[0]}', 'impact': 'Visitors now read a finished page instead of an internal note.', 'area': 'visitors'})
+        elif 'WEBSITE AUDIT REPORT' in system:
             SEEN['rprompt'] += user
             for m in re.finditer(r'^=== key (\S+)\nPage: ([^\n]*)', user, re.M):
                 SEEN['report'].append(m.group(1))
@@ -97,11 +101,21 @@ try:
         PAGES['/fort-hood-window-tint-law'] = ('Fort Hood Window Tint Law', '<h1>Fort Hood Window Tint Law</h1><p>Window tint inspections on post are free for soldiers.</p>')
         S2 = scan(pg, (S1.get('scan') or {}).get('finishedAt'))
         check((S2.get('scan') or {}).get('state') == 'complete', 'two scans finished')
+        F = [f for f in S2['findings'] if not f.get('gone')]
+        fa = next(f for f in F if f['code'] == 'AI_PAGE_TOPIC'); cl = next(f for f in F if f['code'].startswith('PAGE_TOPIC'))
+        pg.evaluate("async (a) => { const st = (b) => fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); await st({ op: 'patchFinding', siteId: 's1', findingIds: [a[0]], changes: { status: 'false' } }); await st({ op: 'patchFinding', siteId: 's1', findingIds: [a[1]], changes: { status: 'clarification', asked: '' } }); }", [fa['id'], cl['id']])
+        FA_FOUND = 'keep your paint glossy'
         pg.goto(f'http://localhost:{APORT}/#/site/s1/report'); pg.reload(); pg.wait_for_selector('#dbPdf', timeout=15000); time.sleep(0.8)
         print('   rows:', pg.locator('[data-dbview]').count(), pg.locator('.db-row-acts').count(), pg.evaluate("() => document.querySelector('.db-table tbody') && document.querySelector('.db-table tbody').innerHTML.slice(0, 600)"))
         print('   scans:', [(x.get('at'), bool(x.get('rep'))) for x in (S2.get('scans') or [])])
         check(pg.locator('[data-dbpdf]').count() >= 2, 'every saved scan has its own 📄 PDF')
-        with pg.expect_download(timeout=180000) as dl: pg.click('#dbPdf')
+        pg.click('#dbPdf'); pg.wait_for_selector('#rmGo', timeout=15000); time.sleep(1)
+        win = pg.inner_text('.rm')
+        print('   window:', ' | '.join(win.split('\n')[:16]))
+        check('Findings report' in win and 'Progress report' in win, 'one window offers both reports')
+        check(pg.is_checked('[data-rml=clar]') and pg.is_checked('[data-rml=contrast]') and pg.is_disabled('.rm-l.off input'), 'For clarification and colour contrast are left out by default; false alarms always are')
+        check(re.search(r'Readability / colour contrast.*?\d+ items?', win, re.S), 'each leave-out choice says how many items it removes')
+        with pg.expect_download(timeout=180000) as dl: pg.click('#rmGo')
         path = dl.value.path(); name = dl.value.suggested_filename
         data = open(path, 'rb').read()
         print('   file:', name, len(data), 'bytes', flush=True)
@@ -127,10 +141,27 @@ try:
         uris = data.count(b'/URI')
         check(uris >= 10, f'the page addresses in the PDF are clickable links ({uris})')
         subprocess.run(['pdftoppm', '-r', '60', '-png', '-f', '1', '-l', '3', out, os.path.join(OUT, 'clientpdf')])
+        check(FA_FOUND not in txt and FA_FOUND not in SEEN['rprompt'], 'an item marked False alarm is not in the report (nor sent to the AI)')
+        check('Hard-to-read pieces' not in txt, 'colour contrast is left out (the default)')
         n = len(SEEN['report'])
-        pg.click('#modalRoot [data-close]'); time.sleep(0.3)
-        with pg.expect_download(timeout=180000) as dl2: pg.click('#dbPdf')
+        with pg.expect_download(timeout=180000) as dl2: pg.click('#rmGo')
         check(len(SEEN['report']) == n, 'making it again asks the AI nothing new (the write-ups are remembered)')
+        # ---- Progress report ----
+        pg.check('[name=rmType][value=progress]'); time.sleep(0.4)
+        check(pg.is_visible('#rmSince') and pg.locator('#rmSince option').count() >= 2, 'the progress report asks since which scan to count fixes')
+        pg.select_option('#rmSince', index=0); time.sleep(0.3)
+        print('   sum:', pg.inner_text('#rmSum'))
+        check(re.search(r'cover \d+ fix', pg.inner_text('#rmSum')), 'it says how many fixes and open items it will cover')
+        with pg.expect_download(timeout=180000) as dl3: pg.click('#rmGo')
+        d3 = open(dl3.value.path(), 'rb').read(); n3 = dl3.value.suggested_filename
+        check(n3.startswith('audit-progress-') and d3[:5] == b'%PDF-', 'the progress report downloads as a PDF: ' + n3)
+        out3 = os.path.join(OUT, 'progresspdf.pdf'); open(out3, 'wb').write(d3)
+        t3 = subprocess.run(['pdftotext', '-layout', out3, '-'], capture_output=True, text=True).stdout
+        check('Website audit progress' in t3 and 'Highlights' in t3 and 'What was fixed' in t3 and 'Still to do' in t3, 'it has the highlights, what was fixed and what is still to do')
+        check('Removed the note left for the writer' in t3 and 'Visitors now read a finished page' in t3, 'each fix says what was done and why it matters')
+        check('Matthew' in SEEN.get('fprompt', '') or 'Matthew' in t3, 'the fix is written from what was there before (the editor note)')
+        check(FA_FOUND not in t3, 'the false alarm is not in the progress report either')
+        subprocess.run(['pdftoppm', '-r', '60', '-png', '-f', '1', '-l', '2', out3, os.path.join(OUT, 'progresspdf')])
         br.close()
 finally:
     srv.terminate()

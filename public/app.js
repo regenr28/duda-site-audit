@@ -12848,7 +12848,7 @@
       <div class="db-tiles rep-tiles">${[['Items found', r.items.length], ['⛔ Critical', r.counts.critical || 0], ['⚠ Warning', r.counts.warning || 0], ['ⓘ Info', r.counts.info || 0]].map(([l, n]) => `<div class="db-tile"><span class="db-tile-n">${n}</span><span class="db-tile-l">${l}</span></div>`).join('')}</div>
       <section class="db-card"><h3>By severity</h3>${dbSevBar(r.counts)}<div class="db-status small">${[['open', 'Open'], ['clarification', 'For clarification'], ['hold', 'On hold'], ['done', 'Done'], ['false', 'False alarm']].map(([v, l]) => `<span>${l} <b>${st(v)}</b></span>`).join('')}<span class="faint">status ${x.now ? 'now' : 'at the time of the scan'}</span></div></section>
       <section class="db-card"><h3>By category</h3>${dbHBars(Object.values(cats).sort((a, b) => b.n - a.n), null, 'No items.')}</section>
-      <div class="rep-acts"><button class="btn sm primary" id="repPdf" type="button" title="A PDF for the business owner, as of this scan">📄 Client report (PDF)</button><button class="btn sm" id="repDl" type="button">⬇ Download this report</button>
+      <div class="rep-acts"><button class="btn sm primary" id="repPdf" type="button" title="A PDF for the business owner, as of this scan">📄 Make a report</button><button class="btn sm" id="repDl" type="button">⬇ Download this report</button>
         ${others.length ? `<span class="rep-cmp"><label class="small muted" for="repWith">Compare with</label><select id="repWith">${others.map((y) => `<option value="${scans.indexOf(y)}" ${y === def ? 'selected' : ''}>${esc(y.now ? 'Today (now)' : dbDate(y.at) + ' · ' + new Date(y.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}</option>`).join('')}</select><button class="btn sm primary" id="repCmp" type="button">Compare</button></span>` : '<span class="small faint">Scan again to have something to compare with.</span>'}</div>
       ${x.seo ? `<section class="db-card"><h3>🔍 Pages created by ${esc(x.seo.by)} (${(x.seo.pages || []).length})</h3>${x.seo.error ? `<div class="small faint">Duda's activity log could not be read: ${esc(x.seo.error)}</div>` : ''}${(x.seo.pages || []).length ? `<div class="rep-list">${x.seo.pages.map((p) => { const path = p.path ? A.normalizePath(String(p.path).replace(/^https?:\/\/[^/]+/i, '')) : ''; const n = path ? r.items.filter((i) => i.p === path).length : null; return `<div class="rep-row seo-pg"><span class="small faint">${esc(p.at ? dbDate(p.at) : '')}</span><span></span><div class="rep-main"><b>${esc(p.title || path || 'Page')}</b>${path ? ` <span class="mono small faint">${esc(path)}</span>` : ''}</div><span class="small ${n ? 'db-worse' : 'muted'} rep-where">${n === null ? '' : n ? `${n} item${n === 1 ? '' : 's'} on this page` : '✓ nothing found'}</span></div>`; }).join('')}</div>` : '<div class="small faint">None in Duda\'s activity log.</div>'}</section>` : ''}
       <section class="db-card"><div class="rep-filter"><h3>Every item (${r.items.length})</h3><input id="repQ" type="search" placeholder="Search items, pages, #number"><select id="repSev"><option value="">All severities</option>${DB_SEV.map((k) => `<option value="${k.k}">${k.label}</option>`).join('')}</select></div><div id="repList"></div></section></div>`;
@@ -12856,7 +12856,7 @@
     draw();
     $('#repQ', body).oninput = (e) => { q = e.target.value.trim().toLowerCase(); limit = 150; draw(); };
     $('#repSev', body).onchange = (e) => { sev = e.target.value; limit = 150; draw(); };
-    $('#repPdf', body).onclick = () => downloadClientPdf(s, x, scans);
+    $('#repPdf', body).onclick = () => openReportMaker(s, x, scans);
     $('#repDl', body).onclick = async () => { repImgs = await proofImages(s, r.items); repDownload(`scan-report-${slug(s.businessName || s.siteId)}-${String(r.at).slice(0, 10)}.html`, reportHtml(s, x, r)); repImgs = {}; };
     if ($('#repCmp', body)) $('#repCmp', body).onclick = () => { const y = scans[Number($('#repWith', body).value)]; if (y) openCompare(s, String(x.at) <= String(y.at) || y.now ? x : y, String(x.at) <= String(y.at) || y.now ? y : x, scans); };
   }
@@ -12927,10 +12927,6 @@
   // The published page when the website is live; before that, its preview, so every page address in the PDF opens something.
   const crUrl = (s, path) => { const d = liveDomain(s) || (s.truth && s.truth.domain) || ''; return d ? `https://${d.replace(/^https?:\/\//, '').replace(/\/$/, '')}${path === '/' ? '/' : path}` : previewUrl(s, path, 'desktop'); };
   const crUnq = (t) => String(t || '').replace(/^["“]|["”]$/g, '').trim();
-  /** The items a client should see: open, not hidden on purpose, not about the scan itself. */
-  function crItems(s, list) {
-    return list.filter((f) => f && !f.gone && (f.status === 'open' || f.status === 'clarification' || !f.status) && !CR_SKIP.test(f.code) && f.category !== 'Scan');
-  }
   /** Items that belong together become one finding: a page's town (title, H1, copy), a page's topic, or the same thing on many pages. */
   function crEntries(s, items) {
     const map = new Map();
@@ -13086,43 +13082,211 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>Current findings • Recommendations • Completed corrections</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
     return { doc, header, footer, name: `website-audit-${slug(biz)}-${String(at).slice(0, 10)}.pdf` };
   }
-  /** Build the client report for one scan (x.now: the audit as it is today) and download it as a PDF. */
-  async function downloadClientPdf(s, x, scans) {
-    modal(`<header><h2>📄 Client report</h2><button class="btn ghost" data-close>✕</button></header><div class="body"><p id="crMsg">Reading the audit…</p><div class="small faint">The findings are written up for the business owner: the page, what is there now and what to change. Items marked False alarm, On hold, Exempt or Done are left out.</div></div>`);
-    const msg = (t) => { const m = $('#crMsg'); if (m) m.textContent = t; };
-    try {
-      const r = await dbReport(s, x); if (!r) throw new Error('This scan was made before scan reports were kept.');
-      const byId = new Map((s.findings || []).map((f) => [f.id, f]));
-      const list = x.now ? (s.findings || []) : r.items.map((i) => Object.assign({ id: i.id, num: i.n, code: i.c, severity: i.s, category: i.g, message: i.m, path: i.p, found: i.f, expected: i.e, location: i.l, status: i.st }, byId.has(i.id) ? { pages: byId.get(i.id).pages, ai: byId.get(i.id).ai } : {}));
-      const items = crItems(s, list);
-      const entries = crEntries(s, items);
-      // What was fixed since the scan before this one.
-      // "Today" is the latest scan with the statuses set since, so it is compared with the scan before that one.
-      const idx = scans.indexOf(x); const before = scans.slice(0, idx < 0 ? scans.length : idx).filter((y) => y.rep && !y.now);
-      if (x.now && before.length) before.pop();
-      const prevX = before.pop();
-      let fixed = []; let prevAt = '';
-      if (prevX) { try { const pr = await dbReport(s, prevX); if (pr) { fixed = compareReports(pr, r).fixed.filter((i) => !CR_SKIP.test(i.c) && i.st !== 'false'); prevAt = prevX.at; } } catch (e) { /* no comparison */ } }
-      msg(`Writing up ${entries.length} finding${entries.length === 1 ? '' : 's'}…`);
-      const aiOk = await crWrite(s, entries, (d, n) => msg(`Writing up the findings ${d}/${n}…`));
-      msg('Adding proof pictures…');
-      repImgs = await proofImages(s, entries.slice(0, 40).map((e) => e.items[0]));
-      const out = crHtml(s, { entries, fixed, prevAt, at: x.now ? new Date().toISOString() : x.at, items });
-      repImgs = {};
-      msg('Making the PDF…');
-      let blob = null;
+  // ---------- Making a report: Findings (what is on the website now, and how to fix it) or Progress
+  // (what was fixed and why it matters, and what is still to do). One window: pick the report, pick
+  // what to leave out (seeing how many items each choice removes), then make the PDF. ----------
+  // False alarms, exempt items and (for what is pending) Done items are never in a report.
+  const CR_LEAVE = [
+    { k: 'clar', label: 'For clarification', hint: 'still being confirmed', def: true, test: (f) => f.status === 'clarification' },
+    { k: 'hold', label: 'On hold', hint: 'parked for now', def: true, test: (f) => f.status === 'hold' },
+    { k: 'contrast', label: 'Readability / colour contrast (WCAG)', hint: 'text and fields too close to their background', def: true, test: (f) => /^CONTRAST_/.test(f.code) || f.category === 'Accessibility' },
+    { k: 'polish', label: 'Design polish', hint: 'fonts, photos used in more than one place', def: false, test: (f) => isPolishItem(f) },
+    { k: 'tech', label: 'Technical SEO files', hint: 'robots.txt, sitemap, llms.txt, schema structure, redirects', def: false, test: (f) => groupOfItem(f) === 'tech' },
+    { k: 'info', label: 'Notes', hint: 'items marked Info', def: false, test: (f) => f.severity === 'info' },
+  ];
+  const crLeft = (f, ex) => CR_LEAVE.some((x) => ex[x.k] && x.test(f));
+  const crTime = (v) => (typeof v === 'number' ? v : Date.parse(v || '') || 0);
+  /** Still to do: open (and, when not left out, for clarification and on hold). */
+  function crItems(s, list, ex) {
+    ex = ex || {};
+    return list.filter((f) => f && !f.gone && (!f.status || ['open', 'clarification', 'hold'].includes(f.status)) && !CR_SKIP.test(f.code) && f.category !== 'Scan' && !crLeft(f, ex));
+  }
+  /** Fixed since a date: confirmed gone by a rescan, or marked Done. Not false alarms or exempt items. */
+  function crFixed(s, since, ex) {
+    const t0 = crTime(since);
+    return (s.findings || []).filter((f) => {
+      if (!f || CR_SKIP.test(f.code) || f.category === 'Scan' || f.status === 'false' || f.status === 'exempt' || f.manualOnly) return false;
+      const at = f.gone ? crTime(f.gone.at) : f.status === 'done' ? crTime(f.statusAt) : 0;
+      return at && at >= t0 && !crLeft(f, ex || {});
+    });
+  }
+  /** Without the AI: a fix written plainly. */
+  function crPlainFixed(s, e) {
+    const f = e.items[0]; const n = e.rows ? e.rows.length : e.pages.length;
+    const what = String(f.message || '').replace(/^AI: /, '').replace(/\s*\((SEO title|H1 heading|page copy|meta description)\)$/, '');
+    const sec = CR_SECTIONS.find((x) => x.k === e.sec) || {};
+    return { title: `Fixed: ${what}${n > 1 ? ` (${n} pages)` : ''}`, impact: sec.k === 'biz' ? 'Customers now see the business’s correct details.' : sec.k === 'google' ? 'Google now reads this part of the website correctly.' : 'Visitors now see a finished, working page.', area: sec.k === 'biz' ? 'business' : sec.k === 'google' ? 'seo' : 'visitors' };
+  }
+  async function crWriteFixed(s, entries, onStep) {
+    const use = entries.slice(0, 60);
+    let aiOk = !!(state.ai && state.ai.enabled), done = 0;
+    const business = Object.assign(aiBusiness({ truth: s.truth || {}, pages: s.pages || [], findings: s.findings || [] }), {
+      phone: ((s.truth || {}).phones || []).map(A.fmtPhone).join(', '), email: ((s.truth || {}).emails || []).join(', '), domain: liveDomain(s) || (s.truth || {}).domain || '' });
+    for (let i = 0; i < use.length && aiOk; i += 8) {
+      const batch = use.slice(i, i + 8);
       try {
-        const res = await fetch('/api/capture', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': 'application/json' }, viewHeaders()), body: JSON.stringify({ op: 'pdf', site: s.id, html: out.doc, header: out.header, footer: out.footer, name: out.name }) });
-        if (res.ok && /pdf/.test(res.headers.get('content-type') || '')) blob = await res.blob();
-      } catch (e) { blob = null; }
-      if (blob) {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = out.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-        msg(`Downloaded ${out.name}.${aiOk ? '' : ' The AI was not available, so the findings are written more plainly.'}`);
-      } else {
-        repDownload(out.name.replace(/\.pdf$/, '.html'), out.doc);
-        msg('The PDF could not be made on the server right now, so the report was downloaded as a page instead: open it and print it (Ctrl/Cmd + P) to save it as a PDF.');
-      }
-    } catch (e) { msg(e.message || String(e)); }
+        const r = await post('/api/ai', { op: 'report', mode: 'fixed', business, items: batch.map((e) => crFacts(s, e)) });
+        (r.results || []).forEach((v) => { const e = batch.find((x) => x.k === v.k); if (e) e.w = v; });
+      } catch (er) { aiOk = false; }
+      done += batch.length; if (onStep) onStep(done, use.length);
+    }
+    entries.forEach((e) => { if (!e.w) e.w = crPlainFixed(s, e); });
+    return aiOk;
+  }
+  function prHtml(s, ctx) {
+    const { fixedE, pendE, fixedN, pendN, since, lastAt, recentN, at } = ctx;
+    const biz = s.businessName || (s.truth || {}).businessName || s.siteId;
+    const fmt = (d, y) => new Date(d).toLocaleDateString('en-US', y === false ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
+    const date = fmt(at);
+    const dom = liveDomain(s) || (s.truth || {}).domain || '';
+    const lk = (t) => esc(t).replace(/https?:\/\/[^\s<"”)]+[^\s<"”).,;:!?]/g, (u) => `<a href="${u}">${u}</a>`);
+    const pageLinks = (e) => { const ps = e.rows ? e.rows.map((r) => r.path) : e.pages; return ps.slice(0, 12).map((p) => `<a href="${esc(crUrl(s, p))}">${esc(crName(s, p))}</a>`).join(', ') + (ps.length > 12 ? ` and ${ps.length - 12} more` : ''); };
+    const area = (k) => fixedE.filter((e) => e.w && e.w.area === k).reduce((n, e) => n + e.items.length, 0);
+    const AREA = { business: 'Customers and contact details', seo: 'What Google reads', visitors: 'How pages read and work' };
+    const top = fixedE.slice().sort((a, b) => CR_RANK[a.sev] - CR_RANK[b.sev] || b.items.length - a.items.length).slice(0, 4);
+    const secs = (list) => CR_SECTIONS.filter((x) => list.some((e) => e.sec === x.k));
+    const was = (e) => { const f = e.items[0]; return f.found ? `<div class="note">Was: “${esc(crUnq(f.found).slice(0, 140))}”${f.expected ? ` → now: ${esc(crUnq(f.expected).replace(/^Suggested: /, '').slice(0, 100))}` : ''}</div>` : ''; };
+    const fixedHtml = (e, i, sec) => `<div class="it"><h4><span class="n ok">✓</span>${esc(e.w.title)}</h4>
+      <p>${lk(e.w.impact || '')}</p><div class="where">${e.rows || e.pages.length > 1 ? `${(e.rows || e.pages).length} pages: ` : ''}${pageLinks(e)}</div>${e.rows ? '' : was(e)}</div>`;
+    const pendHtml = (e, i, sec) => `<div class="it"><h4><span class="n">${sec.letter}${String(i + 1).padStart(2, '0')}</span>${esc(e.w.title)}${e.items.some((f) => f.status === 'clarification') ? '<span class="tag t-later">Being confirmed</span>' : e.items.some((f) => f.status === 'hold') ? '<span class="tag t-later">On hold</span>' : `<span class="tag t-${esc(e.w.priority)}">${e.w.priority === 'now' ? 'Fix now' : e.w.priority === 'later' ? 'When convenient' : 'Fix soon'}</span>`}</h4>
+      <div class="where">${pageLinks(e)}</div><p>${lk(e.w.recommendation || '')}</p></div>`;
+    let n = 1;
+    const body = `<main>
+      <div class="kick">${esc(biz)} / ${esc(date)}</div>
+      <h1>Website audit progress</h1>
+      <p class="lede">${fixedN ? `${fixedN} correction${fixedN === 1 ? '' : 's'} since ${esc(fmt(since))}` : `No corrections recorded since ${esc(fmt(since))}`}${pendN ? `, ${pendN} item${pendN === 1 ? '' : 's'} still to do.` : ', and nothing left open.'}</p>
+      <div class="meta">${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a> • ` : ''}Prepared for ${esc(biz)} and the website team.</div>
+      <div class="tiles"><div><b>${fixedN}</b><span>Fixed</span></div><div><b>${area('business')}</b><span>${AREA.business}</span></div><div><b>${area('seo')}</b><span>${AREA.seo}</span></div><div><b>${pendN}</b><span>Still to do</span></div></div>
+      ${top.length ? `<div class="box"><h3>Highlights</h3>${top.map((e) => `<p class="hl"><b>${esc(e.w.title)}.</b> ${lk(e.w.impact || '')}</p>`).join('')}</div>` : ''}
+      ${recentN && lastAt && crTime(lastAt) > crTime(since) ? `<p class="note">${recentN} of these since the last check on ${esc(fmt(lastAt, false))}.</p>` : ''}
+      <h3 style="margin:16px 0 4px;color:#14263d">How to read this report</h3>
+      <p class="note">First, what was fixed, grouped by subject, with why each fix matters and the pages it covers. Then what is still to do, with what to change. Page names open the page.</p>
+      ${fixedE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What was fixed</h2><div class="sub">Since ${esc(fmt(since))}</div>
+        ${secs(fixedE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${fixedE.filter((e) => e.sec === sec.k).map((e, i) => fixedHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
+      ${pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">Still to do</h2><div class="sub">Open on ${esc(date)}</div>
+        ${secs(pendE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${pendE.filter((e) => e.sec === sec.k).map((e, i) => pendHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
+      <section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">About this report</h2>
+        <p class="note">This report covers the audit from ${esc(fmt(since))} to ${esc(date)}. A correction counts as fixed when a later check of the website no longer found the problem, or when the team confirmed it fixed. Every page was checked on desktop, tablet and phone against the business details on file. The review does not submit forms, test email routing or phone forwarding, or measure traffic or rankings.</p>
+      </section></main>`;
+    const css = CR_CSS + `.tiles{display:flex;gap:10px;margin:16px 0}.tiles div{flex:1;border:1px solid #d3dde6;border-radius:3px;padding:10px 12px;background:#f7fafc}.tiles b{display:block;font:800 22pt 'Archivo',Arial,sans-serif;color:#14263d;line-height:1.1}.tiles span{font-size:8.5pt;color:#5b6475}
+      .hl{margin:0 0 6px}.n.ok{color:#18794e}h3.grp{font-size:12pt;color:#1b6b9a;margin:14px 0 8px;border-bottom:1px solid #dfe5ec;padding-bottom:3px}`;
+    const doc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(biz)} — Website audit progress</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+      <style>${css}</style></head><body>${body}</body></html>`;
+    const header = `<style>#header,#footer{padding:0!important}</style><div style="width:100%;height:0.46in;background:#14263d;color:#fff;font:700 7.5px Arial,sans-serif;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between;padding:0 0.72in;-webkit-print-color-adjust:exact;print-color-adjust:exact"><span>${esc(biz.toUpperCase())}</span><span>AUDIT PROGRESS • ${esc(date.toUpperCase())}</span></div>`;
+    const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>What was fixed • Still to do</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
+    return { doc, header, footer, name: `audit-progress-${slug(biz)}-${String(at).slice(0, 10)}.pdf` };
+  }
+  async function crPdf(s, out, msg, aiOk) {
+    msg('Making the PDF…');
+    let blob = null;
+    try {
+      const res = await fetch('/api/capture', { method: 'POST', credentials: 'same-origin', headers: Object.assign({ 'Content-Type': 'application/json' }, viewHeaders()), body: JSON.stringify({ op: 'pdf', site: s.id, html: out.doc, header: out.header, footer: out.footer, name: out.name }) });
+      if (res.ok && /pdf/.test(res.headers.get('content-type') || '')) blob = await res.blob();
+    } catch (e) { blob = null; }
+    if (blob) {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = out.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      msg(`Downloaded ${out.name}.${aiOk ? '' : ' The AI was not available, so it is written more plainly.'}`);
+    } else {
+      repDownload(out.name.replace(/\.pdf$/, '.html'), out.doc);
+      msg('The PDF could not be made on the server right now, so the report was downloaded as a page instead: open it and print it (Ctrl/Cmd + P) to save it as a PDF.');
+    }
+  }
+  /** The items of a scan as findings (today: the audit itself). */
+  async function crScanItems(s, x) {
+    if (x.now) return s.findings || [];
+    const r = await dbReport(s, x); if (!r) throw new Error('This scan was made before scan reports were kept.');
+    const byId = new Map((s.findings || []).map((f) => [f.id, f]));
+    return r.items.map((i) => Object.assign({ id: i.id, num: i.n, code: i.c, severity: i.s, category: i.g, message: i.m, path: i.p, found: i.f, expected: i.e, location: i.l, status: i.st }, byId.has(i.id) ? { pages: byId.get(i.id).pages, ai: byId.get(i.id).ai } : {}));
+  }
+  /** The report window. x: the scan (today when x.now). */
+  async function openReportMaker(s, x, scans) {
+    const saved = (() => { try { return JSON.parse(localStorage.getItem('dsa:repmaker') || '{}'); } catch (e) { return {}; } })();
+    const ex = {}; CR_LEAVE.forEach((l) => { ex[l.k] = saved.ex && l.k in saved.ex ? !!saved.ex[l.k] : l.def; });
+    const reps = scans.filter((y) => !y.now && y.auto);
+    let type = x.now ? (saved.type || 'findings') : 'findings';
+    let since = reps.length ? reps[0].at : (s.createdAt || '');
+    modal(`<header><h2>📄 Make a report</h2><button class="btn ghost" data-close>✕</button></header><div class="body rm">
+      <div class="rm-types">
+        <label class="rm-type"><input type="radio" name="rmType" value="findings"><span><b>📋 Findings report</b><span class="small muted">What is on the website now and how to fix it: each finding explained, what was corrected since the scan before, and what was checked.${x.now ? '' : ` As of the scan on ${esc(dbDate(x.at))}.`}</span></span></label>
+        <label class="rm-type ${x.now ? '' : 'off'}"><input type="radio" name="rmType" value="progress" ${x.now ? '' : 'disabled'}><span><b>🏆 Progress report</b><span class="small muted">What was fixed and why it matters to the business and in Google, grouped (“Corrected the outdated phone number on 5 pages”), and what is still to do.${x.now ? '' : ' Made from the audit as it is today: open it from today’s report.'}</span></span></label>
+      </div>
+      <div class="rm-since" ${type === 'progress' ? '' : 'hidden'}><label class="small">Count fixes since <select id="rmSince">${reps.map((y, i) => `<option value="${esc(y.at)}">${i === 0 ? 'the first scan, ' : i === reps.length - 1 ? 'the last scan, ' : ''}${esc(dbDate(y.at))}</option>`).join('') || `<option value="${esc(since)}">the start of the audit</option>`}</select></label></div>
+      <div class="rm-leave"><div class="k">Leave out</div>
+        <label class="rm-l off"><input type="checkbox" checked disabled> <span><b>False alarms and exempt items</b> <span class="small faint">always left out, so a mistaken item never reaches the client</span></span></label>
+        ${CR_LEAVE.map((l) => `<label class="rm-l"><input type="checkbox" data-rml="${l.k}" ${ex[l.k] ? 'checked' : ''}> <span><b>${esc(l.label)}</b> <span class="small faint">${esc(l.hint)}</span> <span class="rm-n" data-rmn="${l.k}"></span></span></label>`).join('')}
+      </div>
+      <div class="rm-sum small" id="rmSum"></div>
+      <div class="rm-acts"><button class="btn primary" id="rmGo">Make the PDF</button> <span class="small muted" id="crMsg"></span></div></div>`, { wide: true });
+    const root = $('.rm'); if (!root) return;
+    let base = [];
+    try { base = await crScanItems(s, x); } catch (e) { $('#crMsg').textContent = e.message; return; }
+    const draw = () => {
+      $$('[name=rmType]', root).forEach((r) => { r.checked = r.value === type; });
+      $('.rm-since', root).hidden = type !== 'progress';
+      const pend = crItems(s, base, {});
+      const fixedAll = type === 'progress' ? crFixed(s, since, {}) : [];
+      CR_LEAVE.forEach((l) => { const c = pend.filter(l.test).length + fixedAll.filter(l.test).length; const el = $(`[data-rmn="${l.k}"]`, root); if (el) el.textContent = c ? `${c} item${c === 1 ? '' : 's'}` : 'none'; });
+      const p = crItems(s, base, ex).length; const f = type === 'progress' ? crFixed(s, since, ex).length : 0;
+      $('#rmSum', root).innerHTML = type === 'progress' ? `The report will cover <b>${f}</b> fix${f === 1 ? '' : 'es'} and <b>${p}</b> item${p === 1 ? '' : 's'} still to do.` : `The report will cover <b>${p}</b> open item${p === 1 ? '' : 's'}.`;
+    };
+    $$('[name=rmType]', root).forEach((r) => (r.onchange = () => { type = r.value; draw(); }));
+    if ($('#rmSince', root)) $('#rmSince', root).onchange = (e) => { since = e.target.value; draw(); };
+    $$('[data-rml]', root).forEach((c) => (c.onchange = () => { ex[c.dataset.rml] = c.checked; draw(); }));
+    draw();
+    $('#rmGo', root).onclick = async () => {
+      try { localStorage.setItem('dsa:repmaker', JSON.stringify({ type, ex })); } catch (e) { /* not kept */ }
+      $('#rmGo', root).disabled = true;
+      const msg = (t) => { const m = $('#crMsg'); if (m) m.textContent = t; };
+      try {
+        if (type === 'progress') await makeProgress(s, scans, since, ex, msg);
+        else await downloadClientPdf(s, x, scans, ex, msg, base);
+      } catch (e) { msg(e.message || String(e)); }
+      const b = $('#rmGo'); if (b) b.disabled = false;
+    };
+  }
+  async function makeProgress(s, scans, since, ex, msg) {
+    const fixed = crFixed(s, since, ex);
+    const pend = crItems(s, s.findings || [], ex);
+    const fixedE = crEntries(s, fixed); const pendE = crEntries(s, pend);
+    msg(`Writing up ${fixedE.length} fix${fixedE.length === 1 ? '' : 'es'}…`);
+    const ok1 = await crWriteFixed(s, fixedE, (d, n) => msg(`Writing up the fixes ${d}/${n}…`));
+    msg(`Writing up ${pendE.length} item${pendE.length === 1 ? '' : 's'} still to do…`);
+    const ok2 = await crWrite(s, pendE, (d, n) => msg(`Writing up what is still to do ${d}/${n}…`));
+    const reps = scans.filter((y) => !y.now && y.auto); const last = reps.length > 1 ? reps[reps.length - 2].at : '';
+    const recentN = last ? fixed.filter((f) => (f.gone ? crTime(f.gone.at) : crTime(f.statusAt)) >= crTime(last)).length : 0;
+    const out = prHtml(s, { fixedE, pendE, fixedN: fixed.length, pendN: pend.length, since, lastAt: last, recentN, at: new Date().toISOString() });
+    await crPdf(s, out, msg, ok1 && ok2);
+  }
+  /** The Findings report for one scan (x.now: the audit as it is today). */
+  async function downloadClientPdf(s, x, scans, ex, msg, list) {
+    ex = ex || {}; list = list || await crScanItems(s, x);
+    const r = await dbReport(s, x); if (!r) throw new Error('This scan was made before scan reports were kept.');
+    const items = crItems(s, list, ex);
+    const entries = crEntries(s, items);
+    // What was fixed since the scan before this one.
+    // "Today" is the latest scan with the statuses set since, so it is compared with the scan before that one.
+    const idx = scans.indexOf(x); const before = scans.slice(0, idx < 0 ? scans.length : idx).filter((y) => y.rep && !y.now);
+    if (x.now && before.length) before.pop();
+    const prevX = before.pop();
+    let fixed = []; let prevAt = '';
+    if (prevX) {
+      try {
+        const pr = await dbReport(s, prevX);
+        if (pr) {
+          const cur = new Map((s.findings || []).map((f) => [f.id, f]));
+          fixed = compareReports(pr, r).fixed.filter((i) => !CR_SKIP.test(i.c) && i.st !== 'false' && !((cur.get(i.id) || {}).status === 'false') && !crLeft({ code: i.c, category: i.g, severity: i.s, status: '' }, ex));
+          prevAt = prevX.at;
+        }
+      } catch (e) { /* no comparison */ }
+    }
+    msg(`Writing up ${entries.length} finding${entries.length === 1 ? '' : 's'}…`);
+    const aiOk = await crWrite(s, entries, (d, n) => msg(`Writing up the findings ${d}/${n}…`));
+    msg('Adding proof pictures…');
+    repImgs = await proofImages(s, entries.slice(0, 40).map((e) => e.items[0]));
+    const out = crHtml(s, { entries, fixed, prevAt, at: x.now ? new Date().toISOString() : x.at, items });
+    repImgs = {};
+    await crPdf(s, out, msg, aiOk);
   }
   // ---------- downloaded reports: one HTML file that opens in any browser and prints to PDF ----------
   function repDownload(name, html) {
@@ -13210,8 +13374,8 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
               <td>${(x.counts || {}).critical || 0}${(x.counts || {}).outdated ? ` <span class="small faint">+${x.counts.outdated} outdated</span>` : ''}</td><td>${(x.counts || {}).warning || 0}</td><td>${(x.counts || {}).info || 0}</td><td><b>${tot(x)}</b></td>
               <td>${dbChange(p ? tot(p) : 0, tot(x))}${x.auto && (x.fixed || x.added) ? `<div class="small faint">${x.fixed ? `${x.fixed} fixed` : ''}${x.fixed && x.added ? ' · ' : ''}${x.added ? `${x.added} new` : ''}</div>` : ''}</td>
               <td>${x.pages || '—'}</td><td class="nowrap">${x.ms ? fmtTook(x.ms) : '<span class="faint">—</span>'}</td><td>${esc(x.byName || nameOf(x.by, '—'))}</td>
-              <td class="db-row-acts">${x.rep ? `<button class="btn sm" data-dbview="${i}" title="Every item this scan found, to look through, download or compare">📋 View</button><button class="btn sm" data-dbpdf="${i}" title="The client report (PDF) as of this scan">📄 PDF</button>` : x.auto ? '<span class="small faint" title="Scanned before scan reports were kept">numbers only</span>' : ''}${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
-          <div class="db-acts"><button class="btn sm primary" id="dbPdf" type="button" title="A PDF for the business owner: each finding explained (the page, what is there now, what to change), what was fixed since the last scan, and what was checked">📄 Client report (PDF)</button><button class="btn sm" id="dbNow" type="button" title="Every item open or closed on this audit today">📋 Today's report</button>${scans.some((x) => x.rep) ? `<button class="btn sm" id="dbFirstNow" type="button" title="What was fixed, what is new and what is still there since the first scan with a report">⇄ ${scans.filter((x) => x.rep).length > 1 ? 'First scan vs today' : 'Scan vs today'}</button>` : ''}${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
+              <td class="db-row-acts">${x.rep ? `<button class="btn sm" data-dbview="${i}" title="Every item this scan found, to look through, download or compare">📋 View</button><button class="btn sm" data-dbpdf="${i}" title="The Findings report (PDF) as of this scan">📄 PDF</button>` : x.auto ? '<span class="small faint" title="Scanned before scan reports were kept">numbers only</span>' : ''}${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
+          <div class="db-acts"><button class="btn sm primary" id="dbPdf" type="button" title="A PDF for the business owner: the Findings report (what is on the website now and how to fix it) or the Progress report (what was fixed and why it matters, and what is still to do). You choose what to leave out first.">📄 Make a report</button><button class="btn sm" id="dbNow" type="button" title="Every item open or closed on this audit today">📋 Today's report</button>${scans.some((x) => x.rep) ? `<button class="btn sm" id="dbFirstNow" type="button" title="What was fixed, what is new and what is still there since the first scan with a report">⇄ ${scans.filter((x) => x.rep).length > 1 ? 'First scan vs today' : 'Scan vs today'}</button>` : ''}${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
             <span class="small faint">Each tool counts differently, so a result is only compared with an earlier result from the same tool.</span></div>
           <form class="db-form" id="dbForm" hidden>
             <label class="field">Tool<input id="dbTool" list="dbTools" required maxlength="60" placeholder="Semrush, Ahrefs…"><datalist id="dbTools">${DB_TOOLS.map((t) => `<option value="${esc(t)}">`).join('')}</datalist></label>
@@ -13258,8 +13422,8 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
     const withNow = scans.concat({ now: true, at: new Date().toISOString(), tool: 'Site Auditor', auto: true });
     $$('[data-dbview]', body).forEach((b) => (b.onclick = () => openScanReport(s, scans[Number(b.dataset.dbview)], withNow)));
     $('#dbNow', body).onclick = () => openScanReport(s, withNow[withNow.length - 1], withNow);
-    $('#dbPdf', body).onclick = () => downloadClientPdf(s, withNow[withNow.length - 1], withNow);
-    $$('[data-dbpdf]', body).forEach((b) => (b.onclick = () => downloadClientPdf(s, scans[Number(b.dataset.dbpdf)], withNow)));
+    $('#dbPdf', body).onclick = () => openReportMaker(s, withNow[withNow.length - 1], withNow);
+    $$('[data-dbpdf]', body).forEach((b) => (b.onclick = () => openReportMaker(s, scans[Number(b.dataset.dbpdf)], withNow)));
     if ($('#dbFirstNow', body)) $('#dbFirstNow', body).onclick = () => openCompare(s, scans.find((x) => x.rep), withNow[withNow.length - 1], withNow);
     $('#dbCsv', body).onclick = () => {
       const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;

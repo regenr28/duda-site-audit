@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-23-progress-report', date: '2026-11-23', audience: 'all', tag: 'Audits',
+    title: 'Two reports: Findings and Progress, and you choose what to leave out',
+    what: '<b>📄 Make a report</b> now opens a window with two reports. The <b>Findings report</b> is the one for what is on the website now and how to fix it. The new <b>Progress report</b> shows what the team fixed since the scan you choose, grouped (“Corrected the outdated phone number on 5 pages”, with the pages) and with why each fix matters to the business or in Google, then what is still to do. Before making either, tick what to leave out: false alarms and exempt items are always out; For clarification, On hold and colour contrast are out by default.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>📊 Audit Report</b> → <b>📄 Make a report</b>.'],
+  },
+  {
     id: '2026-11-21-redirected-pages', date: '2026-11-21', audience: 'all', tag: 'Audits',
     title: 'Pages that now redirect are not audited as themselves',
     what: 'A page that redirects to another one (a URL Redirect in Duda, or a page that sends the browser on) was still audited with its old content, so an old town in its address or its old SEO title was reported even though visitors land on the new page. Those pages are now skipped, the page they redirect to is audited instead, and the redirect itself is still checked on Technical SEO. The client report also groups the same finding on several pages into one, with a table of the pages, and every page address in the PDF is a link.',

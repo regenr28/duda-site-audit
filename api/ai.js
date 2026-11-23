@@ -722,12 +722,22 @@ Rules:
 - No jargon: say "SEO title (the page's title in Google)" the first time, "main heading" for H1, "link", "photo". No CSS selectors, no code, no check names, no severity words, no "AI".
 - "priority": "now" for wrong business details, another business's name or town, notes left in the copy, broken pages or links; "soon" for wording, SEO titles and descriptions, photos; "later" for polish.
 Respond with JSON only: {"results":[{"k":"<the finding's key>","title":"…","current":"…","recommendation":"…","priority":"now|soon|later"}]}`;
+// The "what we fixed" half of a progress report: each fix, and what it does for the business or in Google.
+const FIXED_SYSTEM = `You write the "WHAT WE FIXED" part of a website audit PROGRESS REPORT that a web agency sends to its client, a car-care business owner. The owner is not technical. The tone is confident and plain, never boastful.
+For each FIX you get: the page or pages, what each audit check found before it was fixed (the words that were wrong, what they should be), and the business's details.
+For each fix write:
+- "title": what was done, past tense, at most 12 words, with the number of pages when there are several ("Corrected the outdated phone number on 5 pages", "Removed an editor note left in the RV FAQ", "Fixed 3 broken links to the contact page").
+- "impact": 1 or 2 sentences on why it matters to the business: customers reach the right phone, email or address; Google shows the right business name, town or service; visitors trust the page; links and forms lead somewhere; the page reads as finished. Be specific to this fix and use ONLY the facts given: never invent numbers, rankings, traffic or money.
+- "area": "business" (customers and contact details), "seo" (what Google reads and shows) or "visitors" (how the page reads and works).
+No jargon (say "SEO title (the page's title in Google)" once, "main heading" for H1), no code, no check names, no "AI".
+Respond with JSON only: {"results":[{"k":"<the fix's key>","title":"…","impact":"…","area":"business|seo|visitors"}]}`;
 async function reportWrite(req, res, b, list) {
   const business = b.business || {};
   const items = [].concat(b.items || []).filter((x) => x && x.k).slice(0, 10);
   if (!items.length) return res.status(200).json({ results: [] });
   const cacheKey = P + 'airep:' + sha(String(business.name || '')).slice(0, 16);
-  const keyOf = (x) => 'r1' + sha(JSON.stringify([x.page, x.facts, x.checks])).slice(0, 22);
+  const fixedMode = b.mode === 'fixed';
+  const keyOf = (x) => (fixedMode ? 'f1' : 'r1') + sha(JSON.stringify([x.page, x.facts, x.checks])).slice(0, 22);
   const [raw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
   const results = []; const todo = [];
   items.forEach((x, k) => { const c = raw && raw[k] ? jparse(raw[k], null) : null; if (c) results.push(Object.assign({ k: x.k, cached: true }, c)); else todo.push(x); });
@@ -739,12 +749,14 @@ Page: ${String(x.page || '').slice(0, 120)}${x.url ? ' · ' + String(x.url).slic
 ${Object.entries(x.facts || {}).filter(([, v]) => v).map(([k, v]) => `${k}: "${String(v).slice(0, 300)}"`).join('\n')}
 Checks found:
 ${[].concat(x.checks || []).slice(0, 8).map((c) => `- ${String(c.message || '').slice(0, 200)}${c.where ? ` [${String(c.where).slice(0, 60)}]` : ''}${c.found ? ` | found: ${String(c.found).slice(0, 300)}` : ''}${c.expected ? ` | expected: ${String(c.expected).slice(0, 200)}` : ''}${c.reason ? ` | why: ${String(c.reason).slice(0, 200)}` : ''}`).join('\n')}`).join('\n')}`;
-    const { parsed } = await callChain(list, REPORT_SYSTEM, user);
+    const { parsed } = await callChain(list, fixedMode ? FIXED_SYSTEM : REPORT_SYSTEM, fixedMode ? user.replace('FINDINGS:', 'FIXES:') : user);
     const byK = new Map(todo.map((x) => [String(x.k), x])); const save = [];
     [].concat(parsed.results || []).forEach((v) => {
       const x = byK.get(String(v && v.k)); if (!x) return;
-      const c = { title: String(v.title || '').slice(0, 140), current: String(v.current || '').slice(0, 900), recommendation: String(v.recommendation || '').slice(0, 900), priority: /^(now|soon|later)$/.test(v.priority) ? v.priority : 'soon' };
-      if (!c.title || !c.current) return;
+      const c = fixedMode
+        ? { title: String(v.title || '').slice(0, 140), impact: String(v.impact || '').slice(0, 600), area: /^(business|seo|visitors)$/.test(v.area) ? v.area : 'visitors' }
+        : { title: String(v.title || '').slice(0, 140), current: String(v.current || '').slice(0, 900), recommendation: String(v.recommendation || '').slice(0, 900), priority: /^(now|soon|later)$/.test(v.priority) ? v.priority : 'soon' };
+      if (!c.title || (!fixedMode && !c.current)) return;
       results.push(Object.assign({ k: x.k }, c)); save.push(keyOf(x), JSON.stringify(c));
     });
     if (save.length) await redis(['HSET', cacheKey, ...save], ['EXPIRE', cacheKey, 60 * 86400]);
