@@ -13031,7 +13031,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
 .it p{margin:0 0 6px}.it b.lb{color:#14263d}.tag{display:inline-block;font:700 7.5pt 'Archivo',Arial,sans-serif;letter-spacing:.05em;text-transform:uppercase;padding:1px 6px;border-radius:2px;margin-left:8px;vertical-align:2px}
 .t-now{background:#fde8e7;color:#a8251c}.t-soon{background:#fdf0dc;color:#8a4b06}.t-later{background:#eef0f3;color:#4a5466}
 .foot{font-size:8.5pt;color:#7a8394}.grid3{columns:3;column-gap:18px;font-size:9pt}.grid3 div{break-inside:avoid;padding:4px 0;border-bottom:1px solid #e3e8ee;color:#1b6b9a}
-.note{font-size:8.5pt;color:#5b6475}a{color:#1b6b9a;text-decoration:none}.grid3 a{color:#1b6b9a}table.rows{margin:6px 0 4px;font-size:9pt}table.rows th{padding:6px 8px}table.rows td{padding:6px 8px}.it.many{break-inside:auto}.proof img{max-width:340px;width:100%;border:1px solid #d3dde6;margin:2px 0 6px;display:block}`;
+.note{font-size:8.5pt;color:#5b6475}a{color:#1b6b9a;text-decoration:none}.notes{margin:4px 0 8px;border-left:3px solid #c9d6e2;padding:2px 0 2px 10px}.nt{margin:0 0 8px;break-inside:avoid}.nt-h{font:700 8pt 'Archivo',Arial,sans-serif;color:#1b6b9a;text-transform:uppercase;letter-spacing:.04em}.nt-t{font-size:9.5pt;margin:2px 0 4px}.nt img{display:block;max-width:420px;max-height:300px;width:auto;border:1px solid #d3dde6;margin:4px 0}.grid3 a{color:#1b6b9a}table.rows{margin:6px 0 4px;font-size:9pt}table.rows th{padding:6px 8px}table.rows td{padding:6px 8px}.it.many{break-inside:auto}.proof img{max-width:340px;width:100%;border:1px solid #d3dde6;margin:2px 0 6px;display:block}`;
   function crHtml(s, ctx) {
     const { entries, fixed, prevAt, at, items } = ctx;
     const biz = s.businessName || (s.truth || {}).businessName || s.siteId;
@@ -13053,7 +13053,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const rowsTable = (e) => !e.rows ? '' : `<table class="rows"><thead><tr><th style="width:34%">Page</th><th>What is there now</th>${e.rows.some((r) => r.items[0].expected) ? '<th style="width:30%">Should be</th>' : ''}</tr></thead><tbody>${e.rows.slice(0, 25).map((r) => { const f = r.items[0]; return `<tr><td><a href="${esc(crUrl(s, r.path))}">${esc(crName(s, r.path))}</a><div class="note">${esc(r.path)}${r.pages.length > 1 ? ` +${r.pages.length - 1}` : ''}</div></td><td>${f.found ? `\u201c${esc(crUnq(f.found).slice(0, 160))}\u201d` : esc(String(f.message || '').replace(/^AI: /, ''))}${f.location && f.location !== 'Body' ? `<div class="note">${esc(String(f.location).replace('Head / Meta', 'page title and description'))}</div>` : ''}</td>${e.rows.some((x) => x.items[0].expected) ? `<td>${esc(crUnq(f.expected).replace(/^Suggested: /, '').slice(0, 140))}</td>` : ''}</tr>`; }).join('')}</tbody></table>${e.rows.length > 25 ? `<p class="note">And ${e.rows.length - 25} more pages.</p>` : ''}`;
     const itemHtml = (sec, e, i) => `<div class="it${e.rows ? ' many' : ''}"><h4><span class="n">${num(sec, i)}</span>${esc(e.w.title)}<span class="tag t-${esc(e.w.priority)}">${e.w.priority === 'now' ? 'Fix now' : e.w.priority === 'later' ? 'When convenient' : 'Fix soon'}</span></h4>
       <div class="where">${e.rows ? `${e.rows.length} pages, listed below` : link(e.path)}${!e.rows && e.pages.length > 1 ? ` and ${e.pages.length - 1} more page${e.pages.length === 2 ? '' : 's'}` : ''}${e.items[0].location && e.items[0].location !== 'Body' ? ` → ${esc(String(e.items[0].location).replace('Head / Meta', 'page title and description'))}` : ''}</div>
-      <p><b class="lb">Current:</b> ${lk(e.w.current)}</p><p><b class="lb">Recommendation:</b> ${lk(e.w.recommendation)}</p>${rowsTable(e)}${e.rows ? '' : proof(e)}
+      <p><b class="lb">Current:</b> ${lk(e.w.current)}</p><p><b class="lb">Recommendation:</b> ${lk(e.w.recommendation)}</p>${rowsTable(e)}${e.rows ? '' : proof(e)}${crNotesHtml(e)}
       ${!e.rows && e.pages.length > 3 ? `<div class="foot">Pages: ${e.pages.slice(0, 8).map(esc).join(', ')}${e.pages.length > 8 ? ` and ${e.pages.length - 8} more` : ''}</div>` : ''}</div>`;
     const readTable = () => {
       const rows = {}; by('read').forEach((e) => e.items.forEach((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).forEach((p) => { const r = rows[p] || (rows[p] = { n: 0, ex: [] }); r.n++; if (r.ex.length < 2 && f.found) r.ex.push(crUnq(f.found).slice(0, 50)); })));
@@ -13100,6 +13100,42 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
   // (what was fixed and why it matters, and what is still to do). One window: pick the report, pick
   // what to leave out (seeing how many items each choice removes), then make the PDF. ----------
   // False alarms, exempt items and (for what is pending) Done items are never in a report.
+  /**
+   * The team's notes on an entry's items (comments, with their screenshots), for the PDF. Screenshots are
+   * fetched and made smaller (at most 1000px wide, JPEG), so the report stays a size the server can print.
+   */
+  async function crLoadNotes(s, entries, msg) {
+    const byItem = new Map();
+    (s.comments || []).forEach((c) => { if (c && !c.deleted && c.target && c.target !== 'site') (byItem.get(c.target) || byItem.set(c.target, []).get(c.target)).push(c); });
+    let budget = 2400000, imgs = 0;
+    const shrink = async (u) => {
+      try {
+        const blob = await (await fetch(u, { credentials: 'same-origin' })).blob();
+        const bmp = await createImageBitmap(blob); const k = Math.min(1, 1000 / bmp.width);
+        const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+        cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+        return cv.toDataURL('image/jpeg', 0.78);
+      } catch (e) { return ''; }
+    };
+    for (const e of entries) {
+      const cs = e.items.flatMap((f) => byItem.get(f.id) || []).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))).slice(0, 6);
+      if (!cs.length) continue;
+      e.notes = [];
+      for (const c of cs) {
+        const pics = [];
+        for (const u of (c.images || []).slice(0, 3)) {
+          if (budget <= 0 || imgs >= 40) break;
+          if (msg) msg(`Adding the notes' screenshots (${imgs + 1})…`);
+          const d = await shrink(u); if (!d) continue;
+          budget -= d.length; imgs++; pics.push(d);
+        }
+        // Mentions (@[Name]) are for the team: kept as plain names.
+        const text = String(c.text || '').replace(/@\[([^\]]+)\]/g, '$1').trim();
+        if (text || pics.length) e.notes.push({ who: nameOf(c.by, c.byName), at: c.createdAt, text, pics });
+      }
+    }
+  }
+  const crNotesHtml = (e) => !e.notes || !e.notes.length ? '' : `<div class="notes">${e.notes.map((n) => `<div class="nt"><div class="nt-h">Note from ${esc(String(n.who || 'the team').split(' ')[0])}, ${esc(new Date(n.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))}</div>${n.text ? `<div class="nt-t">${esc(n.text).replace(/\n/g, '<br>')}</div>` : ''}${n.pics.map((d) => `<img src="${d}" alt="Screenshot">`).join('')}</div>`).join('')}</div>`;
   const CR_LEAVE = [
     { k: 'clar', label: 'For clarification', hint: 'still being confirmed', def: true, test: (f) => f.status === 'clarification' },
     { k: 'hold', label: 'On hold', hint: 'parked for now', def: true, test: (f) => f.status === 'hold' },
@@ -13150,7 +13186,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     return aiOk;
   }
   function prHtml(s, ctx) {
-    const { fixedE, pendE, fixedN, pendN, since, lastAt, recentN, at } = ctx;
+    const { fixedE, pendE, fixedN, pendN, since, lastAt, recentN, at, withTodo } = ctx;
     const biz = s.businessName || (s.truth || {}).businessName || s.siteId;
     const fmt = (d, y) => new Date(d).toLocaleDateString('en-US', y === false ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
     const date = fmt(at);
@@ -13163,23 +13199,23 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const secs = (list) => CR_SECTIONS.filter((x) => list.some((e) => e.sec === x.k));
     const was = (e) => { const f = e.items[0]; return f.found ? `<div class="note">Was: “${esc(crUnq(f.found).slice(0, 140))}”${f.expected ? ` → now: ${esc(crUnq(f.expected).replace(/^Suggested: /, '').slice(0, 100))}` : ''}</div>` : ''; };
     const fixedHtml = (e, i, sec) => `<div class="it"><h4><span class="n ok">✓</span>${esc(e.w.title)}</h4>
-      <p>${lk(e.w.impact || '')}</p><div class="where">${e.rows || e.pages.length > 1 ? `${(e.rows || e.pages).length} pages: ` : ''}${pageLinks(e)}</div>${e.rows ? '' : was(e)}</div>`;
+      <p>${lk(e.w.impact || '')}</p><div class="where">${e.rows || e.pages.length > 1 ? `${(e.rows || e.pages).length} pages: ` : ''}${pageLinks(e)}</div>${e.rows ? '' : was(e)}${crNotesHtml(e)}</div>`;
     const pendHtml = (e, i, sec) => `<div class="it"><h4><span class="n">${sec.letter}${String(i + 1).padStart(2, '0')}</span>${esc(e.w.title)}${e.items.some((f) => f.status === 'clarification') ? '<span class="tag t-later">Being confirmed</span>' : e.items.some((f) => f.status === 'hold') ? '<span class="tag t-later">On hold</span>' : `<span class="tag t-${esc(e.w.priority)}">${e.w.priority === 'now' ? 'Fix now' : e.w.priority === 'later' ? 'When convenient' : 'Fix soon'}</span>`}</h4>
-      <div class="where">${pageLinks(e)}</div><p>${lk(e.w.recommendation || '')}</p></div>`;
+      <div class="where">${pageLinks(e)}</div><p>${lk(e.w.recommendation || '')}</p>${crNotesHtml(e)}</div>`;
     let n = 1;
     const body = `<main>
       <div class="kick">${esc(biz)} / ${esc(date)}</div>
       <h1>Website audit progress</h1>
-      <p class="lede">${fixedN ? `${fixedN} correction${fixedN === 1 ? '' : 's'} since ${esc(fmt(since))}` : `No corrections recorded since ${esc(fmt(since))}`}${pendN ? `, ${pendN} item${pendN === 1 ? '' : 's'} still to do.` : ', and nothing left open.'}</p>
+      <p class="lede">${fixedN ? `${fixedN} correction${fixedN === 1 ? '' : 's'} since ${esc(fmt(since))}` : `No corrections recorded since ${esc(fmt(since))}`}${!withTodo ? '.' : pendN ? `, ${pendN} item${pendN === 1 ? '' : 's'} still to do.` : ', and nothing left open.'}</p>
       <div class="meta">${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a> • ` : ''}Prepared for ${esc(biz)} and the website team.</div>
-      <div class="tiles"><div><b>${fixedN}</b><span>Fixed</span></div><div><b>${area('business')}</b><span>${AREA.business}</span></div><div><b>${area('seo')}</b><span>${AREA.seo}</span></div><div><b>${pendN}</b><span>Still to do</span></div></div>
+      <div class="tiles"><div><b>${fixedN}</b><span>Fixed</span></div><div><b>${area('business')}</b><span>${AREA.business}</span></div><div><b>${area('seo')}</b><span>${AREA.seo}</span></div>${withTodo ? `<div><b>${pendN}</b><span>Still to do</span></div>` : `<div><b>${new Set(fixedE.flatMap((e) => e.pages)).size}</b><span>Pages improved</span></div>`}</div>
       ${top.length ? `<div class="box"><h3>Highlights</h3>${top.map((e) => `<p class="hl"><b>${esc(e.w.title)}.</b> ${lk(e.w.impact || '')}</p>`).join('')}</div>` : ''}
       ${recentN && lastAt && crTime(lastAt) > crTime(since) ? `<p class="note">${recentN} of these since the last check on ${esc(fmt(lastAt, false))}.</p>` : ''}
       <h3 style="margin:16px 0 4px;color:#14263d">How to read this report</h3>
-      <p class="note">First, what was fixed, grouped by subject, with why each fix matters and the pages it covers. Then what is still to do, with what to change. Page names open the page.</p>
+      <p class="note">What was fixed, grouped by subject, with why each fix matters and the pages it covers${withTodo ? '; then what is still to do, with what to change' : ''}. Page names open the page.</p>
       ${fixedE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What was fixed</h2><div class="sub">Since ${esc(fmt(since))}</div>
         ${secs(fixedE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${fixedE.filter((e) => e.sec === sec.k).map((e, i) => fixedHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
-      ${pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">Still to do</h2><div class="sub">Open on ${esc(date)}</div>
+      ${withTodo && pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">Still to do</h2><div class="sub">Open on ${esc(date)}</div>
         ${secs(pendE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${pendE.filter((e) => e.sec === sec.k).map((e, i) => pendHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
       <section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">About this report</h2>
         <p class="note">This report covers the audit from ${esc(fmt(since))} to ${esc(date)}. A correction counts as fixed when a later check of the website no longer found the problem, or when the team confirmed it fixed. Every page was checked on desktop, tablet and phone against the business details on file. The review does not submit forms, test email routing or phone forwarding, or measure traffic or rankings.</p>
@@ -13190,7 +13226,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
       <style>${css}</style></head><body>${body}</body></html>`;
     const header = `<style>#header,#footer{padding:0!important}</style><div style="width:100%;height:0.46in;background:#14263d;color:#fff;font:700 7.5px Arial,sans-serif;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between;padding:0 0.72in;-webkit-print-color-adjust:exact;print-color-adjust:exact"><span>${esc(biz.toUpperCase())}</span><span>AUDIT PROGRESS • ${esc(date.toUpperCase())}</span></div>`;
-    const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>What was fixed • Still to do</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
+    const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>What was fixed${withTodo ? ' • Still to do' : ''}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
     return { doc, header, footer, name: `audit-progress-${slug(biz)}-${String(at).slice(0, 10)}.pdf` };
   }
   async function crPdf(s, out, msg, aiOk) {
@@ -13227,6 +13263,10 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
         <label class="rm-type"><input type="radio" name="rmType" value="findings"><span><b>📋 Findings report</b><span class="small muted">What is on the website now and how to fix it: each finding explained, what was corrected since the scan before, and what was checked.${x.now ? '' : ` As of the scan on ${esc(dbDate(x.at))}.`}</span></span></label>
         <label class="rm-type ${x.now ? '' : 'off'}"><input type="radio" name="rmType" value="progress" ${x.now ? '' : 'disabled'}><span><b>🏆 Progress report</b><span class="small muted">What was fixed and why it matters to the business and in Google, grouped (“Corrected the outdated phone number on 5 pages”), and what is still to do.${x.now ? '' : ' Made from the audit as it is today: open it from today’s report.'}</span></span></label>
       </div>
+      <div class="rm-opts"><div class="k">Include</div>
+        <label class="rm-l rm-todo" ${type === 'progress' ? '' : 'hidden'}><input type="checkbox" id="rmTodo" ${saved.todo === false ? '' : 'checked'}> <span><b>What is still to do</b> <span class="small faint">untick for a report of the completed work only</span></span></label>
+        <label class="rm-l"><input type="checkbox" id="rmNotes" ${saved.notes === false ? '' : 'checked'}> <span><b>The team\u2019s notes and screenshots</b> <span class="small faint">comments on each item, with the pictures attached to them</span></span></label>
+      </div>
       <div class="rm-since" ${type === 'progress' ? '' : 'hidden'}><label class="small">Count fixes since <select id="rmSince">${reps.map((y, i) => `<option value="${esc(y.at)}">${i === 0 ? 'the first scan, ' : i === reps.length - 1 ? 'the last scan, ' : ''}${esc(dbDate(y.at))}</option>`).join('') || `<option value="${esc(since)}">the start of the audit</option>`}</select></label></div>
       <div class="rm-leave"><div class="k">Leave out</div>
         <label class="rm-l off"><input type="checkbox" checked disabled> <span><b>False alarms and exempt items</b> <span class="small faint">always left out, so a mistaken item never reaches the client</span></span></label>
@@ -13240,42 +13280,48 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const draw = () => {
       $$('[name=rmType]', root).forEach((r) => { r.checked = r.value === type; });
       $('.rm-since', root).hidden = type !== 'progress';
+      $('.rm-todo', root).hidden = type !== 'progress';
+      const todo = $('#rmTodo', root).checked;
       const pend = crItems(s, base, {});
       const fixedAll = type === 'progress' ? crFixed(s, since, {}) : [];
       CR_LEAVE.forEach((l) => { const c = pend.filter(l.test).length + fixedAll.filter(l.test).length; const el = $(`[data-rmn="${l.k}"]`, root); if (el) el.textContent = c ? `${c} item${c === 1 ? '' : 's'}` : 'none'; });
       const p = crItems(s, base, ex).length; const f = type === 'progress' ? crFixed(s, since, ex).length : 0;
-      $('#rmSum', root).innerHTML = type === 'progress' ? `The report will cover <b>${f}</b> fix${f === 1 ? '' : 'es'} and <b>${p}</b> item${p === 1 ? '' : 's'} still to do.` : `The report will cover <b>${p}</b> open item${p === 1 ? '' : 's'}.`;
+      $('#rmSum', root).innerHTML = type === 'progress' ? `The report will cover <b>${f}</b> fix${f === 1 ? '' : 'es'}${todo ? ` and <b>${p}</b> item${p === 1 ? '' : 's'} still to do` : ' (completed work only)'}.` : `The report will cover <b>${p}</b> open item${p === 1 ? '' : 's'}.`;
     };
     $$('[name=rmType]', root).forEach((r) => (r.onchange = () => { type = r.value; draw(); }));
     if ($('#rmSince', root)) $('#rmSince', root).onchange = (e) => { since = e.target.value; draw(); };
     $$('[data-rml]', root).forEach((c) => (c.onchange = () => { ex[c.dataset.rml] = c.checked; draw(); }));
+    $('#rmTodo', root).onchange = draw;
     draw();
     $('#rmGo', root).onclick = async () => {
-      try { localStorage.setItem('dsa:repmaker', JSON.stringify({ type, ex })); } catch (e) { /* not kept */ }
+      const opt = { todo: $('#rmTodo', root).checked, notes: $('#rmNotes', root).checked };
+      try { localStorage.setItem('dsa:repmaker', JSON.stringify({ type, ex, todo: opt.todo, notes: opt.notes })); } catch (e) { /* not kept */ }
       $('#rmGo', root).disabled = true;
       const msg = (t) => { const m = $('#crMsg'); if (m) m.textContent = t; };
       try {
-        if (type === 'progress') await makeProgress(s, scans, since, ex, msg);
-        else await downloadClientPdf(s, x, scans, ex, msg, base);
+        if (type === 'progress') await makeProgress(s, scans, since, ex, msg, opt);
+        else await downloadClientPdf(s, x, scans, ex, msg, base, opt);
       } catch (e) { msg(e.message || String(e)); }
       const b = $('#rmGo'); if (b) b.disabled = false;
     };
   }
-  async function makeProgress(s, scans, since, ex, msg) {
+  async function makeProgress(s, scans, since, ex, msg, opt) {
+    opt = opt || {};
     const fixed = crFixed(s, since, ex);
-    const pend = crItems(s, s.findings || [], ex);
+    const pend = opt.todo === false ? [] : crItems(s, s.findings || [], ex);
     const fixedE = crEntries(s, fixed); const pendE = crEntries(s, pend);
     msg(`Writing up ${fixedE.length} fix${fixedE.length === 1 ? '' : 'es'}…`);
     const ok1 = await crWriteFixed(s, fixedE, (d, n) => msg(`Writing up the fixes ${d}/${n}…`));
-    msg(`Writing up ${pendE.length} item${pendE.length === 1 ? '' : 's'} still to do…`);
-    const ok2 = await crWrite(s, pendE, (d, n) => msg(`Writing up what is still to do ${d}/${n}…`));
+    let ok2 = true;
+    if (pendE.length) { msg(`Writing up ${pendE.length} item${pendE.length === 1 ? '' : 's'} still to do…`); ok2 = await crWrite(s, pendE, (d, n) => msg(`Writing up what is still to do ${d}/${n}…`)); }
     const reps = scans.filter((y) => !y.now && y.auto); const last = reps.length > 1 ? reps[reps.length - 2].at : '';
     const recentN = last ? fixed.filter((f) => (f.gone ? crTime(f.gone.at) : crTime(f.statusAt)) >= crTime(last)).length : 0;
-    const out = prHtml(s, { fixedE, pendE, fixedN: fixed.length, pendN: pend.length, since, lastAt: last, recentN, at: new Date().toISOString() });
+    if (opt.notes !== false) { msg('Adding the team\u2019s notes…'); await crLoadNotes(s, fixedE.concat(pendE), msg); }
+    const out = prHtml(s, { fixedE, pendE, fixedN: fixed.length, pendN: pend.length, since, lastAt: last, recentN, at: new Date().toISOString(), withTodo: opt.todo !== false });
     await crPdf(s, out, msg, ok1 && ok2);
   }
   /** The Findings report for one scan (x.now: the audit as it is today). */
-  async function downloadClientPdf(s, x, scans, ex, msg, list) {
+  async function downloadClientPdf(s, x, scans, ex, msg, list, opt) {
     ex = ex || {}; list = list || await crScanItems(s, x);
     const r = await dbReport(s, x); if (!r) throw new Error('This scan was made before scan reports were kept.');
     const items = crItems(s, list, ex);
@@ -13301,6 +13347,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const aiOk = await crWrite(s, entries, (d, n) => msg(`Writing up the findings ${d}/${n}…`));
     msg('Adding proof pictures…');
     repImgs = await proofImages(s, entries.slice(0, 40).map((e) => e.items[0]));
+    if (!opt || opt.notes !== false) { msg('Adding the team\u2019s notes…'); await crLoadNotes(s, entries, msg); }
     const out = crHtml(s, { entries, fixed, prevAt, at: x.now ? new Date().toISOString() : x.at, items });
     repImgs = {};
     await crPdf(s, out, msg, aiOk);

@@ -2463,6 +2463,7 @@ table.findings .rw-status select { max-width: 150px; }
 .rm-type > span { display: flex; flex-direction: column; gap: 4px; }
 .rm-type.off { opacity: .55; cursor: default; }
 .rm-since { margin: 0 0 12px; }
+.rm-opts { display: grid; gap: 6px; margin: 0 0 12px; }
 .rm-leave { display: grid; gap: 6px; margin: 4px 0 12px; }
 .rm-l { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
 .rm-l.off { cursor: default; opacity: .8; }

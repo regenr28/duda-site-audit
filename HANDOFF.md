@@ -498,3 +498,7 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 ## 210 — Spelling vs. industry terms
 - PROOF_SYSTEM spelling: wrong letters only, same word fixed; automotive/detailing term list (wheel barrels, wheel wells, calipers, door jambs…); a fix must keep the same component/product/service; unsure → `clarify: true`; types kept apart. `minimalFix` spelling now also needs `spellingEdit` (each changed word has a close-spelled partner, or joined/split words): "barrels"→"wells" fails. Proof answers carry `sv: 2`; a cached spelling flag without it is asked again (those blocks only). Clarify items skip the letters test.
 - engine `applyProofIssues`: clarify → Info, "Wording to confirm (the term may be correct)", `clarify: true` (store → For clarification). Release v55 (fixes TEXT_SPELLING, ai). Test: engine_textloc.py. engine v37.
+
+## 211 — Reports: completed work only; notes and screenshots
+- Report window "Include": `#rmTodo` (progress only; off → `makeProgress` skips pending items and `prHtml` its section/tile/footer, `withTodo`) and `#rmNotes` (both reports). Saved in `dsa:repmaker`.
+- `crLoadNotes(s, entries, msg)`: item comments (`s.comments`, target = item id, not deleted, ≤6 per entry), mentions turned into plain names, screenshots fetched and shrunk to ≤1000px JPEG (≤3 per note, ≤40 and ~2.4 MB per report); `crNotesHtml` under each finding/fix. e2e_clientpdf.py covers both. app v84, styles v57.

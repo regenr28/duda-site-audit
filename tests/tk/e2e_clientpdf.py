@@ -97,6 +97,10 @@ try:
         pg.route('**/api/**', route)
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('#sRescan', timeout=20000); time.sleep(1.5)
         S1 = scan(pg)
+        # A note with a screenshot on the editor-note item (it is fixed by the second scan).
+        mat = next(f for f in S1['findings'] if f['code'] == 'PLACEHOLDER' and 'Matthew' in (f.get('found') or ''))
+        PNG = 'iVBORw0KGgoAAAANSUhEUgAAAHgAAAA8CAIAAAAiz+n/AAAAhUlEQVR4nO3QAQkAIBDAQIN9f4xlC4V5sADj1p7Rhdbzg08CDboVaNCtQINuBRp0K9CgW4EG3Qo06FagQbcCDboVaNCtQINuBRp0K9CgW4EG3Qo06FagQbcCDboVaNCtQINuBRp0K9CgW4EG3Qo06FagQbcCDboVaNCtQINuBRp0K9CgWx0RPyoOIgXUmAAAAABJRU5ErkJggg=='
+        pg.evaluate("async (a) => { const up = await (await fetch('/api/img', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: a[1], type: 'image/png' }) })).json(); await fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'comment', siteId: 's1', target: a[0], text: 'Client confirmed the soldier inspections are free; note removed.', images: [up.url] }) }); }", [mat['id'], PNG])
         # The editor note is taken out: the second scan finds it fixed.
         PAGES['/fort-hood-window-tint-law'] = ('Fort Hood Window Tint Law', '<h1>Fort Hood Window Tint Law</h1><p>Window tint inspections on post are free for soldiers.</p>')
         S2 = scan(pg, (S1.get('scan') or {}).get('finishedAt'))
@@ -152,12 +156,17 @@ try:
         pg.select_option('#rmSince', index=0); time.sleep(0.3)
         print('   sum:', pg.inner_text('#rmSum'))
         check(re.search(r'cover \d+ fix', pg.inner_text('#rmSum')), 'it says how many fixes and open items it will cover')
+        check(pg.is_visible('#rmTodo') and pg.is_checked('#rmTodo') and pg.is_checked('#rmNotes'), 'the progress report offers "what is still to do" and "the team\u2019s notes and screenshots", both on')
+        pg.uncheck('#rmTodo'); time.sleep(0.3)
+        check('completed work only' in pg.inner_text('#rmSum'), 'unticking "still to do" makes a report of the completed work only')
         with pg.expect_download(timeout=180000) as dl3: pg.click('#rmGo')
         d3 = open(dl3.value.path(), 'rb').read(); n3 = dl3.value.suggested_filename
         check(n3.startswith('audit-progress-') and d3[:5] == b'%PDF-', 'the progress report downloads as a PDF: ' + n3)
         out3 = os.path.join(OUT, 'progresspdf.pdf'); open(out3, 'wb').write(d3)
         t3 = subprocess.run(['pdftotext', '-layout', out3, '-'], capture_output=True, text=True).stdout
-        check('Website audit progress' in t3 and 'Highlights' in t3 and 'What was fixed' in t3 and 'Still to do' in t3, 'it has the highlights, what was fixed and what is still to do')
+        check('Website audit progress' in t3 and 'Highlights' in t3 and 'What was fixed' in t3 and 'Open on' not in t3, 'it has the highlights and what was fixed, and no "still to do" section')
+        check('Client confirmed the soldier inspections are free' in ' '.join(t3.split()) and 'note from' in t3.lower(), 'the team\u2019s note on a fixed item is in the report')
+        check(subprocess.run(['pdfimages', '-list', out3], capture_output=True, text=True).stdout.count('image') >= 1, 'with the screenshot attached to it')
         check('Removed the note left for the writer' in t3 and 'Visitors now read a finished page' in t3, 'each fix says what was done and why it matters')
         check('Matthew' in SEEN.get('fprompt', '') or 'Matthew' in t3, 'the fix is written from what was there before (the editor note)')
         check(FA_FOUND not in t3, 'the false alarm is not in the progress report either')

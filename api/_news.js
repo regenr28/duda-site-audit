@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-24-report-notes', date: '2026-11-24', audience: 'all', tag: 'Audits',
+    title: 'Reports: completed work only, and your notes and screenshots',
+    what: 'In <b>📄 Make a report</b>, the Progress report can now leave out <b>what is still to do</b>, for a report of the completed work only. Both reports can include <b>the team\'s notes and screenshots</b>: the comments on each item, with the pictures attached to them, appear under that item in the PDF.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>📊 Audit Report</b> → <b>📄 Make a report</b> → the <b>Include</b> choices.'],
+  },
+  {
     id: '2026-11-23-spelling-terms', date: '2026-11-23', audience: 'all', tag: 'Audits',
     title: 'Spelling: detailing terms are words, and a fix keeps the same part',
     what: 'The AI \u201ccorrected\u201d \u201cwheel barrels\u201d (the inner part of a wheel) to \u201cwheel wells\u201d (the body cavity around it). Now a spelling item needs a word with wrong letters and a fix that is the same word spelled right: swapping one real word for another is never a spelling fix. Automotive and detailing terms are read in their sentence first, and a term the AI is not sure about becomes an Info item, <b>wording to confirm</b>, that starts as For clarification.',
