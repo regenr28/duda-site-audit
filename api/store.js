@@ -920,6 +920,12 @@ async function handler(req, res) {
           const st = pairs(stRaw, true);
           const autos = [];
           site.findings.forEach((f) => {
+            // The AI could not tell what a page is meant to offer: a question for the team (once, never over a decision).
+            if (f.clarify && !f.gone) {
+              const cur0 = st[f.id];
+              if (!cur0 || !(cur0.status || cur0.updatedBy)) { autos.push(f.id, JSON.stringify({ status: 'clarification', assignee: (cur0 && cur0.assignee) || '', updatedBy: '', updatedAt: now(), auto: 'ai-unclear' })); asked++; }
+              return;
+            }
             const k = cc.byFinding[f.id];
             if (!k || !k.comments.some((c) => c.client)) return;
             const cur = st[f.id];
@@ -930,7 +936,7 @@ async function handler(req, res) {
           });
           if (autos.length) await redis(['HSET', P + 'fstate:' + b.id, ...autos]);
         } catch (e) { /* the item simply stays Open */ }
-        if (asked) await log(b.id, me, 'item-status', `${asked} item${asked === 1 ? '' : 's'} set to For clarification automatically — a client comment mentions the value`);
+        if (asked) await log(b.id, me, 'item-status', `${asked} item${asked === 1 ? '' : 's'} set to For clarification automatically — a client comment mentions the value, or the AI could not tell what a page is meant to offer`);
         const updN = codes ? { closed: correctedN + fixedN, added: Math.max(0, seq - Number(seqRaw || 0)) } : null;
         if (codes) await log(b.id, me, 'scan', `applied the check updates: ${updN.closed} item${updN.closed === 1 ? '' : 's'} closed, ${updN.added} new · ${activeN} findings now (${c.critical || 0} critical)`);
         else await log(b.id, me, 'scan', `completed a scan: ${activeN} findings (${c.critical || 0} critical)${seq > Number(seqRaw || 0) && Number(seqRaw || 0) ? `, ${seq - Number(seqRaw || 0)} new` : ''}`);

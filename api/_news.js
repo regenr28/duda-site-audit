@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-23-service-judgement', date: '2026-11-23', audience: 'all', tag: 'Audits',
+    title: 'Pages are judged by what they say, not by what kind of business it is',
+    what: 'The AI called a detailer\'s towing page \u201cnot a car-care service the business offers\u201d. Now it checks whether the page\'s SEO title, H1, description and copy agree on one service, with the address as a clue and the website\'s own pages and menu as the evidence of what the business offers: towing, storage or powder coating is fine on a page that is consistent about it. Only a clear mismatch is reported, and when the AI cannot tell what a page is meant to offer, the item starts as <b>For clarification</b> with what is unclear.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: the towing item closes.'],
+  },
+  {
     id: '2026-11-23-whole-paragraphs', date: '2026-11-23', audience: 'all', tag: 'Audits',
     title: 'Sentences with a bold word or a link are no longer "unfinished"',
     what: 'The AI that reads each page against its address was given the copy in pieces, cut wherever a word was bold or linked. \u201cBy applying PPF,\u201d followed by bold words read like a sentence that stops mid-thought, and was reported as a note left in the copy. It now reads whole paragraphs, and an \u201cunfinished\u201d sentence is only reported when the paragraph on the page really ends there.',

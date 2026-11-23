@@ -409,12 +409,14 @@ Respond with JSON only: {"results":[{"i":<number>,"verdict":"wrong_page","confid
 const PAGEFIT_SYSTEM = `You check that each PAGE of a small business website is about what its ADDRESS (URL) says. ${CONTEXT}
 Pages are often made by copying a sister page (another service, or another town's page) and some words are never changed. Read the address FIRST: it names the service (e.g. /ceramic-coating, /paint-protection-film, /window-tint) and/or the town (e.g. /locations/temple-tx/...). Some location pages name only a town and cover several services: then only the town matters. Then read the SEO title, the H1, the meta description, the section headings and the copy.
 Report:
-- "wrong_service": the title, H1, meta description, or most of the copy is about a DIFFERENT service than the one in the address (a ceramic coating page that is really about paint protection film / PPF, a PPF page about ceramic coating). Mentioning a related service in passing, comparing services, or upselling is fine.
+- "wrong_service": the page's parts disagree about what it offers. First decide whether the SEO title, the H1, the meta description and the main copy describe one consistent service or purpose; use the address as a supporting clue, not the only truth. Report only a clear mismatch between them: a ceramic coating address and copy whose title or H1 is about paint protection film / PPF, a PPF page whose copy is all about ceramic coating, a detailing page whose title promotes ceramic coating in another town. Several related services on one page are fine when the copy supports them; mentioning a related service in passing, comparing services, or upselling is fine.
+  NEVER judge a service by the kind of business or by a list of what such businesses usually do: a detailing business may also offer towing, vehicle storage, powder coating, undercoating, or anything else. The website's own pages (listed in the business details as the services the website advertises) are the evidence of what it offers. A page whose title, H1 and copy all describe the same service, that the website advertises, is fine, whatever the service is (example: /service/enclosed-vehicle-towing-services with a towing title, towing copy and a towing page in the services list: fine). Never say the business does not offer a service.
+  When you cannot tell what the page is meant to offer (the parts point different ways and nothing settles it), still report it but set "clarify": true and say in "reason" what is unclear.
 - "wrong_city": the title, H1, meta description or copy presents the page as being for a DIFFERENT town than the one in its address (the Temple page whose heading says "Copperas Cove's top provider"). On a town's page, other towns may be mentioned only in passing ("we also serve…", "minutes from…"). The business's own name may contain a town (e.g. "Harker Heights Ceramic Coatings"): that is the name, not a location claim. The town comes from the ADDRESS, never from where the business is: a page whose address names a town (/brentwood-window-tinting, /locations/temple-tx) is meant to say that town even when the shop is in another town. Never report a page for naming its own address's town, and never suggest replacing it with the business's town. When the address names NO town (/paint-protection-film, /about), the business's own town from the business details is correct anywhere on the page ("Franklin, TN's top choice for PPF"): never report it.
 - "name_variant": this business's name written differently from its official name, including a missing or extra letter or "s" ("Ceramic Coating" for "Ceramic Coatings"), in any capitals.
 - "editor_note": a note from a writer, the agency or the client left in the text: "[Matthew: confirm this is free before publishing.]", "TBD", "insert photo here", "need price from client", a stray default label like "Button" sitting in the copy.
 Quote the exact words. "part" says where: "title", "h1", "desc" (meta description) or "body". Be strict about the address: the shop owner reads these pages. But do not report pages that are fine. Most pages are fine: return nothing for them.
-Respond with JSON only: {"results":[{"i":<page number>,"type":"wrong_service|wrong_city|name_variant|editor_note","part":"title|h1|desc|body","quote":"<exact words, max 20 words>","confidence":<0..1>,"reason":"<max 25 words, plain English>","suggestion":"<the corrected words, or empty>"}]}. Use {"results":[]} when every page is fine.`;
+Respond with JSON only: {"results":[{"i":<page number>,"type":"wrong_service|wrong_city|name_variant|editor_note","part":"title|h1|desc|body","quote":"<exact words, max 20 words>","confidence":<0..1>,"reason":"<max 25 words, plain English>","suggestion":"<the corrected words, or empty>","clarify":<true only when the intended offering is unclear>}]}. Use {"results":[]} when every page is fine.`;
 const fitPrompt = (b, items) => `${businessHeader(b)}
 PAGES
 ${items.map((x) => `=== [${x.i}] ${String(x.path || '/').slice(0, 120)}
@@ -473,7 +475,7 @@ async function extraCheck(req, res, b, list, owner) {
   // 'p2': answers from before the second read of grammar flags are not reused.
   // 'l2': link answers from before "a service word linking to its page is fine" are asked again.
   // 'f3': page checks from before the "town pages name their own town; other pages may name the shop's town" rules are asked again.
-  const keyOf = (x) => (fit ? 'f3' : proof ? 'p2' : 'l2') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt]) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1].join('|')).slice(0, 18);
+  const keyOf = (x) => (fit ? 'f4' : proof ? 'p2' : 'l2') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt]) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1].join('|')).slice(0, 18);
   const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
   const results = []; const todo = [];
   items.forEach((x, k) => {
@@ -503,7 +505,7 @@ async function extraCheck(req, res, b, list, owner) {
       const i = Number(x && x.i); if (!byI.has(i)) return;
       const confidence = Math.max(0, Math.min(1, Number(x.confidence) || 0));
       const r = fit
-        ? (FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240) } : null)
+        ? (FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240), ...(x.clarify === true ? { clarify: true } : {}) } : null)
         : proof
         ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200) } : null)
         : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 200), expected: String(x.expected || '').slice(0, 160) } : null);
@@ -561,7 +563,7 @@ function businessHeader(b) {
   return `THIS BUSINESS
 Name: ${b.name || 'unknown'}${b.names && b.names.length > 1 ? ` (also: ${b.names.slice(1).join(', ')})` : ''}
 Location: ${[b.street, b.city, b.region, b.zip].filter(Boolean).join(', ') || 'unknown'}
-Service-area / location pages on the site: ${(b.areaPages || []).slice(0, 40).join(', ') || 'none found'}${(b.areas || []).length ? `\nTowns this business serves (it has its own pages for them; naming any of them is fine except on a page whose URL names a different town): ${b.areas.slice(0, 40).join(', ')}` : ''}
+Service-area / location pages on the site: ${(b.areaPages || []).slice(0, 40).join(', ') || 'none found'}${(b.services || []).length ? `\nServices the website advertises (its own pages and menu): ${b.services.slice(0, 60).join('; ')}` : ''}${(b.areas || []).length ? `\nTowns this business serves (it has its own pages for them; naming any of them is fine except on a page whose URL names a different town): ${b.areas.slice(0, 40).join(', ')}` : ''}
 ${b.foreignNames && b.foreignNames.length ? `Names already found on this site that belong to another business: ${b.foreignNames.slice(0, 10).join(', ')}\n` : ''}`;
 }
 // The page an alt text sits on matters as much as the words: on /detailing-in-aberdeen, "Aberdeen"

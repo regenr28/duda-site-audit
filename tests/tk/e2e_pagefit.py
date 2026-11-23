@@ -19,6 +19,8 @@ class AI(BaseHTTPRequestHandler):
         elif 'is about what its ADDRESS' in system:
             for m in re.finditer(r'^=== \[(\d+)\] (\S+)\nAddress says: ([^\n]*)', user, re.M):
                 SEEN['fit'].append((m.group(2), m.group(3)))
+                if m.group(2) == '/paint-correction':
+                    results.append({'i': int(m.group(1)), 'type': 'wrong_service', 'part': 'body', 'quote': 'the kind a car wash leaves', 'confidence': 0.8, 'reason': 'Unclear whether this page sells paint correction or washes', 'suggestion': '', 'clarify': True})
                 if m.group(2) == '/locations/belton-tx/window-tint':
                     results.append({'i': int(m.group(1)), 'type': 'wrong_service', 'part': 'body', 'quote': 'keep your paint glossy for years', 'confidence': 0.9, 'reason': 'The copy describes ceramic coating, not window tint', 'suggestion': ''})
                 if m.group(2) == '/locations/nolanville-tx/ceramic-coating':
@@ -105,6 +107,8 @@ try:
         ai = has('AI_PAGE_TOPIC', '/locations/belton-tx/window-tint')
         check(ai and ai[0]['severity'] == 'warning' and ai[0].get('ai'), 'the AI catches a page the rules cannot match word for word (tint page describing a coating)')
         check(ai and ai[0].get('selector') not in ('(page)', '', None), 'the AI item about words in the copy points at the element holding them: ' + str(ai and ai[0].get('selector')))
+        cq = [f for f in F if f['code'] == 'AI_PAGE_TOPIC' and f.get('path') == '/paint-correction']
+        check(cq and cq[0].get('status') == 'clarification' and cq[0]['severity'] == 'warning', 'when the AI cannot tell what a page offers, the item starts as For clarification (a warning): ' + str(cq and (cq[0].get('status'), cq[0]['severity'])))
         check(not has('AI_PAGE_TOPIC', n1) and any(f.get('ai') for f in has('PAGE_TOPIC_MISMATCH', n1)), 'when a rule already raised it, the AI\'s opinion joins that item instead of doubling it')
         sent = dict(SEEN['fit'])
         check(sent.get(n1, '').startswith('service = ceramic') and 'town = nolanville' in sent.get(n1, '') and 'town = nolanville' in sent.get('/locations/nolanville-tx', '') and 'none (location' in sent.get('/locations/nolanville-tx', ''), 'the AI is told what each address promises (service and town; town only for a location page)')

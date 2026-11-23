@@ -616,6 +616,16 @@
         'A sentence the AI called unfinished (\u201cBy applying PPF,\u201d) is no longer reported when the paragraph on the page goes on after it: the AI was shown the copy in pieces cut at bold words and links. It now reads each page\u2019s copy as whole paragraphs',
       ],
     },
+    {
+      v: 53,
+      date: '2026-11-23',
+      title: 'A page is judged by what its own parts say, not by what kind of business it is',
+      scope: { fixes: ['AI_PAGE_TOPIC'], ai: true },
+      items: [
+        'The AI reported a detailer\u2019s towing page as \u201cnot a car-care service the business offers\u201d. A page is now judged by whether its SEO title, H1, description and copy agree on one service (the address is a clue, not the rule), with the website\u2019s own pages and menu as the evidence of what it offers: towing, storage, powder coating or anything else is fine when the page is consistent',
+        'Only a clear mismatch is reported (a title about one service on a page about another). When the AI cannot tell what a page is meant to offer, the item is set to For clarification with what is unclear, instead of being called a mistake',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -4229,6 +4239,17 @@
    * { i (index into fit pages), type: wrong_service | wrong_city | name_variant | editor_note, part: title | h1 | desc | body, quote, confidence, reason, suggestion }
    * When a rule already reported the same thing on that page, the AI's opinion joins that item.
    */
+  const NOT_OFFERED = /\b(not|isn'?t|is not)\b[^.]{0,40}\b(a |an )?(car[- ]care |detailing )?service[^.]{0,40}\b(offer|provide)|\b(doesn'?t|does not|do not|don'?t)\s+(offer|provide)|\bnot offered\b|\bunrelated to\b|\boutside (the|its) (business|services)/i;
+  /** Do the page's address, SEO title and H1 agree on what it is about (and does the quote say the same)? */
+  function pageAgrees(pg, quote) {
+    const STOP = new Set(['services', 'service', 'page', 'best', 'near', 'with', 'from', 'your', 'about', 'professional', 'expert', 'premium', 'auto', 'car', 'vehicle', 'vehicles']);
+    const toks = String(pg.path || '').split('/').pop().toLowerCase().split(/[^a-z]+/).filter((t) => t.length >= 4 && !STOP.has(t));
+    if (!toks.length) return false;
+    const has = (t, txt) => String(txt || '').toLowerCase().includes(t.replace(/s$/, ''));
+    const h1 = [].concat(pg.h1 || []).map((h) => (h && h.text) || h).join(' ');
+    const key = toks.filter((t) => has(t, pg.title) && has(t, h1));
+    return key.length > 0 && (!quote || key.some((t) => has(t, quote)));
+  }
   function applyPageFit(findings, fit, issues, truth, locate) {
     const RULES = {
       wrong_service: ['AI_PAGE_TOPIC', 'Content', /^PAGE_TOPIC_/, "AI: this page's content doesn't match the service in its address"],
@@ -4253,6 +4274,10 @@
       // serves: Business Info's town, its service-area towns, and the place in its own name ("Denver" in
       // "Denver Auto Shield"). Only a town it does not serve is reported there.
       if (v.type === 'wrong_city' && !pg.urlPlace && namesOwnTown(v.quote, truth)) return;
+      // "Not a service this business offers": the type of business is no evidence of what it offers. A
+      // page whose own address, title and H1 agree on what it is about is consistent, whatever the service
+      // (a detailer's /service/enclosed-vehicle-towing-services with a towing title and heading is fine).
+      if (v.type === 'wrong_service' && (NOT_OFFERED.test([v.reason, v.suggestion].join(' ')) || pageAgrees(pg, v.quote))) return;
       const [code, category, sameRe, message] = rule;
       const part = PART[v.part] ? v.part : 'body';
       const ai = { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote };
@@ -4274,6 +4299,8 @@
         expected: v.suggestion ? 'Suggested: ' + v.suggestion : '',
         path: pg.path, pages: [pg.path], devices: ['desktop'], visibleOn: ['desktop'], hiddenOn: [],
         selector: part === 'h1' && pg.h1Sel ? pg.h1Sel : selector, location, snippet: cut(v.reason || '', 160), ai,
+        // The AI could not tell what the page is meant to offer: a question for the team, not a mistake.
+        ...(v.clarify ? { clarify: true, severity: 'warning' } : {}),
       };
       f.id = hash([f.code, f.selector, f.found, f.message, f.path].join('|'));
       // Words in the page copy: the element that holds them, so the item opens on the page at them

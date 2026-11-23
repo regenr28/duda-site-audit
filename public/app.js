@@ -7469,6 +7469,10 @@
       areaPages: (res.pages || []).map((p) => p.path).filter((p) => p !== '/').sort((a, b) => (A.placeOfPath(b) ? 1 : 0) - (A.placeOfPath(a) ? 1 : 0)).slice(0, 60),
       areas: (t.serviceAreas || []).slice(0, 40),
       foreignNames: [...new Set(res.findings.filter((f) => f.foreignName).map((f) => f.foreignName))],
+      // What the website itself offers: its pages' names (service pages first), the evidence for "is this a service they offer".
+      services: [...new Set((res.pages || []).filter((p) => p.path !== '/' && !p.notFound && !p.redirectTo && !p.blog && !A.isThankYouPath(p.path) && !/\/(blog|post|news|privacy|terms|contact|about|review|gallery|career|faq)/i.test(p.path))
+        .sort((a, b) => (/\/service/i.test(b.path) ? 1 : 0) - (/\/service/i.test(a.path) ? 1 : 0))
+        .map((p) => String(p.title || '').split(/\s+[|\u2502\u2013\u2014-]\s+/)[0].trim() || p.path).filter(Boolean))].slice(0, 60),
     };
   }
   /** AI reads the page text (service pages first, then blog posts) looking for another business's name, a wrong city, or a misspelled business name. */

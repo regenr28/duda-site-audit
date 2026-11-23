@@ -42,5 +42,24 @@ with sync_playwright() as p:
     print('  ', r2)
     check(not any('By applying PPF' in x for x in r2), 'a sentence the AI called unfinished is not reported when the paragraph goes on after it')
     check(any('Mike' in x for x in r2), 'a real note left for the team is still reported')
+    r3 = pg.evaluate("""() => {
+      const A = window.DudaAudit;
+      const truth = A.buildTruth({ site: { site_business_info: { business_name: 'Menard Premium Detailing' } }, content: {} }, null, null);
+      const fit = [
+        { path: '/service/enclosed-vehicle-towing-services', title: 'Enclosed Vehicle Towing Services in Warminster, PA', h1: ['Enclosed Vehicle Towing in Warminster'], description: '' },
+        { path: '/locations/nolanville-tx/ceramic-coating', title: 'Expert Paint Protection Film Installation Nolanville, TX', h1: ['Ceramic Coating in Nolanville'], description: '' },
+        { path: '/specials', title: 'Specials', h1: ['Our Specials'], description: '' },
+      ];
+      const issues = [
+        { i: 0, type: 'wrong_service', part: 'title', quote: 'Enclosed Vehicle Towing Services in Warminster, PA', confidence: 0.95, reason: 'Page is about vehicle towing/transport, not a car-care service Menard Premium Detailing offers.', suggestion: '' },
+        { i: 1, type: 'wrong_service', part: 'title', quote: 'Expert Paint Protection Film Installation', confidence: 0.95, reason: 'The title is about PPF but the address and H1 are about ceramic coating.', suggestion: 'Expert Ceramic Coating Nolanville, TX' },
+        { i: 2, type: 'wrong_service', part: 'body', quote: 'tint, PPF and coating packages', confidence: 0.8, reason: 'Unclear which service this page is meant to sell.', suggestion: '', clarify: true },
+      ];
+      return A.applyPageFit([], fit, issues, truth).map((f) => [f.code, f.path, f.severity, f.clarify ? 'clarify' : ''].join(' | '));
+    }""")
+    print('  ', r3)
+    check(not any('towing' in x for x in r3), 'a towing page whose title and H1 agree is fine (no "not a service they offer")')
+    check(any('nolanville' in x and 'critical' in x for x in r3), 'a title about another service than the page is still reported')
+    check(any('/specials' in x and 'clarify' in x and 'warning' in x for x in r3), 'when the AI cannot tell what a page offers, the item is a question (For clarification), not a critical mistake')
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED'); sys.exit(0 if ok else 1)
