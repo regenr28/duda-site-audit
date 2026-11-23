@@ -502,3 +502,7 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 ## 211 — Reports: completed work only; notes and screenshots
 - Report window "Include": `#rmTodo` (progress only; off → `makeProgress` skips pending items and `prHtml` its section/tile/footer, `withTodo`) and `#rmNotes` (both reports). Saved in `dsa:repmaker`.
 - `crLoadNotes(s, entries, msg)`: item comments (`s.comments`, target = item id, not deleted, ≤6 per entry), mentions turned into plain names, screenshots fetched and shrunk to ≤1000px JPEG (≤3 per note, ≤40 and ~2.4 MB per report); `crNotesHtml` under each finding/fix. e2e_clientpdf.py covers both. app v84, styles v57.
+
+## 212 — Grammar keeps the meaning
+- PROOF_SYSTEM grammar: read the whole sentence/paragraph; the fix keeps meaning, subject and comparison and is checked as a whole sentence for grammar and logic; automotive synonyms (clear bra = PPF); real-subject agreement; product-performance claims are not grammar (→ clarify); no sure fix → clarify with empty suggestion. Answers carry `gv: 2`; cached grammar flags without it are asked again.
+- PROOF_VERIFY_SYSTEM now also returns `fix_ok` and `better`: a confirmed error whose fix changes the meaning gets the second reader's version, or no suggestion + clarify. engine: grammar clarify → Info "Wording to confirm (no sure correction; a product claim may need checking)". Release v56 (fixes TEXT_GRAMMAR, ai). Tests: e2e_aicheck.py (clear bra), engine_textloc.py. engine v38.

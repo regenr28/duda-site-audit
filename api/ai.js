@@ -392,6 +392,8 @@ const PROOF_SYSTEM = `You proofread the WEBSITE COPY of one small business, the 
 Report ONLY clear mistakes a visitor would notice:
 - "spelling": a word whose LETTERS are wrong ("recieve", "proffesional", "detialing", "teh"); the fix is the same word spelled right. Never brand, product, car, place or people names, or deliberate marketing spellings. Automotive and detailing terms are real words even when unfamiliar: wheel barrels (the inner cylinder of a wheel), wheel wells, wheel faces, lug nuts, calipers, rotors, door jambs, A-pillars, rocker panels, headliner, trim, emblems, PPF, ceramic, graphene, decon, clay bar, iron remover, compound, polish, glaze, sealant, paint correction, swirl marks, holograms, water spots, overspray, tint, VLT, vinyl, wrap, satin, matte, gloss, hydrophobic, self-healing, ballistic, IR film. Read the whole sentence: an uncommon term that makes sense there is not a mistake. A correction must keep the same component, product or service: never replace a valid word with a different valid word ("wheel barrels" → "wheel wells" changes the part; it is NOT a spelling fix). If you are not sure the word is wrong, do not report it as spelling: report it only with "clarify": true and say in "reason" what is uncertain; never give high confidence without clear evidence.
 - "grammar": an OBJECTIVE grammar error that any editor would fix: a wrong word (your/you're, its/it's, then/than, there/their, loose/lose), a verb that does not agree with its own subject ("the films is"), a missing or doubled word that breaks the sentence ("we we offer", "to the your car"). Sentences that are correct but could be written differently are NOT errors: "it is easy to end up with…", "there are…", long lists, passive voice, starting with "And"/"But", informal or salesy wording.
+  Before suggesting a grammar fix, read the complete sentence and the paragraph around it. The fix must keep the original meaning, subject and comparison: read your corrected sentence as a whole and check it is both grammatical AND logical (on a page about films, "a clear bra … is not as glossy as a film" compares a clear bra with a film, but a clear bra IS a film: that fix is wrong). Know automotive synonyms: "clear bra" is paint protection film (PPF); "ceramic" is ceramic coating; "tint" is window film. Subject–verb agreement counts with the real subject, even far from its verb ("A paint protection film that guards against chips are…" → "is").
+  Grammar is not facts: a claim about how products perform ("not as hydrophobic as a ceramic coating") is never yours to correct; when such a claim may need checking, set "clarify": true and say so in "reason". If you cannot give a correction you are sure keeps the meaning, set "clarify": true, explain the problem in "reason", and leave "suggestion" empty rather than guessing.
 - "punctuation": punctuation that is plainly wrong: a missing full stop between two sentences that run together ("call us today we are open"), a doubled mark ("today!!", "services,,"), a missing closing bracket or quote, a stray mark ("car ."). Never a missing Oxford comma, dashes vs hyphens, or a list without full stops.
 - "incomplete": a sentence or paragraph that stops mid-thought, a heading or button left as a template placeholder ("Add your text here", "Lorem ipsum", "Title goes here", "[City]"), or copy that clearly belongs to a template and was never filled in.
 Do NOT report: style, tone, word choice, clarity, rephrasing, capitalisation, title case, missing commas, American vs British spelling, short punchy fragments used on purpose ("Fast. Reliable. Local."), lists without full stops, emoji, or anything you are unsure about. Most blocks have no mistakes: return nothing for them.
@@ -441,7 +443,8 @@ Copy: ${String(x.excerpt || '').replace(/\s+/g, ' ').slice(0, 2400)}`).join('\n'
 // asked only "is this definitely wrong?" catches those.
 const PROOF_VERIFY_SYSTEM = `You are a senior copy editor double-checking another proofreader's flags on a small business website. For each flag you get the full sentence or paragraph, the words flagged, the claimed problem and the suggested fix.
 Answer "error": true ONLY if the flagged words are definitely wrong in standard English (a real grammar mistake, or text that is clearly unfinished or a template placeholder) and the fix is needed, not just a different way of saying it. Answer false for anything correct but improvable, any style or wording preference, any sentence that is grammatical as written (for example "it is easy to end up with X, Y, and Z" is correct), and whenever you are not sure.
-Respond with JSON only: {"results":[{"i":<number>,"error":true|false,"confidence":<0..1>}]}`;
+Then judge the suggested fix: put it into the full sentence and read the result. "fix_ok": true only if the corrected sentence is grammatical AND keeps the original meaning, subject and comparison (know that a clear bra is paint protection film, a film: "a clear bra is not as glossy as a film" changes the comparison, so fix_ok is false). When the error is real but the fix is not right, give "better": a corrected version of the flagged words that keeps the meaning, or "" if you cannot be sure.
+Respond with JSON only: {"results":[{"i":<number>,"error":true|false,"confidence":<0..1>,"fix_ok":true|false,"better":"<corrected words or empty>"}]}`;
 const verifyPrompt = (flags) => flags.map((f) => `${f.i} | ${f.type} | text: ${String(f.text).replace(/\s+/g, ' ').slice(0, 900)} | flagged: "${f.quote}" | problem: ${f.reason} | suggested: "${f.suggestion}"`).join('\n');
 /** Is the suggestion a correction of the quoted words (a word or two changed), or a rewrite? */
 function minimalFix(quote, suggestion, type) {
@@ -503,7 +506,7 @@ async function extraCheck(req, res, b, list, owner) {
     if (raw === '0') return;
     const c = jparse(raw); if (!c) return todo.push(x);
     // A spelling flag from before the industry-terms rules is asked again (only those blocks).
-    if (proof && (c.r || []).some((r) => r.type === 'spelling' && r.sv !== 2)) return todo.push(x);
+    if (proof && (c.r || []).some((r) => (r.type === 'spelling' && r.sv !== 2) || (r.type === 'grammar' && r.gv !== 2))) return todo.push(x);
     (c.r || []).forEach((r) => results.push(Object.assign({}, r, { i: Number(x.i), cached: true })));
   });
   let used = null;
@@ -528,7 +531,7 @@ async function extraCheck(req, res, b, list, owner) {
       const r = fit
         ? (FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240), ...(x.clarify === true ? { clarify: true } : {}) } : null)
         : proof
-        ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200), sv: 2, ...(x.clarify === true ? { clarify: true } : {}) } : null)
+        ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200), sv: 2, gv: 2, ...(x.clarify === true ? { clarify: true } : {}) } : null)
         : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 200), expected: String(x.expected || '').slice(0, 160) } : null);
       if (!r) return;
       // A "correction" that rewrites the words or adds to them is a style opinion, not a mistake.
@@ -542,7 +545,18 @@ async function extraCheck(req, res, b, list, owner) {
       let ok = new Set();
       try {
         const v = await callChain(list, PROOF_VERIFY_SYSTEM, verifyPrompt(flags));
-        (v.parsed.results || []).forEach((x) => { if (x && x.error === true && Number(x.confidence || 0) >= 0.8) ok.add(Number(x.i)); });
+        (v.parsed.results || []).forEach((x) => {
+          if (!x || x.error !== true || Number(x.confidence || 0) < 0.8) return;
+          const k = Number(x.i); ok.add(k);
+          // A real mistake, but the suggested fix changes the meaning: the second reader's version, or none
+          // (the item then explains the problem and asks for clarification instead of offering a wrong fix).
+          const r = doubt[k];
+          if (r && x.fix_ok === false) {
+            const better = String(x.better || '').slice(0, 200);
+            if (better && better.toLowerCase() !== String(r.quote || '').toLowerCase()) r.suggestion = better;
+            else { r.suggestion = ''; r.clarify = true; }
+          }
+        });
       } catch (e) { ok = new Set(); }  // not confirmed: not reported
       const keep = new Set(doubt.filter((r, k) => ok.has(k)));
       for (let k = found.length - 1; k >= 0; k--) if (found[k].type !== 'spelling' && proof && !keep.has(found[k])) found.splice(k, 1);

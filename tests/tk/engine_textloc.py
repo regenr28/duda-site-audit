@@ -73,5 +73,14 @@ with sync_playwright() as p:
     }""")
     print('  ', r4)
     check(r4 and 'info' in r4[0] and 'clarify' in r4[0] and 'Wording to confirm' in r4[0], 'a term the AI is unsure about is an Info item to confirm, not a spelling mistake')
+    r5 = pg.evaluate("""() => {
+      const A = window.DudaAudit;
+      const t = 'However, a clear bra is not always as hydrophobic as a ceramic coating, and also is not as glossy being a film.';
+      const texts = [{ text: t, selector: 'p', location: 'Body', pages: ['/ceramic-coating'], devices: ['desktop'], visibleOn: ['desktop'], hiddenOn: [] }];
+      const issues = [{ i: 0, type: 'grammar', quote: 'also is not as glossy being a film', confidence: 0.85, reason: 'Awkward clause; the glossiness comparison is a product claim to confirm', suggestion: '', clarify: true }];
+      return A.applyProofIssues([], texts, issues).map((f) => [f.code, f.severity, f.message, f.expected || '-'].join(' | '));
+    }""")
+    print('  ', r5)
+    check(r5 and 'info' in r5[0] and 'no sure correction' in r5[0] and r5[0].endswith('| -'), 'a grammar problem without a sure correction is an Info item that explains it, with no suggested fix')
     b.close()
 print('ALL PASS' if ok else 'SOME FAILED'); sys.exit(0 if ok else 1)

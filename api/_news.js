@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-24-grammar-meaning', date: '2026-11-24', audience: 'all', tag: 'Audits',
+    title: 'Grammar: a correction keeps the meaning, and product claims are not grammar',
+    what: 'The AI suggested \u201c…is not as glossy as a film\u201d for a clear bra, which is itself a film. Grammar fixes are now read as part of the whole sentence and checked for grammar and logic, keeping the original subject and comparison; a second reader replaces a fix that changes the meaning. The AI knows automotive synonyms (clear bra = paint protection film) and checks subject\u2013verb agreement with the real subject. A claim about how a product performs is not corrected as grammar: when it may need checking, or no sure correction exists, the item is an Info item that explains the problem without a suggested fix.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: grammar items are checked again.'],
+  },
+  {
     id: '2026-11-24-report-notes', date: '2026-11-24', audience: 'all', tag: 'Audits',
     title: 'Reports: completed work only, and your notes and screenshots',
     what: 'In <b>📄 Make a report</b>, the Progress report can now leave out <b>what is still to do</b>, for a report of the completed work only. Both reports can include <b>the team\'s notes and screenshots</b>: the comments on each item, with the pictures attached to them, appear under that item in the PDF.',

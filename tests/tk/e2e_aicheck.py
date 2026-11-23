@@ -20,7 +20,11 @@ class AI(BaseHTTPRequestHandler):
         elif 'senior copy editor' in system:
             SEEN['verify'] = SEEN.get('verify', 0) + 1
             for m in re.finditer(r'^(\d+) \| (\w+) \| text: .*? \| flagged: "([^"]*)"', user, re.M):
-                results.append({'i': int(m.group(1)), 'error': ('Their is' in m.group(3)) or ('today!!' in m.group(3)), 'confidence': 0.95})
+                if 'glossy being a film' in m.group(3):
+                    SEEN['clearbra'] = user
+                    results.append({'i': int(m.group(1)), 'error': True, 'confidence': 0.9, 'fix_ok': False, 'better': 'may not be as hydrophobic or as glossy as a ceramic coating'})
+                else:
+                    results.append({'i': int(m.group(1)), 'error': ('Their is' in m.group(3)) or ('today!!' in m.group(3)), 'confidence': 0.95})
         elif 'proofread the WEBSITE COPY' in system:
             for m in re.finditer(r'^\[(\d+)\] \([^)]*\) (.*)$', user, re.M):
                 SEEN['proof'].append(m.group(2)[:200])
@@ -28,6 +32,7 @@ class AI(BaseHTTPRequestHandler):
                 if 'Lorem ipsum' in m.group(2): results.append({'i': int(m.group(1)), 'type': 'incomplete', 'quote': 'Lorem ipsum dolor', 'confidence': 0.9, 'reason': 'placeholder', 'suggestion': 'Real copy'})
                 if m.group(2).rstrip().endswith('with our'): results.append({'i': int(m.group(1)), 'type': 'incomplete', 'quote': 'paint enhancements with our', 'confidence': 0.9, 'reason': 'unfinished', 'suggestion': 'Complete the sentence'})
                 if 'it is easy to end up with trapped air bubbles' in m.group(2): results.append({'i': int(m.group(1)), 'type': 'grammar', 'quote': 'it is easy to end up with trapped air bubbles', 'confidence': 0.85, 'reason': 'subject-verb disagreement', 'suggestion': 'it is easy to end up with trapped air bubbles, improper fit, and durability issues'})
+                if 'glossy being a film' in m.group(2): results.append({'i': int(m.group(1)), 'type': 'grammar', 'quote': 'is not always as hydrophobic as a ceramic coating, and also is not as glossy being a film', 'confidence': 0.85, 'reason': 'awkward phrasing', 'suggestion': 'is not always as hydrophobic as a ceramic coating, and also is not as glossy as a film'})
                 if 'Profesional' in m.group(2): results.append({'i': int(m.group(1)), 'type': 'spelling', 'quote': 'Profesional', 'confidence': 0.95, 'reason': 'misspelled', 'suggestion': 'Professional'})
                 if 'today!!' in m.group(2): results.append({'i': int(m.group(1)), 'type': 'punctuation', 'quote': 'today!!', 'confidence': 0.92, 'reason': 'doubled', 'suggestion': 'today!'})
                 if 'Their is no better' in m.group(2): results.append({'i': int(m.group(1)), 'type': 'grammar', 'quote': 'Their is no better', 'confidence': 0.95, 'reason': 'wrong word', 'suggestion': 'There is no better'})
@@ -63,7 +68,7 @@ def page_html(path):
              f'<section><h2>Window Tint</h2><p>Keep the cabin cool and private with our premium films.</p><a class="dmButtonLink" href="{L('/window-tint')}">Read more</a></section>'
              f'<a href="{L('/ceramic-coating')}">Ceramic Coating</a> <a href="{L('/contact')}">Get a quote</a> <a href="{L('/about')}">Gallery</a>',
         '/contact': '<h1>Contact Buff &amp; Beyond</h1><p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod.</p>',
-        '/about': '<h1>About us</h1><p>We are teh best detailing shop in the whole of Delaware, family run.</p><p>Without the proper tools and experience, it is easy to end up with trapped air bubbles, an improper fit, and a tint that is not durable.</p><p>Their is no better place for your car in the county.</p><p>Book your detail with our friendly team today!! We will be glad to help you.</p><img src="https://img.example/a.jpg" alt="Profesional ceramic coating on a black Tesla"><p>Our team know cars inside and out, from paint to glass.</p>',
+        '/about': '<h1>About us</h1><p>We are teh best detailing shop in the whole of Delaware, family run.</p><p>Without the proper tools and experience, it is easy to end up with trapped air bubbles, an improper fit, and a tint that is not durable.</p><p>Their is no better place for your car in the county.</p><p>Book your detail with our friendly team today!! We will be glad to help you.</p><img src="https://img.example/a.jpg" alt="Profesional ceramic coating on a black Tesla"><p>Our team know cars inside and out, from paint to glass.</p><p>However, a clear bra is not always as hydrophobic as a ceramic coating, and also is not as glossy being a film.</p>',
         '/window-tint': '<h1 style="display:none">Window Tint</h1><h2>Window Tint</h2><p>Premium films for every car, installed by certified technicians.</p>',
         '/ceramic-coating': '<h1>Ceramic Coating</h1><p>Professional coatings with a written warranty for every vehicle.</p>',
     }.get(path)
@@ -122,6 +127,8 @@ try:
         check(any(f['code'] == 'H1_HIDDEN' and f['path'] == '/window-tint' for f in F) and not any(f['code'] == 'H1_MISSING' and f['path'] == '/window-tint' for f in F), 'an H1 that exists but is hidden is said plainly, not "no H1"')
         check('hidden by the page' in ' '.join((S.get('scan') or {}).get('log') or []), 'the scan notes say what was left out and why')
         check(vis and vis[0]['severity'] == 'critical' and not vis[0].get('hiddenLive'), 'placeholder text visitors do see stays critical')
+        cb = [f for f in F if f['code'] == 'TEXT_GRAMMAR' and 'glossy being a film' in f['found']]
+        check(cb and 'as glossy as a film' not in (cb[0].get('expected') or '') and 'ceramic coating' in (cb[0].get('expected') or ''), 'a grammar fix that changes the comparison ("as glossy as a film" for a clear bra) is replaced by one that keeps the meaning: ' + str(cb and cb[0].get('expected')))
         alt = [f for f in F if f['code'] == 'TEXT_SPELLING' and 'Profesional' in f['found']]
         check(alt and 'alt text' in alt[0]['message'] and alt[0]['category'] == 'Images / Alt', 'alt text is proofread, and the item says the slip is in the alt text: ' + (alt[0]['message'] if alt else 'none'))
         check(any(f['code'] == 'TEXT_PUNCTUATION' and 'today!!' in f['found'] for f in F), 'a punctuation mistake confirmed by the second read is raised')
@@ -141,7 +148,7 @@ try:
         print('   links asked about:', SEEN['links'])
         check(('Read more', 'Window Tint', '/window-tint') not in SEEN['links'], '"Read more" under Window Tint opening the window tint page is plainly right and is not asked about')
         check('Ceramic Coating' not in sent and 'Get a quote' not in sent and 'About' not in sent and 'Window Tint' not in sent, 'links that plainly match their page (and menus) are not sent to the AI')
-        check((S.get('scan') or {}).get('ai', {}).get('links', {}).get('flagged') == 2 and (S.get('scan') or {}).get('ai', {}).get('proof', {}).get('flagged') == 4, 'the scan notes count what was proofread and checked')
+        check((S.get('scan') or {}).get('ai', {}).get('links', {}).get('flagged') == 2 and (S.get('scan') or {}).get('ai', {}).get('proof', {}).get('flagged') == 5, 'the scan notes count what was proofread and checked')
         pg.goto(f'http://localhost:{APORT}/#/site/s1'); pg.wait_for_selector('table.findings', timeout=15000); time.sleep(0.6)
         txt = pg.inner_text('#tabBody')
         check('Proofread' in txt and 'open the wrong page' in txt, 'the scan panel says what the AI proofread and checked')

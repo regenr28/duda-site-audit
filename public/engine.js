@@ -646,6 +646,16 @@
         'When the AI is not sure a term is wrong, it is an Info item, \u201cwording to confirm\u201d, that starts as For clarification, instead of a spelling mistake. Spelling items found before are checked again',
       ],
     },
+    {
+      v: 56,
+      date: '2026-11-24',
+      title: 'Grammar: a correction keeps the meaning, and claims are not grammar',
+      scope: { fixes: ['TEXT_GRAMMAR'], ai: true },
+      items: [
+        'A grammar fix is now read as part of the whole sentence and checked for grammar AND logic: \u201cnot as glossy as a film\u201d for a clear bra (which is a film) is rejected. The AI knows automotive synonyms (clear bra = paint protection film) and checks subject\u2013verb agreement with the real subject',
+        'Claims about how products perform are not corrected as grammar: they become Info items to confirm. When no sure correction exists, the item explains the problem without a suggested fix. Grammar items found before are checked again',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -4446,7 +4456,7 @@
       // Alt text and the SEO title / description say where the slip is, so it is fixed in the right place.
       const where = blk.location === 'Image alt text' ? ' in the alt text' : blk.selector === 'head > title' ? ' in the SEO title' : /meta\[name="description"\]/.test(blk.selector || '') ? ' in the meta description' : '';
       const category = blk.location === 'Image alt text' ? 'Images / Alt' : where ? 'Meta / SEO' : category0;
-      const message = (v.clarify ? 'Wording to confirm (the term may be correct)' : message0) + where;
+      const message = (v.clarify ? (v.type === 'grammar' ? 'Wording to confirm (no sure correction; a product claim may need checking)' : 'Wording to confirm (the term may be correct)') : message0) + where;
       // Placeholder text the rules already caught ("Lorem ipsum") is one item, not two.
       if (v.type === 'incomplete' && findings.some((f) => f.code === 'PLACEHOLDER' && f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)))) return;
       const pages = blk.pages.slice().sort();
