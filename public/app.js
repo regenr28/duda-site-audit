@@ -13246,9 +13246,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const groups = []; fixedE.forEach((e) => { const g = (e.w.group || 'Content Refinements').trim(); let x = groups.find((y) => y.name.toLowerCase() === g.toLowerCase()); if (!x) { x = { name: g, list: [] }; groups.push(x); } x.list.push(e); });
     groups.forEach((g) => g.list.sort((a, b) => (b.w.significant ? 1 : 0) - (a.w.significant ? 1 : 0)));
     groups.sort((a, b) => (b.list.some((e) => e.w.significant) ? 1 : 0) - (a.list.some((e) => e.w.significant) ? 1 : 0) || b.list.length - a.list.length);
-    const pubTag = (e) => e.pub === 'pending' ? '<span class="tag t-soon">Awaiting publication</span>' : '';
-    const pending = fixedE.filter((e) => e.pub === 'pending').length;
-    const fixedHtml = (e) => `<div class="it"><h4><span class="n ok">✓</span>${esc(e.w.title)}${pubTag(e)}</h4>
+    const fixedHtml = (e) => `<div class="it"><h4><span class="n ok">✓</span>${esc(e.w.title)}</h4>
       ${e.w.purpose ? `<p>${lk(e.w.purpose)}</p>` : ''}<div class="where">${e.rows || e.pages.length > 1 ? `${(e.rows || e.pages).length} pages: ` : ''}${pageLinks(e)}</div>${crNotesHtml(e)}</div>`;
     // For the owner: what the team is finishing, without alarm words.
     const pendHtml = (e) => `<div class="it"><h4><span class="n">•</span>${esc(e.w.title)}${e.items.some((f) => f.status === 'clarification') ? '<span class="tag t-later">We may ask you</span>' : e.items.some((f) => f.status === 'hold') ? '<span class="tag t-later">On hold</span>' : '<span class="tag t-later">In progress</span>'}</h4>
@@ -13259,18 +13257,18 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       <div class="kick">${esc(biz)} / ${esc(date)}</div>
       <h1>Website health report</h1>
       <div class="verdict ${left && urgent ? 'v-mid' : 'v-ok'}"><div class="v-mark">${left && urgent ? '!' : '✓'}</div><div><h2>${esc(verdict)}</h2>
-        <p>${ctx.intro ? lk(ctx.intro) : `We reviewed all ${pagesN} pages of ${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a>` : 'your website'} on phones, tablets and computers.${fixedN ? ` ${span(true)} we completed <b>${fixedN}</b> update${fixedN === 1 ? '' : 's'}${pending ? `; ${pending === fixedE.length ? (fixedN === 1 ? 'it is' : 'they are') : `${pending} of them are`} ready and will be live once the website is published` : ''}.` : ''}`}</p></div></div>
+        <p>${ctx.intro ? lk(ctx.intro) : `We reviewed all ${pagesN} pages of ${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a>` : 'your website'} on phones, tablets and computers.${fixedN ? ` ${span(true)} we completed <b>${fixedN}</b> update${fixedN === 1 ? '' : 's'}.` : ''}`}</p></div></div>
       <h3 class="ck-h">What we reviewed</h3>
       <p class="note rv">${esc(reviewed.slice(0, -1).join(', ') + (reviewed.length > 1 ? ', and ' : '') + reviewed.slice(-1))}.</p>
       ${groups.length ? `<h3 class="ck-h">Summary of work completed</h3>
-      <table class="ck"><tbody>${groups.map((g) => `<tr><td class="ck-s ck-ok">✓</td><td><b>${esc(g.name)}</b><div class="ck-why">${esc(g.list.slice(0, 3).map((e) => e.w.title).join('; '))}${g.list.length > 3 ? `; and ${g.list.length - 3} more` : ''}.</div></td><td class="ck-n"><span class="ck-good">${g.list.length} update${g.list.length === 1 ? '' : 's'}</span>${g.list.some((e) => e.pub === 'pending') ? '<div class="note">awaiting publication</div>' : ''}</td></tr>`).join('')}</tbody></table>` : ''}
-      <div class="box"><h3>Do you need to do anything?</h3><p>${!withTodo || !left ? `Nothing.${pending ? ' The updates marked “awaiting publication” go live when the website is next published.' : ''} We keep checking your website after every update.` : asks ? `Only one thing: we may ask you to confirm ${asks} detail${asks === 1 ? '' : 's'} so we get it exactly right. Everything else is ours to finish.` : `Nothing. Our team is finishing the ${left} item${left === 1 ? '' : 's'} listed at the end, and we keep checking your website after every update.`}</p></div>
+      <table class="ck"><tbody>${groups.map((g) => `<tr><td class="ck-s ck-ok">✓</td><td><b>${esc(g.name)}</b><div class="ck-why">${esc(g.list.slice(0, 3).map((e) => e.w.title).join('; '))}${g.list.length > 3 ? `; and ${g.list.length - 3} more` : ''}.</div></td><td class="ck-n"><span class="ck-good">${g.list.length} update${g.list.length === 1 ? '' : 's'}</span></td></tr>`).join('')}</tbody></table>` : ''}
+      <div class="box"><h3>Do you need to do anything?</h3><p>${!withTodo || !left ? `Nothing. We keep checking your website after every update.` : asks ? `Only one thing: we may ask you to confirm ${asks} detail${asks === 1 ? '' : 's'} so we get it exactly right. Everything else is ours to finish.` : `Nothing. Our team is finishing the ${left} item${left === 1 ? '' : 's'} listed at the end, and we keep checking your website after every update.`}</p></div>
       ${groups.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Work completed</div><h2 class="st">Work completed</h2><div class="sub">${span(true)}</div>
         ${groups.map((g) => `<h3 class="grp">${esc(g.name)}</h3>${g.list.map((e) => fixedHtml(e)).join('')}`).join('')}</section>` : ''}
       ${withTodo && pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / In progress</div><h2 class="st">What we are finishing</h2><div class="sub">Open on ${esc(date)}</div>
         ${secs(pendE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${pendE.filter((e) => e.sec === sec.k).map((e) => pendHtml(e)).join('')}`).join('')}</section>` : ''}
       <section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / About</div><h2 class="st">About this report</h2>
-        <p class="note">This report covers updates completed from ${esc(fmt(since))} to ${esc(fmt(ended ? until : at))}. An update is listed when a later check of the website confirmed it, or when our team completed it; updates marked “awaiting publication” are made in the website editor and go live when the website is next published. Every page was reviewed on desktop, tablet and phone against the business details on file. The review does not submit forms, test email routing or phone forwarding, or measure traffic or rankings.</p>
+        <p class="note">This report covers updates completed from ${esc(fmt(since))} to ${esc(fmt(ended ? until : at))}. An update is listed when a later check of the website confirmed it, or when our team completed it. Every page was reviewed on desktop, tablet and phone against the business details on file. The review does not submit forms, test email routing or phone forwarding, or measure traffic or rankings.</p>
       </section></main>`;
     const css = CR_CSS + `.verdict{display:flex;gap:16px;align-items:flex-start;border-radius:4px;padding:16px 18px;margin:14px 0 18px}.verdict.v-ok{background:#e8f5ee;border:1px solid #b9e0c9}.verdict.v-mid{background:#fff6e6;border:1px solid #f1d3a1}
       .v-mark{flex:none;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:800 20pt 'Archivo',Arial,sans-serif;color:#fff}.v-ok .v-mark{background:#1e8a4f}.v-mid .v-mark{background:#c9861a}
@@ -13321,10 +13319,9 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     modal(`<header><h2>📄 Make a report</h2><button class="btn ghost" data-close>✕</button></header><div class="body rm">
       <div class="rm-types">
         <label class="rm-type"><input type="radio" name="rmType" value="findings"><span><b>📋 Findings report</b><span class="small muted">What is on the website now and how to fix it: each finding explained, what was corrected since the scan before, and what was checked.${x.now ? '' : ` As of the scan on ${esc(dbDate(x.at))}.`}</span></span></label>
-        <label class="rm-type ${x.now ? '' : 'off'}"><input type="radio" name="rmType" value="progress" ${x.now ? '' : 'disabled'}><span><b>🏆 Website health report</b><span class="small muted">The work completed, in plain words and grouped (“Brand Consistency — Standardized the business name in the page title”), published or awaiting publication. You read and edit the wording before the PDF is made.${x.now ? '' : ' Made from the audit as it is today: open it from today’s report.'}</span></span></label>
+        <label class="rm-type ${x.now ? '' : 'off'}"><input type="radio" name="rmType" value="progress" ${x.now ? '' : 'disabled'}><span><b>🏆 Website health report</b><span class="small muted">The work completed, in plain words and grouped (“Brand Consistency — Standardized the business name in the page title”). Only completed work is listed. You read and edit the wording before the PDF is made.${x.now ? '' : ' Made from the audit as it is today: open it from today’s report.'}</span></span></label>
       </div>
       <div class="rm-opts"><div class="k">Include</div>
-        <label class="rm-l rm-todo" ${type === 'progress' ? '' : 'hidden'}><input type="checkbox" id="rmTodo" ${saved.todo === false ? '' : 'checked'}> <span><b>What is still to do</b> <span class="small faint">untick for a report of the completed work only</span></span></label>
         <label class="rm-l"><input type="checkbox" id="rmNotes" ${saved.notes === false ? '' : 'checked'}> <span><b>The team\u2019s notes and screenshots</b> <span class="small faint">comments on each item, with the pictures attached to them</span></span></label>
       </div>
       <div class="rm-since" ${type === 'progress' ? '' : 'hidden'}><div class="k">Date range</div>
@@ -13343,14 +13340,12 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const draw = () => {
       $$('[name=rmType]', root).forEach((r) => { r.checked = r.value === type; });
       $('.rm-since', root).hidden = type !== 'progress';
-      $('.rm-todo', root).hidden = type !== 'progress';
-      const todo = $('#rmTodo', root).checked;
       const pend = crItems(s, base, {});
       const rg = rangeOf(); const fixedAll = type === 'progress' ? crFixed(s, rg.from, {}, rg.to) : [];
       CR_LEAVE.forEach((l) => { const c = pend.filter(l.test).length + fixedAll.filter(l.test).length; const el = $(`[data-rmn="${l.k}"]`, root); if (el) el.textContent = c ? `${c} item${c === 1 ? '' : 's'}` : 'none'; });
       const p = crItems(s, base, ex).length; const f = type === 'progress' ? crFixed(s, rg.from, ex, rg.to).length : 0;
       $('#rmGo', root).textContent = type === 'progress' ? 'Next: review the wording' : 'Make the PDF';
-      $('#rmSum', root).innerHTML = type === 'progress' ? `The report will cover <b>${f}</b> fix${f === 1 ? '' : 'es'}${todo ? ` and <b>${p}</b> item${p === 1 ? '' : 's'} still to do` : ' (completed work only)'}.` : `The report will cover <b>${p}</b> open item${p === 1 ? '' : 's'}.`;
+      $('#rmSum', root).innerHTML = type === 'progress' ? `The report will cover <b>${f}</b> completed update${f === 1 ? '' : 's'} (completed work only).` : `The report will cover <b>${p}</b> open item${p === 1 ? '' : 's'}.`;
     };
     $$('[name=rmType]', root).forEach((r) => (r.onchange = () => { type = r.value; draw(); }));
     ['#rmFrom', '#rmTo'].forEach((q) => { if ($(q, root)) $(q, root).onchange = () => { $('#rmQuick', root).value = ''; draw(); }; });
@@ -13364,10 +13359,9 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       if (a) { $('#rmFrom', root).value = ymd(a); $('#rmTo', root).value = ymd(b); draw(); }
     };
     $$('[data-rml]', root).forEach((c) => (c.onchange = () => { ex[c.dataset.rml] = c.checked; draw(); }));
-    $('#rmTodo', root).onchange = draw;
     draw();
     $('#rmGo', root).onclick = async () => {
-      const opt = { todo: $('#rmTodo', root).checked, notes: $('#rmNotes', root).checked };
+      const opt = { todo: type !== 'progress', notes: $('#rmNotes', root).checked };
       try { localStorage.setItem('dsa:repmaker', JSON.stringify({ type, ex, todo: opt.todo, notes: opt.notes })); } catch (e) { /* not kept */ }
       $('#rmGo', root).disabled = true;
       const msg = (t) => { const m = $('#crMsg'); if (m) m.textContent = t; };
@@ -13390,15 +13384,8 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const reps = scans.filter((y) => !y.now && y.auto); const last = reps.length > 1 ? reps[reps.length - 2].at : '';
     const recentN = last ? fixed.filter((f) => (f.gone ? crTime(f.gone.at) : crTime(f.statusAt)) >= crTime(last)).length : 0;
     if (opt.notes !== false) { msg('Adding the team\u2019s notes…'); await crLoadNotes(s, fixedE.concat(pendE), msg); }
-    // Published, or made in the editor after the last publish (live once the website is published again).
-    const pd = (pubInfo[s.id] || {}).d; const lx = liveOf(s.siteId);
-    const unpublished = pd && (!pd.domain || /NOT_PUBLISHED|UNPUBLISHED/i.test(pd.publishStatus || ''));
-    const pubAt = crTime((pd && pd.publishedAt) || (lx && lx.published) || (s.live && s.live.publishedAt) || '');
-    fixedE.forEach((e) => {
-      const at = Math.max(...e.items.map((f) => (f.gone ? crTime(f.gone.at) : crTime(f.statusAt)) || 0));
-      e.pub = unpublished ? 'pending' : pubAt ? (at > pubAt ? 'pending' : 'published') : '';
-      e.include = true;
-    });
+    // Only completed work goes in: an item marked Done (or gone on a rescan) counts as done and live.
+    fixedE.forEach((e) => { e.include = true; });
     const ctx = { fixedE, pendE, pendN: pend.length, since, until: opt.until, lastAt: last, recentN, at: new Date().toISOString(), withTodo: opt.todo !== false,
       openAll: crItems(s, s.findings || [], ex), ex };
     // Reviewed and edited by the team before it is made into a PDF.
@@ -13414,7 +13401,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       <label class="field">Headline<input type="text" id="crvVerdict" maxlength="160" value="${esc(defVerdict ? defVerdict[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'") : '')}"></label>
       <div class="crv-list">${list.map((e, i) => `<div class="crv-it" data-i="${i}">
         <label class="crv-in"><input type="checkbox" data-crv="include" ${e.include !== false ? 'checked' : ''}> In the report</label>
-        <span class="small faint">${esc(e.rows ? e.rows.length + ' pages' : e.pages.slice(0, 3).join(', ') + (e.pages.length > 3 ? '…' : ''))}${e.pub === 'pending' ? ' \u00b7 awaiting publication' : e.pub === 'published' ? ' \u00b7 published' : ''}${e.w.significant ? ' \u00b7 <b>significant correction</b>' : ''}</span>
+        <span class="small faint">${esc(e.rows ? e.rows.length + ' pages' : e.pages.slice(0, 3).join(', ') + (e.pages.length > 3 ? '…' : ''))}${e.w.significant ? ' \u00b7 <b>significant correction</b>' : ''}</span>
         <div class="crv-row"><input type="text" data-crv="group" maxlength="50" value="${esc(e.w.group || '')}" aria-label="Heading"><input type="text" data-crv="title" maxlength="140" value="${esc(e.w.title || '')}" aria-label="What was done"></div>
         <textarea data-crv="purpose" rows="2" maxlength="300" aria-label="Its purpose">${esc(e.w.purpose || '')}</textarea>
         <details class="small faint"><summary>What the audit recorded (internal, not in the PDF)</summary>${e.items.slice(0, 4).map((f) => `<div>#${esc(String(f.num || ''))} ${esc(String(f.message || '').replace(/^AI: /, ''))}${f.found ? ` \u2014 \u201c${esc(crUnq(f.found).slice(0, 120))}\u201d` : ''}</div>`).join('')}</details>

@@ -530,3 +530,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `prHtml` rewritten: groups by `e.w.group` (significant first), skips `e.include === false`, "What we reviewed" (neutral `CR_HEALTH` topics; copy/google topics renamed), "Summary of work completed", "Work completed" (✓ title, purpose, pages, notes; no "Was:"), `Awaiting publication` tag when `e.pub === 'pending'`; `ctx.verdict` / `ctx.intro` override.
 - `makeProgress` sets `e.pub` ('pending' when the site is not published or the fix is newer than `publishedAt` from `pubInfo`/`liveOf`; 'published'; '' when unknown) and opens `crReview` in the report window: headline, per update include / heading / title / purpose, internal finding in a details block, then Export the PDF. Report button reads "Next: review the wording" for the health report.
 - e2e_clientpdf.py: stand-in AI answers the new prompt; edits the headline and a title in the review step and checks them in the PDF; checks Awaiting publication and no "Was:", trust, leads or rankings claims. app v90, styles v59.
+
+## 219 — Health report: completed work only, no publication status
+- Removed the "Awaiting publication" tag and every mention of publishing from the health report, the review step and the window text (Done = done and published). `e.pub` is gone from `makeProgress`/`prHtml`/`crReview`.
+- Removed the "What is still to do" option (`#rmTodo`) from the report window: the health report is always completed work only (`opt.todo = type !== 'progress'`). The `withTodo` path stays in `prHtml` but is no longer reachable from the window.
+- e2e_clientpdf.py checks there is no `#rmTodo` and no awaiting/publication/pending/in progress text in the review list or the PDF. app v91.
