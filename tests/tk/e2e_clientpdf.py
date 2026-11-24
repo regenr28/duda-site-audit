@@ -166,8 +166,9 @@ try:
         t3 = subprocess.run(['pdftotext', '-layout', out3, '-'], capture_output=True, text=True).stdout
         check('Website health report' in t3 and 'What we fixed for you' in t3 and 'What we fixed' in t3 and 'Open on' not in t3, 'it has the health cover and what was fixed, and no "still to do" section')
         flat = ' '.join(t3.split())
-        check(re.search(r'Your website is (in good shape|nearly there)', flat), 'the cover gives the owner a plain verdict')
-        check('What we checked, and what it is for' in flat and 'Customers reach you, not an old number' in flat and ('All good' in flat or 'to finish' in flat), 'it lists what was checked, what each check is for, and whether each is all good')
+        check('Your website has been checked and improved.' in flat, 'the completed-only cover gives a plain verdict about the work done')
+        check('What we checked, and what it is for' in flat and 'Customers reach you, not an old number' in flat and 'fixed' in flat, 'it lists what was checked, what each check is for, and what was fixed')
+        check(not re.search(r'to finish|nearly there|things? left|In progress|What we are finishing', flat), 'with "still to do" unticked, nothing open is counted or mentioned anywhere')
         check('Do you need to do anything?' in flat, 'and tells the owner whether they need to do anything')
         check(not re.search(r'\bcritical\b|WCAG|schema|robots', flat, re.I), 'no severity words or technical terms for the owner')
         check('Client confirmed the soldier inspections are free' in ' '.join(t3.split()) and 'note from' in t3.lower(), 'the team\u2019s note on a fixed item is in the report')

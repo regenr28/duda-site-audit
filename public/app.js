@@ -13190,16 +13190,16 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
   // The owner's checklist: what was checked, in their terms, and what each check is for. A line is green
   // when nothing is open in it (left-out items do not count against it); readability only when included.
   const CR_HEALTH = [
-    { k: 'contact', title: 'Phone, email and address are correct on every page', why: 'Customers reach you, not an old number or another shop.',
+    { k: 'contact', topic: 'Phone, email and address on every page', title: 'Phone, email and address are correct on every page', why: 'Customers reach you, not an old number or another shop.',
       test: (f) => /(^|_)(PHONE|EMAIL|ADDRESS|MAILTO|TEL|SMS|NAP)(_|$)|^POLICY_(CONTACT|ADDRESS)|^EMAIL_AUTOMATION/.test(f.code) || f.category === 'Contact info' },
-    { k: 'google', title: 'Google shows the right business name, town and services', why: 'People searching near you find you and see the right details.',
+    { k: 'google', topic: 'The business name, town and services Google shows', title: 'Google shows the right business name, town and services', why: 'People searching near you find you and see the right details.',
       test: (f) => !/^CONTRAST_/.test(f.code) && (/^(META_|H1_|SCHEMA_|ROBOTS_|SITEMAP_|LLMS_|NOINDEX|CANONICAL|PAGE_|AI_PAGE_(TOPIC|CITY|NAME)|NAME_|AI_TEXT_(LOCATION|NAME))/.test(f.code) || ['Meta / SEO', 'Schema', 'Business name', 'Location'].includes(f.category)) },
-    { k: 'links', title: 'Every link and button goes where it should', why: 'Visitors never hit a dead end or the wrong page.', test: (f) => /^(LINK_|BUTTON_|REDIRECT_|HIDDEN_LINK)/.test(f.code) || f.category === 'Links' },
-    { k: 'forms', title: 'Quote and contact forms are set up correctly', why: 'Every lead can reach you, for every service you offer.', test: (f) => /^FORM_/.test(f.code) },
-    { k: 'copy', title: 'No leftover template text or another business\u2019s name', why: 'Your pages read as finished and trustworthy.', test: (f) => /^(PLACEHOLDER|LOREM|TEXT_|AI_TEXT_OTHER|AI_PAGE_NOTE|POLICY_|COPYRIGHT|OTHER_BUSINESS)/.test(f.code) || f.category === 'Content' },
-    { k: 'photos', title: 'Photos fit their pages and load properly', why: 'Customers see your real work, and Google understands your images.', test: (f) => /^(PHOTO_|IMAGE_|ALT_)/.test(f.code) || /^Images/.test(f.category || '') },
-    { k: 'social', title: 'Links to Google and social profiles are yours', why: 'Reviews and followers land on your own profiles.', test: (f) => /^(SOCIAL_|GMB_|MAP_)/.test(f.code) || f.category === 'Social' },
-    { k: 'read', title: 'Pages read clearly on phones and computers', why: 'Everyone can read your text and fill in your forms.', test: (f) => /^CONTRAST_/.test(f.code) || f.category === 'Accessibility', needs: 'contrast' },
+    { k: 'links', topic: 'Where every link and button goes', title: 'Every link and button goes where it should', why: 'Visitors never hit a dead end or the wrong page.', test: (f) => /^(LINK_|BUTTON_|REDIRECT_|HIDDEN_LINK)/.test(f.code) || f.category === 'Links' },
+    { k: 'forms', topic: 'Quote and contact forms', title: 'Quote and contact forms are set up correctly', why: 'Every lead can reach you, for every service you offer.', test: (f) => /^FORM_/.test(f.code) },
+    { k: 'copy', topic: 'Leftover template text and other businesses\u2019 names', title: 'No leftover template text or another business\u2019s name', why: 'Your pages read as finished and trustworthy.', test: (f) => /^(PLACEHOLDER|LOREM|TEXT_|AI_TEXT_OTHER|AI_PAGE_NOTE|POLICY_|COPYRIGHT|OTHER_BUSINESS)/.test(f.code) || f.category === 'Content' },
+    { k: 'photos', topic: 'Photos on every page', title: 'Photos fit their pages and load properly', why: 'Customers see your real work, and Google understands your images.', test: (f) => /^(PHOTO_|IMAGE_|ALT_)/.test(f.code) || /^Images/.test(f.category || '') },
+    { k: 'social', topic: 'Links to Google and social profiles', title: 'Links to Google and social profiles are yours', why: 'Reviews and followers land on your own profiles.', test: (f) => /^(SOCIAL_|GMB_|MAP_)/.test(f.code) || f.category === 'Social' },
+    { k: 'read', topic: 'How clearly pages read on phones and computers', title: 'Pages read clearly on phones and computers', why: 'Everyone can read your text and fill in your forms.', test: (f) => /^CONTRAST_/.test(f.code) || f.category === 'Accessibility', needs: 'contrast' },
   ];
   const crHealthOf = (f) => CR_HEALTH.find((h) => h.test(f));
   const CR_WHY = { biz: 'So customers reach you and Google shows the right business.', copy: 'So your pages read as finished and trustworthy.', photos: 'So customers see your real work.',
@@ -13207,11 +13207,12 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
   function prHtml(s, ctx) {
     const { fixedE, pendE, fixedN, pendN, since, lastAt, recentN, at, withTodo, openAll, fixedAll, ex } = ctx;
     const pagesN = (s.pages || []).filter((p) => !p.notFound && !p.error && !p.redirectTo).length;
-    const rows = CR_HEALTH.filter((h) => !(h.needs && ex && ex[h.needs])).map((h) => ({ h, open: (openAll || []).filter((f) => crHealthOf(f) === h).length, fixed: (fixedAll || []).filter((f) => crHealthOf(f) === h).length }));
+    // Completed work only ("what is still to do" unticked): nothing open is counted or mentioned anywhere.
+    const rows = CR_HEALTH.filter((h) => !(h.needs && ex && ex[h.needs])).map((h) => ({ h, open: withTodo ? (openAll || []).filter((f) => crHealthOf(f) === h).length : 0, fixed: (fixedAll || []).filter((f) => crHealthOf(f) === h).length }));
     const left = rows.reduce((n, r) => n + r.open, 0);
-    const urgent = (openAll || []).filter((f) => f.severity === 'critical').length;
-    const asks = (openAll || []).filter((f) => f.status === 'clarification').length;
-    const verdict = !left ? 'Your website is in good shape.' : !urgent ? `Your website is in good shape, with ${left} small thing${left === 1 ? '' : 's'} left to finish.` : `Your website is nearly there: ${left} thing${left === 1 ? '' : 's'} left to finish.`;
+    const urgent = withTodo ? (openAll || []).filter((f) => f.severity === 'critical').length : 0;
+    const asks = withTodo ? (openAll || []).filter((f) => f.status === 'clarification').length : 0;
+    const verdict = !withTodo ? (fixedN ? 'Your website has been checked and improved.' : 'Your website has been checked.') : !left ? 'Your website is in good shape.' : !urgent ? `Your website is in good shape, with ${left} small thing${left === 1 ? '' : 's'} left to finish.` : `Your website is nearly there: ${left} thing${left === 1 ? '' : 's'} left to finish.`;
     const biz = s.businessName || (s.truth || {}).businessName || s.siteId;
     const fmt = (d, y) => new Date(d).toLocaleDateString('en-US', y === false ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
     const date = fmt(at);
@@ -13235,9 +13236,9 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       <div class="verdict ${left ? (urgent ? 'v-mid' : 'v-ok') : 'v-ok'}"><div class="v-mark">${left && urgent ? '!' : '\u2713'}</div><div><h2>${esc(verdict)}</h2>
         <p>We checked all ${pagesN} pages of ${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a>` : 'your website'} on phones, tablets and computers, against your business details.${fixedN ? ` Since ${esc(fmt(since))} we fixed <b>${fixedN}</b> thing${fixedN === 1 ? '' : 's'}${recentN && lastAt && crTime(lastAt) > crTime(since) ? ` (${recentN} since the last check)` : ''}.` : ''}</p></div></div>
       <h3 class="ck-h">What we checked, and what it is for</h3>
-      <table class="ck"><tbody>${rows.map((r) => `<tr><td class="ck-s ${r.open ? 'ck-open' : 'ck-ok'}">${r.open ? '\u25CF' : '\u2713'}</td><td><b>${esc(r.h.title)}</b><div class="ck-why">${esc(r.h.why)}</div></td><td class="ck-n">${r.open ? `<span class="ck-left">${r.open} to finish</span>` : '<span class="ck-good">All good</span>'}${r.fixed ? `<div class="note">${r.fixed} fixed</div>` : ''}</td></tr>`).join('')}</tbody></table>
+      <table class="ck"><tbody>${rows.map((r) => `<tr><td class="ck-s ${r.open ? 'ck-open' : 'ck-ok'}">${r.open ? '\u25CF' : '\u2713'}</td><td><b>${esc(withTodo ? r.h.title : r.h.topic)}</b><div class="ck-why">${esc(r.h.why)}</div></td><td class="ck-n">${!withTodo ? (r.fixed ? `<span class="ck-good">${r.fixed} fixed</span>` : '<span class="ck-good">Checked</span>') : `${r.open ? `<span class="ck-left">${r.open} to finish</span>` : '<span class="ck-good">All good</span>'}${r.fixed ? `<div class="note">${r.fixed} fixed</div>` : ''}`}</td></tr>`).join('')}</tbody></table>
       ${top.length ? `<div class="box"><h3>What we fixed for you</h3>${top.map((e) => `<p class="hl"><b>${esc(e.w.title)}.</b> ${lk(e.w.impact || '')}</p>`).join('')}${fixedE.length > top.length ? `<p class="note">And ${fixedE.length - top.length} more, listed in the next pages.</p>` : ''}</div>` : ''}
-      <div class="box"><h3>Do you need to do anything?</h3><p>${!left ? 'Nothing. We keep checking your website after every update.' : asks ? `Only one thing: we may ask you to confirm ${asks} detail${asks === 1 ? '' : 's'} (a service area or wording) so we get it exactly right. Everything else is ours to finish.` : `Nothing. Our team is finishing the ${left} item${left === 1 ? '' : 's'} above, and we keep checking your website after every update.`}</p></div>
+      <div class="box"><h3>Do you need to do anything?</h3><p>${!withTodo || !left ? 'Nothing. We keep checking your website after every update.' : asks ? `Only one thing: we may ask you to confirm ${asks} detail${asks === 1 ? '' : 's'} (a service area or wording) so we get it exactly right. Everything else is ours to finish.` : `Nothing. Our team is finishing the ${left} item${left === 1 ? '' : 's'} above, and we keep checking your website after every update.`}</p></div>
       ${fixedE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What we fixed</h2><div class="sub">Since ${esc(fmt(since))}, with why each fix matters</div>
         ${secs(fixedE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${CR_WHY[sec.k] ? `<p class="grp-why">${esc(CR_WHY[sec.k])}</p>` : ''}${fixedE.filter((e) => e.sec === sec.k).map((e, i) => fixedHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
       ${withTodo && pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What we are finishing</h2><div class="sub">Open on ${esc(date)}</div>

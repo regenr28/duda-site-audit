@@ -513,3 +513,6 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 
 ## 214 — Website health report (owner-facing)
 - The Progress report is renamed Website health report (window, PDF title/header/footer, file `website-health-…pdf`). New cover in `prHtml`: verdict (good shape / small things left / nearly there, from open included items), `CR_HEALTH` checklist (contact, google, links, forms, copy, photos, social, read [only when contrast is not left out]) with "what it is for", All good / N to finish / N fixed; "What we fixed for you" (top fixes + impact); "Do you need to do anything?". Fix groups carry `CR_WHY`; pending items are "What we are finishing" with In progress / We may ask you / On hold tags. makeProgress passes `openAll` (crItems with ex), `fixedAll`, `ex`. e2e_clientpdf.py checks the cover and that no severity/technical words appear. app v86.
+
+## 215 — Health report: completed work only hides everything open
+- `prHtml` with `withTodo` false: no open counts in the checklist (shows "N fixed" or "Checked"), verdict "Your website has been checked and improved." (or "…checked."), urgent/asks zeroed, the do-anything box says nothing is needed. e2e_clientpdf.py checks no "to finish / nearly there / left / In progress" text. app v87.

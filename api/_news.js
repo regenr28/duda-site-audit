@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-24-health-done-only', date: '2026-11-24', audience: 'all', tag: 'Audits',
+    title: 'Website health report: completed work only means nothing left is mentioned',
+    what: 'With <b>What is still to do</b> unticked, the cover no longer counts what is left: the verdict reads \u201cYour website has been checked and improved\u201d, each checklist line shows what was fixed (or Checked), and no open item appears anywhere in the report.',
+    where: ['<b>Walkthrough:</b> <b>📄 Make a report</b> → <b>🏆 Website health report</b> → untick <b>What is still to do</b>.'],
+  },
+  {
     id: '2026-11-24-health-report', date: '2026-11-24', audience: 'all', tag: 'Audits',
     title: 'The Progress report is now the Website health report, written for the shop owner',
     what: 'Its cover answers what an owner asks: <b>is my website OK?</b> (\u201cYour website is in good shape\u201d), <b>what did you check, and what is each check for?</b> (a checklist: phone, email and address on every page, what Google shows, links and buttons, forms, leftover template text, photos, social profiles, each marked All good or with how many things are left), <b>what did you fix for me?</b> with why each fix matters, and <b>do I need to do anything?</b> Each group of fixes says what it is for, and what is still open is \u201cwhat we are finishing\u201d, without severity words or technical terms.',
