@@ -86,6 +86,8 @@ try:
         rec1 = json.loads(zlib.decompress(base64.b64decode(redis(['GET', 'dsa:site:s1'])[0][3:]), -15))
         auto = [f for f in rec1['findings'] if f['code'] == 'AUTO_LIVE']
         check(len(auto) == 6 and all(f['autoLive']['at'] and f['category'] == 'Auto audit (live website)' for f in auto), 'the audit on Audits gets the auto audit findings as dated items (%d)' % len(auto))
+        fst = redis(['HGETALL', 'dsa:fstate:s1'])[0]; fstm = {fst[i]: json.loads(fst[i + 1]) for i in range(0, len(fst), 2)}
+        check(all((fstm.get(f['id']) or {}).get('assignee') == '-' for f in auto), 'auto audit items are assigned to no one (not the website default)')
         fnum = redis(['HGETALL', 'dsa:fnum:s1'])[0]
         check(len(fnum) == 12, 'each one is numbered like any audit item')
         idx = json.loads(redis(['HGET', 'dsa:index', 's1'])[0])

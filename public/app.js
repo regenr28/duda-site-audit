@@ -171,10 +171,10 @@
     if (u && u.photo) return `<img class="av av-img" src="${esc(u.photo)}" alt="" title="${esc(name)}" style="${size ? `width:${size}px;height:${size}px` : ''}">`;
     return `<span class="av" style="background:${esc((u && u.color) || '#6b7280')};${size ? `width:${size}px;height:${size}px;font-size:${Math.round(size / 2.3)}px` : ''}" title="${esc(name)}">${esc(initials(name))}</span>`;
   }
-  function userOptions(selected, emptyLabel) {
+  function userOptions(selected, emptyLabel, noOne) {
     const list = activeUsers();
-    const cur = selected && !list.some((u) => u.email === selected) ? user(selected) : null;
-    return `<option value="">${esc(emptyLabel || 'Unassigned')}</option>`
+    const cur = selected && selected !== '-' && !list.some((u) => u.email === selected) ? user(selected) : null;
+    return `<option value="">${esc(emptyLabel || 'Unassigned')}</option>` + (noOne ? `<option value="-" ${selected === '-' ? 'selected' : ''}>No one</option>` : '')
       + (cur ? `<option value="${esc(cur.email)}" selected>${esc(cur.name)} (switched off)</option>` : '')
       + list.map((u) => `<option value="${esc(u.email)}" ${u.email === selected ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
   }
@@ -10355,7 +10355,8 @@
   // =====================================================================
   // SITE DETAIL
   // =====================================================================
-  const effWho = (f, s) => f.assignee || s.assignee || '';
+  // '-' is "no one" on purpose (auto audit items): not the website's default assignee.
+  const effWho = (f, s) => (f.assignee === '-' ? '' : f.assignee || s.assignee || '');
   /**
    * Is the problem in the editor (preview), on the live website, or both? Two small pills under Where.
    * Preview = what the last scan read; Live = the comparison made right after it on the published website.
@@ -11834,7 +11835,7 @@
                 ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more page${f.pages.length === 2 ? '' : 's'}</div>` : ''}
                 ${where ? `<div class="small muted rw-loc">${where}</div>` : ''}${pvLivePills(s, f)}</td>
               <td class="rw-status">${statusSelect(f, 'data-fst')}</td>
-              <td><span class="member-select" data-stop>${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span></td>
+              <td><span class="member-select" data-stop>${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned', true)}</select></span></td>
             </tr>`;
     };
     body.innerHTML = `
@@ -12072,6 +12073,8 @@
       before.set(f.id, { status: f.status, assignee: f.assignee, updatedAt: f.updatedAt, updatedBy: f.updatedBy, statusBy: f.statusBy, statusAt: f.statusAt });
       if (send.status && FLABEL[send.status]) f.status = send.status;
       if ('assignee' in send) f.assignee = send.assignee;
+      // Whoever changes the status takes the item (the server does the same, and logs it).
+      else if (send.status && send.status !== before.get(f.id).status) f.assignee = state.me.email;
       // As the server records it: whoever changed the item last, and when.
       f.updatedAt = at; f.updatedBy = state.me.email; f.statusAt = at; f.statusBy = state.me.email;
     });
@@ -13762,7 +13765,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
           title="Reopen it and tell whoever closed it why">↺ This is not ${f.status === 'done' ? 'done' : 'a false alarm'} — reopen it</button>` : ''}
         ${f.manual && f.code !== 'AUTO_LIVE' && (f.by === state.me.email || can('item.add')) ? `<button class="linkbtn danger" id="drRmItem" style="margin-top:6px;margin-left:10px">Remove this item</button>` : ''}
         <div class="k" style="margin-top:14px">Assignee</div>
-        <span class="member-select">${avatar(effWho(f, s))}<select id="drWho" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned')}</select></span>
+        <span class="member-select">${avatar(effWho(f, s))}<select id="drWho" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned', true)}</select></span>
         <h3 style="margin-top:22px">Discussion <span class="faint">(${comments.filter((c) => !c.deleted).length})</span></h3>
         <div class="c-list">${comments.length ? comments.map((c) => renderComment(c, s)).join('') : '<div class="small faint" style="padding:6px 0 10px">No comments yet. Ask a question or attach a screenshot, then set the status to <b>For clarification</b> if you need an answer.</div>'}</div>
         <div id="drComposer"></div>

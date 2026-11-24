@@ -743,7 +743,9 @@ export async function syncAudit(recId, result, opts = {}) {
       by: '', byName: 'Auto audit', at: prev ? prev.at : at };
     if (!nums[id]) { seq++; nums[id] = String(seq); numAdd.push(id, String(seq)); added++; }
     const cur = st[id];
-    if (cur && cur.status === 'done' && cur.auto === 'live-gone') { stAdd.push(id, JSON.stringify({ status: 'open', assignee: cur.assignee || '', updatedBy: '', updatedAt: nowIso, auto: 'live-back' })); back++; }
+    // Auto audit items belong to no one until somebody takes them (not to the website's default assignee).
+    if (cur && cur.status === 'done' && cur.auto === 'live-gone') { stAdd.push(id, JSON.stringify({ status: 'open', assignee: cur.assignee || '-', updatedBy: '', updatedAt: nowIso, auto: 'live-back' })); back++; }
+    else if (!cur || (!cur.assignee && !cur.updatedBy)) stAdd.push(id, JSON.stringify(Object.assign({ status: 'open' }, cur || {}, { assignee: '-', updatedBy: (cur && cur.updatedBy) || '', updatedAt: (cur && cur.updatedAt) || nowIso })));
     return f;
   });
   const gone = [];

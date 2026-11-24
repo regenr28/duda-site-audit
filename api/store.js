@@ -1449,7 +1449,7 @@ async function handler(req, res) {
         const [raw] = await redis(['GET', P + 'site:' + b.id]);
         const site = unpackJSON(raw); if (!site) return res.status(404).json({ error: 'Not found' });
         const users = await listUsers();
-        const nameOf = (e) => (users.find((u) => u.email === e) || {}).name || 'Unassigned';
+        const nameOf = (e) => (e === '-' ? 'no one' : (users.find((u) => u.email === e) || {}).name || 'Unassigned');
         const siteName = site.businessName || site.siteId;
         const reason = String(b.reason || '').trim().slice(0, 300);
         if ('status' in ch && SITE_STATUSES.includes(ch.status) && ch.status !== site.status) {
@@ -1593,6 +1593,8 @@ async function handler(req, res) {
           const next = { status: f.status, assignee: f.assignee, updatedAt: now(), updatedBy: me.email };
           if ('status' in ch && FSTATUS.includes(ch.status) && ch.status !== f.status) { next.status = ch.status; touched.push({ f, kind: 'status', from: f.status, to: ch.status }); }
           if ('assignee' in ch && ch.assignee !== f.assignee) { next.assignee = ch.assignee; touched.push({ f, kind: 'assign', to: ch.assignee }); }
+          // Whoever changes an item's status takes it: it is assigned to them (said in the same activity line).
+          else if (!('assignee' in ch) && next.status !== f.status && f.assignee !== me.email) { next.assignee = me.email; const st = touched.find((t) => t.f === f && t.kind === 'status'); if (st) st.took = true; }
           cmds.push(['HSET', P + 'fstate:' + b.siteId, f.id, JSON.stringify(next)]);
         });
         if (cmds.length) await redis(...cmds);
@@ -1644,13 +1646,13 @@ async function handler(req, res) {
         const FIELD = { done: 'itemsDone', false: 'itemsFalse', hold: 'itemsHold', clarification: 'itemsClarify', open: 'itemsReopen' };
         for (const t of touched.filter((x) => x.kind === 'status')) await bump(me.email, FIELD[t.to] || '');
         for (const t of touched.slice(0, 20)) {
-          if (t.kind === 'status') await log(b.siteId, me, 'item-status', `changed #${t.f.num} from "${FLABEL[t.from]}" to "${FLABEL[t.to]}"${t.to === 'false' && note ? ` (reason: ${note.slice(0, 120)})` : ''}`, { findingId: t.f.id, findingNum: t.f.num });
+          if (t.kind === 'status') await log(b.siteId, me, 'item-status', `changed #${t.f.num} from "${FLABEL[t.from]}" to "${FLABEL[t.to]}"${t.to === 'false' && note ? ` (reason: ${note.slice(0, 120)})` : ''}${t.took ? `, and it is now assigned to ${me.name}${t.f.assignee ? ` (was ${nameOf(t.f.assignee)})` : ''}` : ''}`, { findingId: t.f.id, findingNum: t.f.num });
           else {
             await log(b.siteId, me, 'item-assign', `assigned #${t.f.num} to ${nameOf(t.to)}`, { findingId: t.f.id, findingNum: t.f.num });
-            if (t.to && t.to !== me.email) await notify(t.to, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: t.f.num, kind: 'assign', text: t.f.message });
+            if (t.to && t.to !== '-' && t.to !== me.email) await notify(t.to, { by: me.email, byName: me.name, siteId: b.siteId, siteName: l.site.businessName || l.site.siteId, findingNum: t.f.num, kind: 'assign', text: t.f.message });
           }
         }
-        { const to = touched.filter((t) => t.kind === 'assign' && t.to).map((t) => t.to); if (to.length) await bringIn(b.siteId, me, to, 'assigned'); }
+        { const to = touched.filter((t) => t.kind === 'assign' && t.to && t.to !== '-').map((t) => t.to); if (to.length) await bringIn(b.siteId, me, to, 'assigned'); }
         { const sum = await saveIndex(b.siteId); const [sv] = await redis(['GET', P + 'ver:s:' + b.siteId]); return res.status(200).json(Object.assign({}, sum, { siteVer: String(sv || 0) })); }
       }
       case 'recheck': {

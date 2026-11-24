@@ -516,3 +516,7 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 
 ## 215 — Health report: completed work only hides everything open
 - `prHtml` with `withTodo` false: no open counts in the checklist (shows "N fixed" or "Checked"), verdict "Your website has been checked and improved." (or "…checked."), urgent/asks zeroed, the do-anything box says nothing is needed. e2e_clientpdf.py checks no "to finish / nearly there / left / In progress" text. app v87.
+
+## 216 — A status change takes the item; auto audit items start with no one
+- store patchFinding: a status change without an assignee in the same change sets `assignee: me.email` (if not already), logged in the status line ("…, and it is now assigned to X (was Y)"). Client sets it at once too.
+- Assignee '-' = no one on purpose (not the site default): `effWho` treats it as nobody; item selects (`userOptions(…, true)`) offer "No one"; no notify / bring-in for '-'. `_watch.js` merge: new or untouched AUTO_LIVE items get fstate assignee '-' (reopened live-back items keep theirs, or '-'). Tests: e2e_autoassign.py, e2e_watch.py. app v88.

@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-24-status-takes', date: '2026-11-24', audience: 'all', tag: 'Audits',
+    title: 'Changing an item\'s status assigns it to you; auto audit items start with no one',
+    what: 'When you change an audit item\'s status, on your audit or anyone else\'s, the item is now assigned to you, and the activity log says so in the same line (who had it before too). Items the auto audit adds start assigned to <b>no one</b>, not the website\'s default person, until somebody takes them. \u201cNo one\u201d is also in every item\'s assignee list.',
+    where: ['<b>Walkthrough:</b> open any audit item and change its status: the assignee becomes you.'],
+  },
+  {
     id: '2026-11-24-health-done-only', date: '2026-11-24', audience: 'all', tag: 'Audits',
     title: 'Website health report: completed work only means nothing left is mentioned',
     what: 'With <b>What is still to do</b> unticked, the cover no longer counts what is left: the verdict reads \u201cYour website has been checked and improved\u201d, each checklist line shows what was fixed (or Checked), and no open item appears anywhere in the report.',

@@ -798,7 +798,8 @@ The write-ups come from the Site Auditor AI from the facts the scan collected (r
   },
   {
     id: 'ownership', group: 'Collaboration', title: 'Who owns an audit (and how your work is protected)', audience: 'all',
-    html: `<p>Nobody can quietly take a website off you, reopen your finished work or rescan it without you hearing about it. Every one of these tells the person affected <b>what happened and who did it</b>, in the bell, on the desktop and on Slack if you've switched that on.</p>
+    html: `<p><b>Changing an item's status takes it.</b> Whoever marks an audit item Done, False alarm, On hold, For clarification or Open again is assigned to it, on anyone's audit, and the activity log says so in the same line (“changed #12 from Open to Done, and it is now assigned to Dana (was Reymark)”). Choosing someone else in the same change keeps that choice. Items from the <b>auto audit</b> start assigned to <b>no one</b> (not the website's default person) until somebody changes them or assigns them; “No one” can also be picked in any item's assignee list.</p>
+<p>Nobody can quietly take a website off you, reopen your finished work or rescan it without you hearing about it. Every one of these tells the person affected <b>what happened and who did it</b>, in the bell, on the desktop and on Slack if you've switched that on.</p>
 <ul>
 <li><b>You're credited when you finish.</b> Set a website to <b>Complete</b> and the page and the Audits row show <b>✓ Marked Complete by you</b> with the date. That stays there even if someone rescans it later.</li>
 <li><b>Rescanned after you completed it?</b> You're told who rescanned it and when, so "wait, I already finished this" never happens again.</li>
