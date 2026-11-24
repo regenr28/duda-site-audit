@@ -13187,8 +13187,31 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     entries.forEach((e) => { if (!e.w) e.w = crPlainFixed(s, e); });
     return aiOk;
   }
+  // The owner's checklist: what was checked, in their terms, and what each check is for. A line is green
+  // when nothing is open in it (left-out items do not count against it); readability only when included.
+  const CR_HEALTH = [
+    { k: 'contact', title: 'Phone, email and address are correct on every page', why: 'Customers reach you, not an old number or another shop.',
+      test: (f) => /(^|_)(PHONE|EMAIL|ADDRESS|MAILTO|TEL|SMS|NAP)(_|$)|^POLICY_(CONTACT|ADDRESS)|^EMAIL_AUTOMATION/.test(f.code) || f.category === 'Contact info' },
+    { k: 'google', title: 'Google shows the right business name, town and services', why: 'People searching near you find you and see the right details.',
+      test: (f) => !/^CONTRAST_/.test(f.code) && (/^(META_|H1_|SCHEMA_|ROBOTS_|SITEMAP_|LLMS_|NOINDEX|CANONICAL|PAGE_|AI_PAGE_(TOPIC|CITY|NAME)|NAME_|AI_TEXT_(LOCATION|NAME))/.test(f.code) || ['Meta / SEO', 'Schema', 'Business name', 'Location'].includes(f.category)) },
+    { k: 'links', title: 'Every link and button goes where it should', why: 'Visitors never hit a dead end or the wrong page.', test: (f) => /^(LINK_|BUTTON_|REDIRECT_|HIDDEN_LINK)/.test(f.code) || f.category === 'Links' },
+    { k: 'forms', title: 'Quote and contact forms are set up correctly', why: 'Every lead can reach you, for every service you offer.', test: (f) => /^FORM_/.test(f.code) },
+    { k: 'copy', title: 'No leftover template text or another business\u2019s name', why: 'Your pages read as finished and trustworthy.', test: (f) => /^(PLACEHOLDER|LOREM|TEXT_|AI_TEXT_OTHER|AI_PAGE_NOTE|POLICY_|COPYRIGHT|OTHER_BUSINESS)/.test(f.code) || f.category === 'Content' },
+    { k: 'photos', title: 'Photos fit their pages and load properly', why: 'Customers see your real work, and Google understands your images.', test: (f) => /^(PHOTO_|IMAGE_|ALT_)/.test(f.code) || /^Images/.test(f.category || '') },
+    { k: 'social', title: 'Links to Google and social profiles are yours', why: 'Reviews and followers land on your own profiles.', test: (f) => /^(SOCIAL_|GMB_|MAP_)/.test(f.code) || f.category === 'Social' },
+    { k: 'read', title: 'Pages read clearly on phones and computers', why: 'Everyone can read your text and fill in your forms.', test: (f) => /^CONTRAST_/.test(f.code) || f.category === 'Accessibility', needs: 'contrast' },
+  ];
+  const crHealthOf = (f) => CR_HEALTH.find((h) => h.test(f));
+  const CR_WHY = { biz: 'So customers reach you and Google shows the right business.', copy: 'So your pages read as finished and trustworthy.', photos: 'So customers see your real work.',
+    links: 'So visitors and Google never hit a dead end.', google: 'So people searching near you find you.', read: 'So everyone can read your pages.', design: 'So the website looks consistent and professional.', other: '' };
   function prHtml(s, ctx) {
-    const { fixedE, pendE, fixedN, pendN, since, lastAt, recentN, at, withTodo } = ctx;
+    const { fixedE, pendE, fixedN, pendN, since, lastAt, recentN, at, withTodo, openAll, fixedAll, ex } = ctx;
+    const pagesN = (s.pages || []).filter((p) => !p.notFound && !p.error && !p.redirectTo).length;
+    const rows = CR_HEALTH.filter((h) => !(h.needs && ex && ex[h.needs])).map((h) => ({ h, open: (openAll || []).filter((f) => crHealthOf(f) === h).length, fixed: (fixedAll || []).filter((f) => crHealthOf(f) === h).length }));
+    const left = rows.reduce((n, r) => n + r.open, 0);
+    const urgent = (openAll || []).filter((f) => f.severity === 'critical').length;
+    const asks = (openAll || []).filter((f) => f.status === 'clarification').length;
+    const verdict = !left ? 'Your website is in good shape.' : !urgent ? `Your website is in good shape, with ${left} small thing${left === 1 ? '' : 's'} left to finish.` : `Your website is nearly there: ${left} thing${left === 1 ? '' : 's'} left to finish.`;
     const biz = s.businessName || (s.truth || {}).businessName || s.siteId;
     const fmt = (d, y) => new Date(d).toLocaleDateString('en-US', y === false ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
     const date = fmt(at);
@@ -13202,34 +13225,39 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const was = (e) => { const f = e.items[0]; return f.found ? `<div class="note">Was: “${esc(crUnq(f.found).slice(0, 140))}”${f.expected ? ` → now: ${esc(crUnq(f.expected).replace(/^Suggested: /, '').slice(0, 100))}` : ''}</div>` : ''; };
     const fixedHtml = (e, i, sec) => `<div class="it"><h4><span class="n ok">✓</span>${esc(e.w.title)}</h4>
       <p>${lk(e.w.impact || '')}</p><div class="where">${e.rows || e.pages.length > 1 ? `${(e.rows || e.pages).length} pages: ` : ''}${pageLinks(e)}</div>${e.rows ? '' : was(e)}${crNotesHtml(e)}</div>`;
-    const pendHtml = (e, i, sec) => `<div class="it"><h4><span class="n">${sec.letter}${String(i + 1).padStart(2, '0')}</span>${esc(e.w.title)}${e.items.some((f) => f.status === 'clarification') ? '<span class="tag t-later">Being confirmed</span>' : e.items.some((f) => f.status === 'hold') ? '<span class="tag t-later">On hold</span>' : `<span class="tag t-${esc(e.w.priority)}">${e.w.priority === 'now' ? 'Fix now' : e.w.priority === 'later' ? 'When convenient' : 'Fix soon'}</span>`}</h4>
+    // For the owner: what the team is finishing, without alarm words.
+    const pendHtml = (e, i, sec) => `<div class="it"><h4><span class="n">\u2022</span>${esc(e.w.title)}${e.items.some((f) => f.status === 'clarification') ? '<span class="tag t-later">We may ask you</span>' : e.items.some((f) => f.status === 'hold') ? '<span class="tag t-later">On hold</span>' : '<span class="tag t-later">In progress</span>'}</h4>
       <div class="where">${pageLinks(e)}</div><p>${lk(e.w.recommendation || '')}</p>${crNotesHtml(e)}</div>`;
     let n = 1;
     const body = `<main>
       <div class="kick">${esc(biz)} / ${esc(date)}</div>
-      <h1>Website audit progress</h1>
-      <p class="lede">${fixedN ? `${fixedN} correction${fixedN === 1 ? '' : 's'} since ${esc(fmt(since))}` : `No corrections recorded since ${esc(fmt(since))}`}${!withTodo ? '.' : pendN ? `, ${pendN} item${pendN === 1 ? '' : 's'} still to do.` : ', and nothing left open.'}</p>
-      <div class="meta">${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a> • ` : ''}Prepared for ${esc(biz)} and the website team.</div>
-      <div class="tiles"><div><b>${fixedN}</b><span>Fixed</span></div><div><b>${area('business')}</b><span>${AREA.business}</span></div><div><b>${area('seo')}</b><span>${AREA.seo}</span></div>${withTodo ? `<div><b>${pendN}</b><span>Still to do</span></div>` : `<div><b>${new Set(fixedE.flatMap((e) => e.pages)).size}</b><span>Pages improved</span></div>`}</div>
-      ${top.length ? `<div class="box"><h3>Highlights</h3>${top.map((e) => `<p class="hl"><b>${esc(e.w.title)}.</b> ${lk(e.w.impact || '')}</p>`).join('')}</div>` : ''}
-      ${recentN && lastAt && crTime(lastAt) > crTime(since) ? `<p class="note">${recentN} of these since the last check on ${esc(fmt(lastAt, false))}.</p>` : ''}
-      <h3 style="margin:16px 0 4px;color:#14263d">How to read this report</h3>
-      <p class="note">What was fixed, grouped by subject, with why each fix matters and the pages it covers${withTodo ? '; then what is still to do, with what to change' : ''}. Page names open the page.</p>
-      ${fixedE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What was fixed</h2><div class="sub">Since ${esc(fmt(since))}</div>
-        ${secs(fixedE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${fixedE.filter((e) => e.sec === sec.k).map((e, i) => fixedHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
-      ${withTodo && pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">Still to do</h2><div class="sub">Open on ${esc(date)}</div>
+      <h1>Website health report</h1>
+      <div class="verdict ${left ? (urgent ? 'v-mid' : 'v-ok') : 'v-ok'}"><div class="v-mark">${left && urgent ? '!' : '\u2713'}</div><div><h2>${esc(verdict)}</h2>
+        <p>We checked all ${pagesN} pages of ${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a>` : 'your website'} on phones, tablets and computers, against your business details.${fixedN ? ` Since ${esc(fmt(since))} we fixed <b>${fixedN}</b> thing${fixedN === 1 ? '' : 's'}${recentN && lastAt && crTime(lastAt) > crTime(since) ? ` (${recentN} since the last check)` : ''}.` : ''}</p></div></div>
+      <h3 class="ck-h">What we checked, and what it is for</h3>
+      <table class="ck"><tbody>${rows.map((r) => `<tr><td class="ck-s ${r.open ? 'ck-open' : 'ck-ok'}">${r.open ? '\u25CF' : '\u2713'}</td><td><b>${esc(r.h.title)}</b><div class="ck-why">${esc(r.h.why)}</div></td><td class="ck-n">${r.open ? `<span class="ck-left">${r.open} to finish</span>` : '<span class="ck-good">All good</span>'}${r.fixed ? `<div class="note">${r.fixed} fixed</div>` : ''}</td></tr>`).join('')}</tbody></table>
+      ${top.length ? `<div class="box"><h3>What we fixed for you</h3>${top.map((e) => `<p class="hl"><b>${esc(e.w.title)}.</b> ${lk(e.w.impact || '')}</p>`).join('')}${fixedE.length > top.length ? `<p class="note">And ${fixedE.length - top.length} more, listed in the next pages.</p>` : ''}</div>` : ''}
+      <div class="box"><h3>Do you need to do anything?</h3><p>${!left ? 'Nothing. We keep checking your website after every update.' : asks ? `Only one thing: we may ask you to confirm ${asks} detail${asks === 1 ? '' : 's'} (a service area or wording) so we get it exactly right. Everything else is ours to finish.` : `Nothing. Our team is finishing the ${left} item${left === 1 ? '' : 's'} above, and we keep checking your website after every update.`}</p></div>
+      ${fixedE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What we fixed</h2><div class="sub">Since ${esc(fmt(since))}, with why each fix matters</div>
+        ${secs(fixedE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${CR_WHY[sec.k] ? `<p class="grp-why">${esc(CR_WHY[sec.k])}</p>` : ''}${fixedE.filter((e) => e.sec === sec.k).map((e, i) => fixedHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
+      ${withTodo && pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What we are finishing</h2><div class="sub">Open on ${esc(date)}</div>
         ${secs(pendE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${pendE.filter((e) => e.sec === sec.k).map((e, i) => pendHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
       <section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">About this report</h2>
         <p class="note">This report covers the audit from ${esc(fmt(since))} to ${esc(date)}. A correction counts as fixed when a later check of the website no longer found the problem, or when the team confirmed it fixed. Every page was checked on desktop, tablet and phone against the business details on file. The review does not submit forms, test email routing or phone forwarding, or measure traffic or rankings.</p>
       </section></main>`;
-    const css = CR_CSS + `.tiles{display:flex;gap:10px;margin:16px 0}.tiles div{flex:1;border:1px solid #d3dde6;border-radius:3px;padding:10px 12px;background:#f7fafc}.tiles b{display:block;font:800 22pt 'Archivo',Arial,sans-serif;color:#14263d;line-height:1.1}.tiles span{font-size:8.5pt;color:#5b6475}
+    const css = CR_CSS + `.verdict{display:flex;gap:16px;align-items:flex-start;border-radius:4px;padding:16px 18px;margin:14px 0 18px}.verdict.v-ok{background:#e8f5ee;border:1px solid #b9e0c9}.verdict.v-mid{background:#fff6e6;border:1px solid #f1d3a1}
+      .v-mark{flex:none;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:800 20pt 'Archivo',Arial,sans-serif;color:#fff}.v-ok .v-mark{background:#1e8a4f}.v-mid .v-mark{background:#c9861a}
+      .verdict h2{margin:0 0 4px;font:800 15pt 'Archivo',Arial,sans-serif;color:#14263d}.verdict p{margin:0}
+      .ck-h{margin:6px 0 6px;color:#14263d;font-size:12pt}table.ck td{padding:8px 10px;vertical-align:top}table.ck tr:nth-child(even) td{background:#f4f7fa}.ck-s{width:22px;font:800 12pt Arial,sans-serif;text-align:center}.ck-ok{color:#1e8a4f}.ck-open{color:#c9861a}
+      .ck-why{font-size:9pt;color:#5b6475;margin-top:1px}.ck-n{width:22%;text-align:right;font-size:9pt}.ck-good{color:#1e8a4f;font-weight:700}.ck-left{color:#a8640c;font-weight:700}.grp-why{margin:-4px 0 10px;font-size:9.5pt;color:#5b6475;font-style:italic}
+      .tiles{display:flex;gap:10px;margin:16px 0}.tiles div{flex:1;border:1px solid #d3dde6;border-radius:3px;padding:10px 12px;background:#f7fafc}.tiles b{display:block;font:800 22pt 'Archivo',Arial,sans-serif;color:#14263d;line-height:1.1}.tiles span{font-size:8.5pt;color:#5b6475}
       .hl{margin:0 0 6px}.n.ok{color:#18794e}h3.grp{font-size:12pt;color:#1b6b9a;margin:14px 0 8px;border-bottom:1px solid #dfe5ec;padding-bottom:3px}`;
-    const doc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(biz)} — Website audit progress</title>
+    const doc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(biz)} — Website health report</title>
       <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
       <style>${css}</style></head><body>${body}</body></html>`;
-    const header = `<style>#header,#footer{padding:0!important}</style><div style="width:100%;height:0.46in;background:#14263d;color:#fff;font:700 7.5px Arial,sans-serif;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between;padding:0 0.72in;-webkit-print-color-adjust:exact;print-color-adjust:exact"><span>${esc(biz.toUpperCase())}</span><span>AUDIT PROGRESS • ${esc(date.toUpperCase())}</span></div>`;
-    const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>What was fixed${withTodo ? ' • Still to do' : ''}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
-    return { doc, header, footer, name: `audit-progress-${slug(biz)}-${String(at).slice(0, 10)}.pdf` };
+    const header = `<style>#header,#footer{padding:0!important}</style><div style="width:100%;height:0.46in;background:#14263d;color:#fff;font:700 7.5px Arial,sans-serif;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between;padding:0 0.72in;-webkit-print-color-adjust:exact;print-color-adjust:exact"><span>${esc(biz.toUpperCase())}</span><span>WEBSITE HEALTH • ${esc(date.toUpperCase())}</span></div>`;
+    const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>Website health${withTodo ? ' \u2022 What we fixed \u2022 What we are finishing' : ' \u2022 What we fixed'}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
+    return { doc, header, footer, name: `website-health-${slug(biz)}-${String(at).slice(0, 10)}.pdf` };
   }
   async function crPdf(s, out, msg, aiOk) {
     msg('Making the PDF…');
@@ -13263,7 +13291,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     modal(`<header><h2>📄 Make a report</h2><button class="btn ghost" data-close>✕</button></header><div class="body rm">
       <div class="rm-types">
         <label class="rm-type"><input type="radio" name="rmType" value="findings"><span><b>📋 Findings report</b><span class="small muted">What is on the website now and how to fix it: each finding explained, what was corrected since the scan before, and what was checked.${x.now ? '' : ` As of the scan on ${esc(dbDate(x.at))}.`}</span></span></label>
-        <label class="rm-type ${x.now ? '' : 'off'}"><input type="radio" name="rmType" value="progress" ${x.now ? '' : 'disabled'}><span><b>🏆 Progress report</b><span class="small muted">What was fixed and why it matters to the business and in Google, grouped (“Corrected the outdated phone number on 5 pages”), and what is still to do.${x.now ? '' : ' Made from the audit as it is today: open it from today’s report.'}</span></span></label>
+        <label class="rm-type ${x.now ? '' : 'off'}"><input type="radio" name="rmType" value="progress" ${x.now ? '' : 'disabled'}><span><b>🏆 Website health report</b><span class="small muted">What was fixed and why it matters to the business and in Google, grouped (“Corrected the outdated phone number on 5 pages”), and what is still to do.${x.now ? '' : ' Made from the audit as it is today: open it from today’s report.'}</span></span></label>
       </div>
       <div class="rm-opts"><div class="k">Include</div>
         <label class="rm-l rm-todo" ${type === 'progress' ? '' : 'hidden'}><input type="checkbox" id="rmTodo" ${saved.todo === false ? '' : 'checked'}> <span><b>What is still to do</b> <span class="small faint">untick for a report of the completed work only</span></span></label>
@@ -13319,7 +13347,8 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const reps = scans.filter((y) => !y.now && y.auto); const last = reps.length > 1 ? reps[reps.length - 2].at : '';
     const recentN = last ? fixed.filter((f) => (f.gone ? crTime(f.gone.at) : crTime(f.statusAt)) >= crTime(last)).length : 0;
     if (opt.notes !== false) { msg('Adding the team\u2019s notes…'); await crLoadNotes(s, fixedE.concat(pendE), msg); }
-    const out = prHtml(s, { fixedE, pendE, fixedN: fixed.length, pendN: pend.length, since, lastAt: last, recentN, at: new Date().toISOString(), withTodo: opt.todo !== false });
+    const out = prHtml(s, { fixedE, pendE, fixedN: fixed.length, pendN: pend.length, since, lastAt: last, recentN, at: new Date().toISOString(), withTodo: opt.todo !== false,
+      openAll: crItems(s, s.findings || [], ex), fixedAll: fixed, ex });
     await crPdf(s, out, msg, ok1 && ok2);
   }
   /** The Findings report for one scan (x.now: the audit as it is today). */
@@ -13441,7 +13470,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
               <td>${dbChange(p ? tot(p) : 0, tot(x))}${x.auto && (x.fixed || x.added) ? `<div class="small faint">${x.fixed ? `${x.fixed} fixed` : ''}${x.fixed && x.added ? ' · ' : ''}${x.added ? `${x.added} new` : ''}</div>` : ''}</td>
               <td>${x.pages || '—'}</td><td class="nowrap">${x.ms ? fmtTook(x.ms) : '<span class="faint">—</span>'}</td><td>${esc(x.byName || nameOf(x.by, '—'))}</td>
               <td class="db-row-acts">${x.rep ? `<button class="btn sm" data-dbview="${i}" title="Every item this scan found, to look through, download or compare">📋 View</button><button class="btn sm" data-dbpdf="${i}" title="The Findings report (PDF) as of this scan">📄 PDF</button>` : x.auto ? '<span class="small faint" title="Scanned before scan reports were kept">numbers only</span>' : ''}${!x.auto && can('site.scan') ? `<button class="linkbtn danger" data-dbrm="${i}" title="Remove this result">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
-          <div class="db-acts"><button class="btn sm primary" id="dbPdf" type="button" title="A PDF for the business owner: the Findings report (what is on the website now and how to fix it) or the Progress report (what was fixed and why it matters, and what is still to do). You choose what to leave out first.">📄 Make a report</button><button class="btn sm" id="dbNow" type="button" title="Every item open or closed on this audit today">📋 Today's report</button>${scans.some((x) => x.rep) ? `<button class="btn sm" id="dbFirstNow" type="button" title="What was fixed, what is new and what is still there since the first scan with a report">⇄ ${scans.filter((x) => x.rep).length > 1 ? 'First scan vs today' : 'Scan vs today'}</button>` : ''}${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
+          <div class="db-acts"><button class="btn sm primary" id="dbPdf" type="button" title="A PDF for the business owner: the Findings report (what is on the website now and how to fix it) or the Website health report for the shop owner (is the website OK, what was checked and what each check is for, what was fixed and why it matters). You choose what to leave out first.">📄 Make a report</button><button class="btn sm" id="dbNow" type="button" title="Every item open or closed on this audit today">📋 Today's report</button>${scans.some((x) => x.rep) ? `<button class="btn sm" id="dbFirstNow" type="button" title="What was fixed, what is new and what is still there since the first scan with a report">⇄ ${scans.filter((x) => x.rep).length > 1 ? 'First scan vs today' : 'Scan vs today'}</button>` : ''}${can('site.scan') ? '<button class="btn sm" id="dbAdd" type="button">＋ Add another tool\'s result</button>' : ''}<button class="btn sm" id="dbCsv" type="button">⬇ Download as CSV</button>
             <span class="small faint">Each tool counts differently, so a result is only compared with an earlier result from the same tool.</span></div>
           <form class="db-form" id="dbForm" hidden>
             <label class="field">Tool<input id="dbTool" list="dbTools" required maxlength="60" placeholder="Semrush, Ahrefs…"><datalist id="dbTools">${DB_TOOLS.map((t) => `<option value="${esc(t)}">`).join('')}</datalist></label>

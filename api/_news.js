@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-24-health-report', date: '2026-11-24', audience: 'all', tag: 'Audits',
+    title: 'The Progress report is now the Website health report, written for the shop owner',
+    what: 'Its cover answers what an owner asks: <b>is my website OK?</b> (\u201cYour website is in good shape\u201d), <b>what did you check, and what is each check for?</b> (a checklist: phone, email and address on every page, what Google shows, links and buttons, forms, leftover template text, photos, social profiles, each marked All good or with how many things are left), <b>what did you fix for me?</b> with why each fix matters, and <b>do I need to do anything?</b> Each group of fixes says what it is for, and what is still open is \u201cwhat we are finishing\u201d, without severity words or technical terms.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>📊 Audit Report</b> → <b>📄 Make a report</b> → <b>🏆 Website health report</b>.'],
+  },
+  {
     id: '2026-11-24-town-links', date: '2026-11-24', audience: 'all', tag: 'Audits',
     title: 'Service links are judged by the page they open, not by a town in its address',
     what: '\u201cThere is no Ceramic coating page for Campbell yet\u201d was reported for links to /ceramic-coating, although that page\'s H1 is \u201cProfessional Ceramic Coating in Campbell, CA\u201d. The page a link opens is now read first (title, H1, description, copy): when it already targets the town, or the town is where the shop is, the link is fine. A warning stays only when a dedicated page for that town and service exists and the link skips it; otherwise a separate town page is an optional idea (Info). Items closed this way are not counted as fixes in the Progress report.',
