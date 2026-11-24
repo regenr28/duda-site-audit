@@ -13157,7 +13157,9 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     return (s.findings || []).filter((f) => {
       if (!f || CR_SKIP.test(f.code) || f.category === 'Scan' || f.status === 'false' || f.status === 'exempt' || f.manualOnly) return false;
       // A page that now redirects took its items with it: that is not a fix to report.
-      if (f.gone && f.gone.why === 'retired-page') return false;
+      // …and neither is an item closed because the check that raised it was corrected (it was never a real problem).
+      if (f.gone && (f.gone.why === 'retired-page' || f.gone.why === 'check-corrected')) return false;
+      if (f.status === 'done' && /^(check-corrected|retired-page)$/.test((f.auto && f.auto.why) || f.autoWhy || '')) return false;
       const at = f.gone ? crTime(f.gone.at) : f.status === 'done' ? crTime(f.statusAt) : 0;
       return at && at >= t0 && !crLeft(f, ex || {});
     });

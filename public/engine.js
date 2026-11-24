@@ -656,6 +656,16 @@
         'Claims about how products perform are not corrected as grammar: they become Info items to confirm. When no sure correction exists, the item explains the problem without a suggested fix. Grammar items found before are checked again',
       ],
     },
+    {
+      v: 57,
+      date: '2026-11-24',
+      title: 'A service link is judged by the page it opens, not by a town in its address',
+      scope: { fixes: ['LINK_TOWN_SERVICE'] },
+      items: [
+        'A link from a page about a town to a service page was reported when no service page had the town in its address. The page the link opens is now read first (title, H1, description, copy): when it already targets that town (\u201cProfessional Ceramic Coating in Campbell, CA\u201d at /ceramic-coating), or the town is the shop\u2019s own town, the link is fine and nothing is reported',
+        'When the business does have a dedicated page for that town and service and the link skips it, that is still a warning. Otherwise a separate town page is only an optional idea (Info), never \u201cmake a page\u201d',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -3910,6 +3920,8 @@
         if (p.notFound || p.error || placeOfPath(p.path) || p.path === '/' || isThankYouPath(p.path)) return;
         const focus = focusTown([p.title || '', ...((p.fit && p.fit.h1) || []).map((h) => h.text || '')].join(' \n '), (bodyText[p.path] || []).join(' \n '), areaMap);
         if (!focus) return;
+        // The shop's own town: the general service pages are its town's pages.
+        const own = ((truth && truth.addresses) || []).some((a) => a && a.city && compact(a.city) === compact(focus.name));
         const seen = new Set();
         (linksOf[p.path] || []).forEach((x) => {
           const to = normalizePath(x.to);
@@ -3920,10 +3932,17 @@
             const key = [p.path, to, sv].join('|'); if (seen.has(key)) return; seen.add(key);
             const label = (SERVICES.find((z) => z.key === sv) || {}).label || sv;
             const target = allPaths.find((q) => compact(placeOfPath(q)) === compact(focus.key) && servicesOfPath(q).includes(sv));
-            raw.push({ code: 'LINK_TOWN_SERVICE', severity: 'warning', category: 'Links',
+            // The page the link opens is judged by what it says, not by its address: a /ceramic-coating page
+            // whose title or H1 is "Professional Ceramic Coating in Campbell, CA" already targets Campbell.
+            const dest = pageInfo[to] || {};
+            const destText = [dest.title, dest.h1, dest.description, ((dest.fit && dest.fit.h1) || []).map((h) => h.text || '').join(' '), (bodyText[to] || []).slice(0, 40).join(' ')].join(' \n ');
+            const covers = compact(destText).includes(compact(focus.name));
+            if (!target && (own || covers)) return;
+            if (target && covers) return;
+            raw.push({ code: 'LINK_TOWN_SERVICE', severity: target ? 'warning' : 'info', category: 'Links',
               message: target ? `This page is about ${focus.name}, but the "${cut(x.text, 40)}" link goes to the general ${label} page instead of the ${focus.name} one`
-                : `This page is about ${focus.name}, but there is no ${label} page for ${focus.name} yet: the "${cut(x.text, 40)}" link goes to the general one`,
-              found: `"${cut(x.text, 60)}" → ${to}`, expected: target ? `Link to ${target}` : `Make a ${label} page for ${focus.name}, then link "${cut(x.text, 40)}" to it`,
+                : `Optional: the "${cut(x.text, 40)}" link opens the general ${label} page, which does not mention ${focus.name}`,
+              found: `"${cut(x.text, 60)}" → ${to}`, expected: target ? `Link to ${target}` : `Fine as it is. If the business wants to rank for ${label} in ${focus.name}, mention ${focus.name} on ${to}, or add a ${focus.name} ${label} page only if it would have distinct, useful content`,
               path: p.path, device: devices[0], selector: x.selector, location: x.location || 'Body', visible: !x.hiddenBy, hiddenBy: x.hiddenBy || '',
               snippet: `${focus.name} is named ${focus.n} time${focus.n === 1 ? '' : 's'} on this page${focus.inTitle ? ', in its title or H1 too' : ''}.` });
           });

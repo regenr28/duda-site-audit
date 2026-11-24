@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-24-town-links', date: '2026-11-24', audience: 'all', tag: 'Audits',
+    title: 'Service links are judged by the page they open, not by a town in its address',
+    what: '\u201cThere is no Ceramic coating page for Campbell yet\u201d was reported for links to /ceramic-coating, although that page\'s H1 is \u201cProfessional Ceramic Coating in Campbell, CA\u201d. The page a link opens is now read first (title, H1, description, copy): when it already targets the town, or the town is where the shop is, the link is fine. A warning stays only when a dedicated page for that town and service exists and the link skips it; otherwise a separate town page is an optional idea (Info). Items closed this way are not counted as fixes in the Progress report.',
+    where: ['<b>Walkthrough:</b> open the audit → <b>⚡ Apply check updates</b>: those items close.'],
+  },
+  {
     id: '2026-11-24-grammar-meaning', date: '2026-11-24', audience: 'all', tag: 'Audits',
     title: 'Grammar: a correction keeps the meaning, and product claims are not grammar',
     what: 'The AI suggested \u201c…is not as glossy as a film\u201d for a clear bra, which is itself a film. Grammar fixes are now read as part of the whole sentence and checked for grammar and logic, keeping the original subject and comparison; a second reader replaces a fix that changes the meaning. The AI knows automotive synonyms (clear bra = paint protection film) and checks subject\u2013verb agreement with the real subject. A claim about how a product performs is not corrected as grammar: when it may need checking, or no sure correction exists, the item is an Info item that explains the problem without a suggested fix.',

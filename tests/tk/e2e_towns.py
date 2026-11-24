@@ -41,10 +41,11 @@ PAGES = {
     '/paint-protection-film-in-littleton-co': page('Paint Protection Film in Littleton, CO', '<h1>Paint Protection Film in Littleton, CO</h1><p>PPF for Littleton drivers.</p>'),
     '/clear-bra': page('Paint Protection Film', '<h1>Paint Protection Film</h1><p>Our PPF stops rock chips.</p>'),
     '/ceramic-coatings': page('Ceramic Coating', '<h1>Ceramic Coating in Boulder, CO</h1><p>Our ceramic coating keeps paint glossy.</p>'),
+    '/window-tint': page('Window Tint', '<h1>Professional Window Tint in Littleton, CO</h1><p>Tint for Littleton drivers.</p>'),
     '/tesla-window-tinting': page('Tesla Window Tinting', '<h1>PREMIER WINDOW TINTING FOR TESLAS IN DENVER, CO</h1><p>Tint for your Tesla.</p>'),
     '/does-ppf-thickness-matter': page('Does PPF Thickness Matter?', '<h1>Does PPF Thickness Matter?</h1>'
         '<p id="b1">A Littleton driver who mainly travels on neighborhood streets has different needs. Littleton roads are rough in winter.</p>'
-        '<p id="b2">Ask about our <a id="l1" href="/site/abc123/clear-bra">paint protection film</a> and <a id="l2" href="/site/abc123/ceramic-coatings">ceramic coating</a> packages.</p>'
+        '<p id="b2">Ask about our <a id="l1" href="/site/abc123/clear-bra">paint protection film</a> and <a id="l2" href="/site/abc123/ceramic-coatings">ceramic coating</a> packages, or <a id="l3" href="/site/abc123/window-tint">window tint</a>.</p>'
         '<p id="b3">Stop by our Boulder shop, CO for a free quote today.</p>'),
 }
 META = {'host': 'ed.multiscreensite.com', 'siteId': 'abc123', 'site': {'site_business_info': {'business_name': 'Denver Auto Shield'}},
@@ -80,7 +81,9 @@ try:
         ppf = next((f for f in tl if '/clear-bra' in f['found']), None)
         cer = next((f for f in tl if '/ceramic-coatings' in f['found']), None)
         check(ppf and '/paint-protection-film-in-littleton-co' in ppf['expected'], 'a post about Littleton linking PPF to the general page is told to link the Littleton PPF page')
-        check(cer and 'no' in cer['message'] and 'Littleton' in cer['expected'], 'and where Littleton has no ceramic coating page yet, it says so')
+        check(ppf and ppf['severity'] == 'warning', '…as a warning (that page exists)')
+        check(cer and cer['severity'] == 'info' and 'Optional' in cer['message'] and 'Littleton' in cer['expected'], 'where Littleton has no ceramic coating page and the general page does not mention Littleton, a town page is only an optional idea (Info)')
+        check(not any('/window-tint' in f['found'] for f in tl), 'a link to a general page that already targets the town in its H1 ("Window Tint in Littleton") is fine, whatever its address')
         check(not any(f['path'] != '/does-ppf-thickness-matter' for f in tl), 'pages that are not about one town are left alone')
         city = [f for f in F if f['code'] == 'AI_PAGE_CITY']
         print('  page city:', [(f['path'], f.get('found')) for f in city], flush=True)
