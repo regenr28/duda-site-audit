@@ -2464,6 +2464,8 @@ table.findings .rw-status select { max-width: 150px; }
 .rm-type.off { opacity: .55; cursor: default; }
 .rm-since { margin: 0 0 12px; }
 .rm-opts { display: grid; gap: 6px; margin: 0 0 12px; }
+.rm-range { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0; }
+.rm-range input[type=date] { margin-left: 4px; }
 .rm-leave { display: grid; gap: 6px; margin: 4px 0 12px; }
 .rm-l { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
 .rm-l.off { cursor: default; opacity: .8; }
@@ -2472,3 +2474,13 @@ table.findings .rw-status select { max-width: 150px; }
 .rm-sum { margin: 8px 0 12px; }
 .rm-acts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 @media (max-width: 640px) { .rm-types { grid-template-columns: 1fr; } }
+
+/* Client report review: the wording, editable before the PDF */
+.crv-list { display: grid; gap: 10px; margin: 12px 0; max-height: 55vh; overflow: auto; }
+.crv-it { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; }
+.crv-in { display: inline-flex; gap: 6px; align-items: center; font-weight: 600; margin-right: 10px; }
+.crv-row { display: grid; grid-template-columns: minmax(140px, 1fr) 2.4fr; gap: 6px; }
+.crv input[type=text], .crv textarea { width: 100%; }
+.crv textarea { font-family: inherit; font-size: 13.5px; }
+.crv .field { display: grid; gap: 4px; font-weight: 600; }
+@media (max-width: 640px) { .crv-row { grid-template-columns: 1fr; } }

@@ -4,6 +4,18 @@
 
 export const NEWS = [
   {
+    id: '2026-11-24-health-wording', date: '2026-11-24', audience: 'all', tag: 'Audits',
+    title: 'Website health report: plain, proportional wording you can edit first',
+    what: 'The work completed is now written for the shop owner in neutral words and in proportion to the change (\u201cGallery Content Cleanup \u2014 Removed unused default titles and captions from the gallery\u201d), grouped under headings such as Content Refinements, Brand Consistency, or Page Title and Description Updates. Each update says what changed and its practical purpose, with no claims about rankings, leads or trust, and no old wrong text quoted. Updates made after the last publish are marked <b>Awaiting publication</b>. Before the PDF is made you can read and change the headline, each heading, title and purpose, and untick anything to leave out. Scores, severity and the audit wording stay in the internal reports.',
+    where: ['<b>Walkthrough:</b> <b>📄 Make a report</b> → <b>🏆 Website health report</b> → <b>Next: review the wording</b> → <b>Export the PDF</b>.'],
+  },
+  {
+    id: '2026-11-24-health-range', date: '2026-11-24', audience: 'all', tag: 'Audits',
+    title: 'Website health report: pick a date range',
+    what: 'The report now covers the fixes made between two dates (From and To, both days included), instead of everything since a scan. Quick picks: since the first or the last scan, the last 7 or 30 days, this month or last month. The report says the dates it covers.',
+    where: ['<b>Walkthrough:</b> <b>📄 Make a report</b> → <b>🏆 Website health report</b> → <b>Date range</b>.'],
+  },
+  {
     id: '2026-11-24-status-takes', date: '2026-11-24', audience: 'all', tag: 'Audits',
     title: 'Changing an item\'s status assigns it to you; auto audit items start with no one',
     what: 'When you change an audit item\'s status, on your audit or anyone else\'s, the item is now assigned to you, and the activity log says so in the same line (who had it before too). Items the auto audit adds start assigned to <b>no one</b>, not the website\'s default person, until somebody takes them. \u201cNo one\u201d is also in every item\'s assignee list.',

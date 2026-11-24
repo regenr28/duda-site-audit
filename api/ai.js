@@ -760,21 +760,22 @@ Rules:
 - "priority": "now" for wrong business details, another business's name or town, notes left in the copy, broken pages or links; "soon" for wording, SEO titles and descriptions, photos; "later" for polish.
 Respond with JSON only: {"results":[{"k":"<the finding's key>","title":"…","current":"…","recommendation":"…","priority":"now|soon|later"}]}`;
 // The "what we fixed" half of a progress report: each fix, and what it does for the business or in Google.
-const FIXED_SYSTEM = `You write the "WHAT WE FIXED" part of a website audit PROGRESS REPORT that a web agency sends to its client, a car-care business owner. The owner is not technical. The tone is confident and plain, never boastful.
-For each FIX you get: the page or pages, what each audit check found before it was fixed (the words that were wrong, what they should be), and the business's details.
+const FIXED_SYSTEM = `You write the "WORK COMPLETED" part of a website report that a web agency gives to its client, a car-care shop owner. The owner is not technical. The tone is clear, calm and neutral: a professional record of what was done, never a list of problems and never a sales pitch.
+For each FIX you get: the page or pages, what each audit check recorded before it was fixed (the words, what they should be), where on the page it was (for example a gallery caption, a page title, a button), and the business's details.
 For each fix write:
-- "title": what was done, past tense, at most 12 words, with the number of pages when there are several ("Corrected the outdated phone number on 5 pages", "Removed an editor note left in the RV FAQ", "Fixed 3 broken links to the contact page").
-- "impact": 1 or 2 sentences on why it matters to the business: customers reach the right phone, email or address; Google shows the right business name, town or service; visitors trust the page; links and forms lead somewhere; the page reads as finished. Be specific to this fix and use ONLY the facts given: never invent numbers, rankings, traffic or money.
-- "area": "business" (customers and contact details), "seo" (what Google reads and shows) or "visitors" (how the page reads and works).
-No jargon (say "SEO title (the page's title in Google)" once, "main heading" for H1), no code, no check names, no "AI".
-Respond with JSON only: {"results":[{"k":"<the fix's key>","title":"…","impact":"…","area":"business|seo|visitors"}]}`;
+- "title": what was done, past tense, at most 12 words, PROPORTIONAL to the change and specific to it. Describe the actual fix, never the audit category: "Removed unused default titles and captions from the gallery", "Standardized the business name in the page title", "Updated the phone number on the contact page", "Fixed 3 links to the contact page". A small, hidden or single-place change must not sound like a site-wide problem (a hidden gallery caption is NOT "unfinished content on the website").
+- "purpose": one short sentence on the practical purpose of the change, plain and modest ("Keeps the gallery tidy.", "Keeps the business name the same everywhere.", "So calls from this page reach the shop."). Never claim results you cannot know: no rankings, traffic, leads, sales, trust, credibility or lost business.
+- "group": a short heading for related work, in Title Case. Prefer one of: "Content Refinements", "Gallery Content Cleanup", "Brand Consistency", "Page Title and Description Updates", "Contact Details", "Links and Navigation", "Images", "Forms", "Search Listing Details", "Readability", "Design Consistency". Use another short heading only when none fits.
+- "significant": true only for a correction a business owner should know about plainly: a wrong phone number, email or address that visitors could see, another business's name or town shown as theirs, a broken contact form or link. State it plainly in the title ("Corrected the phone number shown on the contact page"), without drama. Everything else: false.
+Do not quote the old wrong text. No jargon (say "page title" for SEO title, "main heading" for H1), no code, no check names, no severity words, no confidence, no "AI".
+Respond with JSON only: {"results":[{"k":"<the fix's key>","title":"…","purpose":"…","group":"…","significant":true|false}]}`;
 async function reportWrite(req, res, b, list) {
   const business = b.business || {};
   const items = [].concat(b.items || []).filter((x) => x && x.k).slice(0, 10);
   if (!items.length) return res.status(200).json({ results: [] });
   const cacheKey = P + 'airep:' + sha(String(business.name || '')).slice(0, 16);
   const fixedMode = b.mode === 'fixed';
-  const keyOf = (x) => (fixedMode ? 'f1' : 'r1') + sha(JSON.stringify([x.page, x.facts, x.checks])).slice(0, 22);
+  const keyOf = (x) => (fixedMode ? 'f2' : 'r1') + sha(JSON.stringify([x.page, x.facts, x.checks])).slice(0, 22);
   const [raw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
   const results = []; const todo = [];
   items.forEach((x, k) => { const c = raw && raw[k] ? jparse(raw[k], null) : null; if (c) results.push(Object.assign({ k: x.k, cached: true }, c)); else todo.push(x); });
@@ -791,7 +792,7 @@ ${[].concat(x.checks || []).slice(0, 8).map((c) => `- ${String(c.message || '').
     [].concat(parsed.results || []).forEach((v) => {
       const x = byK.get(String(v && v.k)); if (!x) return;
       const c = fixedMode
-        ? { title: String(v.title || '').slice(0, 140), impact: String(v.impact || '').slice(0, 600), area: /^(business|seo|visitors)$/.test(v.area) ? v.area : 'visitors' }
+        ? { title: String(v.title || '').slice(0, 140), purpose: String(v.purpose || v.impact || '').slice(0, 300), group: String(v.group || '').replace(/[^\w &,'/-]/g, '').slice(0, 50) || 'Content Refinements', significant: v.significant === true }
         : { title: String(v.title || '').slice(0, 140), current: String(v.current || '').slice(0, 900), recommendation: String(v.recommendation || '').slice(0, 900), priority: /^(now|soon|later)$/.test(v.priority) ? v.priority : 'soon' };
       if (!c.title || (!fixedMode && !c.current)) return;
       results.push(Object.assign({ k: x.k }, c)); save.push(keyOf(x), JSON.stringify(c));

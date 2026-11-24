@@ -14,10 +14,10 @@ class AI(BaseHTTPRequestHandler):
         user = ''.join(m['content'] if isinstance(m['content'], str) else ''.join(c.get('text', '') for c in m['content']) for m in body.get('messages', []))
         SEEN['calls'] += 1
         results = []
-        if 'WHAT WE FIXED' in system:
+        if 'WORK COMPLETED' in system:
             SEEN['fixed'] = SEEN.get('fixed', 0) + 1; SEEN['fprompt'] = SEEN.get('fprompt', '') + user
             for m in re.finditer(r'^=== key (\S+)\nPage: ([^\n]*)', user, re.M):
-                results.append({'k': m.group(1), 'title': f'Removed the note left for the writer on {m.group(2).split(" · ")[0]}', 'impact': 'Visitors now read a finished page instead of an internal note.', 'area': 'visitors'})
+                results.append({'k': m.group(1), 'title': f'Removed a leftover editing note on {m.group(2).split(" · ")[0]}', 'purpose': 'Keeps the page wording finished.', 'group': 'Content Refinements', 'significant': False})
         elif 'WEBSITE AUDIT REPORT' in system:
             SEEN['rprompt'] += user
             for m in re.finditer(r'^=== key (\S+)\nPage: ([^\n]*)', user, re.M):
@@ -152,28 +152,48 @@ try:
         check(len(SEEN['report']) == n, 'making it again asks the AI nothing new (the write-ups are remembered)')
         # ---- Progress report ----
         pg.check('[name=rmType][value=progress]'); time.sleep(0.4)
-        check(pg.is_visible('#rmSince') and pg.locator('#rmSince option').count() >= 2, 'the progress report asks since which scan to count fixes')
-        pg.select_option('#rmSince', index=0); time.sleep(0.3)
+        check(pg.is_visible('#rmFrom') and pg.is_visible('#rmTo') and pg.locator('#rmQuick option').count() >= 5, 'the health report asks for a date range (from, to, quick picks)')
+        import datetime
+        today = pg.evaluate("() => { const x = new Date(); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); }")
+        yest = (datetime.date.fromisoformat(today) - datetime.timedelta(days=1)).isoformat()
+        pg.fill('#rmFrom', '2026-01-01'); pg.fill('#rmTo', yest); pg.dispatch_event('#rmTo', 'change'); time.sleep(0.3)
+        check('cover <b>0</b>' in pg.inner_html('#rmSum') or re.search(r'cover 0 fix', pg.inner_text('#rmSum')), 'a range that ends before the fixes were made covers none of them: ' + pg.inner_text('#rmSum'))
+        pg.select_option('#rmQuick', 'first'); time.sleep(0.3)
+        check(pg.input_value('#rmTo') == today, 'a quick pick fills both dates')
         print('   sum:', pg.inner_text('#rmSum'))
         check(re.search(r'cover \d+ fix', pg.inner_text('#rmSum')), 'it says how many fixes and open items it will cover')
         check(pg.is_visible('#rmTodo') and pg.is_checked('#rmTodo') and pg.is_checked('#rmNotes'), 'the progress report offers "what is still to do" and "the team\u2019s notes and screenshots", both on')
         pg.uncheck('#rmTodo'); time.sleep(0.3)
         check('completed work only' in pg.inner_text('#rmSum'), 'unticking "still to do" makes a report of the completed work only')
-        with pg.expect_download(timeout=180000) as dl3: pg.click('#rmGo')
+        check(pg.inner_text('#rmGo') == 'Next: review the wording', 'the health report goes to a wording review first')
+        pg.click('#rmGo'); pg.wait_for_selector('#crvGo', timeout=120000); time.sleep(0.5)
+        rows = pg.locator('.crv-it').count()
+        check(rows >= 1 and pg.locator('[data-crv=title]').first.input_value().startswith('Removed a leftover editing note'), f'each completed update can be read and changed before export ({rows})')
+        check('awaiting publication' in pg.inner_text('.crv-list') or 'published' in pg.inner_text('.crv-list'), 'each update says whether it is published')
+        check('What the audit recorded' in pg.inner_text('.crv-list'), 'the internal finding is shown to the team only')
+        pg.screenshot(path=os.path.join(OUT, 'crreview.png'))
+        pg.fill('#crvVerdict', 'Your website was reviewed and updated this month.')
+        pg.locator('[data-crv=title]').first.fill('Removed a leftover editing note from the page')
+        pg.locator('[data-crv=group]').first.fill('Content Refinements')
+        if rows > 1: pg.locator('[data-crv=include]').nth(1).uncheck()
+        with pg.expect_download(timeout=180000) as dl3: pg.click('#crvGo')
         d3 = open(dl3.value.path(), 'rb').read(); n3 = dl3.value.suggested_filename
         check(n3.startswith('website-health-') and d3[:5] == b'%PDF-', 'the progress report downloads as a PDF: ' + n3)
         out3 = os.path.join(OUT, 'progresspdf.pdf'); open(out3, 'wb').write(d3)
         t3 = subprocess.run(['pdftotext', '-layout', out3, '-'], capture_output=True, text=True).stdout
-        check('Website health report' in t3 and 'What we fixed for you' in t3 and 'What we fixed' in t3 and 'Open on' not in t3, 'it has the health cover and what was fixed, and no "still to do" section')
+        check('Website health report' in t3 and 'Work completed' in t3 and 'Summary of work completed' in ' '.join(t3.split()) and 'Open on' not in t3, 'it has the health cover and the work completed, and no "still to do" section')
         flat = ' '.join(t3.split())
-        check('Your website has been checked and improved.' in flat, 'the completed-only cover gives a plain verdict about the work done')
-        check('What we checked, and what it is for' in flat and 'Customers reach you, not an old number' in flat and 'fixed' in flat, 'it lists what was checked, what each check is for, and what was fixed')
+        check('Your website was reviewed and updated this month.' in flat, 'the headline the team wrote is the one in the PDF')
+        check('Removed a leftover editing note from the page' in flat and 'Content Refinements' in flat, 'the edited title and heading are the ones in the PDF')
+        check('Awaiting publication' in flat or 'awaiting publication' in flat, 'changes not yet published are marked as awaiting publication')
+        check(not re.search(r'\bWas:|trust|(?<!traffic or )rankings?\b|leads\b|lost business', flat, re.I), 'no old wrong text quoted and no claims about trust, rankings or leads')
+        check('What we reviewed' in flat, 'it lists what was reviewed, in neutral words')
         check(not re.search(r'to finish|nearly there|things? left|In progress|What we are finishing', flat), 'with "still to do" unticked, nothing open is counted or mentioned anywhere')
         check('Do you need to do anything?' in flat, 'and tells the owner whether they need to do anything')
         check(not re.search(r'\bcritical\b|WCAG|schema|robots', flat, re.I), 'no severity words or technical terms for the owner')
         check('Client confirmed the soldier inspections are free' in ' '.join(t3.split()) and 'note from' in t3.lower(), 'the team\u2019s note on a fixed item is in the report')
         check(subprocess.run(['pdfimages', '-list', out3], capture_output=True, text=True).stdout.count('image') >= 1, 'with the screenshot attached to it')
-        check('Removed the note left for the writer' in t3 and 'Visitors now read a finished page' in t3, 'each fix says what was done and why it matters')
+        check('Keeps the page wording finished.' in flat, 'each update says its practical purpose')
         check('Matthew' in SEEN.get('fprompt', '') or 'Matthew' in t3, 'the fix is written from what was there before (the editor note)')
         check(FA_FOUND not in t3, 'the false alarm is not in the progress report either')
         subprocess.run(['pdftoppm', '-r', '60', '-png', '-f', '1', '-l', '2', out3, os.path.join(OUT, 'progresspdf')])

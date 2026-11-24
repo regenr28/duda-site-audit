@@ -12985,7 +12985,7 @@
     return {
       k: e.k, page: crName(s, e.path), url: crUrl(s, e.path), pages: e.pages.slice(0, 6),
       facts: head ? { 'SEO title': p.title || '', 'Main heading (H1)': crH1(p), 'Meta description': p.description || '' } : { 'Main heading (H1)': crH1(p) },
-      checks: e.items.slice(0, 8).map((f) => ({ message: String(f.message || '').replace(/^AI: /, ''), where: f.location || '', found: crUnq(f.found), expected: crUnq(f.expected).replace(/^Suggested: /, ''), reason: (f.ai && f.ai.reason) || '' })),
+      checks: e.items.slice(0, 8).map((f) => ({ message: String(f.message || '').replace(/^AI: /, ''), where: crWhere(f), found: crUnq(f.found), expected: crUnq(f.expected).replace(/^Suggested: /, ''), reason: (f.ai && f.ai.reason) || '' })),
     };
   }
   /** Without the AI: the same facts, written plainly. */
@@ -13155,8 +13155,8 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     return list.filter((f) => f && !f.gone && (!f.status || ['open', 'clarification', 'hold'].includes(f.status)) && !CR_SKIP.test(f.code) && f.category !== 'Scan' && !crLeft(f, ex));
   }
   /** Fixed since a date: confirmed gone by a rescan, or marked Done. Not false alarms or exempt items. */
-  function crFixed(s, since, ex) {
-    const t0 = crTime(since);
+  function crFixed(s, since, ex, until) {
+    const t0 = crTime(since); const t1 = until ? crTime(until) : Infinity;
     return (s.findings || []).filter((f) => {
       if (!f || CR_SKIP.test(f.code) || f.category === 'Scan' || f.status === 'false' || f.status === 'exempt' || f.manualOnly) return false;
       // A page that now redirects took its items with it: that is not a fix to report.
@@ -13164,15 +13164,30 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       if (f.gone && (f.gone.why === 'retired-page' || f.gone.why === 'check-corrected')) return false;
       if (f.status === 'done' && /^(check-corrected|retired-page)$/.test((f.auto && f.auto.why) || f.autoWhy || '')) return false;
       const at = f.gone ? crTime(f.gone.at) : f.status === 'done' ? crTime(f.statusAt) : 0;
-      return at && at >= t0 && !crLeft(f, ex || {});
+      return at && at >= t0 && at <= t1 && !crLeft(f, ex || {});
     });
   }
-  /** Without the AI: a fix written plainly. */
+  /** Where on the page an item was, in words (a gallery caption is not "the page copy"). */
+  function crWhere(f) {
+    const sel = String(f.selector || ''), loc = String(f.location || '');
+    const hint = /caption/i.test(sel) || /photoGallery|gallery/i.test(sel) ? 'photo gallery caption' : /head > title/.test(sel) ? 'page title' : /meta\[name="description"\]/.test(sel) ? 'page description' : /^h1\b|> h1/.test(sel) ? 'main heading' : /button|dmButton/i.test(sel) ? 'button' : /^a\b|> a(:|$| )/.test(sel) ? 'link' : '';
+    const hidden = f.visibleOn && !f.visibleOn.length ? 'hidden from visitors' : '';
+    return [loc, hint, hidden].filter(Boolean).join(' \u00b7 ');
+  }
+  /** Without the AI: a fix written plainly and in proportion. */
   function crPlainFixed(s, e) {
-    const f = e.items[0]; const n = e.rows ? e.rows.length : e.pages.length;
-    const what = String(f.message || '').replace(/^AI: /, '').replace(/\s*\((SEO title|H1 heading|page copy|meta description)\)$/, '');
-    const sec = CR_SECTIONS.find((x) => x.k === e.sec) || {};
-    return { title: `Fixed: ${what}${n > 1 ? ` (${n} pages)` : ''}`, impact: sec.k === 'biz' ? 'Customers now see the business’s correct details.' : sec.k === 'google' ? 'Google now reads this part of the website correctly.' : 'Visitors now see a finished, working page.', area: sec.k === 'biz' ? 'business' : sec.k === 'google' ? 'seo' : 'visitors' };
+    const f = e.items[0]; const n = e.rows ? e.rows.length : e.pages.length; const w = crWhere(f);
+    const on = n > 1 ? ` on ${n} pages` : '';
+    if (/gallery caption/.test(w)) return { title: `Removed unused default text from the photo gallery${on}`, purpose: 'Keeps the gallery tidy.', group: 'Gallery Content Cleanup', significant: false };
+    if (/NAME/.test(f.code)) return { title: `Standardized the business name${/page title/.test(w) ? ' in the page title' : ''}${on}`, purpose: 'Keeps the business name the same everywhere.', group: 'Brand Consistency', significant: false };
+    if (/(^|_)(PHONE|TEL|MAILTO|EMAIL|ADDRESS|SMS)(_|$)/.test(f.code)) return { title: `Updated contact details${on}`, purpose: 'So visitors reach the business.', group: 'Contact Details', significant: true };
+    if (/^(META_|H1_)/.test(f.code) || /page title|page description/.test(w)) return { title: `Updated the page title or description${on}`, purpose: 'Keeps how the page appears in search results accurate.', group: 'Page Title and Description Updates', significant: false };
+    if (/^(LINK_|BUTTON_)/.test(f.code)) return { title: `Updated links${on}`, purpose: 'So links lead to the right page.', group: 'Links and Navigation', significant: false };
+    if (/^(PHOTO_|IMAGE_|ALT_)/.test(f.code)) return { title: `Updated images${on}`, purpose: 'Keeps images and their descriptions accurate.', group: 'Images', significant: false };
+    if (/^FORM_/.test(f.code)) return { title: `Updated a form${on}`, purpose: 'So the form lists the right options.', group: 'Forms', significant: false };
+    if (/^CONTRAST_/.test(f.code)) return { title: `Improved text readability${on}`, purpose: 'Makes text easier to read.', group: 'Readability', significant: false };
+    if (/^(FONT_|IMAGE_DUPLICATE)/.test(f.code)) return { title: `Made the design more consistent${on}`, purpose: 'Keeps fonts and photos consistent.', group: 'Design Consistency', significant: false };
+    return { title: `Refined page content${on}`, purpose: 'Keeps the wording accurate and up to date.', group: 'Content Refinements', significant: false };
   }
   async function crWriteFixed(s, entries, onStep) {
     const use = entries.slice(0, 60);
@@ -13195,11 +13210,11 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
   const CR_HEALTH = [
     { k: 'contact', topic: 'Phone, email and address on every page', title: 'Phone, email and address are correct on every page', why: 'Customers reach you, not an old number or another shop.',
       test: (f) => /(^|_)(PHONE|EMAIL|ADDRESS|MAILTO|TEL|SMS|NAP)(_|$)|^POLICY_(CONTACT|ADDRESS)|^EMAIL_AUTOMATION/.test(f.code) || f.category === 'Contact info' },
-    { k: 'google', topic: 'The business name, town and services Google shows', title: 'Google shows the right business name, town and services', why: 'People searching near you find you and see the right details.',
+    { k: 'google', topic: 'Page titles and descriptions', title: 'Google shows the right business name, town and services', why: 'People searching near you find you and see the right details.',
       test: (f) => !/^CONTRAST_/.test(f.code) && (/^(META_|H1_|SCHEMA_|ROBOTS_|SITEMAP_|LLMS_|NOINDEX|CANONICAL|PAGE_|AI_PAGE_(TOPIC|CITY|NAME)|NAME_|AI_TEXT_(LOCATION|NAME))/.test(f.code) || ['Meta / SEO', 'Schema', 'Business name', 'Location'].includes(f.category)) },
     { k: 'links', topic: 'Where every link and button goes', title: 'Every link and button goes where it should', why: 'Visitors never hit a dead end or the wrong page.', test: (f) => /^(LINK_|BUTTON_|REDIRECT_|HIDDEN_LINK)/.test(f.code) || f.category === 'Links' },
     { k: 'forms', topic: 'Quote and contact forms', title: 'Quote and contact forms are set up correctly', why: 'Every lead can reach you, for every service you offer.', test: (f) => /^FORM_/.test(f.code) },
-    { k: 'copy', topic: 'Leftover template text and other businesses\u2019 names', title: 'No leftover template text or another business\u2019s name', why: 'Your pages read as finished and trustworthy.', test: (f) => /^(PLACEHOLDER|LOREM|TEXT_|AI_TEXT_OTHER|AI_PAGE_NOTE|POLICY_|COPYRIGHT|OTHER_BUSINESS)/.test(f.code) || f.category === 'Content' },
+    { k: 'copy', topic: 'Page wording, headings and gallery captions', title: 'No leftover template text or another business\u2019s name', why: 'Your pages read as finished and trustworthy.', test: (f) => /^(PLACEHOLDER|LOREM|TEXT_|AI_TEXT_OTHER|AI_PAGE_NOTE|POLICY_|COPYRIGHT|OTHER_BUSINESS)/.test(f.code) || f.category === 'Content' },
     { k: 'photos', topic: 'Photos on every page', title: 'Photos fit their pages and load properly', why: 'Customers see your real work, and Google understands your images.', test: (f) => /^(PHOTO_|IMAGE_|ALT_)/.test(f.code) || /^Images/.test(f.category || '') },
     { k: 'social', topic: 'Links to Google and social profiles', title: 'Links to Google and social profiles are yours', why: 'Reviews and followers land on your own profiles.', test: (f) => /^(SOCIAL_|GMB_|MAP_)/.test(f.code) || f.category === 'Social' },
     { k: 'read', topic: 'How clearly pages read on phones and computers', title: 'Pages read clearly on phones and computers', why: 'Everyone can read your text and fill in your forms.', test: (f) => /^CONTRAST_/.test(f.code) || f.category === 'Accessibility', needs: 'contrast' },
@@ -13208,46 +13223,54 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
   const CR_WHY = { biz: 'So customers reach you and Google shows the right business.', copy: 'So your pages read as finished and trustworthy.', photos: 'So customers see your real work.',
     links: 'So visitors and Google never hit a dead end.', google: 'So people searching near you find you.', read: 'So everyone can read your pages.', design: 'So the website looks consistent and professional.', other: '' };
   function prHtml(s, ctx) {
-    const { fixedE, pendE, fixedN, pendN, since, lastAt, recentN, at, withTodo, openAll, fixedAll, ex } = ctx;
+    const { fixedE: fixedAllE, pendE, pendN, since, until, lastAt, recentN, at, withTodo, openAll, ex } = ctx;
+    // Only the updates kept in the review step; each with the wording as reviewed.
+    const fixedE = fixedAllE.filter((e) => e.include !== false);
+    const fixedN = fixedE.reduce((n, e) => n + e.items.length, 0);
+    // "Since 1 Nov" when the range runs to today, "between 1 and 15 Nov" when it ends earlier.
+    const ended = until && crTime(until) < Date.now() - 86400000;
+    const span = (cap) => ended ? `${cap ? 'Between' : 'between'} ${esc(fmt(since))} and ${esc(fmt(until))}` : `${cap ? 'Since' : 'since'} ${esc(fmt(since))}`;
     const pagesN = (s.pages || []).filter((p) => !p.notFound && !p.error && !p.redirectTo).length;
-    // Completed work only ("what is still to do" unticked): nothing open is counted or mentioned anywhere.
-    const rows = CR_HEALTH.filter((h) => !(h.needs && ex && ex[h.needs])).map((h) => ({ h, open: withTodo ? (openAll || []).filter((f) => crHealthOf(f) === h).length : 0, fixed: (fixedAll || []).filter((f) => crHealthOf(f) === h).length }));
-    const left = rows.reduce((n, r) => n + r.open, 0);
+    const left = withTodo ? pendN : 0;
     const urgent = withTodo ? (openAll || []).filter((f) => f.severity === 'critical').length : 0;
     const asks = withTodo ? (openAll || []).filter((f) => f.status === 'clarification').length : 0;
-    const verdict = !withTodo ? (fixedN ? 'Your website has been checked and improved.' : 'Your website has been checked.') : !left ? 'Your website is in good shape.' : !urgent ? `Your website is in good shape, with ${left} small thing${left === 1 ? '' : 's'} left to finish.` : `Your website is nearly there: ${left} thing${left === 1 ? '' : 's'} left to finish.`;
+    const verdict = ctx.verdict || (!withTodo ? (fixedN ? 'Your website has been reviewed and updated.' : 'Your website has been reviewed.') : !left ? 'Your website is in good shape.' : !urgent ? `Your website is in good shape, with ${left} small thing${left === 1 ? '' : 's'} left to finish.` : `Your website is nearly there: ${left} thing${left === 1 ? '' : 's'} left to finish.`);
     const biz = s.businessName || (s.truth || {}).businessName || s.siteId;
     const fmt = (d, y) => new Date(d).toLocaleDateString('en-US', y === false ? { month: 'long', day: 'numeric' } : { month: 'long', day: 'numeric', year: 'numeric' });
     const date = fmt(at);
     const dom = liveDomain(s) || (s.truth || {}).domain || '';
     const lk = (t) => esc(t).replace(/https?:\/\/[^\s<"”)]+[^\s<"”).,;:!?]/g, (u) => `<a href="${u}">${u}</a>`);
     const pageLinks = (e) => { const ps = e.rows ? e.rows.map((r) => r.path) : e.pages; return ps.slice(0, 12).map((p) => `<a href="${esc(crUrl(s, p))}">${esc(crName(s, p))}</a>`).join(', ') + (ps.length > 12 ? ` and ${ps.length - 12} more` : ''); };
-    const area = (k) => fixedE.filter((e) => e.w && e.w.area === k).reduce((n, e) => n + e.items.length, 0);
-    const AREA = { business: 'Customers and contact details', seo: 'What Google reads', visitors: 'How pages read and work' };
-    const top = fixedE.slice().sort((a, b) => CR_RANK[a.sev] - CR_RANK[b.sev] || b.items.length - a.items.length).slice(0, 4);
     const secs = (list) => CR_SECTIONS.filter((x) => list.some((e) => e.sec === x.k));
-    const was = (e) => { const f = e.items[0]; return f.found ? `<div class="note">Was: “${esc(crUnq(f.found).slice(0, 140))}”${f.expected ? ` → now: ${esc(crUnq(f.expected).replace(/^Suggested: /, '').slice(0, 100))}` : ''}</div>` : ''; };
-    const fixedHtml = (e, i, sec) => `<div class="it"><h4><span class="n ok">✓</span>${esc(e.w.title)}</h4>
-      <p>${lk(e.w.impact || '')}</p><div class="where">${e.rows || e.pages.length > 1 ? `${(e.rows || e.pages).length} pages: ` : ''}${pageLinks(e)}</div>${e.rows ? '' : was(e)}${crNotesHtml(e)}</div>`;
+    // Related updates under one plain heading (written from the actual fixes), significant corrections first.
+    const groups = []; fixedE.forEach((e) => { const g = (e.w.group || 'Content Refinements').trim(); let x = groups.find((y) => y.name.toLowerCase() === g.toLowerCase()); if (!x) { x = { name: g, list: [] }; groups.push(x); } x.list.push(e); });
+    groups.forEach((g) => g.list.sort((a, b) => (b.w.significant ? 1 : 0) - (a.w.significant ? 1 : 0)));
+    groups.sort((a, b) => (b.list.some((e) => e.w.significant) ? 1 : 0) - (a.list.some((e) => e.w.significant) ? 1 : 0) || b.list.length - a.list.length);
+    const pubTag = (e) => e.pub === 'pending' ? '<span class="tag t-soon">Awaiting publication</span>' : '';
+    const pending = fixedE.filter((e) => e.pub === 'pending').length;
+    const fixedHtml = (e) => `<div class="it"><h4><span class="n ok">✓</span>${esc(e.w.title)}${pubTag(e)}</h4>
+      ${e.w.purpose ? `<p>${lk(e.w.purpose)}</p>` : ''}<div class="where">${e.rows || e.pages.length > 1 ? `${(e.rows || e.pages).length} pages: ` : ''}${pageLinks(e)}</div>${crNotesHtml(e)}</div>`;
     // For the owner: what the team is finishing, without alarm words.
-    const pendHtml = (e, i, sec) => `<div class="it"><h4><span class="n">\u2022</span>${esc(e.w.title)}${e.items.some((f) => f.status === 'clarification') ? '<span class="tag t-later">We may ask you</span>' : e.items.some((f) => f.status === 'hold') ? '<span class="tag t-later">On hold</span>' : '<span class="tag t-later">In progress</span>'}</h4>
+    const pendHtml = (e) => `<div class="it"><h4><span class="n">•</span>${esc(e.w.title)}${e.items.some((f) => f.status === 'clarification') ? '<span class="tag t-later">We may ask you</span>' : e.items.some((f) => f.status === 'hold') ? '<span class="tag t-later">On hold</span>' : '<span class="tag t-later">In progress</span>'}</h4>
       <div class="where">${pageLinks(e)}</div><p>${lk(e.w.recommendation || '')}</p>${crNotesHtml(e)}</div>`;
+    const reviewed = CR_HEALTH.filter((h) => !(h.needs && ex && ex[h.needs])).map((h) => h.topic.charAt(0).toLowerCase() + h.topic.slice(1));
     let n = 1;
     const body = `<main>
       <div class="kick">${esc(biz)} / ${esc(date)}</div>
       <h1>Website health report</h1>
-      <div class="verdict ${left ? (urgent ? 'v-mid' : 'v-ok') : 'v-ok'}"><div class="v-mark">${left && urgent ? '!' : '\u2713'}</div><div><h2>${esc(verdict)}</h2>
-        <p>We checked all ${pagesN} pages of ${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a>` : 'your website'} on phones, tablets and computers, against your business details.${fixedN ? ` Since ${esc(fmt(since))} we fixed <b>${fixedN}</b> thing${fixedN === 1 ? '' : 's'}${recentN && lastAt && crTime(lastAt) > crTime(since) ? ` (${recentN} since the last check)` : ''}.` : ''}</p></div></div>
-      <h3 class="ck-h">What we checked, and what it is for</h3>
-      <table class="ck"><tbody>${rows.map((r) => `<tr><td class="ck-s ${r.open ? 'ck-open' : 'ck-ok'}">${r.open ? '\u25CF' : '\u2713'}</td><td><b>${esc(withTodo ? r.h.title : r.h.topic)}</b><div class="ck-why">${esc(r.h.why)}</div></td><td class="ck-n">${!withTodo ? (r.fixed ? `<span class="ck-good">${r.fixed} fixed</span>` : '<span class="ck-good">Checked</span>') : `${r.open ? `<span class="ck-left">${r.open} to finish</span>` : '<span class="ck-good">All good</span>'}${r.fixed ? `<div class="note">${r.fixed} fixed</div>` : ''}`}</td></tr>`).join('')}</tbody></table>
-      ${top.length ? `<div class="box"><h3>What we fixed for you</h3>${top.map((e) => `<p class="hl"><b>${esc(e.w.title)}.</b> ${lk(e.w.impact || '')}</p>`).join('')}${fixedE.length > top.length ? `<p class="note">And ${fixedE.length - top.length} more, listed in the next pages.</p>` : ''}</div>` : ''}
-      <div class="box"><h3>Do you need to do anything?</h3><p>${!withTodo || !left ? 'Nothing. We keep checking your website after every update.' : asks ? `Only one thing: we may ask you to confirm ${asks} detail${asks === 1 ? '' : 's'} (a service area or wording) so we get it exactly right. Everything else is ours to finish.` : `Nothing. Our team is finishing the ${left} item${left === 1 ? '' : 's'} above, and we keep checking your website after every update.`}</p></div>
-      ${fixedE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What we fixed</h2><div class="sub">Since ${esc(fmt(since))}, with why each fix matters</div>
-        ${secs(fixedE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${CR_WHY[sec.k] ? `<p class="grp-why">${esc(CR_WHY[sec.k])}</p>` : ''}${fixedE.filter((e) => e.sec === sec.k).map((e, i) => fixedHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
-      ${withTodo && pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">What we are finishing</h2><div class="sub">Open on ${esc(date)}</div>
-        ${secs(pendE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${pendE.filter((e) => e.sec === sec.k).map((e, i) => pendHtml(e, i, sec)).join('')}`).join('')}</section>` : ''}
-      <section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Progress</div><h2 class="st">About this report</h2>
-        <p class="note">This report covers the audit from ${esc(fmt(since))} to ${esc(date)}. A correction counts as fixed when a later check of the website no longer found the problem, or when the team confirmed it fixed. Every page was checked on desktop, tablet and phone against the business details on file. The review does not submit forms, test email routing or phone forwarding, or measure traffic or rankings.</p>
+      <div class="verdict ${left && urgent ? 'v-mid' : 'v-ok'}"><div class="v-mark">${left && urgent ? '!' : '✓'}</div><div><h2>${esc(verdict)}</h2>
+        <p>${ctx.intro ? lk(ctx.intro) : `We reviewed all ${pagesN} pages of ${dom ? `<a href="https://${esc(dom)}">${esc(dom)}</a>` : 'your website'} on phones, tablets and computers.${fixedN ? ` ${span(true)} we completed <b>${fixedN}</b> update${fixedN === 1 ? '' : 's'}${pending ? `; ${pending === fixedE.length ? (fixedN === 1 ? 'it is' : 'they are') : `${pending} of them are`} ready and will be live once the website is published` : ''}.` : ''}`}</p></div></div>
+      <h3 class="ck-h">What we reviewed</h3>
+      <p class="note rv">${esc(reviewed.slice(0, -1).join(', ') + (reviewed.length > 1 ? ', and ' : '') + reviewed.slice(-1))}.</p>
+      ${groups.length ? `<h3 class="ck-h">Summary of work completed</h3>
+      <table class="ck"><tbody>${groups.map((g) => `<tr><td class="ck-s ck-ok">✓</td><td><b>${esc(g.name)}</b><div class="ck-why">${esc(g.list.slice(0, 3).map((e) => e.w.title).join('; '))}${g.list.length > 3 ? `; and ${g.list.length - 3} more` : ''}.</div></td><td class="ck-n"><span class="ck-good">${g.list.length} update${g.list.length === 1 ? '' : 's'}</span>${g.list.some((e) => e.pub === 'pending') ? '<div class="note">awaiting publication</div>' : ''}</td></tr>`).join('')}</tbody></table>` : ''}
+      <div class="box"><h3>Do you need to do anything?</h3><p>${!withTodo || !left ? `Nothing.${pending ? ' The updates marked “awaiting publication” go live when the website is next published.' : ''} We keep checking your website after every update.` : asks ? `Only one thing: we may ask you to confirm ${asks} detail${asks === 1 ? '' : 's'} so we get it exactly right. Everything else is ours to finish.` : `Nothing. Our team is finishing the ${left} item${left === 1 ? '' : 's'} listed at the end, and we keep checking your website after every update.`}</p></div>
+      ${groups.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / Work completed</div><h2 class="st">Work completed</h2><div class="sub">${span(true)}</div>
+        ${groups.map((g) => `<h3 class="grp">${esc(g.name)}</h3>${g.list.map((e) => fixedHtml(e)).join('')}`).join('')}</section>` : ''}
+      ${withTodo && pendE.length ? `<section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / In progress</div><h2 class="st">What we are finishing</h2><div class="sub">Open on ${esc(date)}</div>
+        ${secs(pendE).map((sec) => `<h3 class="grp">${esc(sec.title)}</h3>${pendE.filter((e) => e.sec === sec.k).map((e) => pendHtml(e)).join('')}`).join('')}</section>` : ''}
+      <section class="sec"><div class="kick">${String(++n).padStart(2, '0')} / About</div><h2 class="st">About this report</h2>
+        <p class="note">This report covers updates completed from ${esc(fmt(since))} to ${esc(fmt(ended ? until : at))}. An update is listed when a later check of the website confirmed it, or when our team completed it; updates marked “awaiting publication” are made in the website editor and go live when the website is next published. Every page was reviewed on desktop, tablet and phone against the business details on file. The review does not submit forms, test email routing or phone forwarding, or measure traffic or rankings.</p>
       </section></main>`;
     const css = CR_CSS + `.verdict{display:flex;gap:16px;align-items:flex-start;border-radius:4px;padding:16px 18px;margin:14px 0 18px}.verdict.v-ok{background:#e8f5ee;border:1px solid #b9e0c9}.verdict.v-mid{background:#fff6e6;border:1px solid #f1d3a1}
       .v-mark{flex:none;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:800 20pt 'Archivo',Arial,sans-serif;color:#fff}.v-ok .v-mark{background:#1e8a4f}.v-mid .v-mark{background:#c9861a}
@@ -13255,12 +13278,12 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       .ck-h{margin:6px 0 6px;color:#14263d;font-size:12pt}table.ck td{padding:8px 10px;vertical-align:top}table.ck tr:nth-child(even) td{background:#f4f7fa}.ck-s{width:22px;font:800 12pt Arial,sans-serif;text-align:center}.ck-ok{color:#1e8a4f}.ck-open{color:#c9861a}
       .ck-why{font-size:9pt;color:#5b6475;margin-top:1px}.ck-n{width:22%;text-align:right;font-size:9pt}.ck-good{color:#1e8a4f;font-weight:700}.ck-left{color:#a8640c;font-weight:700}.grp-why{margin:-4px 0 10px;font-size:9.5pt;color:#5b6475;font-style:italic}
       .tiles{display:flex;gap:10px;margin:16px 0}.tiles div{flex:1;border:1px solid #d3dde6;border-radius:3px;padding:10px 12px;background:#f7fafc}.tiles b{display:block;font:800 22pt 'Archivo',Arial,sans-serif;color:#14263d;line-height:1.1}.tiles span{font-size:8.5pt;color:#5b6475}
-      .hl{margin:0 0 6px}.n.ok{color:#18794e}h3.grp{font-size:12pt;color:#1b6b9a;margin:14px 0 8px;border-bottom:1px solid #dfe5ec;padding-bottom:3px}`;
+      .rv{font-size:9.5pt;margin:0 0 10px}.hl{margin:0 0 6px}.n.ok{color:#18794e}h3.grp{font-size:12pt;color:#1b6b9a;margin:14px 0 8px;border-bottom:1px solid #dfe5ec;padding-bottom:3px}`;
     const doc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(biz)} — Website health report</title>
       <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
       <style>${css}</style></head><body>${body}</body></html>`;
     const header = `<style>#header,#footer{padding:0!important}</style><div style="width:100%;height:0.46in;background:#14263d;color:#fff;font:700 7.5px Arial,sans-serif;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between;padding:0 0.72in;-webkit-print-color-adjust:exact;print-color-adjust:exact"><span>${esc(biz.toUpperCase())}</span><span>WEBSITE HEALTH • ${esc(date.toUpperCase())}</span></div>`;
-    const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>Website health${withTodo ? ' \u2022 What we fixed \u2022 What we are finishing' : ' \u2022 What we fixed'}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
+    const footer = `<div style="width:100%;font:7.5px Arial,sans-serif;color:#7a8394;display:flex;justify-content:space-between;padding:0 0.72in"><span>Website health${withTodo ? ' \u2022 Work completed \u2022 What we are finishing' : ' \u2022 Work completed'}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
     return { doc, header, footer, name: `website-health-${slug(biz)}-${String(at).slice(0, 10)}.pdf` };
   }
   async function crPdf(s, out, msg, aiOk) {
@@ -13292,16 +13315,22 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const reps = scans.filter((y) => !y.now && y.auto);
     let type = x.now ? (saved.type || 'findings') : 'findings';
     let since = reps.length ? reps[0].at : (s.createdAt || '');
+    const ymd = (d) => { const x = new Date(d || Date.now()); return isNaN(x) ? '' : `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+    // The range is read as local days: from the start of "From" to the end of "To".
+    const rangeOf = () => { const f = ($('#rmFrom') || {}).value, t = ($('#rmTo') || {}).value; return { from: f ? new Date(f + 'T00:00:00').toISOString() : since, to: t ? new Date(t + 'T23:59:59.999').toISOString() : '' }; };
     modal(`<header><h2>📄 Make a report</h2><button class="btn ghost" data-close>✕</button></header><div class="body rm">
       <div class="rm-types">
         <label class="rm-type"><input type="radio" name="rmType" value="findings"><span><b>📋 Findings report</b><span class="small muted">What is on the website now and how to fix it: each finding explained, what was corrected since the scan before, and what was checked.${x.now ? '' : ` As of the scan on ${esc(dbDate(x.at))}.`}</span></span></label>
-        <label class="rm-type ${x.now ? '' : 'off'}"><input type="radio" name="rmType" value="progress" ${x.now ? '' : 'disabled'}><span><b>🏆 Website health report</b><span class="small muted">What was fixed and why it matters to the business and in Google, grouped (“Corrected the outdated phone number on 5 pages”), and what is still to do.${x.now ? '' : ' Made from the audit as it is today: open it from today’s report.'}</span></span></label>
+        <label class="rm-type ${x.now ? '' : 'off'}"><input type="radio" name="rmType" value="progress" ${x.now ? '' : 'disabled'}><span><b>🏆 Website health report</b><span class="small muted">The work completed, in plain words and grouped (“Brand Consistency — Standardized the business name in the page title”), published or awaiting publication. You read and edit the wording before the PDF is made.${x.now ? '' : ' Made from the audit as it is today: open it from today’s report.'}</span></span></label>
       </div>
       <div class="rm-opts"><div class="k">Include</div>
         <label class="rm-l rm-todo" ${type === 'progress' ? '' : 'hidden'}><input type="checkbox" id="rmTodo" ${saved.todo === false ? '' : 'checked'}> <span><b>What is still to do</b> <span class="small faint">untick for a report of the completed work only</span></span></label>
         <label class="rm-l"><input type="checkbox" id="rmNotes" ${saved.notes === false ? '' : 'checked'}> <span><b>The team\u2019s notes and screenshots</b> <span class="small faint">comments on each item, with the pictures attached to them</span></span></label>
       </div>
-      <div class="rm-since" ${type === 'progress' ? '' : 'hidden'}><label class="small">Count fixes since <select id="rmSince">${reps.map((y, i) => `<option value="${esc(y.at)}">${i === 0 ? 'the first scan, ' : i === reps.length - 1 ? 'the last scan, ' : ''}${esc(dbDate(y.at))}</option>`).join('') || `<option value="${esc(since)}">the start of the audit</option>`}</select></label></div>
+      <div class="rm-since" ${type === 'progress' ? '' : 'hidden'}><div class="k">Date range</div>
+        <div class="rm-range"><label class="small">From <input type="date" id="rmFrom" value="${esc(ymd(since))}"></label><label class="small">to <input type="date" id="rmTo" value="${esc(ymd(new Date()))}"></label>
+        <select id="rmQuick" aria-label="Quick ranges"><option value="">Quick pick…</option>${reps.length ? `<option value="first">Since the first scan (${esc(dbDate(reps[0].at))})</option>` : ''}${reps.length > 1 ? `<option value="last">Since the last scan (${esc(dbDate(reps[reps.length - 1].at))})</option>` : ''}<option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="month">This month</option><option value="prev">Last month</option></select></div>
+        <div class="small faint">Only items fixed (marked Done, or gone on a rescan) between these dates, both days included.</div></div>
       <div class="rm-leave"><div class="k">Leave out</div>
         <label class="rm-l off"><input type="checkbox" checked disabled> <span><b>False alarms and exempt items</b> <span class="small faint">always left out, so a mistaken item never reaches the client</span></span></label>
         ${CR_LEAVE.map((l) => `<label class="rm-l"><input type="checkbox" data-rml="${l.k}" ${ex[l.k] ? 'checked' : ''}> <span><b>${esc(l.label)}</b> <span class="small faint">${esc(l.hint)}</span> <span class="rm-n" data-rmn="${l.k}"></span></span></label>`).join('')}
@@ -13317,13 +13346,23 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       $('.rm-todo', root).hidden = type !== 'progress';
       const todo = $('#rmTodo', root).checked;
       const pend = crItems(s, base, {});
-      const fixedAll = type === 'progress' ? crFixed(s, since, {}) : [];
+      const rg = rangeOf(); const fixedAll = type === 'progress' ? crFixed(s, rg.from, {}, rg.to) : [];
       CR_LEAVE.forEach((l) => { const c = pend.filter(l.test).length + fixedAll.filter(l.test).length; const el = $(`[data-rmn="${l.k}"]`, root); if (el) el.textContent = c ? `${c} item${c === 1 ? '' : 's'}` : 'none'; });
-      const p = crItems(s, base, ex).length; const f = type === 'progress' ? crFixed(s, since, ex).length : 0;
+      const p = crItems(s, base, ex).length; const f = type === 'progress' ? crFixed(s, rg.from, ex, rg.to).length : 0;
+      $('#rmGo', root).textContent = type === 'progress' ? 'Next: review the wording' : 'Make the PDF';
       $('#rmSum', root).innerHTML = type === 'progress' ? `The report will cover <b>${f}</b> fix${f === 1 ? '' : 'es'}${todo ? ` and <b>${p}</b> item${p === 1 ? '' : 's'} still to do` : ' (completed work only)'}.` : `The report will cover <b>${p}</b> open item${p === 1 ? '' : 's'}.`;
     };
     $$('[name=rmType]', root).forEach((r) => (r.onchange = () => { type = r.value; draw(); }));
-    if ($('#rmSince', root)) $('#rmSince', root).onchange = (e) => { since = e.target.value; draw(); };
+    ['#rmFrom', '#rmTo'].forEach((q) => { if ($(q, root)) $(q, root).onchange = () => { $('#rmQuick', root).value = ''; draw(); }; });
+    if ($('#rmQuick', root)) $('#rmQuick', root).onchange = (e) => {
+      const v = e.target.value; const now = new Date(); let a = null, b = now;
+      if (v === 'first' && reps.length) a = new Date(reps[0].at);
+      else if (v === 'last' && reps.length) a = new Date(reps[reps.length - 1].at);
+      else if (v === '7' || v === '30') a = new Date(Date.now() - (Number(v) - 1) * 86400000);
+      else if (v === 'month') a = new Date(now.getFullYear(), now.getMonth(), 1);
+      else if (v === 'prev') { a = new Date(now.getFullYear(), now.getMonth() - 1, 1); b = new Date(now.getFullYear(), now.getMonth(), 0); }
+      if (a) { $('#rmFrom', root).value = ymd(a); $('#rmTo', root).value = ymd(b); draw(); }
+    };
     $$('[data-rml]', root).forEach((c) => (c.onchange = () => { ex[c.dataset.rml] = c.checked; draw(); }));
     $('#rmTodo', root).onchange = draw;
     draw();
@@ -13333,7 +13372,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
       $('#rmGo', root).disabled = true;
       const msg = (t) => { const m = $('#crMsg'); if (m) m.textContent = t; };
       try {
-        if (type === 'progress') await makeProgress(s, scans, since, ex, msg, opt);
+        if (type === 'progress') { const rg = rangeOf(); if (rg.to && crTime(rg.to) < crTime(rg.from)) throw new Error('The end date is before the start date.'); await makeProgress(s, scans, rg.from, ex, msg, Object.assign(opt, { until: rg.to })); }
         else await downloadClientPdf(s, x, scans, ex, msg, base, opt);
       } catch (e) { msg(e.message || String(e)); }
       const b = $('#rmGo'); if (b) b.disabled = false;
@@ -13341,7 +13380,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
   }
   async function makeProgress(s, scans, since, ex, msg, opt) {
     opt = opt || {};
-    const fixed = crFixed(s, since, ex);
+    const fixed = crFixed(s, since, ex, opt.until);
     const pend = opt.todo === false ? [] : crItems(s, s.findings || [], ex);
     const fixedE = crEntries(s, fixed); const pendE = crEntries(s, pend);
     msg(`Writing up ${fixedE.length} fix${fixedE.length === 1 ? '' : 'es'}…`);
@@ -13351,9 +13390,50 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     const reps = scans.filter((y) => !y.now && y.auto); const last = reps.length > 1 ? reps[reps.length - 2].at : '';
     const recentN = last ? fixed.filter((f) => (f.gone ? crTime(f.gone.at) : crTime(f.statusAt)) >= crTime(last)).length : 0;
     if (opt.notes !== false) { msg('Adding the team\u2019s notes…'); await crLoadNotes(s, fixedE.concat(pendE), msg); }
-    const out = prHtml(s, { fixedE, pendE, fixedN: fixed.length, pendN: pend.length, since, lastAt: last, recentN, at: new Date().toISOString(), withTodo: opt.todo !== false,
-      openAll: crItems(s, s.findings || [], ex), fixedAll: fixed, ex });
-    await crPdf(s, out, msg, ok1 && ok2);
+    // Published, or made in the editor after the last publish (live once the website is published again).
+    const pd = (pubInfo[s.id] || {}).d; const lx = liveOf(s.siteId);
+    const unpublished = pd && (!pd.domain || /NOT_PUBLISHED|UNPUBLISHED/i.test(pd.publishStatus || ''));
+    const pubAt = crTime((pd && pd.publishedAt) || (lx && lx.published) || (s.live && s.live.publishedAt) || '');
+    fixedE.forEach((e) => {
+      const at = Math.max(...e.items.map((f) => (f.gone ? crTime(f.gone.at) : crTime(f.statusAt)) || 0));
+      e.pub = unpublished ? 'pending' : pubAt ? (at > pubAt ? 'pending' : 'published') : '';
+      e.include = true;
+    });
+    const ctx = { fixedE, pendE, pendN: pend.length, since, until: opt.until, lastAt: last, recentN, at: new Date().toISOString(), withTodo: opt.todo !== false,
+      openAll: crItems(s, s.findings || [], ex), ex };
+    // Reviewed and edited by the team before it is made into a PDF.
+    crReview(s, ctx, msg, ok1 && ok2);
+  }
+  /** The wording, for the team to read and change before the PDF is made: each update's heading, title and purpose, and whether it is in. */
+  function crReview(s, ctx, msg, aiOk) {
+    const root = $('.rm'); if (!root) return;
+    const list = ctx.fixedE;
+    const defVerdict = prHtml(s, Object.assign({}, ctx)).doc.match(/<h2>([^<]*)<\/h2>/); // the default verdict, as the PDF would say it
+    root.innerHTML = `<div class="crv">
+      <p class="small muted">Read and change the wording before the PDF is made. Only what is ticked goes in. Nothing here changes the audit.</p>
+      <label class="field">Headline<input type="text" id="crvVerdict" maxlength="160" value="${esc(defVerdict ? defVerdict[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'") : '')}"></label>
+      <div class="crv-list">${list.map((e, i) => `<div class="crv-it" data-i="${i}">
+        <label class="crv-in"><input type="checkbox" data-crv="include" ${e.include !== false ? 'checked' : ''}> In the report</label>
+        <span class="small faint">${esc(e.rows ? e.rows.length + ' pages' : e.pages.slice(0, 3).join(', ') + (e.pages.length > 3 ? '…' : ''))}${e.pub === 'pending' ? ' \u00b7 awaiting publication' : e.pub === 'published' ? ' \u00b7 published' : ''}${e.w.significant ? ' \u00b7 <b>significant correction</b>' : ''}</span>
+        <div class="crv-row"><input type="text" data-crv="group" maxlength="50" value="${esc(e.w.group || '')}" aria-label="Heading"><input type="text" data-crv="title" maxlength="140" value="${esc(e.w.title || '')}" aria-label="What was done"></div>
+        <textarea data-crv="purpose" rows="2" maxlength="300" aria-label="Its purpose">${esc(e.w.purpose || '')}</textarea>
+        <details class="small faint"><summary>What the audit recorded (internal, not in the PDF)</summary>${e.items.slice(0, 4).map((f) => `<div>#${esc(String(f.num || ''))} ${esc(String(f.message || '').replace(/^AI: /, ''))}${f.found ? ` \u2014 \u201c${esc(crUnq(f.found).slice(0, 120))}\u201d` : ''}</div>`).join('')}</details>
+      </div>`).join('') || '<p class="small faint">No completed updates in this date range.</p>'}</div>
+      <div class="rm-acts"><button class="btn primary" id="crvGo">Export the PDF</button> <span class="small muted" id="crMsg"></span></div></div>`;
+    const read = () => {
+      $$('.crv-it', root).forEach((row) => {
+        const e = list[Number(row.dataset.i)]; if (!e) return;
+        e.include = $('[data-crv=include]', row).checked;
+        e.w = Object.assign({}, e.w, { group: $('[data-crv=group]', row).value.trim() || 'Content Refinements', title: $('[data-crv=title]', row).value.trim() || e.w.title, purpose: $('[data-crv=purpose]', row).value.trim() });
+      });
+    };
+    $('#crvGo', root).onclick = async () => {
+      read(); $('#crvGo', root).disabled = true;
+      const m = (t) => { const x = $('#crMsg'); if (x) x.textContent = t; };
+      try { await crPdf(s, prHtml(s, Object.assign({}, ctx, { verdict: $('#crvVerdict', root).value.trim() })), m, aiOk); } catch (er) { m(er.message || String(er)); }
+      const b = $('#crvGo'); if (b) b.disabled = false;
+    };
+    if (msg) msg('');
   }
   /** The Findings report for one scan (x.now: the audit as it is today). */
   async function downloadClientPdf(s, x, scans, ex, msg, list, opt) {
