@@ -9,7 +9,16 @@
 // GET  /api/imghash?url=…            → the image bytes, same-origin, shrunk where the CDN allows it
 // POST /api/imghash { urls: [...] }  → { hashes: { url: {h, photo, …} | null } }
 // POST /api/imghash { save: [...] }  → { saved: n }
-import { metered, redis, P, readBody, requireUser, jparse, sha } from './_lib.js';
+//
+// Editorial-use-only stock photos (Settings → Editorial stock photos, and the STOCK_EDITORIAL check):
+// POST { stock: 'list' }                 → { items: [{ id, h, preview, title, src, by, at }] }
+// POST { stock: 'add', ids }             → add Shutterstock IDs to the list (exempt.global)
+// POST { stock: 'remove', id }           → take one off the list (exempt.global)
+// POST { stock: 'hash', id, h }          → the picture's fingerprint, made in the browser from its preview
+// POST { stock: 'lookup', ids }          → { results: { id: { editorial, title, preview } } }: asks
+//      Shutterstock's own page for an ID found in a file name; an editorial one joins the list.
+import { metered, redis, P, readBody, requireUser, jparse, sha, can, fetchWithTimeout, UA_DESKTOP } from './_lib.js';
+import { STOCK_SEED } from './_stockseed.js';
 
 // Only the places a Duda website actually serves pictures from. This must never become a proxy for
 // anything anyone asks for.
@@ -17,6 +26,51 @@ const IMG_HOSTS = /(^|\.)(cdn-website\.com|multiscreensite\.com|dudaone\.com|res
 const MAX_BYTES = 6 * 1024 * 1024;
 const TTL = 90 * 86400;          // a picture's pixels don't change under the same address
 const KEY = (u) => P + 'ih:' + sha(u).slice(0, 24);
+
+// ---- Editorial-use-only stock photos ----
+const STOCK_BASE = () => String(process.env.SHUTTERSTOCK_BASE || 'https://www.shutterstock.com').replace(/\/+$/, '');
+const ED_KEY = P + 'stock:ed';            // hash: Shutterstock ID → { id, h, preview, title, src, by, at }
+const ED_SEEDED = P + 'stock:seeded';     // the starting list goes in once; what is removed later stays removed
+const LK_KEY = (id) => P + 'stock:lk:' + id;
+const okId = (v) => /^\d{5,12}$/.test(String(v || '').trim());
+const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
+/** Editorial titles always start with a place and a date ("Vinnytsia, Ukraine - August 04, 2025: …"), and so does the page address. */
+const DATED_SLUG = new RegExp(`(^|-)(${MONTHS})-\\d{1,2}-(19|20)\\d\\d-`, 'i');
+/** Shutterstock's preview pictures: only image files on its own hosts (and the stand-in used by the tests). */
+function stockImgHost(u) {
+  let base = ''; try { base = new URL(STOCK_BASE()).host; } catch (e) { /* default */ }
+  const hostOk = /(^|\.)shutterstock\.com$/i.test(u.hostname) || (base && u.host === base && !/shutterstock\.com$/i.test(base));
+  return hostOk && /\.(jpe?g|png|webp)$/i.test(u.pathname);
+}
+async function stockList() {
+  const [seeded] = await redis(['GET', ED_SEEDED]);
+  if (!seeded && STOCK_SEED.length) {
+    const at = new Date().toISOString();
+    await redis(...STOCK_SEED.map((id) => ['HSETNX', ED_KEY, id, JSON.stringify({ id, src: 'list', by: 'Shutterstock downloads (Editorial Use Only)', at })]), ['SET', ED_SEEDED, at]);
+  }
+  const [all] = await redis(['HGETALL', ED_KEY]);
+  const out = [];
+  if (Array.isArray(all)) for (let i = 0; i + 1 < all.length; i += 2) { const v = jparse(all[i + 1]); if (v && v.id) out.push(v); }
+  else if (all && typeof all === 'object') Object.values(all).forEach((x) => { const v = typeof x === 'string' ? jparse(x) : x; if (v && v.id) out.push(v); });
+  return out.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+/** What Shutterstock's own page says about one ID. null fields = it could not tell (blocked, not found). */
+async function stockLookup(id) {
+  try {
+    const r = await fetchWithTimeout(`${STOCK_BASE()}/image-photo/${id}`, { headers: { 'User-Agent': UA_DESKTOP, Accept: 'text/html', 'Accept-Language': 'en-US,en' }, redirect: 'follow' }, 9000);
+    if (!r.ok) return { id, editorial: null, status: r.status };
+    const html = (await r.text()).slice(0, 600000);
+    const slug = String((r.url || '').split('?')[0].split('/').pop() || '');
+    const meta = (prop) => { const m = html.match(new RegExp(`<meta[^>]+(?:property|name)="${prop}"[^>]+content="([^"]+)"`, 'i')) || html.match(new RegExp(`<meta[^>]+content="([^"]+)"[^>]+(?:property|name)="${prop}"`, 'i')); return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'") : ''; };
+    const flag = html.match(/"is_?editorial"\s*:\s*(true|false)/i);
+    const title = meta('og:title');
+    const dated = DATED_SLUG.test(slug) || new RegExp(`^[^:]{2,80}[-\u2013\u2014]\\s*(${MONTHS})\\s+\\d{1,2},\\s*(19|20)\\d\\d\\s*:`, 'i').test(title);
+    const editorial = flag ? flag[1].toLowerCase() === 'true' : dated;
+    let preview = meta('og:image');
+    try { const pu = new URL(preview, STOCK_BASE()); preview = stockImgHost(pu) ? pu.href : ''; } catch (e) { preview = ''; }
+    return { id, editorial, title: title.slice(0, 200), preview: preview.slice(0, 600), status: r.status };
+  } catch (e) { return { id, editorial: null, status: 0 }; }
+}
 
 /**
  * The same picture served at a dozen sizes is one picture. Duda appends the width to the file name
@@ -54,8 +108,9 @@ async function handler(req, res) {
       const raw = String(req.query.url || '');
       let u;
       try { u = new URL(raw); } catch (e) { return res.status(400).json({ error: 'Bad url' }); }
-      if (u.protocol !== 'https:' || !IMG_HOSTS.test(u.hostname)) return res.status(400).json({ error: 'Host not allowed' });
-      const r = await fetch(smallUrl(raw), { headers: { Accept: 'image/*' }, redirect: 'follow' });
+      const stockPic = stockImgHost(u);
+      if ((u.protocol !== 'https:' && !stockPic) || !(IMG_HOSTS.test(u.hostname) || stockPic)) return res.status(400).json({ error: 'Host not allowed' });
+      const r = await fetch(stockPic ? raw : smallUrl(raw), { headers: Object.assign({ Accept: 'image/*' }, stockPic ? { 'User-Agent': UA_DESKTOP } : {}), redirect: 'follow' });
       if (!r.ok) return res.status(502).json({ error: 'Upstream ' + r.status });
       const type = r.headers.get('content-type') || '';
       if (!/^image\//i.test(type)) return res.status(415).json({ error: 'Not an image' });
@@ -67,6 +122,60 @@ async function handler(req, res) {
     }
 
     const b = readBody(req);
+    if (b.stock) {
+      const op = String(b.stock);
+      if (op === 'list') return res.status(200).json({ items: await stockList(), canEdit: await can(me, 'exempt.global') });
+      if (op === 'add' || op === 'remove') {
+        if (!(await can(me, 'exempt.global'))) return res.status(403).json({ error: 'Only people who manage exception sets can change this list.' });
+        await stockList(); // the starting list first, so it is not added again over a change
+        if (op === 'remove') { if (!okId(b.id)) return res.status(400).json({ error: 'Not a Shutterstock ID' }); await redis(['HDEL', ED_KEY, String(b.id).trim()]); return res.status(200).json({ ok: true }); }
+        const ids = [...new Set([].concat(b.ids || []).map((x) => String(x).trim()).filter(okId))].slice(0, 500);
+        const at = new Date().toISOString();
+        if (ids.length) await redis(...ids.map((id) => ['HSETNX', ED_KEY, id, JSON.stringify({ id, src: 'added', by: me.name || me.email, at })]));
+        return res.status(200).json({ added: ids.length });
+      }
+      if (op === 'hash') {
+        const id = String(b.id || '').trim(); const h = String(b.h || '');
+        if (!okId(id) || !/^[01]{64}$/.test(h)) return res.status(400).json({ error: 'Bad fingerprint' });
+        const [raw] = await redis(['HGET', ED_KEY, id]); const cur = jparse(raw);
+        if (!cur) return res.status(404).json({ error: 'Not on the list' });
+        // Anyone scanning may fill in a missing fingerprint; replacing one is for the list's managers.
+        if (cur.h && !(await can(me, 'exempt.global'))) return res.status(403).json({ error: 'Already fingerprinted' });
+        const next = Object.assign({}, cur, { h, hBy: me.name || me.email, hAt: new Date().toISOString(), hFrom: b.from === 'upload' ? 'upload' : 'preview' });
+        await redis(['HSET', ED_KEY, id, JSON.stringify(next)]);
+        return res.status(200).json({ ok: true, item: next });
+      }
+      if (op === 'lookup') {
+        const ids = [...new Set([].concat(b.ids || []).map((x) => String(x).trim()).filter(okId))].slice(0, 30);
+        if (!ids.length) return res.status(200).json({ results: {} });
+        const cached = await redis(...ids.map((id) => ['GET', LK_KEY(id)]));
+        const results = {}; const fresh = [];
+        ids.forEach((id, i) => { const v = jparse(cached[i]); if (v) results[id] = v; else fresh.push(id); });
+        // A few at a time: this is Shutterstock's public website, not an API.
+        for (const id of fresh.slice(0, 10)) {
+          const v = await stockLookup(id);
+          results[id] = v;
+          await redis(['SET', LK_KEY(id), JSON.stringify(v), 'EX', v.editorial === null ? 86400 : 30 * 86400]);
+        }
+        const [all] = await redis(['HKEYS', ED_KEY]);
+        const listed = new Set([].concat(all || []).map(String));
+        const at = new Date().toISOString(); const cmds = [];
+        Object.values(results).forEach((v) => {
+          if (!v || !v.id) return;
+          if (v.editorial === true && !listed.has(v.id)) cmds.push(['HSETNX', ED_KEY, v.id, JSON.stringify({ id: v.id, src: 'lookup', by: 'Found by a scan', at, preview: v.preview || '', title: v.title || '' })]);
+        });
+        if (cmds.length) await redis(...cmds);
+        // Listed IDs without a preview get the one the page gave.
+        const needPrev = Object.values(results).filter((v) => v && v.preview && listed.has(v.id));
+        if (needPrev.length) {
+          const rows = await redis(...needPrev.map((v) => ['HGET', ED_KEY, v.id]));
+          const up = []; needPrev.forEach((v, i) => { const cur = jparse(rows[i]); if (cur && !cur.preview) up.push(['HSET', ED_KEY, v.id, JSON.stringify(Object.assign(cur, { preview: v.preview, title: cur.title || v.title || '' }))]); });
+          if (up.length) await redis(...up);
+        }
+        return res.status(200).json({ results, pending: Math.max(0, fresh.length - 10) });
+      }
+      return res.status(400).json({ error: 'Unknown stock op' });
+    }
     if (Array.isArray(b.save)) {
       const rows = b.save.slice(0, 120).filter((x) => x && x.url && typeof x.h === 'string');
       if (!rows.length) return res.status(200).json({ saved: 0 });

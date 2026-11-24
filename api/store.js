@@ -664,7 +664,7 @@ async function handler(req, res) {
         // website) is kept exactly as it was.
         const normQ = (x) => '/' + String(x || '/').replace(/^https?:\/\/[^/]+/i, '').replace(/[?#].*$/, '').replace(/^\/+|\/+$/g, '').toLowerCase();
         const partial = Array.isArray(b.partial) && b.partial.length ? new Set(b.partial.map(normQ)) : null;
-        const SITE_WIDE = /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR|PAGE_WRONG_CITY)/;
+        const SITE_WIDE = /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|STOCK_EDITORIAL|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR|PAGE_WRONG_CITY)/;
         // robots.txt / sitemap / llms.txt and redirects are read whole on every scan, chosen pages or not.
         const EVERY_SCAN = /^(ROBOTS_|SITEMAP_|LLMS_|REDIRECT_)/;
         const inPartial = (f) => partial && (EVERY_SCAN.test(String(f.code)) || (!SITE_WIDE.test(String(f.code)) && (f.pages && f.pages.length ? f.pages : [f.path || '/']).every((pg) => partial.has(normQ(pg)))));

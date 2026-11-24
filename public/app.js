@@ -6263,6 +6263,7 @@
     { route: 'home', icon: '🏠', label: 'Home', words: 'home dashboard overview start today needs attention my work what to do first', href: '#/home', help: 'home' },
     { route: 'settings', icon: '🎨', label: 'Appearance: dark mode, light mode and colours', words: 'appearance dark mode light mode theme colour color night start page tips look', href: '#/settings/appearance', help: 'home' },
     { route: 'sites', icon: '📋', label: 'Audits', words: 'audits websites list scan home', href: '#/', help: 'audits' },
+    { route: 'settings', icon: '📷', label: 'Editorial stock photos: Shutterstock images that may not be used on a business website', words: 'shutterstock editorial stock photo license licence commercial use only image list', href: '#/settings/stock', help: 'stock' },
     { route: 'settings', icon: '🚫', label: 'Audit exceptions: manufacturer pages and contact info that are not checked', words: 'exceptions exempt exemption white label manufacturer landing page xpel skip not checked', href: '#/settings/exceptions', perm: 'exempt.global', help: 'exceptions' },
     { route: 'tasks', icon: '🐆', label: 'Tasks: the Jaguars board', words: 'tasks jaguars jags queue board take next first in first out kanban review approve', href: '#/tasks', perm: 'jags.take', help: 'jaguars' },
     { route: 'projects', icon: '🏗', label: 'Projects', words: 'projects build phases dev qa cleanup client handover', href: '#/projects', perm: 'project.view', help: 'projects' },
@@ -6499,11 +6500,84 @@
     ['presence', '📣 Online presence', () => can('members.manage')],
     ['integrations', '🔌 Integrations', () => can('members.manage')],
     ['exceptions', '🚫 Audit exceptions', () => can('exempt.global')],
+    ['stock', '📷 Editorial stock photos', () => true],
     ['security', '🛡 Security log', () => true],
     // Only while moving the app to a new home (COPY_FROM_URL / COPY_FROM_TOKEN set), and only the owner.
     ['move', '📦 Move data in', () => !!(state.superAdmin && state.config && state.config.copyFrom)],
   ];
   const secState = { all: false, data: null, who: '', type: '', loading: false };
+  /** A picture's fingerprint, made here from an address (through the app) or from a file somebody chose. */
+  function stockHashOf(src) {
+    return new Promise((done) => {
+      const img = new Image(); let over = false;
+      const fin = (v) => { if (!over) { over = true; clearTimeout(t); done(v); } };
+      const t = setTimeout(() => fin(null), 12000);
+      img.onload = () => { const m = A.measureImage(img); fin(m && m.hash ? m.hash : null); };
+      img.onerror = () => fin(null);
+      img.src = src;
+    });
+  }
+  /**
+   * Settings → Editorial stock photos: the Shutterstock images that may only be used editorially.
+   * The audit flags them by the ID in a file name, and by how they look (each one's fingerprint, made
+   * from Shutterstock's preview or from a copy uploaded here), so a renamed copy is caught too.
+   */
+  async function drawStockList(body) {
+    body.innerHTML = '<h2>Editorial stock photos</h2><div class="empty">Loading…</div>';
+    let d; try { d = await post('/api/imghash', { stock: 'list' }); } catch (e) { body.innerHTML = `<h2>Editorial stock photos</h2><div class="note bad">${esc(e.message)}</div>`; return; }
+    const items = d.items || []; const edit = !!d.canEdit;
+    const ready = items.filter((x) => x.h).length;
+    const src = (x) => x.src === 'lookup' ? 'found by a scan' : x.src === 'added' ? `added by ${x.by || 'someone'}` : 'Shutterstock downloads';
+    body.innerHTML = `<h2>Editorial stock photos</h2>
+      <p class="muted">Shutterstock images licensed for <b>editorial use only</b>, which may not be used to promote a business. Every audit reports a picture on the website as <b>Stock photo licensed for editorial use only</b> when its file name carries one of these IDs, or when it <b>looks the same</b> as one of them (so a renamed or resized copy is caught too). An ID in a file name that is not on this list is looked up on Shutterstock once, and added when Shutterstock marks it editorial.</p>
+      <ul class="set-facts"><li><b>${items.length}</b> image${items.length === 1 ? '' : 's'} on the list; <b>${ready}</b> can also be recognised by how they look.</li>
+      <li>The others are recognised by file name only until they have a fingerprint: <b>Get previews from Shutterstock</b> makes it from Shutterstock\u2019s preview, or upload a copy of the picture on its row.</li></ul>
+      ${edit ? `<label class="field">Add Shutterstock IDs or links (one per line, or separated by commas)<textarea id="stAdd" rows="3" placeholder="2669861029\nhttps://www.shutterstock.com/image-photo/2530975229"></textarea></label>
+      <div class="row-gap"><button class="btn primary" id="stAddGo">Add to the list</button> <button class="btn" id="stPrev" ${items.length === ready ? 'disabled' : ''}>Get previews from Shutterstock</button> <span class="small muted" id="stOut"></span></div>`
+        : `<div class="row-gap"><button class="btn" id="stPrev" ${items.length === ready ? 'disabled' : ''}>Get previews from Shutterstock</button> <span class="small muted" id="stOut"></span></div><p class="small faint">Only people who manage exception sets can add or remove images.</p>`}
+      <table class="tbl st-tbl"><thead><tr><th>Shutterstock ID</th><th>Title</th><th>Recognised by</th><th>From</th><th></th></tr></thead><tbody>
+      ${items.map((x) => `<tr data-st="${esc(x.id)}"><td><a href="https://www.shutterstock.com/image-photo/${esc(x.id)}" target="_blank" rel="noopener" class="mono">${esc(x.id)}</a></td>
+        <td class="small">${esc(x.title || '')}</td>
+        <td class="small">${x.h ? '\u2713 file name and look' : 'file name only'}</td>
+        <td class="small faint">${esc(src(x))}</td>
+        <td class="nowrap"><label class="btn sm" title="Make the fingerprint from a copy of this picture">Upload a copy<input type="file" accept="image/*" data-stup="${esc(x.id)}" hidden></label>${edit ? ` <button class="btn sm ghost" data-strm="${esc(x.id)}" title="Take it off the list">Remove</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="faint">No images on the list yet.</td></tr>'}
+      </tbody></table>`;
+    const out = (t) => { const o = $('#stOut'); if (o) o.textContent = t; };
+    if ($('#stAddGo')) $('#stAddGo').onclick = async () => {
+      const ids = [...new Set(($('#stAdd').value.match(/\d{5,12}/g) || []))];
+      if (!ids.length) { out('No Shutterstock IDs found in that text.'); return; }
+      try { const r = await post('/api/imghash', { stock: 'add', ids }); toast(`${r.added} added`); drawStockList(body); } catch (e) { out(e.message); }
+    };
+    $('#stPrev').onclick = async () => {
+      $('#stPrev').disabled = true;
+      const need = items.filter((x) => !x.h);
+      let made = 0, none = 0;
+      for (let i = 0; i < need.length; i += 10) {
+        out(`Asking Shutterstock\u2026 ${Math.min(i + 10, need.length)} of ${need.length}`);
+        let res = {};
+        try { res = (await post('/api/imghash', { stock: 'lookup', ids: need.slice(i, i + 10).map((x) => x.id) })).results || {}; } catch (e) { out(e.message); break; }
+        for (const x of need.slice(i, i + 10)) {
+          const pv = (res[x.id] && res[x.id].preview) || x.preview;
+          const h = pv ? await stockHashOf('/api/imghash?url=' + encodeURIComponent(pv)) : null;
+          if (h) { try { await post('/api/imghash', { stock: 'hash', id: x.id, h }); made++; } catch (e) { none++; } } else none++;
+        }
+      }
+      toast(made ? `${made} fingerprint${made === 1 ? '' : 's'} made` : 'Shutterstock gave no previews');
+      if (none && !made) { drawStockList(body).then(() => out(`Shutterstock did not give a preview for ${none} image${none === 1 ? '' : 's'}. Upload a copy on their rows instead (a watermarked preview saved from Shutterstock is fine).`)); return; }
+      drawStockList(body).then(() => { if (none) out(`${none} without a preview: upload a copy on their rows.`); });
+    };
+    $$('[data-stup]', body).forEach((inp) => (inp.onchange = async () => {
+      const f = inp.files && inp.files[0]; if (!f) return;
+      const url = URL.createObjectURL(f);
+      const h = await stockHashOf(url); URL.revokeObjectURL(url);
+      if (!h) { toast('That file could not be read as a picture'); return; }
+      try { await post('/api/imghash', { stock: 'hash', id: inp.dataset.stup, h, from: 'upload' }); toast('Fingerprint saved'); drawStockList(body); } catch (e) { toast(e.message); }
+    }));
+    $$('[data-strm]', body).forEach((b) => (b.onclick = async () => {
+      if (!confirm(`Take Shutterstock ${b.dataset.strm} off the list? Audits will stop reporting it.`)) return;
+      try { await post('/api/imghash', { stock: 'remove', id: b.dataset.strm }); drawStockList(body); } catch (e) { toast(e.message); }
+    }));
+  }
   /** Settings → Online presence: the automatic monthly check, and who sees the suggestions. */
   async function drawPresenceSettings(body) {
     body.innerHTML = '<h2>Online presence</h2><div class="empty">Loading…</div>';
@@ -6570,6 +6644,7 @@
     if (cur === 'team') return drawTeamPage(body);
     if (cur === 'security') return drawSecurity(body);
     if (cur === 'exceptions') return drawExceptionSets(body);
+    if (cur === 'stock') return drawStockList(body);
     if (cur === 'move') return drawMove(body);
     if (cur === 'presence') return drawPresenceSettings(body);
     if (cur === 'appearance') return drawAppearance(body);
@@ -7357,7 +7432,9 @@
         ...(wants(/^(LINK_|IMAGE_BROKEN)/) || (plan && plan.links) ? { checkUrls: (urls) => sPost('/api/check', { urls }) } : {}),
         googlePlaces: (urls) => sPost('/api/check', { places: urls }),
         // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
-        ...(wants(/^IMAGE_DUPLICATE/) ? { imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}), saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }) } : {}),
+        ...(wants(/^(IMAGE_DUPLICATE|STOCK_EDITORIAL)/) ? { imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}), saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }) } : {}),
+        // Editorial-use-only stock photos: the team's list, and Shutterstock asked about IDs it does not know.
+        ...(wants(/^STOCK_EDITORIAL/) ? stockOpts() : {}),
         onProgress: (p) => { state.scanning[id] = plan ? Object.assign({}, p, { message: '⚡ Check updates · ' + p.message }) : p; renderProgress(id); },
       });
       log.push(...res.log);
@@ -10793,6 +10870,7 @@
         // Fingerprinting pictures: the cache is asked first, so a rescan downloads nothing.
         imageHashes: (urls) => sPost('/api/imghash', { urls }).then((r) => r.hashes || {}),
         saveImageHashes: (rows) => sPost('/api/imghash', { save: rows }),
+        ...stockOpts(),
         onProgress,
       });
       res.aiSkip = new Set();
@@ -10912,7 +10990,7 @@
   // Checks that compare the whole website (duplicate titles across pages, the font system, repeated
   // photos, the favicon, a name found on one page and searched for on every other) cannot be judged
   // from a few pages: they would vanish simply because the rest was not read. Those need a full Rescan.
-  const RECHECK_SITE_WIDE = /^(CONTRAST_[A-Z_]+|PAGE_WRONG_CITY|PAGE_WRONG_CITY_BODY|AI_PAGE_[A-Z]+|META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_[A-Z_]+|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR)$/;
+  const RECHECK_SITE_WIDE = /^(CONTRAST_[A-Z_]+|PAGE_WRONG_CITY|PAGE_WRONG_CITY_BODY|AI_PAGE_[A-Z]+|META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_[A-Z_]+|IMAGE_DUPLICATE|STOCK_EDITORIAL|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|MAILTO_SHARE_NO_TO|LINK_BROKEN_INTERNAL|PAGE_FETCH_ERROR)$/;
   const RECHECK_MAX_PAGES = 12;
   // Rows ticked in the audit items table, for acting on several at once.
   const pick = { site: '', ids: new Set() };
@@ -11278,6 +11356,22 @@
     return (s.findings || []).filter((f) => codes.has(f.code) && !['done', 'false'].includes(f.status));
   }
   const isCorrected = (s, f) => fixedCodes(s).has(f.code) && !['done', 'false'].includes(f.status);
+  /** The scan's hooks for the editorial stock photo check (Settings → Editorial stock photos). */
+  function stockOpts() {
+    return {
+      stockList: () => sPost('/api/imghash', { stock: 'list' }).then((r) => r.items || []),
+      stockLookup: (ids) => sPost('/api/imghash', { stock: 'lookup', ids }).then((r) => r.results || {}),
+      stockSaveHash: (id, h) => sPost('/api/imghash', { stock: 'hash', id, h }),
+    };
+  }
+  /** An editorial stock photo item: which Shutterstock image it is, and how it was recognised. */
+  function stockNote(f) {
+    if (f.code !== 'STOCK_EDITORIAL' || !f.stockId) return '';
+    return `<div class="note known-note"><div class="k">Shutterstock image ${esc(f.stockId)}</div>
+      ${f.stockTitle ? `<div class="small">${esc(f.stockTitle)}</div>` : ''}
+      <div class="small muted">${f.stockHow === 'look' ? 'Recognised by how it looks (the file was renamed): compare the two before replacing it.' : 'Recognised by the Shutterstock ID in the file name.'}</div>
+      <div><a href="${esc(f.stockUrl || ('https://www.shutterstock.com/image-photo/' + f.stockId))}" target="_blank" rel="noopener">Open it on Shutterstock \u2197</a> <span class="faint small">\u00b7 replace it with a photo licensed for commercial use, or the business\u2019s own</span></div></div>`;
+  }
   /**
    * Where a repeated photo actually is. The item names the picture; this names each place, so the
    * fix is "open these four elements" rather than "go and find them".
@@ -13183,6 +13277,7 @@ h2.st{font-size:22pt;color:#14263d;margin:0 0 4px;font-weight:800}.sub{font-size
     if (/(^|_)(PHONE|TEL|MAILTO|EMAIL|ADDRESS|SMS)(_|$)/.test(f.code)) return { title: `Updated contact details${on}`, purpose: 'So visitors reach the business.', group: 'Contact Details', significant: true };
     if (/^(META_|H1_)/.test(f.code) || /page title|page description/.test(w)) return { title: `Updated the page title or description${on}`, purpose: 'Keeps how the page appears in search results accurate.', group: 'Page Title and Description Updates', significant: false };
     if (/^(LINK_|BUTTON_)/.test(f.code)) return { title: `Updated links${on}`, purpose: 'So links lead to the right page.', group: 'Links and Navigation', significant: false };
+    if (/^STOCK_/.test(f.code)) return { title: `Replaced a stock photo with one licensed for website use${on}`, purpose: 'Keeps the photos on the website properly licensed.', group: 'Images', significant: false };
     if (/^(PHOTO_|IMAGE_|ALT_)/.test(f.code)) return { title: `Updated images${on}`, purpose: 'Keeps images and their descriptions accurate.', group: 'Images', significant: false };
     if (/^FORM_/.test(f.code)) return { title: `Updated a form${on}`, purpose: 'So the form lists the right options.', group: 'Forms', significant: false };
     if (/^CONTRAST_/.test(f.code)) return { title: `Improved text readability${on}`, purpose: 'Makes text easier to read.', group: 'Readability', significant: false };
@@ -13806,7 +13901,7 @@ footer{margin-top:30px;color:#8a919c;font-size:12px}@media print{body{background
         ${f.snippet && f.snippet !== f.found ? `<div class="snip">${esc(f.snippet)}</div>` : ''}
         ${isCorrected(s, f) ? `<div class="note fixed-checks" style="margin-top:10px"><b>⚠ The check that produced this item has since been corrected.</b>
           <div class="small" style="margin-top:3px">It may not be a real problem at all. Don't spend time on it — <b>rescan the website</b> and it is replaced with what the corrected check finds. Your Done, False alarm and On hold items are untouched by a rescan.</div></div>` : ''}
-        ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${dupPlaces(f)}${reportNote(f)}${knownNote(f, s)}
+        ${aiNote(f, true)}${aiPendingHtml(f, true)}${autoNote(f)}${stockNote(f)}${dupPlaces(f)}${reportNote(f)}${knownNote(f, s)}
         <div class="dr-meta">
           <div><div class="k">Page</div><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small">${esc(f.path)} ↗</a>${f.pages && f.pages.length > 1 ? `<details class="small"><summary class="muted">+${f.pages.length - 1} more pages</summary><div class="mono faint">${f.pages.slice(1).map(esc).join('<br>')}</div></details>` : ''}</div>
           <div><div class="k">Where</div><div class="loc">${esc(f.location)}</div>${devChips(f)}${f.hiddenOn && f.hiddenOn.length ? `<div class="small faint">Hidden: ${esc(f.hiddenOn.join(', '))}</div>` : ''}${pvLivePills(s, f)}${(pvLive(s, f) || {}).say ? `<div class="small faint pvl-say">${esc(pvLive(s, f).say)}</div>` : ''}${((s.pages || []).find((p) => p.path === f.path) || {}).via ? `<div class="small faint">Visitors also land on this page from ${esc(((s.pages || []).find((p) => p.path === f.path).via).join(', '))} (redirected).</div>` : ''}</div>

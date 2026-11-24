@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-25-editorial-stock', date: '2026-11-25', audience: 'all', tag: 'Audits',
+    title: 'New check: stock photos licensed for editorial use only',
+    what: 'Some Shutterstock images may only be used editorially, never to promote a business. Audits now report one on a website as <b>Stock photo licensed for editorial use only</b> (critical), with every place it is used and a link to it on Shutterstock. A picture is recognised by the Shutterstock ID in its file name, or by how it looks, so a renamed or resized copy is caught too. The list starts with the 67 Editorial Use Only images in our Shutterstock downloads; an ID the list does not know is looked up on Shutterstock once. Run <b>⚡ Apply check updates</b> on an audit to check it now.',
+    where: ['<b>Walkthrough:</b> <b>Settings → 📷 Editorial stock photos</b> to see the list, add IDs, and <b>Get previews from Shutterstock</b> so each image can also be recognised by how it looks.'],
+  },
+  {
     id: '2026-11-24-health-wording', date: '2026-11-24', audience: 'all', tag: 'Audits',
     title: 'Website health report: plain, proportional wording you can edit first',
     what: 'The work completed is now written for the shop owner in neutral words and in proportion to the change (\u201cGallery Content Cleanup \u2014 Removed unused default titles and captions from the gallery\u201d), grouped under headings such as Content Refinements, Brand Consistency, or Page Title and Description Updates. Each update says what changed and its practical purpose, with no claims about rankings, leads or trust, and no old wrong text quoted. Only completed work is listed: an item marked Done (or no longer found on a rescan) counts as done and live, and nothing pending or in progress is mentioned. Before the PDF is made you can read and change the headline, each heading, title and purpose, and untick anything to leave out. Scores, severity and the audit wording stay in the internal reports.',

@@ -666,6 +666,15 @@
         'When the business does have a dedicated page for that town and service and the link skips it, that is still a warning. Otherwise a separate town page is only an optional idea (Info), never \u201cmake a page\u201d',
       ],
     },
+    {
+      v: 58,
+      date: '2026-11-25',
+      title: 'Stock photos licensed for editorial use only',
+      scope: { adds: ['STOCK_EDITORIAL'] },
+      items: [
+        'New check: a Shutterstock photo that is licensed for editorial use only (not for promoting a business) is reported as critical, with where it is used and a link to it on Shutterstock. A picture is matched by the Shutterstock ID in its file name, or by how it looks, so a renamed or resized copy is still caught. The list of editorial images starts with the team\u2019s own Shutterstock downloads and is kept in Settings \u2192 Editorial stock photos; an ID the list does not know is looked up on Shutterstock once',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -696,7 +705,7 @@
       return { v: r.v, title: r.title, kind: ad.length ? 'adds' : 'fixes', files: !!sc.files, codes: fx.concat(ad), items, pages: sc.files ? [] : ad.length ? 'all' : [...new Set(items.flatMap((f) => (f.pages && f.pages.length ? f.pages : [f.path || '/']).map(normalizePath)))], ai: !!sc.ai, contrast: !!sc.contrast, photos: !!sc.photos, skip: !used };
     });
     // Checks that compare the whole website (duplicate titles, fonts, duplicate photos…) read every page.
-    if ([...codes].some((c) => /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|LINK_BROKEN_INTERNAL|PAGE_WRONG_CITY)/.test(c))) all = true;
+    if ([...codes].some((c) => /^(META_TITLE_DUP|META_DESC_DUP|TEXT_OTHER_BUSINESS|FONT_|IMAGE_DUPLICATE|STOCK_EDITORIAL|FAVICON_MISSING|HOMESCREEN_ICON_MISSING|LINK_BROKEN_INTERNAL|PAGE_WRONG_CITY)/.test(c))) all = true;
     return { releases: rel, full, codes: [...codes], pages: all ? 'all' : [...paths], ai, contrast, photos, links, steps };
   }
 
@@ -1670,6 +1679,108 @@
         path: one.path, device: one.device, selector: places[0].block, location: places[0].location,
         visible: !one.hiddenBy, hiddenBy: one.hiddenBy || '', snippet: where.join(' · ') + (places.length > 6 ? ` · …and ${places.length - 6} more` : ''),
         allowValue,
+        dupPlaces: places.slice(0, PHOTO_ITEM_CAP).map((sp) => ({ selector: sp.block, location: sp.location, how: sp.how, paths: [...sp.paths].slice(0, 8) })),
+      });
+    });
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // EDITORIAL-USE-ONLY STOCK PHOTOS
+  //
+  // Some Shutterstock images may only be used editorially (news, not a business's website). The team
+  // keeps the list of the ones it has downloaded (Settings → Editorial stock photos). A picture on the
+  // website is one of them when its file name still carries the Shutterstock ID, or when it LOOKS the
+  // same as the list's preview of it — the same fingerprint as the duplicate-photo check, so a renamed
+  // or resized copy is still caught. An ID in a file name that is not on the list is asked about once
+  // (Shutterstock's own page says whether it is editorial), and joins the list if it is.
+  // ---------------------------------------------------------------------------
+  const STOCK_NAME = [
+    /shutterstock[\s_-]*(\d{5,12})(?!\d)/i,                         // shutterstock_2530975229.jpg (as downloaded)
+    /-\d{2,4}nw-(\d{5,12})(?!\d)/i,                                 // …-260nw-2669861029.jpg (Shutterstock's preview)
+    /(?:^|[_-])stock-(?:photo|vector|image|illustration)-.*-(\d{5,12})(?=\D*$)/i,
+  ];
+  /** The Shutterstock ID in a picture's file name, or ''. */
+  function stockIdOf(url) {
+    const name = safeDecode(String(url || '').split('?')[0].split('#')[0].split('/').pop() || '');
+    for (const re of STOCK_NAME) { const m = name.match(re); if (m) return m[1]; }
+    return '';
+  }
+  const STOCK_LOOK = 7;   // bits that may differ: a watermarked preview against the clean file
+  const stockLink = (id) => `https://www.shutterstock.com/image-photo/${id}`;
+  /** Fill in missing fingerprints of listed pictures from their previews (a few per scan). */
+  async function stockFingerprints(items, opts, max) {
+    if (!opts.stockSaveHash || typeof document === 'undefined') return;
+    const todo = items.filter((x) => !x.h && x.preview).slice(0, max || 8);
+    for (const x of todo) {
+      const img = await loadImage(x.preview, 10000);
+      const m = img ? measureImage(img) : null;
+      if (!m || flatHash(m.hash)) continue;
+      x.h = m.hash;
+      try { await opts.stockSaveHash(x.id, m.hash); } catch (e) { /* next scan */ }
+    }
+  }
+  async function editorialStockFindings(byKey, opts, log) {
+    let items = [];
+    try { items = (await opts.stockList()) || []; } catch (e) { log.push('Editorial stock list could not be read: ' + e); return []; }
+    const ed = new Map(items.map((x) => [String(x.id), x]));
+    const entries = [...byKey.values()];
+    // IDs in file names that the list does not know yet: Shutterstock's page is asked once.
+    const unknown = [...new Set(entries.map((e) => stockIdOf(e.url)).filter((id) => id && !ed.has(id)))].slice(0, 20);
+    if (unknown.length && opts.stockLookup) {
+      try {
+        const r = (await opts.stockLookup(unknown)) || {};
+        Object.values(r).forEach((v) => { if (v && v.id && v.editorial === true && !ed.has(v.id)) { const x = { id: v.id, preview: v.preview || '', title: v.title || '', src: 'lookup' }; ed.set(v.id, x); items.push(x); } });
+        const unsure = unknown.filter((id) => !r[id] || r[id].editorial === null);
+        if (unsure.length) log.push(`Shutterstock did not say whether ${unsure.length} picture${unsure.length === 1 ? ' is' : 's are'} editorial (${unsure.slice(0, 5).join(', ')})`);
+      } catch (e) { log.push('Shutterstock lookup failed: ' + e); }
+    }
+    await stockFingerprints(items, opts, 8);
+    const refs = items.filter((x) => x.h && x.h.length === 64 && !flatHash(x.h));
+    const hits = new Map();
+    entries.forEach((e) => {
+      const fid = stockIdOf(e.url);
+      let id = '', how = '', d = 99;
+      if (fid && ed.has(fid)) { id = fid; how = 'name'; }
+      else if (e.m && e.m.hash && !e.why && !flatHash(e.m.hash)) {
+        refs.forEach((x) => { const dd = hamming(x.h, e.m.hash); if (dd < d) { d = dd; id = String(x.id); } });
+        if (d <= STOCK_LOOK) how = 'look'; else id = '';
+      }
+      if (!id) return;
+      const g = hits.get(id) || { id, how, members: [] };
+      if (how === 'name') g.how = 'name';
+      g.members.push(e);
+      hits.set(id, g);
+    });
+    const out = [];
+    hits.forEach((g) => {
+      const spots = new Map();
+      g.members.forEach((e) => e.places.forEach((ph) => {
+        const k = [ph.block || ph.selector, ph.location].join('|');
+        const sp = spots.get(k) || { block: ph.block || ph.selector, selector: ph.selector, location: ph.location, how: ph.how, paths: new Set(), hiddenBy: ph.hiddenBy, first: ph };
+        sp.paths.add(ph.path || '/');
+        if (!spots.has(k)) spots.set(k, sp);
+      }));
+      const places = [...spots.values()];
+      if (!places.length) return;
+      const shown = places.filter((sp) => !sp.hiddenBy);
+      const one = (shown[0] || places[0]).first;
+      const names = [...new Set(g.members.map((e) => safeDecode(String(e.url).split('?')[0].split('/').pop() || '')))];
+      const where = places.slice(0, 6).map((sp) => `${sp.location}${sp.paths.size ? ' (' + [...sp.paths].slice(0, 3).join(', ') + (sp.paths.size > 3 ? ', …' : '') + ')' : ''}`);
+      const ref = ed.get(g.id) || {};
+      out.push({
+        code: 'STOCK_EDITORIAL', severity: shown.length ? 'critical' : 'warning', category: 'Images / Alt',
+        message: 'Stock photo licensed for editorial use only',
+        found: `${names[0]} · Shutterstock ${g.id}`,
+        expected: 'A photo licensed for commercial use, or the business’s own photo',
+        reason: g.how === 'name'
+          ? `The file name carries Shutterstock ID ${g.id}, which is on the list of editorial-use-only images. Editorial images may not be used to promote a business.`
+          : `This photo looks the same as Shutterstock image ${g.id}, which is on the list of editorial-use-only images (it was probably renamed). Compare the two before replacing it.`,
+        path: one.path, device: one.device, selector: (shown[0] || places[0]).block, location: (shown[0] || places[0]).location,
+        visible: !!shown.length, hiddenBy: shown.length ? '' : (one.hiddenBy || ''),
+        snippet: where.join(' · ') + (places.length > 6 ? ` · …and ${places.length - 6} more` : ''),
+        stockId: g.id, stockUrl: stockLink(g.id), stockHow: g.how, stockTitle: String(ref.title || '').slice(0, 160),
+        allowValue: names[0],
         dupPlaces: places.slice(0, PHOTO_ITEM_CAP).map((sp) => ({ selector: sp.block, location: sp.location, how: sp.how, paths: [...sp.paths].slice(0, 8) })),
       });
     });
@@ -3975,7 +4086,8 @@
     if (photoRows.length && opts.imageHashes) {
       try {
         const byKey = await fingerprintPhotos(photoRows, opts);
-        duplicatePhotoFindings(byKey, allowedImages(opts.allow)).forEach((f) => raw.push(f));
+        if (!opts.noDuplicates) duplicatePhotoFindings(byKey, allowedImages(opts.allow)).forEach((f) => raw.push(f));
+        if (opts.stockList) (await editorialStockFindings(byKey, opts, log)).forEach((f) => raw.push(f));
         photoSys = {
           total: byKey.size,
           photos: [...byKey.values()].filter((e) => !e.why && e.m).length,
@@ -4658,6 +4770,6 @@
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince, updatePlan, codeIn,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, LEAD_WORDS,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1175,6 +1175,18 @@ The write-ups come from the Site Auditor AI from the facts the scan collected (r
 <p>Every exception keeps its history (added, changed, by whom, when, why) and the same lines are in the audit's <b>Activity log</b>, removals included. Changes to sets are in the app's activity log and in each set's history.</p>`,
   },
   {
+    id: 'stock', group: 'Audits', title: 'Editorial stock photos — Shutterstock images a business may not use', audience: 'all',
+    html: `<p>Some Shutterstock images are licensed for <b>editorial use only</b> (news and commentary). They may not be used to promote a business, so they must not be on a client's website. The audit reports one as <b>Stock photo licensed for editorial use only</b> (critical when visitors see it, a warning when it is hidden), with every place it is used and a link to it on Shutterstock.</p>
+<h3>How a picture is recognised</h3>
+<ul><li><b>By file name</b>: a picture that still carries its Shutterstock ID (<span class="mono">shutterstock_2530975229.jpg</span>, or a Shutterstock preview such as <span class="mono">…-260nw-2669861029.jpg</span>) is matched against the list.</li>
+<li><b>By how it looks</b>: every photo on the website is fingerprinted for the duplicate-photo check anyway; a photo whose fingerprint matches an image on the list is reported too, so a renamed, resized or re-saved copy is still caught. The item says which way it was recognised; when it was by look, compare the two before replacing it. A copy that was heavily cropped or edited may not match.</li>
+<li><b>New IDs</b>: an ID in a file name that is not on the list is looked up on Shutterstock once. Editorial images have a place and a date in their title (\u201cVinnytsia, Ukraine \u2013 August 04, 2025: \u2026\u201d); when Shutterstock marks it editorial it joins the list. When Shutterstock cannot be asked, the scan log says so and the picture is not reported.</li></ul>
+<h3>The list</h3>
+<p><b>Settings → 📷 Editorial stock photos</b>. It starts with the Editorial Use Only images in the team's Shutterstock downloads. People who manage exception sets can add IDs (or paste Shutterstock links) and remove them. <b>Get previews from Shutterstock</b> makes the fingerprints from Shutterstock's previews (a watermark makes no difference); when Shutterstock does not give one, <b>Upload a copy</b> on the image's row (a preview saved from Shutterstock is fine). Images without a fingerprint are recognised by file name only.</p>
+<h3>Fixing it</h3>
+<p>Replace the picture with one licensed for commercial use (a Standard license) or the business's own photo, then rescan or mark the item Done. To stay clear: don't download images marked <b>Editorial use only</b> on Shutterstock, and keep the original file name when uploading Shutterstock images.</p>`,
+  },
+  {
     id: 'jaguars', group: 'Collaboration', title: 'Tasks — the Jaguars board', audience: 'all',
     html: `<p><b>Tasks</b> is where the Jaguars fix audits, one website at a time, <b>first in, first out</b>.</p>
 <h3>The board</h3>
