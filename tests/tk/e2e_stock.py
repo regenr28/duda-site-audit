@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
 APP, TESTS = sys.argv[1], sys.argv[2]
-OUT = os.path.join(TESTS, 'tk'); APORT, RPORT, SSPORT = 3998, 8078, 8114
+OUT = os.path.join(TESTS, 'tk'); APORT, RPORT, SSPORT, AIPORT = 3998, 8078, 8114, 8115
 ADMIN_TOK, MEMBER_TOK = 'tokadmin1234567890abcdef', 'tokmember1234567890abcde'
 
 def picture(seed):
@@ -15,8 +15,8 @@ def picture(seed):
     for i in range(14):
         d.rectangle([(i * 37 + seed * 11) % 380, (i * 53) % 240, (i * 37 + seed * 11) % 380 + 40, (i * 53) % 240 + 30], fill=((i * 40 + seed * 30) % 255, (i * 90) % 255, (i * 15 + seed) % 255))
     b = io.BytesIO(); im.save(b, 'JPEG', quality=88); return b.getvalue()
-PICS = {'2669861029': picture(1), '2530975229': picture(2)}
-SEEN = {'pages': []}
+PICS = {'2669861029': picture(1), '2530975229': picture(2), '2777777777': picture(4), '2888888888': picture(5)}
+SEEN = {'pages': [], 'ai': []}
 class SS(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
@@ -39,8 +39,25 @@ class SS(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.end_headers(); self.wfile.write(PICS[m.group(1)]); return
         self.send_response(404); self.end_headers()
 ss = HTTPServer(('127.0.0.1', SSPORT), SS); threading.Thread(target=ss.serve_forever, daemon=True).start()
+class AI(BaseHTTPRequestHandler):
+    # Stand-in for the AI web search: finds the Shutterstock page of whatever ID it is asked about.
+    def log_message(self, *a): pass
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get('content-length') or 0)) or b'{}')
+        user = ''.join(m['content'] if isinstance(m['content'], str) else '' for m in body.get('messages', []))
+        i = (re.search(r'(\d{5,12})', user) or [None, ''])[1]; SEEN['ai'].append(i)
+        tools = body.get('tools') or []
+        res = [{'type': 'web_search_result', 'url': 'https://www.shutterstock.com/image-photo/some-other-picture-1000000001', 'title': 'Other | Shutterstock'},
+               {'type': 'web_search_result', 'url': f'https://www.shutterstock.com/image-photo/denver-usa-march-3-2025-blue-truck-{i}', 'title': 'Denver, USA - March 3, 2025: blue truck Stock Photo | Shutterstock'}]
+        out = {'id': 'm', 'model': 'claude-haiku-4-5-20251001', 'usage': {'input_tokens': 10, 'output_tokens': 5, 'server_tool_use': {'web_search_requests': 1}},
+               'content': [{'type': 'server_tool_use', 'id': 's1', 'name': 'web_search', 'input': {'query': i}}, {'type': 'web_search_tool_result', 'tool_use_id': 's1', 'content': res},
+                           {'type': 'text', 'text': 'https://www.shutterstock.com/image-photo/a-made-up-address-' + i}]}
+        check_tools = any(t.get('name') == 'web_search' for t in tools)
+        b = json.dumps(out if check_tools else {'content': [{'type': 'text', 'text': '{}'}]}).encode()
+        self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(b)
+ais = HTTPServer(('127.0.0.1', AIPORT), AI); threading.Thread(target=ais.serve_forever, daemon=True).start()
 
-env = dict(os.environ, SHUTTERSTOCK_BASE=f'http://127.0.0.1:{SSPORT}')
+env = dict(os.environ, SHUTTERSTOCK_BASE=f'http://127.0.0.1:{SSPORT}', ANTHROPIC_API_KEY='sk-test', ANTHROPIC_API_BASE=f'http://127.0.0.1:{AIPORT}/v1', ANTHROPIC_MODEL='claude-haiku-4-5-20251001', AI_ORDER='anthropic')
 srv = subprocess.Popen(['node', os.path.join(OUT, 'run.mjs'), APP, TESTS], stdout=subprocess.PIPE, stderr=open(os.path.join(OUT, 'srv-stock.log'), 'w'), text=True, env=env)
 assert srv.stdout.readline().strip() == 'READY'
 def api(body, tok=ADMIN_TOK):
@@ -94,6 +111,15 @@ try:
     try: urllib.request.urlopen(urllib.request.Request(f'http://localhost:{APORT}/api/imghash?url={q2}', headers={'Cookie': 'dsa_sess=' + ADMIN_TOK}), timeout=30); bad = 200
     except urllib.error.HTTPError as e: bad = e.code
     check(bad == 400, 'but a Shutterstock page that is not a picture file is refused')
+    # Shutterstock's page refuses: adding one by hand falls back to an AI web search, trusting only the result addresses.
+    st, r = api({'stock': 'lookup', 'ids': ['2777777777'], 'ai': True})
+    v = r['results']['2777777777']
+    print('   ai lookup:', v)
+    check(v.get('via') == 'ai' and v.get('editorial') is True and 'denver-usa-march-3-2025-blue-truck-2777777777' in v.get('url', ''), 'when Shutterstock’s page refuses, the AI web search finds the image’s page (and its place-and-date title says editorial)')
+    check(v.get('preview', '').endswith('/image-photo/denver-usa-march-3-2025-blue-truck-260nw-2777777777.jpg') and v.get('file') == 'shutterstock_2777777777.jpg', 'the preview address and the file name are built from the ID and the page address')
+    check('made-up' not in json.dumps(v), 'the AI’s own words are never used, only the addresses its search returned')
+    st, r = api({'stock': 'list'})
+    check('2777777777' not in [x['id'] for x in r['items']], 'looking one up to add it does not put it on the list by itself')
     # Settings page
     api({'stock': 'remove', 'id': '2669861029'}); api({'stock': 'add', 'ids': ['2669861029']})
     with sync_playwright() as p:
@@ -114,7 +140,22 @@ try:
         row = pg.inner_text('tr[data-st="2669861029"]')
         check('file name and look' in row, 'Get previews made the fingerprint from Shutterstock’s preview: ' + row.replace('\n', ' | '))
         check(m and int(m.group(1)) >= 2, 'the ones Shutterstock gave a preview for are fingerprinted')
-        check('without a preview' in pg.inner_text('#stOut'), 'and it says which ones still need a copy uploaded')
+        check('did not give a preview' in pg.inner_text('#stOut'), 'and it says which ones still need a copy uploaded')
+        # + New → Editorial photo: type the ID, the app finds the rest
+        pg.click('#btnNew'); pg.wait_for_selector('[data-new="editorial"]', timeout=5000)
+        pg.click('[data-new="editorial"]'); pg.wait_for_selector('#saId', timeout=5000)
+        pg.fill('#saId', 'https://www.shutterstock.com/image-photo/2888888888'); pg.click('#saFind')
+        pg.wait_for_selector('.st-card', timeout=60000); time.sleep(1.5)
+        card = pg.inner_text('.st-card')
+        print('   card:', card.replace('\n', ' | '))
+        check('Denver, USA - March 3, 2025: blue truck' in card and 'shutterstock_2888888888.jpg' in card and 'denver-usa-march-3-2025-blue-truck-2888888888' in card and 'Editorial use only' in card, 'the Add box shows the title, page link, file name and licence for the ID')
+        check(pg.evaluate("() => { const i = document.querySelector('.st-card img.st-thumb'); return !!i && i.naturalWidth > 0; }"), 'and the thumbnail preview')
+        pg.screenshot(path=os.path.join(OUT, 'stock-add.png'))
+        pg.click('#saGo'); pg.wait_for_selector('tr[data-st="2888888888"]', timeout=20000); time.sleep(1.5)
+        row = pg.inner_text('tr[data-st="2888888888"]')
+        check('file name and look' in row and 'shutterstock_2888888888.jpg' in row and 'Added by Reymark R' in row, 'Add puts it on the list, fingerprinted from its preview: ' + row.replace('\n', ' | '))
+        check(pg.evaluate("() => { const i = document.querySelector('tr[data-st=\"2888888888\"] img.st-thumb'); return !!i && i.complete && i.naturalWidth > 0; }"), 'its row shows the thumbnail')
+        check(pg.locator('#stNew').count() == 1, 'the page has its own + Add editorial photo button')
         # Upload a copy for one without a preview
         tmp = os.path.join(OUT, 'stock-upload.jpg'); open(tmp, 'wb').write(picture(3))
         pg.set_input_files('[data-stup="1234567"]', tmp); time.sleep(2)
@@ -127,6 +168,6 @@ try:
         check(pg2.locator('[data-strm]').count() == 0 and pg2.locator('#stAdd').count() == 0 and 'Only people who manage exception sets' in pg2.inner_text('#setBody'), 'a member sees the list without Add or Remove')
         br.close()
 finally:
-    srv.terminate(); ss.shutdown()
+    srv.terminate(); ss.shutdown(); ais.shutdown()
 check(not errors, 'no page errors ' + '; '.join(errors[:3]))
 print('ALL PASS' if ok else 'SOME FAILED'); sys.exit(0 if ok else 1)

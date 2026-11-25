@@ -2484,3 +2484,15 @@ table.findings .rw-status select { max-width: 150px; }
 .crv textarea { font-family: inherit; font-size: 13.5px; }
 .crv .field { display: grid; gap: 4px; font-weight: 600; }
 @media (max-width: 640px) { .crv-row { grid-template-columns: 1fr; } }
+
+/* Settings → Editorial photos */
+.st-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.st-thumb { display: block; width: 96px; height: 64px; object-fit: cover; border-radius: 6px; background: var(--subtle, #f1f3f6); border: 1px solid var(--border); }
+.st-thumb.none { display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--faint, #8a93a3); }
+.st-thumb.big { width: 220px; height: 146px; }
+.st-tbl td { vertical-align: middle; }
+.st-t a { word-break: break-all; }
+.st-card { display: flex; gap: 14px; align-items: flex-start; margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.st-card-t { display: grid; gap: 4px; min-width: 0; }
+.st-card-t a { word-break: break-all; }
+@media (max-width: 640px) { .st-card { flex-direction: column; } .st-thumb.big { width: 100%; height: auto; aspect-ratio: 3 / 2; } }

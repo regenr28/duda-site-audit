@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-25-editorial-add', date: '2026-11-25', audience: 'all', tag: 'Audits',
+    title: 'Editorial photos: add one by its Shutterstock ID, with a preview',
+    what: 'The Editorial photos list now shows each image\u2019s preview, Shutterstock ID, title, link to its Shutterstock page and file name. To add one, type its Shutterstock ID (or paste the link): the app finds its page, title, file name and preview by itself, and says whether Shutterstock marks it Editorial use only.',
+    where: ['<b>Walkthrough:</b> <b>+ New</b> (top right) → <b>📷 Editorial photo</b>, or <b>Settings → 📷 Editorial photos</b> → <b>+ Add editorial photo</b>.'],
+  },
+  {
     id: '2026-11-25-editorial-stock', date: '2026-11-25', audience: 'all', tag: 'Audits',
     title: 'New check: stock photos licensed for editorial use only',
     what: 'Some Shutterstock images may only be used editorially, never to promote a business. Audits now report one on a website as <b>Stock photo licensed for editorial use only</b> (critical), with every place it is used and a link to it on Shutterstock. A picture is recognised by the Shutterstock ID in its file name, or by how it looks, so a renamed or resized copy is caught too. The list starts with the 67 Editorial Use Only images in our Shutterstock downloads; an ID the list does not know is looked up on Shutterstock once. Run <b>⚡ Apply check updates</b> on an audit to check it now.',

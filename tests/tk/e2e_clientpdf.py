@@ -56,7 +56,7 @@ PAGES = {
     '/locations/belton-tx/window-tint': ('Window Tint in Belton, TX', '<h1>Window Tint in Belton</h1><p>Our team will keep your paint glossy for years in Belton.</p>'),
     '/fort-hood-window-tint-law': ('Fort Hood Window Tint Law', '<h1>Fort Hood Window Tint Law</h1><p>Window tint inspections on post are free for soldiers. [Matthew: confirm this is free before publishing.]</p><div class="dmButton"><span>Button</span></div>'),
     '/window-tint': ('Window Tint \u2502 Harker Heights \u2013 Ceramic\u200b Coatings', '<h1>Window Tint</h1><p>Window tint for every car. Tint that keeps the cabin cool.</p>'),
-    '/paint-correction': ('Paint Correction | Harker Heights Ceramic Coatings', '<h1>Paint Correction</h1><p>Paint correction removes swirls \u2014 the kind a car wash leaves.</p>'),
+    '/paint-correction': ('Paint Correction | Harker Heights Ceramic Coatings', '<h1>Paint Correction</h1><p>Paint correction removes swirls \u2014 the kind a car wash leaves.</p><img src="/files/our-shop-bay.jpg" alt="Our paint correction bay" width="800" height="500">'),
     '/contrast-test': ('Get a Quote | Harker Heights Ceramic Coatings', '<h1>Get a Quote</h1><p>Contrast cases are on the preview server.</p>'),
     '/ceramic-coating': ('Ceramic Coating | Harker Heights Ceramic Coatings', '<h1>Ceramic Coating</h1>' + CER + '<p>Pair it with PPF on the front end.</p>'),
 }
@@ -105,6 +105,8 @@ try:
         PAGES['/fort-hood-window-tint-law'] = ('Fort Hood Window Tint Law', '<h1>Fort Hood Window Tint Law</h1><p>Window tint inspections on post are free for soldiers.</p>')
         S2 = scan(pg, (S1.get('scan') or {}).get('finishedAt'))
         check((S2.get('scan') or {}).get('state') == 'complete', 'two scans finished')
+        slog = ' | '.join(str(x) for x in ((S2.get('scan') or {}).get('log') or []))
+        check('Editorial stock' not in slog and 'not defined' not in slog, 'the editorial stock photo check ran without errors: ' + slog[:200])
         F = [f for f in S2['findings'] if not f.get('gone')]
         fa = next(f for f in F if f['code'] == 'AI_PAGE_TOPIC'); cl = next(f for f in F if f['code'].startswith('PAGE_TOPIC'))
         pg.evaluate("async (a) => { const st = (b) => fetch('/api/store', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); await st({ op: 'patchFinding', siteId: 's1', findingIds: [a[0]], changes: { status: 'false' } }); await st({ op: 'patchFinding', siteId: 's1', findingIds: [a[1]], changes: { status: 'clarification', asked: '' } }); }", [fa['id'], cl['id']])

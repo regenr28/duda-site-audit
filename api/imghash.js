@@ -19,6 +19,8 @@
 //      Shutterstock's own page for an ID found in a file name; an editorial one joins the list.
 import { metered, redis, P, readBody, requireUser, jparse, sha, can, fetchWithTimeout, UA_DESKTOP } from './_lib.js';
 import { STOCK_SEED } from './_stockseed.js';
+import { aiUsage } from './_meter.js';
+import { _test as ai } from './ai.js';
 
 // Only the places a Duda website actually serves pictures from. This must never become a proxy for
 // anything anyone asks for.
@@ -54,6 +56,52 @@ async function stockList() {
   else if (all && typeof all === 'object') Object.values(all).forEach((x) => { const v = typeof x === 'string' ? jparse(x) : x; if (v && v.id) out.push(v); });
   return out.sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
+/** "Denver, USA - March 3, 2025: blue truck Stock Photo | Shutterstock" → the image's own title. */
+const cleanTitle = (t) => String(t || '').replace(/\s*[|\u2013\u2014]\s*Shutterstock.*$/i, '').replace(/\s+(Stock|Editorial Stock)\s+(Photo|Image|Vector|Illustration)s?\s*$/i, '').trim();
+/** Everything that follows from an image's address on Shutterstock: its page, the downloaded file's name, its preview picture. */
+function stockFacts(id, pageUrl, title) {
+  let kind = 'image-photo', slug = '';
+  try {
+    const u = new URL(pageUrl, STOCK_BASE());
+    const m = u.pathname.match(/\/(image-photo|image-vector|image-illustration|editorial\/image-editorial)\/(.+?)(?:-(\d{5,12}))?\/?$/);
+    if (m && (!m[3] || m[3] === id)) { kind = m[1]; slug = m[2].replace(new RegExp('-?' + id + '$'), ''); }
+  } catch (e) { /* no page address */ }
+  const dated = DATED_SLUG.test(slug + '-') || new RegExp(`^[^:]{2,80}[-\u2013\u2014]\\s*(${MONTHS})\\s+\\d{1,2},\\s*(19|20)\\d\\d\\s*:`, 'i').test(title || '');
+  return {
+    url: slug ? `${STOCK_BASE()}/${kind}/${slug}-${id}` : `${STOCK_BASE()}/image-photo/${id}`,
+    preview: slug ? `${STOCK_BASE()}/${kind}/${slug}-260nw-${id}.jpg` : '',
+    file: `shutterstock_${id}.jpg`, slug, dated,
+  };
+}
+/** When Shutterstock's own page will not answer: an AI web search for the ID, trusting only the addresses it returns. */
+async function stockLookupAI(id) {
+  const list = await ai.applySavedModels(ai.providers()).catch(() => ai.providers());
+  const p = list.find((x) => x.id === 'anthropic');
+  if (!p) return null;
+  const model = process.env.STOCK_AI_MODEL || p.model;
+  try {
+    const r = await fetchWithTimeout(`${p.base}/messages`, {
+      method: 'POST', headers: { 'x-api-key': p.key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, max_tokens: 400, system: 'Find the Shutterstock image with the given ID. Search for it and reply with its page address only.',
+        messages: [{ role: 'user', content: `Shutterstock image ID ${id}` }],
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2, allowed_domains: ['shutterstock.com'] }] }),
+    }, 60000);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return null;
+    const u = j.usage || {};
+    aiUsage('anthropic', j.model || model, (u.input_tokens || 0) + (u.cache_read_input_tokens || 0), u.output_tokens || 0, (u.server_tool_use && u.server_tool_use.web_search_requests) || 0);
+    // Only a search result whose address ends in this ID counts: the AI's own words are never used.
+    let hit = null;
+    (j.content || []).forEach((b) => {
+      if (b.type !== 'web_search_tool_result' || !Array.isArray(b.content)) return;
+      b.content.forEach((x) => { if (!hit && x && x.url && new RegExp(`shutterstock\\.com/.*-${id}/?(\\?|$)`).test(x.url)) hit = x; });
+    });
+    if (!hit) return { id, editorial: null, via: 'ai', status: 0 };
+    const title = cleanTitle(hit.title);
+    const f = stockFacts(id, new URL(hit.url).pathname, title);
+    return { id, editorial: f.dated ? true : null, title: title.slice(0, 200), url: f.url, preview: f.preview, file: f.file, via: 'ai', status: 200 };
+  } catch (e) { return null; }
+}
 /** What Shutterstock's own page says about one ID. null fields = it could not tell (blocked, not found). */
 async function stockLookup(id) {
   try {
@@ -63,12 +111,13 @@ async function stockLookup(id) {
     const slug = String((r.url || '').split('?')[0].split('/').pop() || '');
     const meta = (prop) => { const m = html.match(new RegExp(`<meta[^>]+(?:property|name)="${prop}"[^>]+content="([^"]+)"`, 'i')) || html.match(new RegExp(`<meta[^>]+content="([^"]+)"[^>]+(?:property|name)="${prop}"`, 'i')); return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'") : ''; };
     const flag = html.match(/"is_?editorial"\s*:\s*(true|false)/i);
-    const title = meta('og:title');
+    const title = cleanTitle(meta('og:title'));
     const dated = DATED_SLUG.test(slug) || new RegExp(`^[^:]{2,80}[-\u2013\u2014]\\s*(${MONTHS})\\s+\\d{1,2},\\s*(19|20)\\d\\d\\s*:`, 'i').test(title);
     const editorial = flag ? flag[1].toLowerCase() === 'true' : dated;
+    const f = stockFacts(id, r.url || '', title);
     let preview = meta('og:image');
     try { const pu = new URL(preview, STOCK_BASE()); preview = stockImgHost(pu) ? pu.href : ''; } catch (e) { preview = ''; }
-    return { id, editorial, title: title.slice(0, 200), preview: preview.slice(0, 600), status: r.status };
+    return { id, editorial, title: title.slice(0, 200), preview: (preview || f.preview).slice(0, 600), url: f.url, file: f.file, via: 'page', status: r.status };
   } catch (e) { return { id, editorial: null, status: 0 }; }
 }
 
@@ -131,7 +180,11 @@ async function handler(req, res) {
         if (op === 'remove') { if (!okId(b.id)) return res.status(400).json({ error: 'Not a Shutterstock ID' }); await redis(['HDEL', ED_KEY, String(b.id).trim()]); return res.status(200).json({ ok: true }); }
         const ids = [...new Set([].concat(b.ids || []).map((x) => String(x).trim()).filter(okId))].slice(0, 500);
         const at = new Date().toISOString();
-        if (ids.length) await redis(...ids.map((id) => ['HSETNX', ED_KEY, id, JSON.stringify({ id, src: 'added', by: me.name || me.email, at })]));
+        const facts = b.facts && typeof b.facts === 'object' ? b.facts : {};
+        const clean = (v) => { const x = facts[v] || {}; const f = stockFacts(v, x.url || '', x.title || '');
+          let preview = ''; try { const pu = new URL(String(x.preview || f.preview || '')); preview = stockImgHost(pu) ? pu.href : ''; } catch (e) { /* none */ }
+          return { title: String(x.title || '').slice(0, 200), url: f.slug ? f.url : '', preview: preview.slice(0, 600), editorial: x.editorial === true ? true : x.editorial === false ? false : null }; };
+        if (ids.length) await redis(...ids.map((id) => ['HSETNX', ED_KEY, id, JSON.stringify(Object.assign({ id, src: 'added', by: me.name || me.email, at }, clean(id)))]));
         return res.status(200).json({ added: ids.length });
       }
       if (op === 'hash') {
@@ -150,26 +203,30 @@ async function handler(req, res) {
         if (!ids.length) return res.status(200).json({ results: {} });
         const cached = await redis(...ids.map((id) => ['GET', LK_KEY(id)]));
         const results = {}; const fresh = [];
-        ids.forEach((id, i) => { const v = jparse(cached[i]); if (v) results[id] = v; else fresh.push(id); });
+        // A page that did not answer is asked again when the AI may now fill in (adding by hand, Get previews).
+        ids.forEach((id, i) => { const v = jparse(cached[i]); if (v && !(b.ai && v.editorial === null && !v.preview && v.via !== 'ai')) results[id] = v; else fresh.push(id); });
         // A few at a time: this is Shutterstock's public website, not an API.
-        for (const id of fresh.slice(0, 10)) {
-          const v = await stockLookup(id);
+        // Side by side, so ten of them (an AI web search each, when Shutterstock's page does not answer) stay well inside the time limit.
+        await Promise.all(fresh.slice(0, 10).map(async (id) => {
+          let v = await stockLookup(id);
+          // When Shutterstock's page does not answer, an AI web search finds its address (adding by hand, Get previews).
+          if (b.ai && v.editorial === null && !v.preview) { const w = await stockLookupAI(id); if (w && (w.preview || w.title)) v = w; }
           results[id] = v;
-          await redis(['SET', LK_KEY(id), JSON.stringify(v), 'EX', v.editorial === null ? 86400 : 30 * 86400]);
-        }
+          await redis(['SET', LK_KEY(id), JSON.stringify(v), 'EX', v.editorial === null && !v.preview ? 86400 : 30 * 86400]);
+        }));
         const [all] = await redis(['HKEYS', ED_KEY]);
         const listed = new Set([].concat(all || []).map(String));
         const at = new Date().toISOString(); const cmds = [];
         Object.values(results).forEach((v) => {
           if (!v || !v.id) return;
-          if (v.editorial === true && !listed.has(v.id)) cmds.push(['HSETNX', ED_KEY, v.id, JSON.stringify({ id: v.id, src: 'lookup', by: 'Found by a scan', at, preview: v.preview || '', title: v.title || '' })]);
+          if (v.editorial === true && !listed.has(v.id) && !b.ai) cmds.push(['HSETNX', ED_KEY, v.id, JSON.stringify({ id: v.id, src: 'lookup', by: 'Found by a scan', at, preview: v.preview || '', url: v.url || '', title: v.title || '', editorial: true })]);
         });
         if (cmds.length) await redis(...cmds);
         // Listed IDs without a preview get the one the page gave.
         const needPrev = Object.values(results).filter((v) => v && v.preview && listed.has(v.id));
         if (needPrev.length) {
           const rows = await redis(...needPrev.map((v) => ['HGET', ED_KEY, v.id]));
-          const up = []; needPrev.forEach((v, i) => { const cur = jparse(rows[i]); if (cur && !cur.preview) up.push(['HSET', ED_KEY, v.id, JSON.stringify(Object.assign(cur, { preview: v.preview, title: cur.title || v.title || '' }))]); });
+          const up = []; needPrev.forEach((v, i) => { const cur = jparse(rows[i]); if (cur && (!cur.preview || !cur.url)) up.push(['HSET', ED_KEY, v.id, JSON.stringify(Object.assign(cur, { preview: cur.preview || v.preview, url: cur.url || v.url || '', title: cur.title || v.title || '', editorial: cur.editorial === undefined ? v.editorial : cur.editorial }))]); });
           if (up.length) await redis(...up);
         }
         return res.status(200).json({ results, pending: Math.max(0, fresh.length - 10) });
