@@ -108,7 +108,9 @@ function summary(site, comments) {
   return {
     id: site.id, siteId: site.siteId, host: site.host, editorUrl: site.editorUrl, businessName: site.businessName || '',
     assignee: site.assignee || '', status: site.status || 'Not started', scan: slimScan(site.scan), addedBy: site.addedBy || '', addedByName: site.addedByName || '',
-    createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c, exv: site._exv || 0, sv: 3, cmBy, faBy, doneBy,
+    createdAt: site.createdAt, updatedAt: site.updatedAt, counts: c, exv: site._exv || 0, sv: 4, cmBy, faBy, doneBy,
+    // Audited by an auto audit (the SEO websites' audit after each publish), not only by hand: the Audits filter.
+    ...((site.scans || []).some((x) => x && x.seoAuto) ? { auto: 'seo' } : {}),
     // Everyone this website has passed through, so the list can be narrowed to a person's own work
     // without reading every full record.
     people: site.people || [site.addedBy, site.assignee].filter(Boolean),
@@ -366,7 +368,7 @@ async function handler(req, res) {
         // Summaries written before must-fix and design polish were counted apart are brought up to
         // date a few at a time (each is one website read), so the list is right within a load or two.
         // …and so are those counted before the exception sets last changed.
-        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined || (x.exv || 0) !== exv || x.sv !== 3)).slice(0, 40);
+        const old = sites.filter((x) => x && x.id && (!x.counts || x.counts.lt === undefined || (x.exv || 0) !== exv || x.sv !== 4)).slice(0, 40);
         if (old.length) {
           const fresh = await Promise.all(old.map((x) => saveIndex(x.id).catch(() => null)));
           const byId = new Map(fresh.filter(Boolean).map((x) => [x.id, x]));

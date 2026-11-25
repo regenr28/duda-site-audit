@@ -127,6 +127,9 @@ async function sweep(req, res) {
   if (gate !== 'OK') return res.status(200).json({ skipped: 'already ran in the last 20 hours' });
   const bot = { email: '', name: 'Daily check' };
   const list = await loadList('published', bot, false);
+  // Domain monitoring runs on the days Settings → Auto audits gives it (the list above is refreshed regardless).
+  const { aaCfg, aaToday, aaMark } = await import('./_autoaudits.js');
+  if (!aaToday(await aaCfg('domains'))) return res.status(200).json({ skipped: 'domain monitoring is off today (Settings \u2192 Auto audits)' });
   const [doms, names] = await redis(['HGETALL', DOMS], ['HGETALL', NAMES]);
   // A result that only says the connection was cut off is checked again first (it was the checker, not the website).
   const cut = (v) => v && /ECONNRESET|ECONNREFUSED|socket|other side closed/i.test(String(v.detail || '')) && v.status === 'down';
@@ -139,6 +142,8 @@ async function sweep(req, res) {
   const out = await checkAndStore(due, { budgetMs: 95000, concurrency: 6 });
   await markRun('domains', bot, false, { count: Object.keys(out).length });
   const open = await sendDigest().catch(() => 0);
+  const lastDom = due[Math.min(due.length, Object.keys(out).length) - 1];
+  await aaMark('domains', { by: 'cron', checked: Object.keys(out).length, open, site: lastDom ? { id: lastDom.id, name: lastDom.name || lastDom.domain } : null });
   return res.status(200).json({ checked: Object.keys(out).length, due: due.length, open });
 }
 

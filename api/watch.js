@@ -19,10 +19,14 @@ async function cron(req, res) {
   if (secret && String(req.headers.authorization || '') !== 'Bearer ' + secret) return res.status(401).json({ error: 'Not allowed' });
   const [gate] = await redis(['SET', P + 'cwsweep', new Date().toISOString(), 'NX', 'EX', 20 * 3600]);
   if (gate !== 'OK') return res.status(200).json({ skipped: 'already ran in the last 20 hours' });
-  const r = await runWatch({ budgetMs: 70000, by: 'cron' });
+  // Each auto audit runs on the days Settings → Auto audits gives it.
+  const { aaCfg, aaToday, aaMark } = await import('./_autoaudits.js');
+  const [biz, ed, pres] = await Promise.all([aaCfg('bizinfo'), aaCfg('editorial'), aaCfg('presence')]);
+  const r = aaToday(biz) || aaToday(ed) ? await runWatch({ budgetMs: 70000, by: 'cron' }) : { skipped: 'not a day the Business Info and editorial photo checks run' };
   const reported = await watchDigest().catch(() => 0);
   const { presenceAuto } = await import('./_presence.js');
-  r.presence = await presenceAuto({ budgetMs: 40000, by: 'cron' }).catch((e) => ({ error: String(e.message || e) }));
+  r.presence = aaToday(pres) ? await presenceAuto({ budgetMs: 40000, by: 'cron' }).catch((e) => ({ error: String(e.message || e) })) : { skipped: 'not today' };
+  if (r.presence && Array.isArray(r.presence.done) && r.presence.done.length) await aaMark('presence', { by: 'cron', done: r.presence.done.length });
   // Websites whose forms have just gone quiet: one message a day to the admins.
   const { quietAlerts } = await import('./_leadkv.js');
   r.quiet = await quietAlerts().catch((e) => ({ error: String(e.message || e) }));
@@ -38,6 +42,13 @@ async function handler(req, res) {
     if (!me) return;
     if (await denyUnless(res, me, 'live.view', 'Your role does not include Live DR Sites.')) return;
     if (req.method === 'GET') {
+      // Settings → Auto audits: the list, and one auto audit's settings.
+      if (req.query.op === 'autoaudits') { const { aaList } = await import('./_autoaudits.js'); return res.status(200).json({ list: await aaList(), canEdit: me.role === 'admin' }); }
+      if (req.query.op === 'aa') {
+        const { aaDetail } = await import('./_autoaudits.js');
+        const d = await aaDetail(String(req.query.id || ''));
+        return d ? res.status(200).json(Object.assign(d, { canEdit: me.role === 'admin' })) : res.status(404).json({ error: 'No such auto audit' });
+      }
       if (req.query.op === 'site') {
         const id = String(req.query.id || '');
         if (!okId(id)) return res.status(400).json({ error: 'Which website?' });
@@ -84,6 +95,29 @@ async function handler(req, res) {
       const next = { auto: b.auto === undefined ? cur.auto : !!b.auto, perDay: Math.max(1, Math.min(200, Number(b.perDay) || cur.perDay)), clientDefault: b.clientDefault === undefined ? cur.clientDefault : !!b.clientDefault, by: me.name, at: Date.now() };
       await redis(['SET', PCFG, JSON.stringify(next)], next.auto ? ['SET', P + 'presence:due', '1', 'EX', 86400] : ['DEL', P + 'presence:due']);
       return res.status(200).json({ cfg: next });
+    }
+    if (b.op === 'aaSave' || b.op === 'aaTest' || b.op === 'aaPreview' || b.op === 'aaRun') {
+      const A = await import('./_autoaudits.js');
+      const def = A.aaDef(String(b.id || ''));
+      if (!def) return res.status(400).json({ error: 'Which auto audit?' });
+      if (b.op === 'aaPreview' || b.op === 'aaTest') {
+        // The message as it would be sent with the settings on screen (not saved yet), for a made-up website.
+        const cfg = Object.assign(await A.aaCfg(def.id), { notify: Object.assign({}, (await A.aaCfg(def.id)).notify, b.notify || {}) });
+        if (!def.notify) return res.status(400).json({ error: 'This auto audit sends no messages.' });
+        const m = A.aaMessage(def, cfg, { kind: def.id === 'domains' ? 'domain-problem' : def.id === 'quiet' ? 'leads-quiet' : 'watch-issue', test: true }, A.aaSample(def.id));
+        if (b.op === 'aaTest') { const { notifyUser } = await import('./_lib.js'); await notifyUser(me.email, Object.assign({}, m, { headline: '[Test] ' + m.headline })); }
+        return res.status(200).json({ message: { headline: m.headline, sections: m.sections, lines: m.lines } });
+      }
+      if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+      if (b.op === 'aaSave') { const cfg = await A.aaSave(def.id, b.cfg || {}, me); await watchStatus().catch(() => {}); return res.status(200).json({ cfg }); }
+      // Run now: the reading pass (Business Info and editorial photos) or the forms-gone-quiet message.
+      if (def.id === 'bizinfo' || def.id === 'editorial') {
+        if (isCopy()) return res.status(409).json({ error: 'This is the copy of the app: the auto audit runs in the main app.' });
+        const r = await runWatch({ budgetMs: 45000, by: me.email });
+        return res.status(200).json({ ran: true, done: (r.done || []).length, pending: r.pending || 0, off: !!r.off, wait: r.wait || 0, busy: !!r.busy });
+      }
+      if (def.id === 'quiet') { const { quietAlerts } = await import('./_leadkv.js'); const r = await quietAlerts({ force: true }); return res.status(200).json({ ran: true, quiet: r.quiet || 0, fresh: r.fresh || 0 }); }
+      return res.status(400).json({ error: 'This one runs on its own schedule only.' });
     }
     if (b.op === 'settings') {
       if (me.role !== 'admin') return res.status(403).json({ error: 'Admins only' });

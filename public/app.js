@@ -3064,7 +3064,7 @@
   // Every published website is read like a visitor reads it (all pages in its sitemap, blog posts
   // included) and compared with its Business Info. The server does the reading; this shows it.
   prof.watch = {};
-  const WC_TYPE = { phone: '📞 Phone', email: '✉️ Email', address: '📍 Address', name: '🏷 Business name', social: '🔗 Social account', schema: '🧩 Schema' };
+  const WC_TYPE = { phone: '📞 Phone', email: '✉️ Email', address: '📍 Address', name: '🏷 Business name', social: '🔗 Social account', schema: '🧩 Schema', stock: '📷 Editorial stock photo' };
   const wcPlural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
   function loadWatch(siteId, again, force) {
     const W = prof.watch[siteId];
@@ -3303,6 +3303,7 @@
       <span class="small faint">${e.wait ? esc(e.why || 'taking a break') : e.err ? esc(e.err) : e.c ? `${e.c} super critical${e.n > e.c ? ` · ${e.n - e.c} to check` : ''}` : e.n ? `${e.n} to check` : 'nothing wrong'}${e.pages ? ` · ${e.pages} page${e.pages === 1 ? '' : 's'}` : ''} · ${esc(acClock(e.at))}</span></li>`;
     return `<div class="ac-p-head"><div class="ac-p-title">🔎 Auto audit <span class="ac-dot ${dot}"></span><span class="ac-p-state">${head}</span></div>
         <div class="ac-p-acts">${admin && S.unreadable && !L.paused ? `<button class="btn sm" id="acRetry" title="Forget every 'could not be read' and try all of them again now">↻ Retry the ${S.unreadable} that could not be read</button>` : ''}
+          <a class="btn sm ghost" href="#/settings/autoaudits" title="What the auto audits check, when they run and who is told">\u2699 Settings</a>
           ${admin ? `<button class="btn sm ${L.paused ? 'primary' : 'ghost'}" id="acPause" title="${L.paused ? 'Start reading websites again' : 'Stop the auto audit until an admin resumes it'}">${L.paused ? '▶ Resume' : 'Pause'}</button>` : ''}</div></div>
       <div class="small muted ac-p-sub">${sub}</div>
       <div class="ac-bar" role="img" aria-label="${S.checked} read, ${S.unreadable} could not be read, ${pend} waiting, of ${S.total}"><i class="ok" style="width:${pct(S.checked)}%"></i><i class="bad" style="width:${pct(S.unreadable)}%"></i></div>
@@ -3340,7 +3341,7 @@
     const busy = !L || L.running || L.now || L.wait || (!L.paused && L.stat && L.stat.pending > 0) || wq.running;
     if (!wq.liveAt || Date.now() - wq.liveAt > (busy ? 10000 : 300000)) pollAuto();
   }, 1000);
-  const AC_TYPE = { phone: ['📞', 'phone', 'phones'], email: ['✉️', 'email', 'emails'], address: ['📍', 'address', 'addresses'], name: ['🏷', 'business name', 'business names'], social: ['🔗', 'social', 'socials'], schema: ['🧩', 'schema', 'schemas'] };
+  const AC_TYPE = { phone: ['📞', 'phone', 'phones'], email: ['✉️', 'email', 'emails'], address: ['📍', 'address', 'addresses'], name: ['🏷', 'business name', 'business names'], social: ['🔗', 'social', 'socials'], schema: ['🧩', 'schema', 'schemas'], stock: ['📷', 'editorial photo', 'editorial photos'] };
   /** Published again since the auto audit read it: its results are from before, and it is queued again. */
   const acRepub = (x) => !!(x && x.wc && !x.wc.e && x.published && Date.parse(x.published) > (x.wc.pubAt || 0) + 1000);
   /** The DR Websites "Auto audit" column: done (when), republished and queued, and the super critical ones. */
@@ -6264,6 +6265,7 @@
     { route: 'home', icon: '🏠', label: 'Home', words: 'home dashboard overview start today needs attention my work what to do first', href: '#/home', help: 'home' },
     { route: 'settings', icon: '🎨', label: 'Appearance: dark mode, light mode and colours', words: 'appearance dark mode light mode theme colour color night start page tips look', href: '#/settings/appearance', help: 'home' },
     { route: 'sites', icon: '📋', label: 'Audits', words: 'audits websites list scan home', href: '#/', help: 'audits' },
+    { route: 'settings', icon: '🤖', label: 'Auto audits: what runs by itself, its schedule and its notifications', words: 'auto audit automatic schedule cron daily notification message format slack business info editorial domain forms quiet presence settings', href: '#/settings/autoaudits', help: 'autoaudits' },
     { route: 'settings', icon: '📷', label: 'Editorial stock photos: Shutterstock images that may not be used on a business website', words: 'shutterstock editorial stock photo license licence commercial use only image list', href: '#/settings/stock', help: 'stock' },
     { route: 'settings', icon: '🚫', label: 'Audit exceptions: manufacturer pages and contact info that are not checked', words: 'exceptions exempt exemption white label manufacturer landing page xpel skip not checked', href: '#/settings/exceptions', perm: 'exempt.global', help: 'exceptions' },
     { route: 'tasks', icon: '🐆', label: 'Tasks: the Jaguars board', words: 'tasks jaguars jags queue board take next first in first out kanban review approve', href: '#/tasks', perm: 'jags.take', help: 'jaguars' },
@@ -6500,6 +6502,7 @@
     ['domains', '🌐 Domain monitoring', () => can('members.manage')],
     ['presence', '📣 Online presence', () => can('members.manage')],
     ['integrations', '🔌 Integrations', () => can('members.manage')],
+    ['autoaudits', '🤖 Auto audits', () => can('live.view')],
     ['exceptions', '🚫 Audit exceptions', () => can('exempt.global')],
     ['stock', '📷 Editorial photos', () => true],
     ['security', '🛡 Security log', () => true],
@@ -6639,6 +6642,139 @@
       try { await post('/api/imghash', { stock: 'remove', id: b.dataset.strm }); drawStockList(body); } catch (e) { toast(e.message); }
     }));
   }
+  // ---------- Settings → Auto audits ----------
+  const AA_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  /** "Every day" / "Mon–Fri" / "Mon, Wed, Fri": the days a cron day (UTC) runs, as words. */
+  const aaDaysWord = (days) => { const d = (days || []).slice().sort(); return d.length === 7 ? 'every day' : !d.length ? 'never' : d.join() === '1,2,3,4,5' ? 'Mon\u2013Fri' : d.map((x) => AA_DAYS[x]).join(', '); };
+  const aaWhen = (ms) => (ms ? fmtFull(new Date(ms).toISOString()) : '');
+  /** Settings → Auto audits: every check that runs by itself, one row each. */
+  async function drawAutoAudits(body) {
+    body.innerHTML = '<h2>Auto audits</h2><div class="empty">Loading…</div>';
+    let d; try { d = await api('/api/watch?op=autoaudits'); } catch (e) { body.innerHTML = `<h2>Auto audits</h2><div class="note bad">${esc(e.message)}</div>`; return; }
+    const who = (x) => (!x || !x.by || x.by === 'auto' ? '' : x.by === 'cron' ? 'on schedule' : x.by === 'manual' ? 'run by hand' : `by ${esc(nameOf(x.by, String(x.by).split('@')[0]))}`);
+    body.innerHTML = `<h2>Auto audits</h2>
+      <p class="muted">Checks that run by themselves on every website. Click one to choose what it checks, when it runs, and who is told and how. ${d.canEdit ? '' : 'Only admins can change them.'}</p>
+      <div class="aa-list">${d.list.map((x) => `<a class="aa-row" href="#/settings/autoaudits/${esc(x.id)}" data-aa="${esc(x.id)}">
+        <div class="aa-ic" aria-hidden="true">${x.icon}</div>
+        <div class="aa-main"><div class="aa-t"><b>${esc(x.title)}</b> ${x.paused ? `<span class="badge sev-warning">Paused${x.paused.by ? ' by ' + esc(x.paused.by) : ''}</span>` : x.on ? '<span class="badge v-ok">On</span>' : '<span class="badge subtle">Off</span>'}</div>
+          <div class="small muted">${esc(x.summary || '')}</div></div>
+        <dl class="aa-facts small">
+          <div><dt>Last run</dt><dd>${x.last && x.last.at ? `${esc(aaWhen(x.last.at))} <span class="faint">${who(x.last)}</span>` : '<span class="faint">not yet</span>'}</dd></div>
+          <div><dt>Last website</dt><dd>${x.last && x.last.site && x.last.site.name ? esc(x.last.site.name) : '<span class="faint">\u2014</span>'}</dd></div>
+          <div><dt>Next run</dt><dd>${x.next ? `${esc(aaWhen(x.next))} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : x.on && x.nextText ? `${esc(x.nextText)} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : '<span class="faint">off</span>'}</dd></div>
+          <div><dt>Notifications</dt><dd>${x.notify ? (x.notify.on ? [x.notify.instant && 'at once', x.notify.daily && 'daily report'].filter(Boolean).join(' + ') + ` \u00b7 ${x.notify.to === 'people' ? `${x.notify.people} ${x.notify.people === 1 ? 'person' : 'people'}` : 'admins'}` : 'off') : '<span class="faint">none</span>'}</dd></div>
+        </dl><span class="aa-go" aria-hidden="true">\u203a</span></a>`).join('')}</div>
+      <p class="small faint">Your own notifications (like a scan you started finishing) are in <a href="#/settings/notifications">Your notifications</a>. Each person also chooses there whether these messages reach their bell, pop-ups or Slack.</p>`;
+  }
+  /** One auto audit: what it checks (a tree of checkboxes), its schedule, and its notifications. */
+  async function drawAutoAudit(body, id) {
+    body.innerHTML = '<div class="empty">Loading…</div>';
+    let d; try { d = await api('/api/watch?op=aa&id=' + encodeURIComponent(id)); } catch (e) { body.innerHTML = `<a href="#/settings/autoaudits">\u2039 Auto audits</a><div class="note bad">${esc(e.message)}</div>`; return; }
+    const { def, cfg, users } = d; const edit = !!d.canEdit; const dis = edit ? '' : 'disabled';
+    const n = cfg.notify; const on = (k) => cfg.checks[k] !== false;
+    const cronLocal = (() => { const t = new Date(); t.setUTCHours(d.cronUtc[0], d.cronUtc[1], 0, 0); return t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); })();
+    const varChips = n ? Object.entries(def.notify.vars).map(([k, v]) => `<button type="button" class="chip aa-var" data-var="${esc(k)}" title="${esc(v)}" ${dis}>{${esc(k)}}</button>`).join(' ') : '';
+    body.innerHTML = `<div class="aa-back"><a href="#/settings/autoaudits">\u2039 Auto audits</a></div>
+      <div class="aa-head"><h2>${def.icon} ${esc(def.title)}</h2>
+        <label class="aa-switch"><input type="checkbox" id="aaOn" ${cfg.on ? 'checked' : ''} ${dis}> <b>${cfg.on ? 'On' : 'Off'}</b></label></div>
+      <p class="muted">${esc(def.desc)}</p>
+      <div class="small faint">${d.last && d.last.at ? `Last run ${esc(aaWhen(d.last.at))}${d.last.site && d.last.site.name ? ` \u00b7 last website: ${esc(d.last.site.name)}` : ''}` : 'Not run yet'}${d.next ? ` \u00b7 next ${esc(aaWhen(d.next))}` : ''}${d.summary ? ` \u00b7 ${esc(d.summary)}` : d.nextText && cfg.on ? ` \u00b7 ${esc(d.nextText)}` : ''}${cfg.by ? ` \u00b7 settings changed by ${esc(cfg.by)} ${esc(aaWhen(cfg.at))}` : ''}</div>
+      <section class="aa-sec"><h3>What it checks</h3>
+        <div class="aa-tree">${def.checks.map((g) => { const all = g.kids.every((c) => on(c.k)); const some = g.kids.some((c) => on(c.k));
+          return `<details class="aa-g" open><summary><label><input type="checkbox" data-aag="${esc(g.k)}" ${all ? 'checked' : ''} ${some && !all ? 'data-mixed="1"' : ''} ${dis}> <b>${esc(g.label)}</b></label> <span class="small faint">${g.kids.filter((c) => on(c.k)).length} of ${g.kids.length}</span></summary>
+            <div class="aa-kids">${g.kids.map((c) => `<label class="aa-k"><input type="checkbox" data-aak="${esc(c.k)}" data-g="${esc(g.k)}" ${on(c.k) ? 'checked' : ''} ${dis}> ${esc(c.label)}</label>`).join('')}</div></details>`; }).join('')}</div></section>
+      <section class="aa-sec"><h3>Schedule</h3>
+        <div class="small muted">${def.cron ? `Runs at <b>${esc(cronLocal)}</b> your time on the days ticked${def.id === 'bizinfo' || def.id === 'editorial' ? ', and in between whenever anyone has the app open: a website is read as soon as it is published' : ''}.` : 'Runs on the days ticked, while anyone on the team has the app open (the scans run in the team\u2019s browsers, in the scan line, after the team\u2019s own scans).'}</div>
+        <div class="aa-days">${AA_DAYS.map((w, i) => `<label class="chip-check"><input type="checkbox" data-day="${i}" ${(cfg.days || []).includes(i) ? 'checked' : ''} ${dis}> ${w}</label>`).join('')}</div>
+        ${(def.fields || []).map((f) => f.type === 'bool'
+          ? `<label class="check-row"><input type="checkbox" data-field="${esc(f.k)}" ${cfg.fields[f.k] ? 'checked' : ''} ${dis}> <span>${esc(f.label)}</span></label>`
+          : f.type === 'select'
+          ? `<label class="field aa-num">${esc(f.label)} <select data-field="${esc(f.k)}" ${dis}>${f.options.map(([k, l]) => `<option value="${esc(k)}" ${cfg.fields[f.k] === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`
+          : `<label class="field aa-num">${esc(f.label)} <input type="number" data-field="${esc(f.k)}" min="${f.min}" max="${f.max}" value="${esc(cfg.fields[f.k])}" ${dis}></label>`).join('')}
+        ${def.with ? `<div class="small faint">Runs in the same reading as the ${esc((def.with === 'bizinfo' ? 'Business Info check' : def.with))}.</div>` : ''}</section>
+      ${n ? `<section class="aa-sec"><h3>Notifications</h3>
+        <label class="check-row"><input type="checkbox" id="aaNOn" ${n.on ? 'checked' : ''} ${dis}> <span><b>Send notifications</b></span></label>
+        <div class="aa-nbody">
+        <div class="aa-sub">When</div>
+        ${def.notify.instant ? `<label class="check-row"><input type="checkbox" id="aaNInst" ${n.instant ? 'checked' : ''} ${dis}> <span>${esc(def.notify.instant)}</span></label>` : ''}
+        ${def.notify.daily ? `<label class="check-row"><input type="checkbox" id="aaNDaily" ${n.daily ? 'checked' : ''} ${dis}> <span>${esc(def.notify.daily)}</span></label>` : ''}
+        <div class="aa-sub">Who is told</div>
+        <label class="check-row"><input type="radio" name="aaTo" value="admins" ${n.to !== 'people' ? 'checked' : ''} ${dis}> <span>All admins</span></label>
+        <label class="check-row"><input type="radio" name="aaTo" value="people" ${n.to === 'people' ? 'checked' : ''} ${dis}> <span>These people:</span></label>
+        <div class="aa-people" ${n.to === 'people' ? '' : 'hidden'}>${users.map((u) => `<label class="chip-check"><input type="checkbox" data-person="${esc(u.email)}" ${(n.people || []).includes(u.email) ? 'checked' : ''} ${dis}> ${esc(u.name)}${u.admin ? ' <span class="faint">(admin)</span>' : ''}</label>`).join('')}</div>
+        <div class="small faint">Each person chooses in <a href="#/settings/notifications">their own notification settings</a> whether it reaches their bell, pop-ups or Slack.</div>
+        <div class="aa-sub">Message format</div>
+        <div class="small muted">Words in braces are filled in: ${varChips} <span class="faint">(click one to add it where the cursor is)</span>. Leave a box empty for the standard wording. *bold* and _italic_ work in Slack.</div>
+        <label class="field">Headline <input type="text" id="aaHead" maxlength="300" placeholder="${esc(def.notify.headline)}" value="${esc(n.headline || '')}" ${dis}></label>
+        <label class="field">Each website <textarea id="aaLine" rows="3" maxlength="600" placeholder="${esc(def.notify.line)}" ${dis}>${esc(n.line || '')}</textarea></label>
+        <label class="field">Last line (optional) <input type="text" id="aaFoot" maxlength="300" placeholder="e.g. Please check these today." value="${esc(n.footer || '')}" ${dis}></label>
+        <label class="check-row"><input type="checkbox" id="aaLinks" ${n.links !== false ? 'checked' : ''} ${dis}> <span>Include links back to the app</span></label>
+        <div class="aa-sub">Preview <span class="small faint">(a made-up website)</span></div>
+        <div class="aa-preview" id="aaPrev"></div>
+        <div class="row-gap"><button class="btn" id="aaTest" type="button">Send me a test</button> <span class="small muted" id="aaTestOut"></span></div>
+        </div></section>` : '<section class="aa-sec"><h3>Notifications</h3><p class="small muted">This one sends no messages: its results are in each website\u2019s audit or profile.</p></section>'}
+      ${edit ? `<div class="aa-save row-gap"><button class="btn primary" id="aaSave">Save</button> ${def.id === 'bizinfo' || def.id === 'editorial' || def.id === 'quiet' ? '<button class="btn" id="aaRun" type="button">Run now</button>' : ''} <span class="small muted" id="aaOut"></span></div>` : ''}`;
+    // Group boxes: ticking a group ticks every check in it; a half-ticked group shows as mixed.
+    const syncGroup = (g) => { const kids = $$(`[data-g="${g}"]`, body); const box = $(`[data-aag="${g}"]`, body); if (!box) return;
+      const n1 = kids.filter((k) => k.checked).length; box.checked = n1 === kids.length; box.indeterminate = n1 > 0 && n1 < kids.length;
+      const cnt = box.closest('summary').querySelector('.faint'); if (cnt) cnt.textContent = `${n1} of ${kids.length}`; };
+    $$('[data-aag]', body).forEach((b) => { syncGroup(b.dataset.aag); b.onchange = () => { $$(`[data-g="${b.dataset.aag}"]`, body).forEach((k) => { k.checked = b.checked; }); syncGroup(b.dataset.aag); }; b.onclick = (e) => e.stopPropagation(); });
+    $$('[data-aak]', body).forEach((k) => (k.onchange = () => syncGroup(k.dataset.g)));
+    const read = () => {
+      const checks = {}; $$('[data-aak]', body).forEach((k) => { if (!k.checked) checks[k.dataset.aak] = false; });
+      const fields = {}; $$('[data-field]', body).forEach((f) => { fields[f.dataset.field] = f.type === 'checkbox' ? f.checked : f.tagName === 'SELECT' ? f.value : Number(f.value); });
+      const out = { on: $('#aaOn', body).checked, checks, fields, days: $$('[data-day]', body).filter((x) => x.checked).map((x) => Number(x.dataset.day)) };
+      if (n) out.notify = { on: $('#aaNOn', body).checked, instant: !!($('#aaNInst', body) && $('#aaNInst', body).checked), daily: !!($('#aaNDaily', body) && $('#aaNDaily', body).checked),
+        to: ($('[name=aaTo]:checked', body) || {}).value || 'admins', people: $$('[data-person]', body).filter((x) => x.checked).map((x) => x.dataset.person),
+        headline: $('#aaHead', body).value, line: $('#aaLine', body).value, footer: $('#aaFoot', body).value, links: $('#aaLinks', body).checked };
+      return out;
+    };
+    // The preview: rendered by the server exactly as it would be sent (Slack *bold* shown bold).
+    const slackHtml = (t) => esc(t).replace(/&lt;([^|&]+)\|([^&]+)&gt;/g, '<a>$2</a>').replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(^|\s)_([^_\n]+)_/g, '$1<i>$2</i>').replace(/\n/g, '<br>');
+    let pv = 0;
+    const preview = async () => {
+      if (!n) return; const my = ++pv;
+      try { const r = await post('/api/watch', { op: 'aaPreview', id: def.id, notify: read().notify });
+        if (my !== pv) return;
+        $('#aaPrev', body).innerHTML = `<div class="aa-msg"><div class="aa-msg-h">${slackHtml(r.message.headline)}</div>${(r.message.sections || []).map((x) => `<div class="aa-msg-s">${slackHtml(x)}</div>`).join('')}</div>`;
+      } catch (e) { $('#aaPrev', body).textContent = e.message; }
+    };
+    let tmr = 0; const later = () => { clearTimeout(tmr); tmr = setTimeout(preview, 300); };
+    if (n) {
+      ['#aaHead', '#aaLine', '#aaFoot'].forEach((q) => { $(q, body).oninput = later; $(q, body).onfocus = () => { body._aaLast = $(q, body); }; });
+      $('#aaLinks', body).onchange = later;
+      $$('[name=aaTo]', body).forEach((r) => (r.onchange = () => { $('.aa-people', body).hidden = r.value !== 'people' || !r.checked; }));
+      $$('.aa-var', body).forEach((b) => (b.onclick = () => {
+        const el = body._aaLast || $('#aaLine', body); const ins = '{' + b.dataset.var + '}';
+        if (!el.value) el.value = el === $('#aaHead', body) ? def.notify.headline : el === $('#aaLine', body) ? def.notify.line : '';
+        const at = el.selectionStart == null ? el.value.length : el.selectionStart;
+        el.value = el.value.slice(0, at) + ins + el.value.slice(el.selectionEnd == null ? at : el.selectionEnd); el.focus(); later();
+      }));
+      $('#aaTest', body).onclick = async () => {
+        $('#aaTest', body).disabled = true;
+        try { await post('/api/watch', { op: 'aaTest', id: def.id, notify: read().notify }); $('#aaTestOut', body).textContent = 'Sent to you, with these settings (bell, pop-ups or Slack, as your own notification settings say).'; }
+        catch (e) { $('#aaTestOut', body).textContent = e.message; }
+        $('#aaTest', body).disabled = false;
+      };
+      preview();
+    }
+    $('#aaOn', body).onchange = () => { $('#aaOn', body).nextElementSibling.textContent = $('#aaOn', body).checked ? 'On' : 'Off'; };
+    if ($('#aaSave', body)) $('#aaSave', body).onclick = async () => {
+      const c = read();
+      if (!c.days.length) { $('#aaOut', body).textContent = 'Tick at least one day (or switch it off).'; return; }
+      if (c.notify && c.notify.on && c.notify.to === 'people' && !c.notify.people.length) { $('#aaOut', body).textContent = 'Tick at least one person to tell.'; return; }
+      $('#aaSave', body).disabled = true;
+      try { await post('/api/watch', { op: 'aaSave', id: def.id, cfg: c }); toast('Saved'); drawAutoAudit(body, id); }
+      catch (e) { $('#aaOut', body).textContent = e.message; $('#aaSave', body).disabled = false; }
+    };
+    if ($('#aaRun', body)) $('#aaRun', body).onclick = async () => {
+      $('#aaRun', body).disabled = true; $('#aaOut', body).textContent = 'Running\u2026';
+      try { const r = await post('/api/watch', { op: 'aaRun', id: def.id });
+        $('#aaOut', body).textContent = r.off ? 'It is switched off (or paused on DR Websites).' : r.busy ? 'Already running.' : r.wait ? 'Taking a break: the websites asked us to slow down.' : def.id === 'quiet' ? `${r.quiet} quiet, ${r.fresh} new: told the people above.` : `Read ${r.done} website${r.done === 1 ? '' : 's'}; ${r.pending} still waiting (it carries on by itself).`;
+      } catch (e) { $('#aaOut', body).textContent = e.message; }
+      $('#aaRun', body).disabled = false;
+    };
+  }
   /** Settings → Online presence: the automatic monthly check, and who sees the suggestions. */
   async function drawPresenceSettings(body) {
     body.innerHTML = '<h2>Online presence</h2><div class="empty">Loading…</div>';
@@ -6695,7 +6831,7 @@
     try { const r = await api('/api/migrate'); mv.st = r.state; mv.from = r.from; } catch (e) { mv.err = e.message; }
     if (route().name === 'settings' && $('#setBody') === body) paint();
   }
-  function renderSettings(section) {
+  function renderSettings(section, sub) {
     const list = SET_SECTIONS.filter((x) => x[2]());
     const cur = list.find((x) => x[0] === section) ? section : 'team';
     $('#view').innerHTML = `<div class="page-head"><div><h1>General settings</h1><div class="muted">Settings for the whole app. Anything about one website is on that website's profile.</div></div></div>
@@ -6706,6 +6842,7 @@
     if (cur === 'security') return drawSecurity(body);
     if (cur === 'exceptions') return drawExceptionSets(body);
     if (cur === 'stock') return drawStockList(body);
+    if (cur === 'autoaudits') return sub ? drawAutoAudit(body, sub) : drawAutoAudits(body);
     if (cur === 'move') return drawMove(body);
     if (cur === 'presence') return drawPresenceSettings(body);
     if (cur === 'appearance') return drawAppearance(body);
@@ -9472,7 +9609,7 @@
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'health') return { name: 'health' };
     if (parts[0] === 'usage') return { name: 'usage' };
-    if (parts[0] === 'settings') return { name: 'settings', section: parts[1] || 'team' };
+    if (parts[0] === 'settings') return { name: 'settings', section: parts[1] || 'team', sub: parts[2] ? decodeURIComponent(parts[2]) : '' };
     if (parts[0] === 'analysis') return { name: 'analysis', tab: parts[1] || 'quiet' };
     if (parts[0] === 'activity') return { name: 'activity' };
     if (parts[0] === 'removed') return { name: 'removed' };
@@ -9530,7 +9667,7 @@
     if (r.name === 'home') return renderHome();
     if (r.name === 'about') return renderAbout();
     if (r.name === 'help') return renderHelp(r.section);
-    if (r.name === 'settings') return renderSettings(r.section);
+    if (r.name === 'settings') return renderSettings(r.section, r.sub);
     if (r.name === 'health') return state.superAdmin ? renderHealth() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
     if (r.name === 'usage') return state.superAdmin ? renderUsage() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
     if (r.name === 'analysis') return can('leads.view') ? renderAnalysis(r.tab) : ($('#view').innerHTML = '<div class="empty">Your role does not include form submissions.</div>');
@@ -10164,7 +10301,7 @@
     const f = state.filters || {}; const bits = [];
     const v = currentView('audits'); if (v && v.id !== 'all') bits.push(`tab "${v.name}"`);
     if (f.oldChecks) bits.push('scanned before the newest checks'); if (f.repub) bits.push('republished since scan');
-    if (f.status) bits.push(f.status); if (f.q) bits.push(`search "${f.q}"`); if (f.must) bits.push('must-fix: ' + f.must); if (f.live) bits.push(f.live);
+    if (f.status) bits.push(f.status); if (f.q) bits.push(`search "${f.q}"`); if (f.must) bits.push('must-fix: ' + f.must); if (f.live) bits.push(f.live); if (f.by) bits.push(f.by === 'auto' ? 'auto audited' : 'audited by hand');
     return `Rescan all shown (${n})${bits.length ? ': ' + bits.join(', ') : ''}`;
   }
   function renderSites() {
@@ -10182,7 +10319,8 @@
       (!f.oldChecks || newChecksFor(s).length) &&
       (!f.repub || repubSince(s)) &&
       (!f.must || (f.must === 'crit' ? ((s.counts || {}).critical || 0) > 0 : mustState(s) === f.must)) &&
-      (!f.clar || ((s.counts || {}).clarification || 0) > 0))
+      (!f.clar || ((s.counts || {}).clarification || 0) > 0) &&
+      (!f.by || (f.by === 'auto' ? !!s.auto : !s.auto)))
       .filter(avf.fn).sort(vsortFn('audits', state.asort || AV.sort || 'added'));
     const tot = { crit: 0, clar: 0, complete: 0, scanned: 0, oldChecks: 0, repub: SITES.filter((s) => repubSince(s)).length };
     tot.mustDone = SITES.filter((s) => mustState(s) === 'done').length; tot.critSites = SITES.filter((s) => ((s.counts || {}).critical || 0) > 0).length;
@@ -10209,6 +10347,7 @@
           <select id="fwho"><option value="">Everyone</option><option value="_mine" ${f.assignee === '_mine' ? 'selected' : ''}>Assigned to me</option><option value="_none" ${f.assignee === '_none' ? 'selected' : ''}>Unassigned</option>${activeUsers().map((u) => `<option value="${esc(u.email)}" ${u.email === f.assignee ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
           ${liveDR.data ? `<select id="flive"><option value="">Live or not</option><option value="draft" ${f.live === 'draft' ? 'selected' : ''}>Not published yet (${SITES.filter((x) => dudaState(x.siteId) === 'draft').length})</option><option value="gone" ${f.live === 'gone' ? 'selected' : ''}>Not found in Duda (${SITES.filter((x) => dudaState(x.siteId) === 'gone').length})</option><option value="domain" ${f.live === 'domain' ? 'selected' : ''}>Domain problems (${SITES.filter((x) => liveOf(x.siteId) && domProblem(liveOf(x.siteId).dom)).length})</option></select>` : ''}
           ${tot.oldChecks ? `<button class="btn sm ${f.oldChecks ? 'primary' : ''}" id="foldck" title="These were scanned before the newest checks existed. Their items are unchanged — a rescan is what adds the new ones.">✨ Scanned before the newest checks (${tot.oldChecks})</button>` : ''}
+          <select id="fby" title="Audited by hand, or by an auto audit (the SEO websites are audited by themselves after each publish)"><option value="">Audited: any</option><option value="hand" ${f.by === 'hand' ? 'selected' : ''}>By hand (${SITES.filter((s) => !s.auto).length})</option><option value="auto" ${f.by === 'auto' ? 'selected' : ''}>🤖 Auto audited \u00b7 SEO websites (${SITES.filter((s) => s.auto).length})</option></select>
           <select id="fmust" title="Audit items that affect the business and SEO (not fonts or duplicate photos)"><option value="">Must-fix: any</option><option value="crit" ${f.must === 'crit' ? 'selected' : ''}>Critical still open (${tot.critSites})</option><option value="open" ${f.must === 'open' ? 'selected' : ''}>Must-fix still open (${SITES.filter((s) => mustState(s) === 'open').length})</option><option value="done" ${f.must === 'done' ? 'selected' : ''}>Must-fix done (${tot.mustDone})</option></select>
           ${tot.repub || f.repub ? `<button class="btn sm ${f.repub ? 'primary' : ''}" id="frepub" title="Published again in Duda after their last scan: rescan to check the audit items are still there">↻ Republished since scan (${tot.repub})</button>` : ''}
           <select id="asort" aria-label="Sort">${VSORTS.audits.map(([k, l]) => `<option value="${k}" ${(state.asort || AV.sort || 'added') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
@@ -10220,7 +10359,7 @@
           <tbody>${list.map((s) => {
             const c = s.counts || {};
             return `<tr class="row-link" data-open="${esc(s.id)}">
-              <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}${mineOnBoard(s) ? ' <a class="badge subtle" href="#/tasks" title="You hold this website on the Jaguars board">🐆 Yours on Tasks</a>' : ''}${(s.watch || []).some((w) => w.e === state.me.email && w.h === 'peek') ? ' <span class="badge subtle" title="You peeked at it from Tasks: read-only">👁 Watching</span>' : ''}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
+              <td><div class="site-name">${esc(s.businessName || 'Not scanned yet')}${s.auto ? ' <span class="badge ln-auto-chip" title="Audited by itself after each publish (SEO websites, Settings \u2192 Auto audits)">🤖 Auto audited</span>' : ''}${mineOnBoard(s) ? ' <a class="badge subtle" href="#/tasks" title="You hold this website on the Jaguars board">🐆 Yours on Tasks</a>' : ''}${(s.watch || []).some((w) => w.e === state.me.email && w.h === 'peek') ? ' <span class="badge subtle" title="You peeked at it from Tasks: read-only">👁 Watching</span>' : ''}</div><div class="small muted mono">${esc(s.siteId)} · ${esc(s.host)}</div>
                 ${(() => {
                   const st = dudaState(s.siteId);
                   if (st === 'draft') return `<div><span class="badge subtle" title="This website is in Duda but hasn't been published yet — normal for an audit done before launch. Live site checks need it published first.">Not published yet</span></div>`;
@@ -10252,6 +10391,7 @@
     if ($('#foldck')) $('#foldck').onclick = () => { f.oldChecks = !f.oldChecks; renderSites(); };
     if ($('#frepub')) $('#frepub').onclick = () => { f.repub = !f.repub; renderSites(); };
     $('#fmust').onchange = (e) => { f.must = e.target.value; renderSites(); };
+    $('#fby').onchange = (e) => { f.by = e.target.value; renderSites(); };
     if ($('#statCrit')) $('#statCrit').onclick = () => { f.must = f.must === 'crit' ? '' : 'crit'; renderSites(); };
     if ($('#statMust')) $('#statMust').onclick = () => { f.must = f.must === 'done' ? '' : 'done'; renderSites(); };
     if ($('#statClar')) $('#statClar').onclick = () => { f.clar = !f.clar; renderSites(); };

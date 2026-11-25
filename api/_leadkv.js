@@ -40,7 +40,7 @@ async function siteDirectory() {
  * when it has gone three of those gaps (and at least three weeks) without one. Only published
  * websites with at least `min` enquiries in the year are judged — too few is not a rhythm.
  */
-export async function quietKV({ now = Date.now(), min = 6, limit = 100 } = {}) {
+export async function quietKV({ now = Date.now(), min = 6, limit = 100, gaps = 3, minDays = 21 } = {}) {
   const [tot, last] = await redis(['HGETALL', P + 'leadtot'], ['HGETALL', P + 'leadlast']);
   const T = flat(tot); const L = flat(last);
   const { sites, known } = await siteDirectory();
@@ -51,7 +51,7 @@ export async function quietKV({ now = Date.now(), min = 6, limit = 100 } = {}) {
     const e = sites.get(String(id));
     if (known && (!e || !e.published)) return; // switched off or gone from Duda: of course it is quiet
     const gap = 365 / total; const quiet = (now - at) / DAY;
-    if (quiet <= Math.max(21, gap * 3)) return;
+    if (quiet <= Math.max(minDays, gap * gaps)) return;
     rows.push({ site: id, name: (e && e.name) || id, domain: (e && e.domain) || '', auditId: (e && e.auditId) || '', dom: (e && e.dom) || null,
       total_real: total, per_month: Math.round((total / 12) * 10) / 10, months: 12, last_real: new Date(at).toISOString().slice(0, 10),
       quiet_days: Math.floor(quiet), missed: Math.max(1, Math.round(quiet / gap)) });
@@ -97,9 +97,12 @@ export async function acrossKV({ now = Date.now() } = {}) {
  * enquiry arrives and it goes quiet again) is reported again.
  */
 export async function quietAlerts({ now = Date.now(), force = false } = {}) {
+  const { aaCfg, aaToday, aaOn, aaSend, aaMark } = await import('./_autoaudits.js');
+  const cfg = await aaCfg('quiet');
+  if (!force && !aaToday(cfg, now)) return { skipped: 'off today (Settings \u2192 Auto audits)' };
   const day = new Date(now).toISOString().slice(0, 10);
   if (!force) { const [first] = await redis(['SET', P + 'quietran:' + day, '1', 'NX', 'EX', 2 * 86400]); if (first !== 'OK') return { skipped: true }; }
-  const list = await quietKV({ now, limit: 300 });
+  const list = await quietKV({ now, limit: 300, min: cfg.fields.min, gaps: cfg.fields.gaps, minDays: cfg.fields.minDays });
   const [seenRaw] = await redis(['HGETALL', P + 'quietseen']);
   const seen = flat(seenRaw);
   const fresh = list.filter((r) => seen[r.site] !== r.last_real);
@@ -108,15 +111,13 @@ export async function quietAlerts({ now = Date.now(), force = false } = {}) {
   list.forEach((r) => { if (seen[r.site] !== r.last_real) cmds.push(['HSET', P + 'quietseen', r.site, r.last_real]); });
   Object.keys(seen).filter((id) => !keep.has(id)).forEach((id) => cmds.push(['HDEL', P + 'quietseen', id]));
   if (cmds.length) await redis(...cmds);
+  const mark = (x) => aaMark('quiet', Object.assign({ by: force ? 'manual' : 'cron', quiet: list.length }, x, fresh[0] ? { site: { id: fresh[0].site, name: fresh[0].name } } : {}));
   // The very first run would report every quiet website at once; it only remembers them instead.
-  if (!Object.keys(seen).length && !force) return { first: true, quiet: list.length };
-  if (!fresh.length) return { quiet: list.length, fresh: 0 };
-  const lines = fresh.slice(0, 12).map((r) => `${String(r.name).replace(/[*_~<>]/g, '')}: no enquiry for ${r.quiet_days} days (usually ${r.per_month} a month)${r.dom && r.dom.status !== 'ok' ? ` · domain: ${r.dom.label}` : ''}${r.form === false ? ' · no contact form found on the live website' : ''}`);
-  if (fresh.length > 12) lines.push(`and ${fresh.length - 12} more`);
-  const m = { kind: 'leads-quiet', by: '', byName: 'Lead analysis', count: fresh.length,
-    headline: `📭 *Forms gone quiet*${fresh.length > 1 ? ` (${fresh.length} websites)` : ''}`,
-    sections: [lines.map((l) => '• ' + l).join('\n')], lines, text: lines.join('\n') };
-  const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
-  await Promise.all(admins.map((u) => notifyUser(u.email, m).catch(() => {})));
+  if (!Object.keys(seen).length && !force) { await mark({ fresh: 0, first: true }); return { first: true, quiet: list.length }; }
+  if (!fresh.length) { await mark({ fresh: 0 }); return { quiet: list.length, fresh: 0 }; }
+  const items = fresh.map((r) => ({ name: String(r.name).replace(/[*_~<>]/g, ''), domain: r.domain || '', days: r.quiet_days, usual: r.per_month,
+    problems: `${aaOn(cfg, 'q.domain') && r.dom && r.dom.status !== 'ok' ? ` · domain: ${r.dom.label}` : ''}${aaOn(cfg, 'q.form') && r.form === false ? ' · no contact form found on the live website' : ''}` }));
+  const told = await aaSend('quiet', 'daily', { kind: 'leads-quiet', byName: 'Lead analysis' }, items);
+  await mark({ fresh: fresh.length, told });
   return { quiet: list.length, fresh: fresh.length };
 }

@@ -8,6 +8,8 @@ fk = subprocess.Popen(['node', os.path.join(OUT, 'fakewatch.mjs'), str(FPORT)], 
 env = dict(os.environ, DUDA_API_BASE=f'http://127.0.0.1:{FPORT}/api', DUDA_API_USERNAME='u', DUDA_API_PASSWORD='p', WATCH_PROTOCOL='http')
 srv = subprocess.Popen(['node', os.path.join(OUT, 'run.mjs'), APP, TESTS], stdout=subprocess.PIPE, stderr=open(os.path.join(OUT, 'srv-w.log'), 'w'), text=True, env=env)
 assert srv.stdout.readline().strip() == 'READY'
+# These checks follow findings into the audit on Audits: allow every audit (the default is only audits an auto audit made).
+_cfg_req = urllib.request.Request('http://127.0.0.1:8078/pipeline', data=json.dumps([['SET', 'dsa:aacfg:bizinfo', json.dumps({'fields': {'toAudits': 'all'}})]]).encode(), method='POST'); urllib.request.urlopen(_cfg_req).read()
 ADMIN, MEMBER = 'reymark@8bitcreative.com', 'dev@8bitcreative.com'
 TOK = {ADMIN: 'tokadmin1234567890abcdef', MEMBER: 'tokmember1234567890abcde'}
 def redis(*cmds):

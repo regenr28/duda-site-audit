@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-25-auto-audits', date: '2026-11-25', audience: 'all', tag: 'Settings',
+    title: 'Settings → Auto audits: every automatic check in one place',
+    what: 'Business Info check, editorial stock photos (now on every published website), domain monitoring, forms gone quiet, online presence and SEO websites, one row each with its last run, last website and next run. Click one to choose exactly what it checks, the days it runs, and who is told and how (with your own message format, a preview and Send me a test). SEO websites can wait for, or mix in with, the websites still being read. Auto audit findings now go only to audits an auto audit made, not to audits scanned by hand, and the Audits tab can show only the auto-audited ones.',
+    where: ['<b>Walkthrough:</b> <b>Settings → 🤖 Auto audits</b>, or <b>⚙ Settings</b> on the DR Websites auto audit panel. On the Audits tab: the <b>Audited</b> filter.'],
+  },
+  {
     id: '2026-11-25-editorial-places', date: '2026-11-25', audience: 'all', tag: 'Audits',
     title: 'Editorial photos: every slide, gallery picture and hidden section',
     what: 'The editorial photo check now finds a photo on any slide of a slider (not only the first), pictures kept in a gallery, and backgrounds of sections hidden on every device. Run <b>⚡ Apply check updates</b> on an audit to look again.',

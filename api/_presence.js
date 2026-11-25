@@ -208,7 +208,7 @@ function recsFor(listings, truth, formats) {
 }
 
 // ---------- one website ----------
-export async function presenceCheck(dudaId, { by = '' } = {}) {
+export async function presenceCheck(dudaId, { by = '', platforms = null } = {}) {
   const amap = await auditMap();
   const recId = amap[String(dudaId).toLowerCase()] || '';
   let allow = [];
@@ -221,7 +221,8 @@ export async function presenceCheck(dudaId, { by = '' } = {}) {
   const bare = domain.replace(/:\d+$/, '');          // compared without a port
   const formats = await websiteFormats(domain, truth);
   // Google and Facebook always; the others when Business Info lists them.
-  const wanted = ['google', 'facebook'].concat(['instagram', 'youtube', 'yelp'].filter((k) => (truth.socialLinks || {})[k]));
+  // Profiles unticked in Settings → Auto audits are left out of the automatic check.
+  const wanted = ['google', 'facebook'].concat(['instagram', 'youtube', 'yelp'].filter((k) => (truth.socialLinks || {})[k])).filter((k) => !platforms || platforms[k] !== false);
   const listings = []; let ws = null; let gbpSource = '';
   if (process.env.GOOGLE_MAPS_API_KEY) {
     try { listings.push(await gbpFromPlaces(dudaId, truth, bare)); gbpSource = 'places'; }
@@ -257,6 +258,9 @@ export async function presenceAuto({ budgetMs = 40000, by = 'auto' } = {}) {
 }
 async function presenceAutoRun(cfg, budgetMs, by) {
   const t0 = Date.now();
+  const { aaCfg } = await import('./_autoaudits.js');
+  const ac = await aaCfg('presence');
+  const platforms = {}; ['google', 'facebook', 'instagram', 'youtube', 'yelp'].forEach((k) => { platforms[k] = ac.checks['pl.' + k] !== false; });
   const day = new Date().toISOString().slice(0, 10);
   const [countRaw, sumRaw, listRaw] = await redis(['GET', P + 'presence:day:' + day], ['HGETALL', P + 'presencesum'], ['GET', P + 'dudasites']);
   let done = Number(countRaw) || 0;
@@ -268,7 +272,7 @@ async function presenceAutoRun(cfg, budgetMs, by) {
   for (const s of due) {
     if (done >= cfg.perDay || Date.now() - t0 > budgetMs - 25000) break;
     onSite(s.id);
-    try { await presenceCheck(s.id, { by }); out.push(s.id); } catch (e) { out.push(s.id + ': ' + String(e.message || e).slice(0, 80)); }
+    try { await presenceCheck(s.id, { by, platforms }); out.push(s.id); } catch (e) { out.push(s.id + ': ' + String(e.message || e).slice(0, 80)); }
     onSite('');
     done++;
     await redis(['SET', P + 'presence:day:' + day, String(done), 'EX', 2 * 86400]);

@@ -250,21 +250,19 @@ const KIND_OF = (a) => (a.kind === 'up' ? 'domain-ok' : a.kind === 'down' || (a.
  * message listing them, not a wall of separate ones.
  */
 export async function sendDomainAlerts(alerts) {
-  const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
-  if (!admins.length) return;
-  const msgs = [];
-  if (alerts.length > 3) {
-    const bad = alerts.filter((a) => a.kind !== 'up');
-    const lines = alerts.slice(0, 12).map((a) => `${a.name} · ${alertLine(a)}`);
-    if (alerts.length > 12) lines.push(`…and ${alerts.length - 12} more`);
-    msgs.push({ kind: bad.length ? 'domain-problem' : 'domain-ok', urgent: !!bad.length, by: '', byName: `${alerts.length} websites`, siteName: '', dudaSite: '',
-      headline: `${bad.length ? '🚨 ' : ''}*Domain check* — ${bad.length} website${bad.length === 1 ? '' : 's'} need${bad.length === 1 ? 's' : ''} attention${bad.length < alerts.length ? `, ${alerts.length - bad.length} working again` : ''}`,
-      count: bad.length || alerts.length, lines, text: lines.join('\n') });
-  } else {
-    alerts.forEach((a) => msgs.push({ kind: KIND_OF(a), urgent: a.kind === 'down' || (a.kind === 'reg' && a.days <= 7), by: '', byName: a.name, siteName: a.name, dudaSite: a.id, domain: a.domain,
-      headline: `*${a.name}* — ${alertLine(a)}`, text: alertLine(a) }));
-  }
-  for (const m of msgs) await Promise.all(admins.map((u) => notifyUser(u.email, m).catch(() => {})));
+  const { aaCfg, aaOn, aaSend } = await import('./_autoaudits.js');
+  const cfg = await aaCfg('domains');
+  // Only what Settings → Auto audits asks to be told about.
+  const keyOf = (a) => (a.kind === 'up' ? 'up' : a.kind === 'down' ? (a.cls === 'redirect' ? 'redirect' : 'down') : a.kind === 'reg' ? (a.days < 0 ? 'expired' : 'expiring') : 'down');
+  const list = alerts.filter((a) => aaOn(cfg, keyOf(a)));
+  if (!list.length) return;
+  const bad = list.filter((a) => a.kind !== 'up');
+  const urgent = list.some((a) => a.kind === 'down' || (a.kind === 'reg' && a.days <= 7));
+  const items = list.map((a) => ({ name: a.name || a.domain, domain: a.domain || '', problems: alertLine(a), plain: list.length === 1 ? alertLine(a) : `${a.name} · ${alertLine(a)}`, link: '' }));
+  const headlineDefault = list.length === 1 ? `*${list[0].name}* — ${alertLine(list[0])}`
+    : `${bad.length ? '🚨 ' : ''}*Domain check* — ${bad.length} website${bad.length === 1 ? '' : 's'} need${bad.length === 1 ? 's' : ''} attention${bad.length < list.length ? `, ${list.length - bad.length} working again` : ''}`;
+  await aaSend('domains', 'instant', { headlineDefault, kind: list.length === 1 ? KIND_OF(list[0]) : bad.length ? 'domain-problem' : 'domain-ok', urgent, byName: list.length === 1 ? list[0].name : `${list.length} websites`,
+    siteName: list.length === 1 ? list[0].name : '', dudaSite: list.length === 1 ? list[0].id : '', domain: list.length === 1 ? list[0].domain : '' }, items);
 }
 
 /**
@@ -289,11 +287,17 @@ export async function sendDigest() {
   const summary = [part('expired', 'expired'), part('soon7', 'expiring within 7 days'), part('soon30', 'expiring within 30 days'), part('redirect', 'showing another site'), part('down', 'down')].filter(Boolean).join(' · ');
   const lines = [];
   [['expired', 'Expired'], ['soon7', 'Expiring ≤ 7 days'], ['redirect', 'Showing another site'], ['down', 'Down'], ['soon30', 'Expiring ≤ 30 days']].forEach(([k, l]) => { if (c[k].length) lines.push(`${l}: ${c[k].slice(0, 6).join(', ')}${c[k].length > 6 ? ` …+${c[k].length - 6}` : ''}`); });
-  const admins = (await listUsers()).filter((u) => u.role === 'admin' && u.status === 'active');
+  const { aaCfg, aaOn, aaSend } = await import('./_autoaudits.js');
+  const cfg = await aaCfg('domains');
+  const want = { expired: 'expired', soon7: 'expiring', soon30: 'expiring', redirect: 'redirect', down: 'down' };
+  Object.keys(c).forEach((k) => { if (!aaOn(cfg, want[k])) c[k] = []; });
+  const items = [['expired', 'Expired'], ['soon7', 'Expiring ≤ 7 days'], ['redirect', 'Showing another site'], ['down', 'Down'], ['soon30', 'Expiring ≤ 30 days']]
+    .filter(([k]) => c[k].length).map(([k, l]) => { const list = c[k].slice(0, 6).join(', ') + (c[k].length > 6 ? ` …+${c[k].length - 6}` : ''); return { name: l, domain: '', problems: list, plain: `${l}: ${list}`, link: '' }; });
+  if (!items.length) return 0;
   const urgent = !!(c.expired.length || c.soon7.length || c.redirect.length || c.down.length);
-  const m = { kind: 'domain-digest', urgent, by: '', byName: 'Daily domain report', siteName: '', dudaSite: '', count: total, lines,
-    headline: `${urgent ? '🚨 ' : ''}*Daily domain report* — ${summary}`, text: lines.join('\n') };
-  await Promise.all(admins.map((u) => notifyUser(u.email, m).catch(() => {})));
+  const part2 = (k, label) => (c[k].length ? `${c[k].length} ${label}` : '');
+  const said = [part2('expired', 'expired'), part2('soon7', 'expiring within 7 days'), part2('soon30', 'expiring within 30 days'), part2('redirect', 'showing another site'), part2('down', 'down')].filter(Boolean).join(' · ');
+  await aaSend('domains', 'daily', { kind: 'domain-digest', urgent, byName: 'Daily domain report', headlineDefault: `${urgent ? '🚨 ' : ''}*Daily domain report* — ${said}` }, items);
   return total;
 }
 

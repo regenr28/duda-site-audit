@@ -204,8 +204,11 @@ async function handler(req, res) {
         const clean = (v) => { const x = facts[v] || {}; const f = stockFacts(v, x.url || '', x.title || '');
           let preview = ''; try { const pu = new URL(String(x.preview || f.preview || '')); preview = stockImgHost(pu) ? pu.href : ''; } catch (e) { /* none */ }
           return { title: String(x.title || '').slice(0, 200), url: f.slug ? f.url : '', preview: preview.slice(0, 600), editorial: x.editorial === true ? true : x.editorial === false ? false : null }; };
-        if (ids.length) await redis(...ids.map((id) => ['HSETNX', ED_KEY, id, JSON.stringify(Object.assign({ id, src: 'added', by: me.name || me.email, at }, clean(id)))]));
-        return res.status(200).json({ added: ids.length });
+        let added = 0;
+        if (ids.length) added = (await redis(...ids.map((id) => ['HSETNX', ED_KEY, id, JSON.stringify(Object.assign({ id, src: 'added', by: me.name || me.email, at }, clean(id)))]))).filter((x) => Number(x) === 1).length;
+        // New photos on the list: the auto audit reads every website once more for them.
+        if (added) { const { bumpStockVer } = await import('./_autoaudits.js'); await bumpStockVer(); }
+        return res.status(200).json({ added });
       }
       if (op === 'hash') {
         const id = String(b.id || '').trim(); const h = String(b.h || '');

@@ -28,13 +28,13 @@ function flat(x) { const o = {}; if (Array.isArray(x)) { for (let i = 0; i < x.l
 const isSeo = (s) => (s.labels || []).some((l) => String(l).trim().toLowerCase() === LABEL().toLowerCase());
 
 /** The SEO websites, with when each was last published, its audit, and whether an auto audit is due. */
-async function seoSites() {
+async function seoSites(delayH = DELAY_H()) {
   const [ds, watch, idx, runs] = await redis(['GET', P + 'dudasites'], ['HGETALL', P + 'watch'], ['HGETALL', P + 'index'], ['HGETALL', RUNS]);
   const list = ((unpackJSON(ds) || {}).sites || []).filter(isSeo);
   const W = flat(watch); const R = flat(runs);
   const audits = new Map();
   Object.values(flat(idx)).forEach((v) => { const s = typeof v === 'string' ? jparse(v) : v; if (s && s.siteId) audits.set(String(s.siteId), s); });
-  const delay = DELAY_H() * 3600000; const t = Date.now();
+  const delay = delayH * 3600000; const t = Date.now();
   return list.map((s) => {
     const w = jparse(W[s.id]) || {};
     // The webhook says the moment it happens; the list is refreshed every few hours. The later one wins.
@@ -125,10 +125,19 @@ async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const op = req.query.op || 'list';
-      if (op === 'list') return res.status(200).json({ sites: await seoSites(), label: LABEL(), email: EMAIL(), delayH: DELAY_H() });
+      const { aaCfg, aaToday } = await import('./_autoaudits.js');
+      const cfg = await aaCfg('seo');
+      const delayH = cfg.fields.delayH === undefined ? DELAY_H() : cfg.fields.delayH;
+      if (op === 'list') return res.status(200).json({ sites: await seoSites(delayH), label: LABEL(), email: EMAIL(), delayH, on: cfg.on });
       if (op === 'due') {
         if (!runner) return res.status(200).json({});
-        const all = await seoSites();
+        // Settings → Auto audits: on, today, and its turn next to the websites still waiting to be read.
+        if (!aaToday(cfg)) return res.status(200).json({ held: cfg.on ? 'not a day it runs' : 'switched off' });
+        const [stat, since] = await redis(['GET', P + 'cwstat'], ['GET', P + 'aa:sinceSeo']);
+        const pending = (jparse(stat) || {}).pending || 0;
+        if (pending && cfg.fields.priority === 'after') return res.status(200).json({ held: `waiting until the ${pending} websites still to read are done` });
+        if (pending && cfg.fields.priority === 'interleave' && (Number(since) || 0) < cfg.fields.everyN) return res.status(200).json({ held: `${Number(since) || 0} of ${cfg.fields.everyN} websites read since the last SEO website` });
+        const all = await seoSites(delayH);
         const [locks] = await redis(['MGET', ...(all.length ? all.map((s) => LOCK(s.id)) : [LOCK('none')])]);
         // Oldest publish first; a website another tab is working on is skipped.
         const next = all.filter((s, i) => s.due && !(locks || [])[i]).sort((a, b) => String(a.published).localeCompare(String(b.published)))[0];
@@ -147,6 +156,8 @@ async function handler(req, res) {
     if (!/^[\w-]{4,64}$/.test(site)) return res.status(400).json({ error: 'Unknown website' });
     if (b.op === 'claim') {
       const [got] = await redis(['SET', LOCK(site), me.email, 'NX', 'EX', 7200]);
+      // Its turn is used: the next one waits for another few websites to be read (Settings → Auto audits).
+      if (got === 'OK') await redis(['SET', P + 'aa:sinceSeo', '0']);
       return res.status(200).json({ ok: got === 'OK' });
     }
     if (b.op === 'done') {
@@ -154,8 +165,10 @@ async function handler(req, res) {
       const cmds = [['HSET', RUNS, site, JSON.stringify(run)], ['DEL', LOCK(site)]];
       // The pages the SEO company created, attached to that scan's line in the audit's history.
       let pages = null;
+      const { aaCfg, aaOn } = await import('./_autoaudits.js');
+      const wantPages = aaOn(await aaCfg('seo'), 'seo.pages');
       if (!run.error && run.auditId) {
-        try { pages = await seoPages(site, true); } catch (e) { pages = { pages: [], error: e.message }; }
+        if (wantPages) { try { pages = await seoPages(site, true); } catch (e) { pages = { pages: [], error: e.message }; } } else pages = { pages: [] };
         const [raw] = await redis(['GET', P + 'site:' + run.auditId]);
         const a = unpackJSON(raw);
         if (a && Array.isArray(a.scans) && a.scans.length) {
@@ -166,6 +179,8 @@ async function handler(req, res) {
         }
       }
       await redis(...cmds);
+      // The Audits list marks it as auto audited (its filter and tag).
+      if (run.auditId) { try { const { saveIndex } = await import('./store.js'); await saveIndex(run.auditId); } catch (e) { /* next list load */ } }
       return res.status(200).json({ ok: true, pages: pages ? (pages.pages || []).length : 0 });
     }
     if (b.op === 'release') { await redis(['DEL', LOCK(site)]); return res.status(200).json({ ok: true }); }
