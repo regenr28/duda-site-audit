@@ -4,9 +4,15 @@
 
 export const NEWS = [
   {
+    id: '2026-11-25-editorial-id-only', date: '2026-11-25', audience: 'all', tag: 'Audits',
+    title: 'Editorial photos: the Shutterstock ID is all you need',
+    what: 'Adding an editorial photo no longer needs a download or an upload. Type the Shutterstock ID and the app fetches its preview straight from Shutterstock, makes its fingerprint, and adds it, so renamed copies are caught too.',
+    where: ['<b>Walkthrough:</b> <b>+ New</b> → <b>📷 Editorial photo</b> → type the ID → <b>Look it up</b> → <b>Add to the list</b>.'],
+  },
+  {
     id: '2026-11-25-editorial-add', date: '2026-11-25', audience: 'all', tag: 'Audits',
     title: 'Editorial photos: add one by its Shutterstock ID, with a preview',
-    what: 'The Editorial photos list now shows each image\u2019s preview, Shutterstock ID, title, link to its Shutterstock page and file name. To add one, type its Shutterstock ID (or paste the link): the app finds its page, title, file name and preview by itself, and says whether Shutterstock marks it Editorial use only.',
+    what: 'The Editorial photos list now shows each image\u2019s preview, Shutterstock ID, title, link to its Shutterstock page and file name. To add one, type its Shutterstock ID (or paste the link): the app finds its page, title, file name and preview by itself, and says whether Shutterstock marks it Editorial use only. The 67 images already on the list come with their thumbnails and fingerprints, so renamed copies are caught from the first scan.',
     where: ['<b>Walkthrough:</b> <b>+ New</b> (top right) → <b>📷 Editorial photo</b>, or <b>Settings → 📷 Editorial photos</b> → <b>+ Add editorial photo</b>.'],
   },
   {

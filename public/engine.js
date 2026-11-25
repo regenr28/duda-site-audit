@@ -1708,13 +1708,28 @@
   }
   const STOCK_LOOK = 7;   // bits that may differ: a watermarked preview against the clean file
   const stockLink = (id) => `https://www.shutterstock.com/image-photo/${id}`;
+  /**
+   * Fingerprint a Shutterstock preview. Its 260nw previews carry a 20px white Shutterstock strip at the
+   * bottom that is not part of the photo: it is cut off first, so the fingerprint matches the photo
+   * as it is used on a website.
+   */
+  function stockMeasure(img, url) {
+    let src = String(url || img.src || '');
+    try { src = decodeURIComponent(src); } catch (e) { /* as it is */ }
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    if (!/-\d{2,4}nw-\d{5,12}\.jpe?g/i.test(src) || !w || h < 60) return measureImage(img);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h - 20;
+    const cx = cv.getContext('2d'); if (!cx) return measureImage(img);
+    cx.drawImage(img, 0, 0, w, h - 20, 0, 0, w, h - 20);
+    return measureImage(cv);
+  }
   /** Fill in missing fingerprints of listed pictures from their previews (a few per scan). */
   async function stockFingerprints(items, opts, max) {
     if (!opts.stockSaveHash || typeof document === 'undefined') return;
     const todo = items.filter((x) => !x.h && x.preview).slice(0, max || 8);
     for (const x of todo) {
       const img = await loadImage(x.preview, 10000);
-      const m = img ? measureImage(img) : null;
+      const m = img ? stockMeasure(img, x.preview) : null;
       if (!m || flatHash(m.hash)) continue;
       x.h = m.hash;
       try { await opts.stockSaveHash(x.id, m.hash); } catch (e) { /* next scan */ }
@@ -4770,6 +4785,6 @@
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince, updatePlan, codeIn,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, LEAD_WORDS,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, stockMeasure, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

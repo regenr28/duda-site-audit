@@ -18,7 +18,7 @@
 // POST { stock: 'lookup', ids }          → { results: { id: { editorial, title, preview } } }: asks
 //      Shutterstock's own page for an ID found in a file name; an editorial one joins the list.
 import { metered, redis, P, readBody, requireUser, jparse, sha, can, fetchWithTimeout, UA_DESKTOP } from './_lib.js';
-import { STOCK_SEED } from './_stockseed.js';
+import { STOCK_SEED, STOCK_SEED_HASH } from './_stockseed.js';
 import { aiUsage } from './_meter.js';
 import { _test as ai } from './ai.js';
 
@@ -33,6 +33,7 @@ const KEY = (u) => P + 'ih:' + sha(u).slice(0, 24);
 const STOCK_BASE = () => String(process.env.SHUTTERSTOCK_BASE || 'https://www.shutterstock.com').replace(/\/+$/, '');
 const ED_KEY = P + 'stock:ed';            // hash: Shutterstock ID → { id, h, preview, title, src, by, at }
 const ED_SEEDED = P + 'stock:seeded';     // the starting list goes in once; what is removed later stays removed
+const ED_SEEDED2 = P + 'stock:seeded2';   // …and its thumbnails and fingerprints, once, on lists made before they existed
 const LK_KEY = (id) => P + 'stock:lk:' + id;
 const okId = (v) => /^\d{5,12}$/.test(String(v || '').trim());
 const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
@@ -49,6 +50,22 @@ async function stockList() {
   if (!seeded && STOCK_SEED.length) {
     const at = new Date().toISOString();
     await redis(...STOCK_SEED.map((id) => ['HSETNX', ED_KEY, id, JSON.stringify({ id, src: 'list', by: 'Shutterstock downloads (Editorial Use Only)', at })]), ['SET', ED_SEEDED, at]);
+  }
+  // The thumbnails from the Downloads screenshots and their fingerprints: filled in once where missing.
+  const [seeded2] = await redis(['GET', ED_SEEDED2]);
+  if (!seeded2) {
+    const ids = Object.keys(STOCK_SEED_HASH);
+    const rows = ids.length ? await redis(...ids.map((id) => ['HGET', ED_KEY, id])) : [];
+    const up = [];
+    ids.forEach((id, i) => {
+      const cur = jparse(rows[i]); if (!cur) return;   // taken off the list: stays off
+      const next = Object.assign({}, cur);
+      if (!next.thumb) next.thumb = `/stock/${id}.jpg`;
+      if (!next.h) Object.assign(next, { h: STOCK_SEED_HASH[id], hFrom: 'screenshot', hBy: 'Shutterstock Downloads screenshots' });
+      if (next.editorial === undefined || next.editorial === null) next.editorial = true;
+      up.push(['HSET', ED_KEY, id, JSON.stringify(next)]);
+    });
+    await redis(...up, ['SET', ED_SEEDED2, new Date().toISOString()]);
   }
   const [all] = await redis(['HGETALL', ED_KEY]);
   const out = [];
@@ -69,7 +86,10 @@ function stockFacts(id, pageUrl, title) {
   const dated = DATED_SLUG.test(slug + '-') || new RegExp(`^[^:]{2,80}[-\u2013\u2014]\\s*(${MONTHS})\\s+\\d{1,2},\\s*(19|20)\\d\\d\\s*:`, 'i').test(title || '');
   return {
     url: slug ? `${STOCK_BASE()}/${kind}/${slug}-${id}` : `${STOCK_BASE()}/image-photo/${id}`,
-    preview: slug ? `${STOCK_BASE()}/${kind}/${slug}-260nw-${id}.jpg` : '',
+    // Shutterstock serves the preview by ID alone (the words before -260nw- are not needed), even when
+    // it refuses its pages to servers. It carries a 20px white Shutterstock strip at the bottom, which is
+    // cut off before the picture is fingerprinted (stockMeasure in engine.js).
+    preview: `${STOCK_BASE()}/${kind}/${slug}-260nw-${id}.jpg`,
     file: `shutterstock_${id}.jpg`, slug, dated,
   };
 }
@@ -106,7 +126,7 @@ async function stockLookupAI(id) {
 async function stockLookup(id) {
   try {
     const r = await fetchWithTimeout(`${STOCK_BASE()}/image-photo/${id}`, { headers: { 'User-Agent': UA_DESKTOP, Accept: 'text/html', 'Accept-Language': 'en-US,en' }, redirect: 'follow' }, 9000);
-    if (!r.ok) return { id, editorial: null, status: r.status };
+    if (!r.ok) { const f = stockFacts(id, '', ''); return { id, editorial: null, preview: f.preview, url: f.url, file: f.file, via: 'id', status: r.status }; }
     const html = (await r.text()).slice(0, 600000);
     const slug = String((r.url || '').split('?')[0].split('/').pop() || '');
     const meta = (prop) => { const m = html.match(new RegExp(`<meta[^>]+(?:property|name)="${prop}"[^>]+content="([^"]+)"`, 'i')) || html.match(new RegExp(`<meta[^>]+content="([^"]+)"[^>]+(?:property|name)="${prop}"`, 'i')); return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'") : ''; };
@@ -118,7 +138,7 @@ async function stockLookup(id) {
     let preview = meta('og:image');
     try { const pu = new URL(preview, STOCK_BASE()); preview = stockImgHost(pu) ? pu.href : ''; } catch (e) { preview = ''; }
     return { id, editorial, title: title.slice(0, 200), preview: (preview || f.preview).slice(0, 600), url: f.url, file: f.file, via: 'page', status: r.status };
-  } catch (e) { return { id, editorial: null, status: 0 }; }
+  } catch (e) { const f = stockFacts(id, '', ''); return { id, editorial: null, preview: f.preview, url: f.url, file: f.file, via: 'id', status: 0 }; }
 }
 
 /**
@@ -204,15 +224,15 @@ async function handler(req, res) {
         const cached = await redis(...ids.map((id) => ['GET', LK_KEY(id)]));
         const results = {}; const fresh = [];
         // A page that did not answer is asked again when the AI may now fill in (adding by hand, Get previews).
-        ids.forEach((id, i) => { const v = jparse(cached[i]); if (v && !(b.ai && v.editorial === null && !v.preview && v.via !== 'ai')) results[id] = v; else fresh.push(id); });
+        ids.forEach((id, i) => { const v = jparse(cached[i]); if (v && v.preview && !(b.ai && v.editorial === null && !v.title && v.via !== 'ai')) results[id] = v; else fresh.push(id); });
         // A few at a time: this is Shutterstock's public website, not an API.
         // Side by side, so ten of them (an AI web search each, when Shutterstock's page does not answer) stay well inside the time limit.
         await Promise.all(fresh.slice(0, 10).map(async (id) => {
           let v = await stockLookup(id);
           // When Shutterstock's page does not answer, an AI web search finds its address (adding by hand, Get previews).
-          if (b.ai && v.editorial === null && !v.preview) { const w = await stockLookupAI(id); if (w && (w.preview || w.title)) v = w; }
+          if (b.ai && v.editorial === null && !v.title) { const w = await stockLookupAI(id); if (w && w.title) v = Object.assign({}, v, { title: w.title, url: w.url || v.url, preview: w.preview || v.preview, editorial: w.editorial, via: 'ai' }); }
           results[id] = v;
-          await redis(['SET', LK_KEY(id), JSON.stringify(v), 'EX', v.editorial === null && !v.preview ? 86400 : 30 * 86400]);
+          await redis(['SET', LK_KEY(id), JSON.stringify(v), 'EX', v.editorial === null ? 86400 : 30 * 86400]);
         }));
         const [all] = await redis(['HKEYS', ED_KEY]);
         const listed = new Set([].concat(all || []).map(String));

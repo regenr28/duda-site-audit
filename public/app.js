@@ -6513,7 +6513,7 @@
       const img = new Image(); let over = false;
       const fin = (v) => { if (!over) { over = true; clearTimeout(t); done(v); } };
       const t = setTimeout(() => fin(null), 12000);
-      img.onload = () => { const m = A.measureImage(img); fin(m && m.hash ? m.hash : null); };
+      img.onload = () => { const m = A.stockMeasure(img, src); fin(m && m.hash ? m.hash : null); };
       img.onerror = () => fin(null);
       img.src = src;
     });
@@ -6521,8 +6521,8 @@
   /** A Shutterstock image's page, its downloaded file name and its preview, built from the ID (and what a lookup found). */
   const stockPage = (x) => x.url || `https://www.shutterstock.com/image-photo/${x.id}`;
   const stockFile = (x) => `shutterstock_${x.id}.jpg`;
-  const stockThumb = (x, big) => x.preview
-    ? `<img class="st-thumb${big ? ' big' : ''}" src="/api/imghash?url=${encodeURIComponent(x.preview)}" alt="Shutterstock ${esc(x.id)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'st-thumb none',textContent:'No preview'}))">`
+  const stockThumb = (x, big) => x.thumb || x.preview
+    ? `<img class="st-thumb${big ? ' big' : ''}" src="${x.thumb && /^\/stock\/\d{5,12}\.jpg$/.test(x.thumb) ? x.thumb : '/api/imghash?url=' + encodeURIComponent(x.preview)}" alt="Shutterstock ${esc(x.id)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'st-thumb none',textContent:'No preview'}))">`
     : `<span class="st-thumb none${big ? ' big' : ''}">No preview</span>`;
   const stockLic = (v) => v === true ? '<span class="badge sev-critical">Editorial use only</span>' : v === false ? '<span class="badge subtle">Standard license</span>' : '<span class="badge subtle">Not confirmed</span>';
   /**
@@ -6558,9 +6558,9 @@
       $('#saFind').disabled = false;
       if (!v) return;
       found = Object.assign({ id }, v);
-      const note = v.editorial === false ? '⚠ Shutterstock does not mark this one as editorial. Add it only if you are sure it is editorial use only.'
-        : v.editorial === null && !v.preview ? 'Shutterstock did not answer, so only the ID is known. It can still be added: it will be recognised by file name, and you can upload a copy on its row for the look-alike match.'
-        : v.via === 'ai' ? 'Found by an AI web search (Shutterstock’s page did not answer).' : '';
+      const note = v.editorial === false ? '\u26a0 Shutterstock does not mark this one as editorial. Add it only if you are sure it is editorial use only.'
+        : !v.title ? 'The preview comes straight from Shutterstock by its ID. Its title could not be found, which is fine: it is recognised by file name and by look.' : '';
+      if (found.editorial === null) found.editorial = true;   // added to this list = editorial use only
       show(found, note);
       $('#saGo').disabled = false;
     };
@@ -6591,12 +6591,12 @@
     let d; try { d = await post('/api/imghash', { stock: 'list' }); } catch (e) { body.innerHTML = `<h2>Editorial stock photos</h2><div class="note bad">${esc(e.message)}</div>`; return; }
     const items = d.items || []; const edit = !!d.canEdit;
     const ready = items.filter((x) => x.h).length;
-    const noPrev = items.filter((x) => !x.preview || !x.h).length;
+    const noPrev = items.filter((x) => !x.h).length;
     const src = (x) => x.src === 'lookup' ? 'Found by a scan' : x.src === 'added' ? `Added by ${x.by || 'someone'}` : 'Shutterstock downloads';
     body.innerHTML = `<div class="st-head"><h2>Editorial stock photos</h2>${edit ? '<button class="btn primary" id="stNew">+ Add editorial photo</button>' : ''}</div>
       <p class="muted">Shutterstock images licensed for <b>editorial use only</b>, which may not be used to promote a business. Every audit reports a picture on the website as <b>Stock photo licensed for editorial use only</b> when its file name carries one of these IDs, or when it <b>looks the same</b> as one of them (so a renamed or resized copy is caught too).</p>
       <ul class="set-facts"><li><b>${items.length}</b> image${items.length === 1 ? '' : 's'} on the list; <b>${ready}</b> can also be recognised by how they look.</li>
-      ${noPrev ? `<li><b>${noPrev}</b> still need${noPrev === 1 ? 's' : ''} a preview: <b>Get previews from Shutterstock</b> fetches them, or upload a copy on the row.</li>` : ''}</ul>
+      ${noPrev ? `<li><b>${noPrev}</b> still need${noPrev === 1 ? 's' : ''} a preview: <b>Get previews from Shutterstock</b> fetches them, or upload a copy on the row.</li>` : '<li>Every image has a preview and a fingerprint.</li>'}</ul>
       <div class="row-gap"><button class="btn" id="stPrev" ${noPrev ? '' : 'disabled'}>Get previews from Shutterstock</button> <span class="small muted" id="stOut"></span></div>
       ${edit ? '' : '<p class="small faint">Only people who manage exception sets can add or remove images.</p>'}
       <div class="tbl-wrap"><table class="tbl st-tbl"><thead><tr><th>Preview</th><th>Shutterstock ID</th><th>Title and link</th><th>File name</th><th>Recognised by</th><th></th></tr></thead><tbody>
@@ -6611,12 +6611,12 @@
     if ($('#stNew')) $('#stNew').onclick = () => openStockAdd(() => drawStockList(body));
     $('#stPrev').onclick = async () => {
       $('#stPrev').disabled = true;
-      const need = items.filter((x) => !x.preview || !x.h);
+      const need = items.filter((x) => !x.h);
       let made = 0, none = 0;
       for (let i = 0; i < need.length; i += 10) {
         out(`Asking Shutterstock… ${Math.min(i + 10, need.length)} of ${need.length}`);
         let res = {};
-        try { res = (await post('/api/imghash', { stock: 'lookup', ids: need.slice(i, i + 10).map((x) => x.id), ai: true })).results || {}; } catch (e) { out(e.message); break; }
+        try { res = (await post('/api/imghash', { stock: 'lookup', ids: need.slice(i, i + 10).map((x) => x.id) })).results || {}; } catch (e) { out(e.message); break; }
         for (const x of need.slice(i, i + 10)) {
           if (x.h) continue;
           const pv = (res[x.id] && res[x.id].preview) || x.preview;

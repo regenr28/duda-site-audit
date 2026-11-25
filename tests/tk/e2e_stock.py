@@ -15,6 +15,11 @@ def picture(seed):
     for i in range(14):
         d.rectangle([(i * 37 + seed * 11) % 380, (i * 53) % 240, (i * 37 + seed * 11) % 380 + 40, (i * 53) % 240 + 30], fill=((i * 40 + seed * 30) % 255, (i * 90) % 255, (i * 15 + seed) % 255))
     b = io.BytesIO(); im.save(b, 'JPEG', quality=88); return b.getvalue()
+def preview(seed):
+    # Shutterstock's 260nw preview: the photo with a 20px white Shutterstock strip under it.
+    ph = Image.open(io.BytesIO(picture(seed))); im = Image.new('RGB', (ph.width, ph.height + 20), (254, 254, 254)); im.paste(ph, (0, 0))
+    ImageDraw.Draw(im).text((8, ph.height + 4), 'shutterstock \u00b7 123456', fill=(120, 120, 120))
+    b = io.BytesIO(); im.save(b, 'JPEG', quality=88); return b.getvalue()
 PICS = {'2669861029': picture(1), '2530975229': picture(2), '2777777777': picture(4), '2888888888': picture(5)}
 SEEN = {'pages': [], 'ai': []}
 class SS(BaseHTTPRequestHandler):
@@ -36,7 +41,8 @@ class SS(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(html.encode()); return
         m = re.match(r'^/image-photo/.*-260nw-(\d+)\.jpg$', self.path)
         if m and m.group(1) in PICS:
-            self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.end_headers(); self.wfile.write(PICS[m.group(1)]); return
+            seed = {'2669861029': 1, '2530975229': 2, '2777777777': 4, '2888888888': 5}[m.group(1)]
+            self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.end_headers(); self.wfile.write(preview(seed)); return
         self.send_response(404); self.end_headers()
 ss = HTTPServer(('127.0.0.1', SSPORT), SS); threading.Thread(target=ss.serve_forever, daemon=True).start()
 class AI(BaseHTTPRequestHandler):
@@ -73,6 +79,9 @@ try:
     st, r = api({'stock': 'list'})
     ids = [x['id'] for x in r['items']]
     check(st == 200 and len(ids) == 67 and '2669861029' in ids and '2685614241' not in ids, f'the list starts with the 67 editorial downloads, not the 7 regular ones ({len(ids)})')
+    check(all(x.get('h') and len(x['h']) == 64 and x.get('thumb') == f"/stock/{x['id']}.jpg" for x in r['items']), 'each one comes with its thumbnail (from the Downloads screenshots) and its fingerprint')
+    th = urllib.request.urlopen(urllib.request.Request(f'http://localhost:{APORT}/stock/2669861029.jpg'), timeout=20)
+    check(th.status == 200 and th.read()[:2] == b'\xff\xd8', 'the thumbnails are served with the app')
     check(r['canEdit'] is True, 'an admin may change it')
     st, r = api({'stock': 'list'}, MEMBER_TOK)
     check(st == 200 and r['canEdit'] is False and len(r['items']) == 67, 'a member sees it but may not change it')
@@ -90,6 +99,7 @@ try:
     print('   lookup:', {k: v.get('editorial') for k, v in res.items()})
     check(res['2685614241']['editorial'] is False and res['9999999999']['editorial'] is None and res['2669861029']['editorial'] is True, 'Shutterstock’s page tells editorial (place and date in the title) from regular; a refused page is "can’t tell"')
     check(res['2669861029']['preview'].endswith('-260nw-2669861029.jpg'), 'and gives its preview picture')
+    check(res['9999999999']['preview'].endswith('/image-photo/-260nw-9999999999.jpg') and res['9999999999']['file'] == 'shutterstock_9999999999.jpg', 'when Shutterstock refuses its page, the preview and file name are still built from the ID alone')
     api({'stock': 'remove', 'id': '2530975229'})
     n = len(SEEN['pages'])
     st, r = api({'stock': 'lookup', 'ids': ['2530975229', '2685614241']})
@@ -97,8 +107,9 @@ try:
     ids = [x['id'] for x in r2['items']]
     check('2530975229' in ids and next(x for x in r2['items'] if x['id'] == '2530975229')['src'] == 'lookup' and '2685614241' not in ids, 'an editorial ID found by a scan joins the list; a regular one does not')
     check(len(SEEN['pages']) == n + 1, 'an ID already asked about is not asked again (remembered)')
-    st, r = api({'stock': 'hash', 'id': '2669861029', 'h': '0' * 63 + '1'}, MEMBER_TOK)
-    st2, r2 = api({'stock': 'hash', 'id': '2669861029', 'h': '1' * 64}, MEMBER_TOK)
+    st, r = api({'stock': 'hash', 'id': '1234567', 'h': '0' * 63 + '1'}, MEMBER_TOK)
+    st2, r2 = api({'stock': 'hash', 'id': '1234567', 'h': '1' * 64}, MEMBER_TOK)
+    api({'stock': 'remove', 'id': '1234567'}); api({'stock': 'add', 'ids': ['1234567']})
     check(st == 200 and st2 == 403, 'anyone scanning may fill in a missing fingerprint, but not replace one')
     st, r = api({'stock': 'hash', 'id': '2669861029', 'h': 'abc'})
     check(st == 400, 'a malformed fingerprint is refused')
@@ -131,6 +142,10 @@ try:
         txt = pg.inner_text('#setBody')
         check('Editorial stock photos' in txt and '67 images on the list' in txt, 'Settings → Editorial stock photos shows the list: ' + re.sub(r'\s+', ' ', txt)[:160])
         check(pg.locator('.st-tbl tbody tr').count() == 67 and pg.locator('[data-strm]').count() == 67, 'one row per image, each with Remove (admin)')
+        pg.evaluate("() => document.querySelectorAll('.st-tbl img.st-thumb').forEach((i) => i.scrollIntoView())"); time.sleep(2); pg.evaluate("() => window.scrollTo(0, 0)")
+        shown = pg.evaluate("() => [...document.querySelectorAll('.st-tbl img.st-thumb')].filter((i) => i.complete && i.naturalWidth > 0).length")
+        check(shown >= 64, f'the list shows the thumbnails ({shown})')
+        check('file name and look' in pg.inner_text('tr[data-st="2626541375"]'), 'and they are recognised by look without fetching anything')
         pg.click('#stPrev')
         pg.wait_for_function("() => /\\d+ can also be recognised by how they look/.test(document.querySelector('#setBody').innerText) && !document.querySelector('#stPrev').disabled || /without a preview/.test(document.querySelector('#stOut') ? document.querySelector('#stOut').innerText : '')", timeout=180000)
         time.sleep(1)
@@ -156,6 +171,11 @@ try:
         check('file name and look' in row and 'shutterstock_2888888888.jpg' in row and 'Added by Reymark R' in row, 'Add puts it on the list, fingerprinted from its preview: ' + row.replace('\n', ' | '))
         check(pg.evaluate("() => { const i = document.querySelector('tr[data-st=\"2888888888\"] img.st-thumb'); return !!i && i.complete && i.naturalWidth > 0; }"), 'its row shows the thumbnail')
         check(pg.locator('#stNew').count() == 1, 'the page has its own + Add editorial photo button')
+        import base64
+        clean = pg.evaluate("(s) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(window.DudaAudit.measureImage(i).hash); i.src = s; })", 'data:image/jpeg;base64,' + base64.b64encode(picture(5)).decode())
+        saved = next(x for x in api({'stock': 'list'})[1]['items'] if x['id'] == '2888888888')['h']
+        dd = sum(a != b for a, b in zip(clean, saved))
+        check(dd <= 3, f'the fingerprint made from Shutterstock\u2019s preview (white strip cut off) matches the photo itself ({dd} bits apart)')
         # Upload a copy for one without a preview
         tmp = os.path.join(OUT, 'stock-upload.jpg'); open(tmp, 'wb').write(picture(3))
         pg.set_input_files('[data-stup="1234567"]', tmp); time.sleep(2)
@@ -167,6 +187,16 @@ try:
         pg2.goto(f'http://localhost:{APORT}/#/settings/stock'); pg2.wait_for_selector('.st-tbl', timeout=20000); time.sleep(0.4)
         check(pg2.locator('[data-strm]').count() == 0 and pg2.locator('#stAdd').count() == 0 and 'Only people who manage exception sets' in pg2.inner_text('#setBody'), 'a member sees the list without Add or Remove')
         br.close()
+    # A list made before the thumbnails existed (update 220–222): they are filled in once; removed images stay removed.
+    def redis(*cmds):
+        req = urllib.request.Request(f'http://127.0.0.1:{RPORT}/pipeline', data=json.dumps(list(cmds)).encode(), method='POST')
+        return [x.get('result') for x in json.loads(urllib.request.urlopen(req).read())]
+    redis(['DEL', 'dsa:stock:seeded2'], ['HSET', 'dsa:stock:ed', '2626541375', json.dumps({'id': '2626541375', 'src': 'list', 'by': 'x', 'at': '2026-11-25T00:00:00Z'})])
+    st, r = api({'stock': 'list'})
+    it = {x['id']: x for x in r['items']}
+    check(it['2626541375'].get('h') and it['2626541375'].get('thumb') == '/stock/2626541375.jpg', 'an existing list gets the thumbnails and fingerprints on its next load')
+    check('2183357569' not in it, 'an image taken off the list is not put back')
+    check(it['1234567'].get('by') == 'Reymark R' and not it['1234567'].get('thumb'), 'images added by hand are left as they are')
 finally:
     srv.terminate(); ss.shutdown(); ais.shutdown()
 check(not errors, 'no page errors ' + '; '.join(errors[:3]))
