@@ -43,6 +43,8 @@ export const AA = [
     fields: [
       { k: 'recheckDays', label: 'Read every website again after (days), even when it was not published', type: 'number', min: 7, max: 90, def: 30 },
       { k: 'maxPages', label: 'Pages read per website, at most', type: 'number', min: 10, max: 300, def: 100 },
+      { k: 'pace', label: 'Reading speed (every website is on Duda\u2019s servers, which refuse connections when asked too fast)', type: 'select', def: 'gentle',
+        options: [['gentle', 'Gentle: 2 pages at a time, a short pause between websites (recommended)'], ['slow', 'Slow: 1 page at a time, a longer pause (if it keeps taking breaks)'], ['normal', 'Fast: 4 pages at a time (may be refused and take breaks)']] },
       { k: 'toAudits', label: 'Add what it finds as audit items on the Audits tab', type: 'select', def: 'auto',
         options: [['auto', 'Only to audits made by an auto audit (SEO websites), never to audits scanned by hand'], ['all', 'To every audit of the website'], ['none', 'Never: keep it on DR Websites only']] },
     ],
@@ -294,6 +296,12 @@ export async function aaList() {
     if (!r.last && lastRun) r.last = { at: lastRun.at, by: lastRun.by, done: lastRun.done };
     if (lastSite && r.last && !r.last.site) r.last.site = { id: lastSite.id, name: lastSite.name || lastSite.domain || '' };
   });
+  // What the reading is doing right now: the "Next run" column alone made it look stopped.
+  const [nowRaw, waitRaw, lockRaw, statRaw] = await redis(['GET', P + 'cwnow'], ['GET', P + 'cwwait'], ['GET', P + 'cwlock'], ['GET', P + 'cwstat']);
+  const nowR = jparse(nowRaw); const wait = jparse(waitRaw) || {}; const stat = jparse(statRaw) || {};
+  const live = { pending: stat.pending || 0, reading: nowR ? (nowR.name || nowR.domain || '') : '', running: !!lockRaw,
+    waitUntil: wait.until > Date.now() ? wait.until : 0, waitWhy: wait.until > Date.now() ? wait.why || '' : '' };
+  [biz, ed].forEach((r) => { r.live = live; });
   const read = sums.filter((s) => s.at && !s.err);
   biz.summary = `${read.length} websites read · ${read.filter((s) => s.c && (!s.t || Object.keys(s.t).some((t) => t !== 'stock'))).length} with serious problems`;
   const [ver] = await redis(['GET', P + 'stock:ver']);

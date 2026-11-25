@@ -2533,3 +2533,6 @@ table.findings .rw-status select { max-width: 150px; }
 .aa-sec .check-row { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0; }
 .aa-sec input[type=number] { padding: 7px 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; }
 .aa-num { display: grid; gap: 4px; margin: 8px 0; }
+.aa-live { font-size: 12.5px; margin-top: 6px; padding: 4px 8px; border-radius: 6px; background: var(--panel-2); }
+.aa-live.wait { background: color-mix(in srgb, #f59e0b 14%, transparent); }
+.aa-live.run { background: color-mix(in srgb, #22c55e 14%, transparent); }

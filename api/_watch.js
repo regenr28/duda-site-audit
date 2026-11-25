@@ -39,6 +39,9 @@ const MAX_ISSUES = 25;
 const RECHECK_DAYS = 30;
 export const WWAIT = P + 'cwwait';                    // Duda asked us to slow down: nothing is read until this expires
 const GAP_MS = 1500;                                  // at least this long per website, so Duda is never asked in bursts
+// Reading speed (Settings → Auto audits): pages at once, pause between them, and the least time per website.
+// Every website sits on the same Duda servers, which start refusing connections when asked too fast.
+export const PACE = { normal: { batch: BATCH, gap: BATCH_GAP_MS, site: GAP_MS }, gentle: { batch: 2, gap: 800, site: 4000 }, slow: { batch: 1, gap: 1500, site: 8000 } };
 const SUM_V = 3;
 // What the checks themselves look for. A website whose result came from older rules, and that the newer rules
 // would judge differently, is read again soon instead of waiting a month.
@@ -359,7 +362,8 @@ export async function runSettings() {
   const [biz, ed, [edRaw, verRaw]] = await Promise.all([aaCfg('bizinfo'), aaCfg('editorial'), redis(['HGETALL', P + 'stock:ed'], ['GET', P + 'stock:ver'])]);
   const items = []; for (let i = 0; edRaw && i < edRaw.length; i += 2) { const v = jparse(edRaw[i + 1]); if (v && v.id) items.push(v); }
   return { biz, ed, bizOn: !!biz.on, edOn: !!ed.on && items.length > 0, ver: Number(verRaw) || 1,
-    ids: new Set(items.map((x) => String(x.id))), refs: items.filter((x) => x.h && x.h.length === 64), recheckDays: biz.fields.recheckDays || 30, maxPages: biz.fields.maxPages || MAX_PAGES };
+    ids: new Set(items.map((x) => String(x.id))), refs: items.filter((x) => x.h && x.h.length === 64), recheckDays: biz.fields.recheckDays || 30, maxPages: biz.fields.maxPages || MAX_PAGES,
+    pace: PACE[biz.fields.pace] || PACE.gentle };
 }
 /** Which check of the tree (Settings → Auto audits) a finding belongs to. */
 export function checkKey(x) {
@@ -586,7 +590,7 @@ async function readSite(s, recId, timeLeft, st) {
   let lastNote = 0;
   while (i < pages.length && timeLeft() > 4000) {
     if (i - lastNote >= 20) { lastNote = i; await nowReading(s, i, pages.length); }
-    const batch = pages.slice(i, i + BATCH);
+    const batch = pages.slice(i, i + st.pace.batch);
     const got = await Promise.all(batch.map((p) => fetchPage(s.domain, p)));
     got.forEach((g, k) => { if (g.html) { read++; look(g.html, batch[k]); noteForms(g.html, batch[k]); } });
     i += batch.length;
@@ -596,7 +600,7 @@ async function readSite(s, recId, timeLeft, st) {
       await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found, forms, imgs: [...imgs] }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
       return { done: false, wait: true, why: `Websites stopped answering us (${(got.find((g) => !g.html) || {}).why || 'refused'})` };
     }
-    if (i < pages.length) await new Promise((res) => setTimeout(res, BATCH_GAP_MS));
+    if (i < pages.length) await new Promise((res) => setTimeout(res, st.pace.gap));
   }
   if (i < pages.length) {
     await redis(['SET', WPART(s.id), JSON.stringify({ pub: s.pub, pages, i, read, found, forms, imgs: [...imgs] }), 'EX', 3 * DAY], ['SET', WPARTID, s.id, 'EX', 3 * DAY]);
@@ -681,7 +685,7 @@ export async function runWatch({ budgetMs = 50000, only = '', by = 'auto' } = {}
       done.push(Object.assign({ id: s.id }, r));
       await redis(['INCR', P + 'aa:sinceSeo']).catch(() => {});   // SEO websites take their turn after a few of these
       await redis(['LPUSH', WRECENT, JSON.stringify({ at: Date.now(), id: s.id, name: s.name || '', domain: s.domain, n: r.n || 0, c: r.c || 0, err: r.err || '', pages: r.pages || 0 })], ['LTRIM', WRECENT, 0, 9]);
-      const rest = GAP_MS - (Date.now() - t0);
+      const rest = st.pace.site - (Date.now() - t0);
       if (rest > 0 && timeLeft() > rest + 6000) await new Promise((res) => setTimeout(res, rest));
     }
     if (!stopped && partId && done.some((d) => d.id === partId)) await redis(['DEL', WPARTID]);

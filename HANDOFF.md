@@ -575,3 +575,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `_domains.js` / `_leadkv.js` / `_presence.js`: messages through `aaSend`, filtered by the tree; quiet thresholds (min, gaps, minDays) and presence profiles from settings.
 - SEO websites (`api/seo.js`): hours after publish from settings; `op=due` is held while `cwstat.pending` > 0 per priority (`after` / `interleave` every N read, counter `dsa:aa:sinceSeo` incremented per website read, reset on claim / `first`); `seo.pages` toggle; `saveIndex` after done. Index summary `auto: 'seo'` (sv 4) → Audits filter `#fby` and the 🤖 Auto audited tag.
 - UI: Settings → 🤖 Auto audits (`drawAutoAudits`, `drawAutoAudit`), route `#/settings/autoaudits/<id>`; ⚙ Settings on the DR Websites panel; search entry; Help `autoaudits`. Test: tk/e2e_autoaudits.py; e2e_watch.py sets toAudits 'all' for its audit-item checks. app v98, styles v61.
+
+## 227 — Auto audits: live state and reading speed
+- Production logs showed the reading backing off 5 → 10 → 20 → 40 min ("Websites stopped answering us (could not be reached)") after ~142 websites: Duda's servers refusing connections when read fast. Nothing was stopped; the row only showed the daily cron time.
+- `PACE` in `_watch.js` (normal 4 pages/300 ms/1.5 s per site, gentle 2/800 ms/4 s, slow 1/1.5 s/8 s); `runSettings().pace` from bizinfo field `pace` (default gentle).
+- `aaList` adds `live` { pending, reading, running, waitUntil, waitWhy } to the bizinfo/editorial rows; the page shows it (`aaLive`) and labels the column "Next daily run". Tests in e2e_autoaudits.py. app v99, styles v62.

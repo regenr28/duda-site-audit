@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-25-auto-pace', date: '2026-11-25', audience: 'all', tag: 'Settings',
+    title: 'Auto audits: see what it is doing now, and a gentler reading speed',
+    what: 'The Business Info and editorial photo rows now say whether a website is being read, how many are waiting, or that it is taking a break (and until when). Duda\u2019s servers refuse connections when websites are read too fast, which caused long breaks; reading is now gentler by default, and the speed is a setting.',
+    where: ['<b>Walkthrough:</b> <b>Settings → 🤖 Auto audits</b> → <b>Business Info check</b> → <b>Reading speed</b>.'],
+  },
+  {
     id: '2026-11-25-auto-audits', date: '2026-11-25', audience: 'all', tag: 'Settings',
     title: 'Settings → Auto audits: every automatic check in one place',
     what: 'Business Info check, editorial stock photos (now on every published website), domain monitoring, forms gone quiet, online presence and SEO websites, one row each with its last run, last website and next run. Click one to choose exactly what it checks, the days it runs, and who is told and how (with your own message format, a preview and Send me a test). SEO websites can wait for, or mix in with, the websites still being read. Auto audit findings now go only to audits an auto audit made, not to audits scanned by hand, and the Audits tab can show only the auto-audited ones.',

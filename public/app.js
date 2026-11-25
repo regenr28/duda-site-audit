@@ -6647,6 +6647,16 @@
   /** "Every day" / "Mon–Fri" / "Mon, Wed, Fri": the days a cron day (UTC) runs, as words. */
   const aaDaysWord = (days) => { const d = (days || []).slice().sort(); return d.length === 7 ? 'every day' : !d.length ? 'never' : d.join() === '1,2,3,4,5' ? 'Mon\u2013Fri' : d.map((x) => AA_DAYS[x]).join(', '); };
   const aaWhen = (ms) => (ms ? fmtFull(new Date(ms).toISOString()) : '');
+  /** What the reading is doing right now (Business Info and editorial photos share it). */
+  const aaLive = (x) => {
+    const L = x.live; if (!L || !x.on) return '';
+    const t = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (x.paused) return '';
+    if (L.waitUntil) return `<div class="aa-live wait">\u23f3 Taking a break until <b>${esc(t(L.waitUntil))}</b>: ${esc(L.waitWhy || 'the websites asked us to slow down')}. It carries on by itself after that${L.pending ? ` \u00b7 <b>${L.pending}</b> websites waiting` : ''}.</div>`;
+    if (L.reading) return `<div class="aa-live run">\u25cf Reading now: <b>${esc(L.reading)}</b>${L.pending ? ` \u00b7 <b>${L.pending}</b> websites waiting` : ''}</div>`;
+    if (L.pending) return `<div class="aa-live queue">\u25cb <b>${L.pending}</b> websites waiting. Reading carries on whenever anyone on the team has the app open (and at the daily run).</div>`;
+    return '';
+  };
   /** Settings → Auto audits: every check that runs by itself, one row each. */
   async function drawAutoAudits(body) {
     body.innerHTML = '<h2>Auto audits</h2><div class="empty">Loading…</div>';
@@ -6657,11 +6667,11 @@
       <div class="aa-list">${d.list.map((x) => `<a class="aa-row" href="#/settings/autoaudits/${esc(x.id)}" data-aa="${esc(x.id)}">
         <div class="aa-ic" aria-hidden="true">${x.icon}</div>
         <div class="aa-main"><div class="aa-t"><b>${esc(x.title)}</b> ${x.paused ? `<span class="badge sev-warning">Paused${x.paused.by ? ' by ' + esc(x.paused.by) : ''}</span>` : x.on ? '<span class="badge v-ok">On</span>' : '<span class="badge subtle">Off</span>'}</div>
-          <div class="small muted">${esc(x.summary || '')}</div></div>
+          <div class="small muted">${esc(x.summary || '')}</div>${aaLive(x)}</div>
         <dl class="aa-facts small">
           <div><dt>Last run</dt><dd>${x.last && x.last.at ? `${esc(aaWhen(x.last.at))} <span class="faint">${who(x.last)}</span>` : '<span class="faint">not yet</span>'}</dd></div>
           <div><dt>Last website</dt><dd>${x.last && x.last.site && x.last.site.name ? esc(x.last.site.name) : '<span class="faint">\u2014</span>'}</dd></div>
-          <div><dt>Next run</dt><dd>${x.next ? `${esc(aaWhen(x.next))} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : x.on && x.nextText ? `${esc(x.nextText)} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : '<span class="faint">off</span>'}</dd></div>
+          <div><dt>${x.id === 'bizinfo' || x.id === 'editorial' ? 'Next daily run' : 'Next run'}</dt><dd>${x.next ? `${esc(aaWhen(x.next))} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : x.on && x.nextText ? `${esc(x.nextText)} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : '<span class="faint">off</span>'}</dd></div>
           <div><dt>Notifications</dt><dd>${x.notify ? (x.notify.on ? [x.notify.instant && 'at once', x.notify.daily && 'daily report'].filter(Boolean).join(' + ') + ` \u00b7 ${x.notify.to === 'people' ? `${x.notify.people} ${x.notify.people === 1 ? 'person' : 'people'}` : 'admins'}` : 'off') : '<span class="faint">none</span>'}</dd></div>
         </dl><span class="aa-go" aria-hidden="true">\u203a</span></a>`).join('')}</div>
       <p class="small faint">Your own notifications (like a scan you started finishing) are in <a href="#/settings/notifications">Your notifications</a>. Each person also chooses there whether these messages reach their bell, pop-ups or Slack.</p>`;
