@@ -675,6 +675,16 @@
         'New check: a Shutterstock photo that is licensed for editorial use only (not for promoting a business) is reported as critical, with where it is used and a link to it on Shutterstock. A picture is matched by the Shutterstock ID in its file name, or by how it looks, so a renamed or resized copy is still caught. The list of editorial images starts with the team\u2019s own Shutterstock downloads and is kept in Settings \u2192 Editorial stock photos; an ID the list does not know is looked up on Shutterstock once',
       ],
     },
+    {
+      v: 59,
+      date: '2026-11-25',
+      title: 'Editorial stock photos: every slide, gallery picture and hidden section',
+      scope: { adds: ['STOCK_EDITORIAL'] },
+      items: [
+        'A published Duda page shows only the first slide of a slider; the other slides are in the slider\u2019s data and load as it moves. An editorial photo on any slide (the last one too) is now found, and so is a picture kept only in a gallery\u2019s data',
+        'A background in a section hidden on every device is now found even when the section is not in the page as served (its picture is still in the page\u2019s styles). It is reported as a warning, in a hidden section',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -1396,6 +1406,7 @@
 
   function photosUsed(doc, ctx, device) {
     const out = [];
+    const unplaced = [];
     const abs = (u) => { try { return new URL(u, ctx.pageUrl).href; } catch (e) { return ''; } };
     const push = (el, url, how, extra) => {
       if (!url || /^data:/i.test(url)) return;
@@ -1439,15 +1450,56 @@
         const urls = urlsInCss(m[2]);
         if (!urls.length) continue;
         const tiled = tiledFrom(m[2]);
+        let matched = 0; const sels = [];
         m[1].split(',').forEach((raw) => {
           const sel = raw.replace(/::?[a-z-]+(\([^)]*\))?/gi, '').trim();
           if (!sel || /^@/.test(sel)) return;
+          sels.push(sel);
           let hits = [];
           try { hits = doc.querySelectorAll(sel); } catch (e) { return; }
+          matched += hits.length;
           Array.prototype.slice.call(hits, 0, 40).forEach((el) => urls.forEach((u) => push(el, u, 'background', { tiled })));
         });
+        // A background whose element is not on the page as served (a section hidden on every device):
+        // the file is still part of the website, so it is kept for the checks that look at files.
+        if (!matched && sels.length && /\.u_\d+|#\d{6,}|\[id=/.test(sels.join(','))) urls.forEach((u) => unplaced.push({ url: u, sel: sels[0] }));
       }
     });
+    // Pictures that are not <img> or a background in the page as served, but are still the website's:
+    // the other slides of a slider (Duda renders only the first and loads the rest from the slider's
+    // data as it moves), gallery data, and backgrounds of sections hidden on every device. They are
+    // marked fromData: the editorial-photo check uses them; the duplicate-photo check does not.
+    const have = new Set(out.map((x) => imageKey(abs(x.url))));
+    let extra = 0;
+    const addData = (el, u, how, hid) => {
+      if (extra >= 200) return;
+      const a = abs(u); if (!a || !/^https?:/i.test(a)) return;
+      const k = imageKey(a); if (have.has(k)) return;
+      have.add(k); extra++;
+      const holder = el && el.nodeType === 1 ? el : null;
+      const sel = holder ? uniqueSelector(holder) : (hid && hid.sel) || 'style';
+      out.push({ url: a, how, selector: sel, block: holder ? blockOf(sel) : sel, location: holder ? (locationOf(holder) || 'Body') : 'Hidden section',
+        hiddenBy: holder ? (hiddenReason(holder, device) || '') : 'its section is not shown on the published page', fromData: true });
+    };
+    const DATA_URL = /https?:\/\/[^\s"'()<>\\,]+?\.(?:jpe?g|png|webp|avif|gif)(?:\?[^\s"'()<>\\,]*)?(?=$|[\s"'()<>\\,&])/gi;
+    const unwrap = (t) => { let x = String(t || '').replace(/\\u002[Ff]/g, '/').replace(/\\\//g, '/').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+      if (/%2F/i.test(x)) { try { x = x + ' ' + decodeURIComponent(x.replace(/%(?![0-9a-f]{2})/gi, '%25')); } catch (e) { /* as it is */ } }
+      return x; };
+    const widgetOf = (el) => (el && el.closest && el.closest('[data-element-type],[dmle_extension],[id]')) || el;
+    // Slider and gallery data: Duda's hydration scripts, data-initial-props (url-encoded) and data-model (base64 JSON).
+    doc.querySelectorAll('script').forEach((sc) => {
+      const t = sc.textContent || ''; if (!/cdn-website|multiscreensite|dms3rep|imgSrc/i.test(t) || t.length > 400000) return;
+      const host = widgetOf(sc.parentElement);
+      (unwrap(t).match(DATA_URL) || []).forEach((u) => addData(host, u, 'slider', null));
+    });
+    doc.querySelectorAll('[data-initial-props],[data-model],[data-image-url],[data-gallery],[data-slides]').forEach((el) => {
+      ['data-initial-props', 'data-model', 'data-image-url', 'data-gallery', 'data-slides'].forEach((a) => {
+        let v = el.getAttribute(a); if (!v) return;
+        if (a === 'data-model' && /^[A-Za-z0-9+/=]{40,}$/.test(v)) { try { v = typeof atob === 'function' ? atob(v) : Buffer.from(v, 'base64').toString('utf8'); } catch (e) { return; } }
+        (unwrap(v).match(DATA_URL) || []).forEach((u) => addData(widgetOf(el), u, /slider|slide/i.test(el.getAttribute('data-element-type') || el.getAttribute('dmle_extension') || '') ? 'slider' : 'gallery', null));
+      });
+    });
+    unplaced.forEach((x) => addData(null, x.url, 'background', { sel: x.sel }));
     // One entry per element per picture: a rule and an inline style naming the same file on the
     // same element is one picture in one place, not two.
     const seenHere = new Set();
@@ -1457,7 +1509,7 @@
       if (seenHere.has(k)) return false;
       seenHere.add(k);
       return true;
-    }).slice(0, 400);
+    }).slice(0, 600);
   }
 
   // ---------------------------------------------------------------------------
@@ -1642,8 +1694,9 @@
   function duplicatePhotoFindings(byKey, allow) {
     const out = [];
     const ok = allow || new Set();
-    const shots = [...byKey.values()].filter((e) => e.m && e.m.hash && !e.why && !flatHash(e.m.hash)
-      && !imageApproved(ok, e));
+    // Places read from slider/gallery data or hidden sections are not counted as repeats.
+    const shots = [...byKey.values()].map((e) => Object.assign({}, e, { places: e.places.filter((ph) => !ph.fromData) }))
+      .filter((e) => e.places.length && e.m && e.m.hash && !e.why && !flatHash(e.m.hash) && !imageApproved(ok, e));
 
     // Group by fingerprint: the same file, and the same picture uploaded twice under other names.
     const groups = [];
@@ -4785,6 +4838,6 @@
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince, updatePlan, codeIn,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, stockMeasure, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, LEAD_WORDS,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, stockMeasure, photosUsed, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

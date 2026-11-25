@@ -561,3 +561,9 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `stockFacts` always builds `preview` (`/{kind}/{slug}-260nw-{id}.jpg`, slug may be empty); `stockLookup` returns preview/url/file even when the page is refused (`via: 'id'`). AI web search is now only for the title (Add box, `ai: true`); Get previews no longer uses AI.
 - `stockMeasure(img, url)` in engine.js crops the bottom 20px of a `-NNNnw-ID.jpg` preview before `measureImage`; used by scans (`stockFingerprints`) and the app (`stockHashOf`). An ID added by hand counts as editorial when Shutterstock cannot say.
 - e2e_stock.py: stand-in previews carry the strip; checks the ID-only preview and that the preview's fingerprint matches the clean photo. engine v41, app v96.
+
+## 225 — Editorial photos: sliders, galleries, hidden sections
+- Seen on a published Duda page (detailersroadmap.com, from a Vercel sandbox): an `ssrimageslider` renders only the first slide as `<img>`; the other slides are only in `data-initial-props` (url-encoded JSON), `data-model` (base64 JSON) and the hydration `<script>` (`"imgSrc"`). Row backgrounds are in inline `<style>` as `.u_<id>{background-image:url(…)}`.
+- `photosUsed` now also reads picture URLs from scripts and `data-initial-props / data-model / data-image-url / data-gallery / data-slides` (decoded), and keeps stylesheet backgrounds whose `.u_…`/`#id` selector matches nothing (section hidden on every device, not in the page) as location 'Hidden section', hidden. These rows carry `fromData: true`; `duplicatePhotoFindings` ignores fromData places. Cap 600 rows per page (200 from data). `photosUsed` exported.
+- Check release v59 (`adds: ['STOCK_EDITORIAL']`) so Apply check updates looks again.
+- Test: tk/e2e_stockplaces.py (published-style page: last slide, gallery data, hidden row not in the page, hidden row in the page, parallax, fixed+covered). engine v42, app v97.

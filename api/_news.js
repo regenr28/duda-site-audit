@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-25-editorial-places', date: '2026-11-25', audience: 'all', tag: 'Audits',
+    title: 'Editorial photos: every slide, gallery picture and hidden section',
+    what: 'The editorial photo check now finds a photo on any slide of a slider (not only the first), pictures kept in a gallery, and backgrounds of sections hidden on every device. Run <b>⚡ Apply check updates</b> on an audit to look again.',
+    where: ['<b>Walkthrough:</b> open an audit → <b>⚡ Apply check updates</b>.'],
+  },
+  {
     id: '2026-11-25-editorial-id-only', date: '2026-11-25', audience: 'all', tag: 'Audits',
     title: 'Editorial photos: the Shutterstock ID is all you need',
     what: 'Adding an editorial photo no longer needs a download or an upload. Type the Shutterstock ID and the app fetches its preview straight from Shutterstock, makes its fingerprint, and adds it, so renamed copies are caught too.',
