@@ -7840,6 +7840,17 @@
   function linkNeedsJudging(l, dest) {
     if (!l.text || !l.to) return false;
     if (dest && dest.notFound) return false; // already a broken-link item
+    // A section of its own page: a missing section is its own item; a section that is there is judged by its words.
+    if (l.anchor) {
+      if (!l.anchor.found) return false;
+      const sec = new Set(linkWords(l.anchor.text));
+      const ws = linkWords(l.text);
+      return !!ws.length && !ws.some((w) => sec.has(w) || [...sec].some((x) => x.startsWith(w.slice(0, 5))));
+    }
+    // A packages, brand or vehicle link that opens that kind of page keeps its promise.
+    const purpose = A.linkPurpose(l.text, l.to);
+    if ((purpose === 'brand' || purpose === 'vehicle') && A.linkPurpose('', (dest && dest.path) || l.to) === purpose) return false;
+    if (purpose === 'packages' && dest && dest.pkg) return false;
     const there = new Set(linkWords([l.to.replace(/[/-]/g, ' '), dest && dest.title, dest && dest.h1].join(' ')));
     const matches = (ws) => ws.length && ws.every((w) => there.has(w) || [...there].some((x) => x.startsWith(w.slice(0, 5))));
     // "Read more" under a "Window Tint" heading opening /window-tint: the section is the destination.
@@ -7959,9 +7970,13 @@
     if (proofItems.length + tooShort < proofTexts.length) log.push(`Proofreading read the first ${proofItems.length} of ${proofTexts.length} blocks of text (service pages first, then blog posts): the website is very large.`);
     const linkItems = [];
     (res.links || []).forEach((l, i) => {
-      const dest = byPath.get(l.to);
+      // Where the link really lands: through the website's redirects, so a renamed page is not taken for a missing one.
+      const land = A.finalPage(l.to, byPath);
+      const dest = byPath.get(land);
       if (linkItems.length >= 150 || !linkNeedsJudging(l, dest)) return;
-      linkItems.push({ i, text: l.text, context: l.context, near: l.near, from: (l.pages || [])[0] || '/', to: l.to, toTitle: (dest && dest.title) || '', toH1: (dest && dest.h1) || '', button: l.button });
+      linkItems.push({ i, text: l.text, context: l.context, near: l.near, from: (l.pages || [])[0] || '/', to: l.to, toTitle: (dest && dest.title) || '', toH1: (dest && dest.h1) || '', button: l.button,
+        ...(land !== l.to ? { final: land } : {}), ...(l.frag ? { frag: l.frag } : {}), ...(l.anchor && l.anchor.text ? { section: l.anchor.text } : {}), ...(dest && dest.pkg ? { pkg: true } : {}), ...(l.parts > 1 ? { parts: l.parts } : {}),
+        ...(dest && dest.notFound === false && dest.error ? { unverified: true } : {}) });
     });
     const batches = (items, maxChars, maxItems, size) => { const out = []; let cur = [], n = 0; items.forEach((x) => { const s = size(x); if (cur.length && (n + s > maxChars || cur.length >= maxItems)) { out.push(cur); cur = []; n = 0; } cur.push(x); n += s; }); if (cur.length) out.push(cur); return out; };
     const out = { proof: { blocks: proofItems.length, of: proofTexts.length - tooShort, flagged: 0 }, links: { checked: linkItems.length, of: (res.links || []).length, flagged: 0 }, used: [], paused: null };
@@ -9665,7 +9680,7 @@
     if (!f.ai) return '';
     const ok = ['describes_image', 'this_business', 'partner_logo'].includes(f.ai.verdict);
     return `<div class="ai-note ${ok ? 'ok' : 'bad'}"><span class="badge ai-badge">✨ AI</span> <b>${esc(AI_LABEL[f.ai.verdict] || f.ai.verdict)}</b>${f.ai.reason ? ' · ' + esc(f.ai.reason) : ''} <span class="faint">(${Math.round((f.ai.confidence || 0) * 100)}% sure)</span>
-      ${full && f.ai.suggestion ? `<div class="ai-sugg">${f.optional ? 'Optional rewording' : /^TEXT_(SPELLING|GRAMMAR|WORD_CHOICE|PUNCTUATION|INCOMPLETE)$/.test(f.code) ? 'Suggested correction' : f.code === 'LINK_WRONG_PAGE' ? 'Should open' : /^AI_(TEXT|PAGE)/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
+      ${full && f.ai.suggestion ? `<div class="ai-sugg">${f.optional && f.code === 'LINK_WRONG_PAGE' ? 'Optional: could open' : f.optional ? 'Optional rewording' : /^TEXT_(SPELLING|GRAMMAR|WORD_CHOICE|PUNCTUATION|INCOMPLETE)$/.test(f.code) ? 'Suggested correction' : f.code === 'LINK_WRONG_PAGE' ? 'Should open' : /^AI_(TEXT|PAGE)/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
   }
 
   async function checkProfiles(truth) {

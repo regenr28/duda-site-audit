@@ -413,9 +413,15 @@ Report "wrong_page" ONLY when the page it opens clearly does not match what the 
 - "Read more" / "Learn more" under a "Ceramic Coating" section opening the window tint page;
 - "View gallery" opening the about page; a service card for one service opening another service's page.
 These are FINE (never report): any call to action (book, schedule, get a quote, free estimate, get started, call) that opens a contact, quote, booking or estimate page; a generic button that opens a closely related or overview page (services, all packages); "Home" or a logo opening the home page; a page whose topic matches even if its wording differs.
-A link inside a paragraph on a word or service name ("PPF", "ceramic coating") that opens the page about that word or service is FINE on any page: it is how pages link to each other. A link never "should" open the page it is already on.
+A link inside a paragraph on a word or service name ("PPF", "ceramic coating") that opens the page about that word or service is FINE on any page: it is how pages link to each other.
+Judge each link by what its words, its sentence and its section PROMISE, and whether the page (or section) it opens gives that. Keep the link's purpose: packages or pricing ("PPF packages" opening the main PPF page that shows the packages is FINE), a maker's or product's information ("STEK film options" should open STEK information, "LLumar film details" LLumar information), a vehicle's own service ("Porsche PPF packages" opening the Porsche PPF page is FINE), a complementary service ("add ceramic coating over your PPF" opening the ceramic coating page is FINE), general service information, a town's service, or contact/booking.
+The town of the page a link sits on is background only: a page about a town may link the GENERAL service page, and that page does not need to name the town. Never report a link only because a town page exists. When the link's own words name a town and a town page exists, that page is at most an optional idea: set "optional": true.
+"opens" may show a SECTION of the page ("#packages … section: <its heading and words>"): a button that scrolls to a section of its own page that gives what it promises ("VIEW PACKAGES" to the packages section) is FINE. Never send such a button to another page instead.
+"opens" may show "(redirects to /x)": judge the page it finally lands on. A redirect that lands on the right page is not a wrong page and never a "non-existent" page.
+"(one phrase across N links)" means formatting split the words into several links to the same page: read the whole phrase as the link's words.
+Report "wrong_page" only with evidence that the destination fails the promise (another service, no packages when packages are promised, another business's or branch's offer). "reason" says what the link promises, what the page gives, and why they differ. "expected" must be a page from THE SITE'S PAGES that gives exactly what the link promises; never pick one from its address alone; leave it empty when none clearly does.
 If you are not sure, do not report it. Most items are fine: return nothing for them.
-Respond with JSON only: {"results":[{"i":<number>,"verdict":"wrong_page","confidence":<0..1>,"reason":"<max 20 words, plain English>","expected":"<the address from THE SITE'S PAGES that it should open, or empty>"}]}. Use {"results":[]} when every item is fine.`;
+Respond with JSON only: {"results":[{"i":<number>,"verdict":"wrong_page","confidence":<0..1>,"reason":"<max 30 words: promised, given, why they differ>","expected":"<the address from THE SITE'S PAGES that it should open, or empty>","optional":<true when the current page is fine and another is only a better option>}]}. Use {"results":[]} when every item is fine.`;
 
 // Does each page say what its address promises? Pages are often built by copying a sister page, and
 // the copy keeps the sister's service or town: /locations/nolanville-tx/ceramic-coating ends up about
@@ -498,7 +504,7 @@ THE SITE'S PAGES (address | title)
 ${[].concat(pages || []).slice(0, 80).map((p) => `${String(p.path || '/').slice(0, 90)} | ${String(p.title || '').slice(0, 90)}`).join('\n')}
 
 BUTTONS AND LINKS (i | words on it | section heading | text around it | on page | opens → title / main heading)
-${items.map((x) => `${x.i} | ${x.button ? '[button] ' : ''}${String(x.text).slice(0, 80)} | ${String(x.context || '-').slice(0, 100)} | ${String(x.near || '-').replace(/\s+/g, ' ').slice(0, 220)} | ${String(x.from || '/').slice(0, 80)} | ${String(x.to || '/').slice(0, 90)} → ${String(x.toTitle || '-').slice(0, 90)} / ${String(x.toH1 || '-').slice(0, 90)}`).join('\n')}`;
+${items.map((x) => `${x.i} | ${x.button ? '[button] ' : ''}${String(x.text).slice(0, 120)}${x.parts > 1 ? ` (one phrase across ${x.parts} links)` : ''} | ${String(x.context || '-').slice(0, 100)} | ${String(x.near || '-').replace(/\s+/g, ' ').slice(0, 220)} | ${String(x.from || '/').slice(0, 80)} | ${String(x.to || '/').slice(0, 90)}${x.frag ? '#' + String(x.frag).slice(0, 60) : ''}${x.final ? ` (redirects to ${String(x.final).slice(0, 90)})` : ''}${x.section ? ` section: ${String(x.section).replace(/\s+/g, ' ').slice(0, 200)}` : ''} → ${String(x.toTitle || '-').slice(0, 90)} / ${String(x.toH1 || '-').slice(0, 90)}${x.pkg ? ' [shows packages]' : ''}${x.unverified ? ' [could not be read]' : ''}`).join('\n')}`;
 
 /**
  * The two whole-website reads that are not about the business's name: proofreading the copy, and
@@ -514,8 +520,9 @@ async function extraCheck(req, res, b, list, owner) {
   const cacheKey = P + 'aic:' + sha([business.name, business.city, business.region, (business.areaPages || []).length].join('|')).slice(0, 20);
   // 'p2': answers from before the second read of grammar flags are not reused.
   // 'l2': link answers from before "a service word linking to its page is fine" are asked again.
+  // 'l3': links are judged by their promise; the key holds the section, the redirect and packages, so a change there is asked again.
   // 'f3': page checks from before the "town pages name their own town; other pages may name the shop's town" rules are asked again.
-  const keyOf = (x) => (fit ? 'f4' : proof ? 'p2' : 'l2') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt]) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1].join('|')).slice(0, 18);
+  const keyOf = (x) => (fit ? 'f4' : proof ? 'p2' : 'l3') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt]) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1, x.frag || '', x.final || '', x.section || '', x.pkg ? 1 : 0, x.unverified ? 1 : 0, x.from || ''].join('|')).slice(0, 18);
   const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
   const results = []; const todo = [];
   items.forEach((x, k) => {
@@ -551,7 +558,7 @@ async function extraCheck(req, res, b, list, owner) {
         ? (FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240), ...(x.clarify === true ? { clarify: true } : {}) } : null)
         : proof
         ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200), sv: 2, gv: 3, ...(x.clarify === true ? { clarify: true } : {}), ...(x.optional === true && x.clarify !== true && x.type !== 'incomplete' ? { optional: true } : {}) } : null)
-        : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 200), expected: String(x.expected || '').slice(0, 160) } : null);
+        : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 240), expected: String(x.expected || '').slice(0, 160), ...(x.optional === true ? { optional: true } : {}) } : null);
       if (!r) return;
       // A "correction" that rewrites the words or adds to them is a style opinion, not a mistake.
       if (proof && r.type !== 'incomplete' && !r.clarify && !minimalFix(r.quote, r.suggestion, r.type)) return;

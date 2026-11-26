@@ -46,7 +46,8 @@ PAGES = {
     '/does-ppf-thickness-matter': page('Does PPF Thickness Matter?', '<h1>Does PPF Thickness Matter?</h1>'
         '<p id="b1">A Littleton driver who mainly travels on neighborhood streets has different needs. Littleton roads are rough in winter.</p>'
         '<p id="b2">Ask about our <a id="l1" href="/site/abc123/clear-bra">paint protection film</a> and <a id="l2" href="/site/abc123/ceramic-coatings">ceramic coating</a> packages, or <a id="l3" href="/site/abc123/window-tint">window tint</a>.</p>'
-        '<p id="b3">Stop by our Boulder shop, CO for a free quote today.</p>'),
+        '<p id="b3">Stop by our Boulder shop, CO for a free quote today.</p>'
+        '<p id="b4">Many owners choose <a id="l4" href="/site/abc123/clear-bra">paint protection film in Littleton</a> for winter roads, or compare our <a id="l5" href="/site/abc123/clear-bra">Littleton PPF packages</a>.</p>'),
 }
 META = {'host': 'ed.multiscreensite.com', 'siteId': 'abc123', 'site': {'site_business_info': {'business_name': 'Denver Auto Shield'}},
         'content': {'location_data': {'address': {'streetAddress': '4211 S Natches Ct', 'city': 'Englewood', 'region': 'CO', 'postalCode': '80110'}}},
@@ -78,11 +79,12 @@ try:
         check(SEEN['areas_in_prompt'], 'the AI is told which towns the business serves')
         check(not any('Littleton' in (f.get('found') or '') for f in loc), 'a blog post naming a town the business serves is not "a location that doesn\'t match"')
         check(any('Boulder' in (f.get('found') or '') for f in loc), 'a town it does not serve still is')
-        ppf = next((f for f in tl if '/clear-bra' in f['found']), None)
-        cer = next((f for f in tl if '/ceramic-coatings' in f['found']), None)
-        check(ppf and '/paint-protection-film-in-littleton-co' in ppf['expected'], 'a post about Littleton linking PPF to the general page is told to link the Littleton PPF page')
-        check(ppf and ppf['severity'] == 'warning', '…as a warning (that page exists)')
-        check(cer and cer['severity'] == 'info' and 'Optional' in cer['message'] and 'Littleton' in cer['expected'], 'where Littleton has no ceramic coating page and the general page does not mention Littleton, a town page is only an optional idea (Info)')
+        # A post about Littleton may link the GENERAL service pages: the page's town alone asks for nothing.
+        check(not any('"paint protection film" ' in f['found'] for f in tl), 'a post about Littleton linking "paint protection film" to the general PPF page is fine (no town-page item)')
+        check(not any('/ceramic-coatings' in f['found'] for f in tl), 'nor is a general ceramic coating link, even where the general page does not name Littleton')
+        named = next((f for f in tl if 'paint protection film in Littleton' in f['found']), None)
+        check(named and named['severity'] == 'info' and named['message'].startswith('Optional') and '/paint-protection-film-in-littleton-co' in named['expected'], 'a link whose own words name Littleton is offered the Littleton PPF page, as an optional idea (Info)')
+        check(not any('PPF packages' in f['found'] for f in tl), 'a packages link keeps the page with the packages, town named or not')
         check(not any('/window-tint' in f['found'] for f in tl), 'a link to a general page that already targets the town in its H1 ("Window Tint in Littleton") is fine, whatever its address')
         check(not any(f['path'] != '/does-ppf-thickness-matter' for f in tl), 'pages that are not about one town are left alone')
         city = [f for f in F if f['code'] == 'AI_PAGE_CITY']

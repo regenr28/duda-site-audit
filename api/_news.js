@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-26-link-promise', date: '2026-11-26', audience: 'all', tag: 'Checks',
+    title: 'Links are judged by what they promise: far fewer false alarms',
+    what: 'A page about a town may link the general service pages, a maker\u2019s page (STEK, LLumar, CARPRO), a vehicle\u2019s page or the packages: no more \u201cgo to the town page instead\u201d for those. Only a link whose own words name the town is offered the town page, as an optional Info idea. A button that scrolls to a section of its own page (\u201cVIEW PACKAGES\u201d) is judged by that section; a link through a redirect by the page it lands on (never \u201cnon-existent\u201d); words split across several links are read as one phrase. A suggested page is always one the scan found working, and each link gets one recommendation. Audits catch up with <b>Apply check updates</b>.',
+    where: ['<b>Walkthrough:</b> an audit → the <b>Apply check updates</b> banner, then the Links items.'],
+  },
+  {
     id: '2026-11-26-grammar-fix', date: '2026-11-26', audience: 'all', tag: 'Checks',
     title: 'Grammar items: the smallest fix that keeps the meaning, and the real problem named',
     what: 'A grammar correction is now chosen after reading the whole sentence and checked inside the corrected sentence before it is suggested. \u201cWe believe in treating your vehicle is treated with care\u201d now suggests \u201cin treating your vehicle\u201d (keeping the statement of values) and explains that two sentence structures are mixed. A real word used wrongly (\u201ccartouches\u201d for coatings) is its own \u201cWrong word\u201d item, and an optional style improvement is an Info item that says it is not a mistake. Audits pick this up with <b>Apply check updates</b>.',

@@ -696,6 +696,18 @@
         'A real word used in the wrong place (\u201ccartouches\u201d for coatings) is its own item, \u201cWrong word\u201d, separate from any grammar mistake in the same sentence. An optional style improvement, when reported, is an Info item that says it is not a mistake. Grammar items found before are checked again',
       ],
     },
+    {
+      v: 61,
+      date: '2026-11-26',
+      title: 'Links are judged by what they promise: town pages, packages, brands, sections and redirects',
+      scope: { fixes: ['LINK_TOWN_SERVICE', 'LINK_WRONG_PAGE'], adds: ['LINK_ANCHOR_MISSING', 'LINK_VIA_REDIRECT'], ai: true },
+      items: [
+        'A page about a town linking the general service page is no longer flagged because a town page exists. Links to packages, a film or coating maker\u2019s page (STEK, LLumar, CARPRO\u2026), a vehicle\u2019s own service page (Porsche PPF) or a complementary service keep their page. Only a link whose own words name the town (\u201cpaint protection film Voorhees\u201d) is offered the town page, as an optional Info idea',
+        'A button that scrolls to a section of its own page (\u201cVIEW PACKAGES\u201d to #FullVehicleDetailingPackages) is judged by that section, not sent to another page. A section that is not on the page is its own item, for clarification',
+        'A link through a redirect is judged by the page it lands on: never \u201cnon-existent\u201d. When it lands on the right page, linking straight to it is an optional tidy-up',
+        'A phrase that formatting split into several links (\u201cauto\u201d + \u201cwindow\u201d + \u201ctinting\u201d) is read whole. A suggested page must be one the scan opened and found working, and one link gets one recommendation',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -2839,16 +2851,68 @@
       }
       return '';
     };
-    const noteLink = (a, to, label, isButton) => {
+    // Sections a link can scroll to: ids, names and Duda's anchor settings (data-* values), read once per page.
+    let anchorIds = null;
+    const anchorEl = (frag) => {
+      if (!anchorIds) {
+        anchorIds = new Map();
+        doc.querySelectorAll('[id], [name], *').forEach((e) => {
+          for (const at of e.attributes || []) {
+            if (!(at.name === 'id' || at.name === 'name' || at.name.startsWith('data-anchor') || (at.name.startsWith('data-') && /anchor|section|scroll/i.test(at.name)))) continue;
+            const v = String(at.value || '').trim().toLowerCase(); if (v && v.length < 120 && !anchorIds.has(v)) anchorIds.set(v, e);
+          }
+        });
+      }
+      return anchorIds.get(String(frag || '').toLowerCase()) || null;
+    };
+    /** What a visitor sees where a section link lands: the section's heading and first words. */
+    const sectionText = (e) => {
+      for (let n = 0, x = e; x && n < 4; n++, x = x.nextElementSibling || (x.parentElement && x.parentElement.nextElementSibling)) {
+        const t = clean(x.textContent); if (t.length >= 20) { const h = x.querySelector && x.querySelector('h1, h2, h3, h4, h5, h6'); return cut((h ? clean(h.textContent) + ' \u2014 ' : '') + t, 240); }
+      }
+      return '';
+    };
+    /**
+     * Formatting can cut one phrase into several links to the same page ("auto" + "window" + "tinting").
+     * The whole phrase is what the link promises: the run of neighbouring links with the same address,
+     * read as one when the paragraph has them side by side. Each element keeps its own selector.
+     */
+    const splitPhrase = (a, label) => {
+      const href = a.getAttribute('href'); let blk = a.parentElement;
+      for (let n = 0; blk && n < 4 && !/^(P|LI|H[1-6]|TD|DD|BLOCKQUOTE|DIV)$/.test(blk.tagName); n++) blk = blk.parentElement;
+      if (!blk || !href) return null;
+      const same = Array.prototype.filter.call(blk.querySelectorAll('a'), (x) => x.getAttribute('href') === href);
+      if (same.length < 2) return null;
+      const para = clean(blk.textContent).toLowerCase();
+      const at = same.indexOf(a); if (at < 0) return null;
+      let lo = at, hi = at;
+      const joined = (i, j) => same.slice(i, j + 1).map((x) => clean(x.textContent)).join(' ').toLowerCase();
+      while (lo > 0 && para.includes(joined(lo - 1, hi))) lo--;
+      while (hi < same.length - 1 && para.includes(joined(lo, hi + 1))) hi++;
+      if (lo === hi) return null;
+      return { text: clean(same.slice(lo, hi + 1).map((x) => clean(x.textContent)).join(' ')), first: same[lo], n: hi - lo + 1 };
+    };
+    const noteLink = (a, to, label, isButton, frag) => {
       const where = locationOf(a);
       if (where === 'Head / Meta') return;
       // Menus are a list of page names; a header or footer only counts when it is a button.
       if ((where === 'Header' || where === 'Footer' || where === 'Side panel') && !isButton) return;
       if (!label || label.length > 80 || linkRows.size >= 150) return;
-      const context = sectionOf(a);
-      const k = [label.toLowerCase(), to, context.toLowerCase()].join('|');
+      const sp = splitPhrase(a, label);
+      const el = sp ? sp.first : a;
+      const text = sp && sp.text.length <= 120 ? sp.text : label;
+      const context = sectionOf(el);
+      frag = String(frag || '').replace(/^#/, '');
+      const k = [text.toLowerCase(), to, frag.toLowerCase(), context.toLowerCase()].join('|');
       if (linkRows.has(k)) return;
-      linkRows.set(k, { el: a, text: label, to, button: !!isButton, context, near: nearOf(a, label) });
+      const row = { el, text, to, button: !!isButton, context, near: nearOf(el, text) };
+      if (sp) Object.assign(row, { parts: sp.n, part: label });
+      // The fragment is kept for this link only (the page address stays the same everywhere else).
+      if (frag) {
+        row.frag = cut(frag, 100);
+        if (to === ctx.path) { const e = anchorEl(frag); row.anchor = e ? { found: true, text: sectionText(e) } : { found: false }; }
+      }
+      linkRows.set(k, row);
     };
     doc.querySelectorAll('a').forEach((a) => {
       const raw = a.getAttribute('href');
@@ -2939,7 +3003,12 @@
         if (d.length >= 10 && !phoneOk(d)) add(a, { code: 'SMS_MISMATCH', severity: 'critical', category: 'Contact info', message: 'Text/SMS link number not in Business Info', found: fmtPhone(d), expected: expectedPhones });
         return;
       }
-      if (href.startsWith('#')) return;
+      if (href.startsWith('#')) {
+        // A button that scrolls to a section of this page: fine when the section is there.
+        const fr = href.slice(1).trim();
+        if (isButton && fr && !hasPopup && !/^(top|!|\/)/i.test(fr)) noteLink(a, ctx.path, text || clean(a.getAttribute('aria-label') || ''), isButton, fr);
+        return;
+      }
 
       let u;
       try { u = new URL(href, ctx.pageUrl); } catch (e) { add(a, { code: 'LINK_MALFORMED', severity: 'warning', category: 'Links', message: 'Malformed link URL', found: href }); return; }
@@ -2955,14 +3024,14 @@
         }
         if (isAbs && !sameHost) add(a, { code: 'LINK_EDITOR_URL', severity: 'critical', category: 'Links', message: 'Link points to the Duda editor/preview URL instead of the live site', found: href });
         internal.add(normalizePath(siteMatch[2] || '/')); btnTo(normalizePath(siteMatch[2] || '/'));
-        noteLink(a, normalizePath(siteMatch[2] || '/'), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
+        noteLink(a, normalizePath(siteMatch[2] || '/'), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton, u.hash);
         return;
       }
       // A relative address ("/", "/contact") opens on whatever website the page is on: on the published
       // website that is the client's own domain. Only an address written out in full can point at the editor.
       if (!isAbs) {
         internal.add(normalizePath(u.pathname)); btnTo(normalizePath(u.pathname));
-        noteLink(a, normalizePath(u.pathname), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
+        noteLink(a, normalizePath(u.pathname), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton, u.hash);
         return;
       }
       if (EDITOR_HOSTS.test(u.hostname) || sameHost) {
@@ -2972,7 +3041,7 @@
       const hostNoWww = u.hostname.toLowerCase().replace(/^www\./, '');
       if (truth.domain && hostNoWww === truth.domain.replace(/^www\./, '')) {
         internal.add(normalizePath(u.pathname)); btnTo(normalizePath(u.pathname));
-        noteLink(a, normalizePath(u.pathname), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton);
+        noteLink(a, normalizePath(u.pathname), text || clean(Array.prototype.map.call(a.querySelectorAll('img'), (i) => i.getAttribute('alt') || '').join(' ')) || clean(a.getAttribute('aria-label') || ''), isButton, u.hash);
         return;
       }
       const net = socialNetOf(u.href);
@@ -3147,12 +3216,22 @@
       }
     });
 
+    // A button that scrolls to a section of its own page, and the section is not there: that problem, and
+    // no other page invented to replace it. A page's scripts could still place it, so it asks to be confirmed.
+    linkRows.forEach((x) => {
+      if (!x.anchor || x.anchor.found) return;
+      add(x.el, { code: 'LINK_ANCHOR_MISSING', severity: 'warning', category: 'Links', clarify: true,
+        message: `${x.button ? 'Button' : 'Link'} scrolls to a section (#${x.frag}) that is not on this page`,
+        found: `"${cut(x.text, 60)}" \u2192 #${x.frag}`,
+        expected: 'Check in preview that it scrolls to the right section. If it does not, pick the section in the button\u2019s link settings in Duda (Link to: Section/Anchor)' });
+    });
     return {
       notFound: false,
       findings: collapseContact(findings),
       photos: photosUsed(doc, ctx, device),
       internal: Array.from(internal),
-      links: Array.from(linkRows.values()).map((x) => ({ text: x.text, to: x.to, button: x.button, context: x.context, near: x.near, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
+      links: Array.from(linkRows.values()).map((x) => ({ text: x.text, to: x.to, button: x.button, context: x.context, near: x.near, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '',
+        ...(x.frag ? { frag: x.frag } : {}), ...(x.anchor ? { anchor: x.anchor } : {}), ...(x.parts ? { parts: x.parts, part: x.part } : {}) })),
       external: Array.from(external.keys()).map((url) => ({ url, selector: uniqueSelector(external.get(url).el), location: locationOf(external.get(url).el), hiddenBy: hiddenReason(external.get(url).el, device) || '' })),
       images: Array.from(images.keys()).map((url) => ({ url, selector: uniqueSelector(images.get(url).el), location: locationOf(images.get(url).el), hiddenBy: hiddenReason(images.get(url).el, device) || '' })),
       alts: altList,
@@ -3376,6 +3455,22 @@
   }
   const namesOwnTown = (quote, truth) => { const q = compact(quote || ''); return !!q && [...ownTowns(truth)].some((t) => q.includes(t)); };
   /** The one service-area town a page is about: named at least twice, more than twice as often as any other, or in its title / H1. */
+  /**
+   * What a link promises, from its words and where it goes: 'packages' (prices, coverage, options),
+   * 'brand' (a film or coating maker's page), 'vehicle' (a make's own service page), 'lead' (contact,
+   * quote, booking) or 'service' (about the service). Only 'service' links may be offered a town page.
+   */
+  const BRAND_RE = /\b(stek|llumar|xpel|suntek|3m|carpro|c-?quartz|gtechniq|ceramic pro|gyeon|feynlab|igl|kavaca|avery|hexis|geoshield|madico|huper ?optik|global window films|johnson window films|solar gard|formula one|vvivid|opti-?coat|system x|modesta|nanolex|cquartz)\b/i;
+  const MAKE_RE = /\b(porsche|tesla|bmw|mercedes(-benz)?|audi|lexus|ford|chevy|chevrolet|corvette|toyota|honda|jeep|rivian|lucid|ferrari|lamborghini|mclaren|bentley|rolls[- ]royce|maserati|cadillac|gmc|ram|dodge|subaru|mazda|nissan|hyundai|kia|volkswagen|vw|volvo|land rover|range rover|jaguar|genesis|acura|infiniti|lincoln|mini|alfa romeo|aston martin|polestar)\b/i;
+  const PACKAGE_RE = /\b(packages?|pricing|prices?|costs?|coverage|options?|plans?|tiers?|levels?|warrant(y|ies)|compare|comparison)\b/i;
+  function linkPurpose(text, to) {
+    const t = String(text || ''), where = String(to || '').replace(/[-_/]+/g, ' ');
+    if (LEAD_WORDS.test(t)) return 'lead';
+    if (BRAND_RE.test(t) || BRAND_RE.test(where)) return 'brand';
+    if (MAKE_RE.test(t) || MAKE_RE.test(where)) return 'vehicle';
+    if (PACKAGE_RE.test(t)) return 'packages';
+    return 'service';
+  }
   function focusTown(head, body, areas) {
     const count = (t, x) => { const re = new RegExp('\\b' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s-]+') + '\\b', 'gi'); return (String(x || '').match(re) || []).length; };
     const rows = [...areas.values()].map((a) => ({ key: a.key, name: a.name, inTitle: count(a.key, head) > 0, n: count(a.key, head) + count(a.key, body) })).filter((r) => r.n).sort((a, b) => b.n - a.n);
@@ -4005,7 +4100,7 @@
           if (proseIdx.length < 6000) (r.prose || []).forEach((x) => proseIdx.push(Object.assign({ path, device }, x)));
           if (device === devices[0] && pageLinks.length < 8000) (r.links || []).forEach((x) => { if (x.location === 'Body' && x.to) pageLinks.push(Object.assign({ path }, x)); });
           if (device === devices[0]) (r.links || []).forEach((x) => {
-            const k = [x.text.toLowerCase(), x.to, x.context.toLowerCase()].join('|');
+            const k = [x.text.toLowerCase(), x.to, (x.frag || '').toLowerCase(), x.context.toLowerCase(), x.anchor ? path : ''].join('|');
             let m = linkMap.get(k);
             if (!m) { if (linkMap.size >= 600) return; m = Object.assign({ pages: [] }, x); linkMap.set(k, m); }
             if (!m.pages.includes(path)) m.pages.push(path);
@@ -4099,42 +4194,42 @@
     // ---- Service areas: the towns the website has its own pages for (and the shop's own town) ----
     const allPaths = [...new Set(Object.keys(pagesMeta).concat(Object.keys(pageInfo)))];
     const areaMap = serviceAreas(allPaths, truth);
-    // ---- A page about one of those towns should link to that town's service pages ----
-    // A blog post about "a Littleton driver" that links "PPF" to the general PPF page sends the reader
-    // (and Google) away from the Littleton PPF page. Flagged whether that page exists yet or not.
+    // ---- A link whose own words name a town the business has a page for ----
+    // A link is judged by what it promises. A page about a town may link a general service page to
+    // show packages, explain the service, compare coverage, recommend an add-on, or open a brand's or a
+    // vehicle's page: all fine, and the page's town alone never asks for a town page. Only when the
+    // link's own words name the town ("paint protection film Voorhees") is that town's page offered,
+    // as an optional idea (Info), because the general page still answers the link.
     if (areaMap.size) {
       const bodyText = {};
       textIdx.forEach((x) => { if (x.device !== devices[0] || x.location !== 'Body') return; const b = bodyText[x.path] || (bodyText[x.path] = []); if (b.length < 600) b.push(x.text); });
       const linksOf = {}; pageLinks.forEach((x) => (linksOf[x.path] = linksOf[x.path] || []).push(x));
+      const townIn = (t) => [...areaMap.values()].find((a) => new RegExp('\\b' + a.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s-]+') + '\\b', 'i').test(String(t || '')));
       Object.values(pageInfo).forEach((p) => {
-        if (p.notFound || p.error || placeOfPath(p.path) || p.path === '/' || isThankYouPath(p.path)) return;
-        const focus = focusTown([p.title || '', ...((p.fit && p.fit.h1) || []).map((h) => h.text || '')].join(' \n '), (bodyText[p.path] || []).join(' \n '), areaMap);
-        if (!focus) return;
-        // The shop's own town: the general service pages are its town's pages.
-        const own = ((truth && truth.addresses) || []).some((a) => a && a.city && compact(a.city) === compact(focus.name));
+        if (p.notFound || p.error || p.path === '/' || isThankYouPath(p.path)) return;
         const seen = new Set();
         (linksOf[p.path] || []).forEach((x) => {
           const to = normalizePath(x.to);
           if (!to || to === p.path || placeOfPath(to) || isBlogPath(to) || (pageInfo[to] && pageInfo[to].blog)) return;
+          if (linkPurpose(x.text, to) !== 'service') return;   // packages, a brand, a vehicle, a contact action: kept
+          const town = townIn(x.text); if (!town) return;
           const svcs = servicesOfPath(to); if (!svcs.length) return;
           if (!pageInfo[to] && !pagesMeta[to]) return;   // only links to this website's own pages
           svcs.forEach((sv) => {
-            const key = [p.path, to, sv].join('|'); if (seen.has(key)) return; seen.add(key);
+            const key = [p.path, to, sv, town.key].join('|'); if (seen.has(key)) return; seen.add(key);
             const label = (SERVICES.find((z) => z.key === sv) || {}).label || sv;
-            const target = allPaths.find((q) => compact(placeOfPath(q)) === compact(focus.key) && servicesOfPath(q).includes(sv));
-            // The page the link opens is judged by what it says, not by its address: a /ceramic-coating page
-            // whose title or H1 is "Professional Ceramic Coating in Campbell, CA" already targets Campbell.
+            const target = allPaths.find((q) => compact(placeOfPath(q)) === compact(town.key) && servicesOfPath(q).includes(sv));
+            if (!target) return;
+            // The page the link opens already targets that town ("Ceramic Coating in Campbell, CA"): nothing to offer.
             const dest = pageInfo[to] || {};
             const destText = [dest.title, dest.h1, dest.description, ((dest.fit && dest.fit.h1) || []).map((h) => h.text || '').join(' '), (bodyText[to] || []).slice(0, 40).join(' ')].join(' \n ');
-            const covers = compact(destText).includes(compact(focus.name));
-            if (!target && (own || covers)) return;
-            if (target && covers) return;
-            raw.push({ code: 'LINK_TOWN_SERVICE', severity: target ? 'warning' : 'info', category: 'Links',
-              message: target ? `This page is about ${focus.name}, but the "${cut(x.text, 40)}" link goes to the general ${label} page instead of the ${focus.name} one`
-                : `Optional: the "${cut(x.text, 40)}" link opens the general ${label} page, which does not mention ${focus.name}`,
-              found: `"${cut(x.text, 60)}" → ${to}`, expected: target ? `Link to ${target}` : `Fine as it is. If the business wants to rank for ${label} in ${focus.name}, mention ${focus.name} on ${to}, or add a ${focus.name} ${label} page only if it would have distinct, useful content`,
+            if (compact(destText).includes(compact(town.name))) return;
+            raw.push({ code: 'LINK_TOWN_SERVICE', severity: 'info', category: 'Links', optional: true,
+              message: `Optional: the "${cut(x.text, 50)}" link names ${town.name}; the ${town.name} ${label} page is another option`,
+              found: `"${cut(x.text, 60)}" \u2192 ${to}`,
+              expected: `Optional: link to ${target}. The general ${label} page it opens now still answers the link`,
               path: p.path, device: devices[0], selector: x.selector, location: x.location || 'Body', visible: !x.hiddenBy, hiddenBy: x.hiddenBy || '',
-              snippet: `${focus.name} is named ${focus.n} time${focus.n === 1 ? '' : 's'} on this page${focus.inTitle ? ', in its title or H1 too' : ''}.` });
+              snippet: x.near ? `Around it: ${cut(x.near, 200)}` : '' });
           });
         });
       });
@@ -4320,6 +4415,8 @@
         files = ff.info;
       } catch (e) { log.push('robots.txt / llms.txt: ' + e.message); }
     } else if (opts.fileNote) log.push(opts.fileNote);
+    // Pages that show packages, prices or coverage options: a "packages" link to one of them keeps its promise.
+    const pkgPages = new Set(textIdx.filter((x) => x.device === devices[0] && x.location === 'Body' && /\b(packages?|coverage options|pricing|prices)\b/i.test(x.text)).map((x) => x.path));
     const merged = sortFindings(oneItemPerSite(groupAcrossPages(mergeDevices(raw))));
     const counts = { critical: 0, outdated: 0, warning: 0, info: 0 };
     merged.forEach((f) => { counts[f.severity]++; });
@@ -4331,7 +4428,7 @@
       photos: photoSys,
       findings: merged,
       retired: Object.values(pageInfo).filter((p) => p.redirectTo).map((p) => p.path),
-      pages: Object.values(pageInfo).map((p) => ({ path: p.path, ...(p.redirectTo ? { redirectTo: p.redirectTo } : {}), ...(viaOf.get(p.path) ? { via: viaOf.get(p.path).slice(0, 10) } : {}), title: p.title || '', h1: p.h1 || '', ...(p.description ? { description: String(p.description).slice(0, 320) } : {}), notFound: !!p.notFound, error: p.error || '', devices: p.devices || [], ...(p.blog ? { blog: true } : {}), ...(p.forms ? { forms: p.forms } : {}) })),
+      pages: Object.values(pageInfo).map((p) => ({ path: p.path, ...(p.redirectTo ? { redirectTo: p.redirectTo } : {}), ...(viaOf.get(p.path) ? { via: viaOf.get(p.path).slice(0, 10) } : {}), title: p.title || '', h1: p.h1 || '', ...(p.description ? { description: String(p.description).slice(0, 320) } : {}), ...(pkgPages.has(p.path) ? { pkg: true } : {}), notFound: !!p.notFound, error: p.error || '', devices: p.devices || [], ...(p.blog ? { blog: true } : {}), ...(p.forms ? { forms: p.forms } : {}) })),
       links: Array.from(linkMap.values()),
       // For the AI read of whether each page fits its address. Not saved with the audit.
       // Buttons on each page, in order (desktop). Not saved with the audit.
@@ -4691,41 +4788,85 @@
     });
     return sortFindings(findings);
   }
-  /** Words that ask for a lead: a button with them opening the wrong page loses enquiries, so it is critical. */
-  const LEAD_WORDS = /\b(contact|get in touch|quote|estimate|book|schedule|appointment|call|reach us|enquir|inquir)/i;
+  /** Where a link really lands: its address followed through the website's redirects (at most 4 hops). */
+  function finalPage(to, byPath) {
+    let p = normalizePath(to), seen = new Set();
+    for (let n = 0; n < 4; n++) {
+      const d = byPath.get(p); if (!d || !d.redirectTo || !/^\//.test(d.redirectTo) || seen.has(p)) break;
+      seen.add(p); p = normalizePath(d.redirectTo);
+    }
+    return p;
+  }
   /**
    * A button or link that opens a different page from the one its words (or its section) promise,
-   * as judged by the AI with the destination page's title and heading in front of it.
+   * as judged by the AI with the destination page (after redirects) and its section in front of it.
    */
   function applyLinkVerdicts(findings, links, verdicts, pages) {
     const byPath = new Map((pages || []).map((p) => [p.path, p]));
+    // A page a replacement may name: one the scan opened and found working, not a redirect.
+    const usable = (q) => { const d = byPath.get(q); return !!(d && !d.notFound && !d.error && !d.redirectTo); };
     verdicts.forEach((v) => {
       const l = links[v.i];
       if (!l || v.verdict !== 'wrong_page' || Number(v.confidence) < 0.75) return;
-      // "Should open the page it is already on" is never the fix for a link.
-      const exp = normalizePath(String(v.expected || '').replace(/^https?:\/\/[^/]+/i, '').split(/[?#\s]/)[0] || '');
+      const where = (l.pages || []).slice().sort();
+      const land = finalPage(l.to, byPath);
+      // A link is never sent to the page it is already on, and a link to a section of its own page that
+      // the scan found is judged by that section, not replaced by another page.
+      let exp = normalizePath(String(v.expected || '').replace(/^https?:\/\/[^/]+/i, '').split(/[?#\s]/)[0] || '');
       if (exp && (l.pages || []).map((p) => normalizePath(p)).includes(exp)) return;
+      if (l.anchor && l.anchor.found) return;
       // A link whose words name a service ("PPF", "ceramic coating") and that opens that service's page is right.
       const named = SERVICES.filter((sv) => { sv.re.lastIndex = 0; return sv.re.test(String(l.text || '')); }).map((sv) => sv.key);
-      if (named.length && servicesOfPath(l.to).some((k) => named.includes(k))) return;
-      const dest = byPath.get(l.to) || {};
+      if (named.length && servicesOfPath(land).some((k) => named.includes(k))) return;
+      const dest = byPath.get(land) || {};
       const lead = LEAD_WORDS.test(l.text);
-      const where = (l.pages || []).slice().sort();
+      // The link reaches the page it should through a redirect: not wrong. Linking straight to it is optional tidying.
+      if (exp && land !== normalizePath(l.to) && exp === land) {
+        const f = { code: 'LINK_VIA_REDIRECT', severity: 'info', category: 'Links', optional: true,
+          message: `Optional: ${l.button ? 'button' : 'link'} reaches the right page through a redirect`,
+          found: `"${l.text}" → ${l.to} → ${land}`, expected: `Optional: link straight to ${land}. Duda URL redirects work on the published website only, so in preview the old address may not open`,
+          path: where[0] || '/', pages: where, selector: l.selector, location: l.location, visibleOn: l.hiddenBy ? [] : ['desktop'], hiddenOn: l.hiddenBy ? [`Desktop (${l.hiddenBy})`] : [],
+          snippet: [l.context ? `Section: ${l.context}` : '', l.near ? `Around it: ${l.near}` : ''].filter(Boolean).join(' · ').slice(0, 300) };
+        f.id = hash([f.code, f.selector, l.to, where.length > 1 ? '*' : f.path].join('|'));
+        if (!findings.some((x) => x.id === f.id)) findings.push(f);
+        return;
+      }
+      // Packages, a brand's page or a vehicle's page that the link already opens is its purpose: kept.
+      const purpose = linkPurpose(l.text, land);
+      if ((purpose === 'brand' || purpose === 'vehicle') && linkPurpose('', land) === purpose) return;
+      if (purpose === 'packages' && dest.pkg) return;
+      // Only a replacement the scan found working is suggested; never one guessed from an address.
+      if (exp && !usable(exp)) exp = '';
+      const optional = v.optional === true;
       const f = {
-        code: 'LINK_WRONG_PAGE', severity: lead ? 'critical' : 'warning', category: 'Links',
-        message: `${l.button ? 'Button' : 'Link'} opens the wrong page`,
-        found: `"${l.text}" → ${l.to}${dest.title ? ` (${dest.title})` : ''}`,
-        expected: v.expected ? `Should open ${v.expected}` : (v.reason || ''),
+        code: 'LINK_WRONG_PAGE', severity: optional ? 'info' : lead ? 'critical' : 'warning', category: 'Links',
+        message: optional ? `Optional: a better page for this ${l.button ? 'button' : 'link'}` : `${l.button ? 'Button' : 'Link'} opens the wrong page`,
+        found: `"${l.text}" → ${l.to}${land !== normalizePath(l.to) ? ` → ${land}` : ''}${dest.title ? ` (${dest.title})` : ''}`,
+        expected: exp ? `${optional ? 'Optional: ' : 'Should open '}${exp}${byPath.get(exp) && byPath.get(exp).title ? ` (${byPath.get(exp).title})` : ''}` : (v.reason || ''),
         path: where[0] || '/', pages: where, selector: l.selector, location: l.location,
         visibleOn: l.hiddenBy ? [] : ['desktop'], hiddenOn: l.hiddenBy ? [`Desktop (${l.hiddenBy})`] : [],
         snippet: [l.context ? `Section: ${l.context}` : '', l.near ? `Around it: ${l.near}` : ''].filter(Boolean).join(' · ').slice(0, 300),
-        ai: { verdict: 'wrong_page', confidence: v.confidence, reason: v.reason, suggestion: v.expected || '' },
+        ai: { verdict: 'wrong_page', confidence: v.confidence, reason: v.reason, suggestion: exp || '' },
       };
+      if (optional) f.optional = true;
+      if (!exp && !optional) f.clarify = true;   // a mismatch with no page we could check to offer instead
       f.id = hash([f.code, f.selector, l.to, l.text, where.length > 1 ? '*' : f.path].join('|'));
       if (!findings.some((x) => x.id === f.id)) findings.push(f);
     });
-    return sortFindings(findings);
+    return sortFindings(reconcileLinks(findings));
   }
+  /**
+   * One answer per link: when the AI found a link opens the wrong page (or reaches it through a
+   * redirect), a town-page idea for the same link and page is dropped, so a link is never told to go
+   * two different places. Only these overlapping link items; nothing else is touched.
+   */
+  function reconcileLinks(findings) {
+    const strong = findings.filter((f) => !f.gone && (f.code === 'LINK_WRONG_PAGE' || f.code === 'LINK_VIA_REDIRECT' || f.code === 'LINK_ANCHOR_MISSING'));
+    if (!strong.length) return findings;
+    return findings.filter((f) => f.code !== 'LINK_TOWN_SERVICE' || f.gone || !strong.some((g) => g.selector === f.selector && (g.pages || [g.path]).some((p) => (f.pages || [f.path]).includes(p))));
+  }
+  /** Words that ask for a lead: a button with them opening the wrong page loses enquiries, so it is critical. */
+  const LEAD_WORDS = /\b(contact|get in touch|quote|estimate|book|schedule|appointment|call|reach us|enquir|inquir)/i;
 
   function toCSV(findings, siteLabel) {
     const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
@@ -4849,10 +4990,10 @@
   }
 
   global.DudaAudit = {
-    POLISH_CODES, isPolish, LENGTH_CODES, isLength, isTech, groupOf, serviceAreas, focusTown, isAutomationEmail, fileFindings, robotsGroups,
+    POLISH_CODES, isPolish, LENGTH_CODES, isLength, isTech, groupOf, serviceAreas, focusTown, linkPurpose, isAutomationEmail, fileFindings, robotsGroups,
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince, updatePlan, codeIn,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, stockMeasure, photosUsed, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, LEAD_WORDS,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, stockMeasure, photosUsed, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, finalPage, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
