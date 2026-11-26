@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-27-changed-today', date: '2026-11-27', audience: 'all', tag: 'Audits',
+    title: 'Filter: changed today, yesterday or in the last 7 days',
+    what: 'A new filter next to the search box shows only the audit items whose status changed today, yesterday or in the last 7 days. Pick <b>Done</b> in the status list too to see what was closed today.',
+    where: ['<b>Walkthrough:</b> an audit \u2192 <b>Audit items</b> \u2192 <b>Changed: today</b> (and <b>Done</b> in the status list).'],
+  },
+  {
     id: '2026-11-27-status-when', date: '2026-11-27', audience: 'all', tag: 'Audits',
     title: 'See when each item\u2019s status changed, right in the list',
     what: 'Under every audit item\u2019s status is now the date and time it last changed and who did it, or \u201cfixed on rescan\u201d when a rescan closed it. A new <b>Sort: last status change first</b> puts the most recent changes on top. Changing only the assignee does not move the date.',

@@ -23,7 +23,7 @@
     config: {}, me: null, users: [], sites: [], current: null,
     scanning: {}, line: [], workers: [], running: 0, skipAI: {}, aiAbort: {}, claims: {},
     filters: { q: '', status: '', assignee: '', oldChecks: false, clar: false },
-    ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '', cmt: false, sort: '' },
+    ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '', cmt: false, sort: '', when: '' },
     refTab: 'info',
     fixedChecks: {},
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
@@ -11001,6 +11001,7 @@
       if (ff.who && (ff.who === '_none' ? effWho(f, s) : ff.who === '_mine' ? effWho(f, s) !== state.me.email : effWho(f, s) !== ff.who)) return false;
       if (ff.q) { const q = ff.q.replace(/^#/, ''); if (!(String(f.num) === q || [f.message, f.found, f.expected, f.path, f.selector, f.location].join(' ').toLowerCase().includes(ff.q.toLowerCase()))) return false; }
       if (ff.cmt && !f.comments) return false;
+      if (ff.when && !changedIn(f, ff.when)) return false;
       return true;
     }).sort(ff.sort === 'changed' ? (a, b) => (Date.parse(stWhen(b).at) || 0) - (Date.parse(stWhen(a).at) || 0) || (a.num || 0) - (b.num || 0) : (a, b) => (a.num || 0) - (b.num || 0));
   }
@@ -11008,6 +11009,16 @@
    * When an item's status last changed, and how: by a person, or closed by a rescan / a corrected check.
    * { at, who, how } — at is '' for an item nobody has changed since it was found.
    */
+  /** Did the item's status change in this period ('today', 'yesterday', '7d'), by the viewer's own clock? */
+  const WHEN_LABEL = { today: 'Changed today', yesterday: 'Changed yesterday', '7d': 'Changed in the last 7 days' };
+  function changedIn(f, when) {
+    const t = Date.parse(stWhen(f).at || ''); if (!t) return false;
+    const d0 = new Date(); d0.setHours(0, 0, 0, 0); const today = d0.getTime(), day = 86400000;
+    if (when === 'today') return t >= today;
+    if (when === 'yesterday') return t >= today - day && t < today;
+    if (when === '7d') return t >= today - 6 * day;
+    return true;
+  }
   const AUTO_HOW = { 'rescan-gone': 'fixed on rescan', 'check-corrected': 'check corrected', 'recheck-gone': 'gone on recheck', 'retired-page': 'page now redirects', 'came-back': 'back after a rescan', 'still-there': 'still there after rescan', 'ai-unclear': 'AI unsure', 'client-comment': 'client comment', 'reference-changed': 'reference changed', challenged: 'reopened' };
   function stWhen(f) {
     if (f.gone && f.gone.at) return { at: f.gone.at, who: f.gone.byName || nameOf(f.gone.by, ''), how: f.gone.why === 'check-corrected' ? 'check corrected' : f.gone.why === 'retired-page' ? 'page now redirects' : 'fixed on rescan' };
@@ -11923,10 +11934,11 @@
     </div>`;
   }
 
-  const FF_DEFAULTS = { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '', cmt: false };
+  const FF_DEFAULTS = { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '', cmt: false, when: '' };
   /** The filters currently narrowing the list, named the way the person chose them. */
   function activeFilters(ff) {
     const on = [];
+    if (ff.when) on.push(WHEN_LABEL[ff.when] || ff.when);
     if (ff.sev) on.push({ critical: 'Critical', outdated: 'Outdated', warning: 'Warning', info: 'Info' }[ff.sev] || ff.sev);
     if (ff.st && ff.st !== 'active') on.push(FLABEL[ff.st] || 'All statuses');
     if (ff.cat) on.push(ff.cat === '__ai' ? 'AI-reviewed' : ff.cat);
@@ -12301,6 +12313,7 @@
             <option value="all" ${ff.st === 'all' ? 'selected' : ''}>All (${findings.length})</option>
           </select>
           <input type="search" id="ffq" placeholder="Search, or #12 to jump to an ID…" value="${esc(ff.q)}">
+          <select id="ffwhen" title="Only items whose status changed in this period (pick Done in the status list for what was closed)"><option value="">Changed: any time</option>${Object.entries(WHEN_LABEL).map(([k, l]) => `<option value="${k}" ${ff.when === k ? 'selected' : ''}>${l} (${filteredFindings(s, 'when').filter((f) => changedIn(f, k)).length})</option>`).join('')}</select>
           <select id="ffsort" title="Order of the list"><option value="">Sort: by ID</option><option value="changed" ${ff.sort === 'changed' ? 'selected' : ''}>Sort: last status change first</option></select>
           <select id="ffcat"><option value="">All categories</option>${findings.some((f) => f.ai) ? `<option value="__ai" ${ff.cat === '__ai' ? 'selected' : ''}>✨ AI-reviewed (${findings.filter((f) => f.ai).length})</option>` : ''}${cats.map((c) => `<option ${c === ff.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="ffloc"><option value="">All locations</option>${locs.map((c) => `<option ${c === ff.loc ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
@@ -12361,7 +12374,7 @@
     if ($('#ffCmt', body)) $('#ffCmt', body).onclick = () => { ff.cmt = !ff.cmt; renderSite(); };
     runHint();
     $('#ffq') && ($('#ffq').oninput = (e) => { ff.q = e.target.value; const p = e.target.selectionStart; renderSite(); const i = $('#ffq'); i.focus(); i.setSelectionRange(p, p); });
-    [['#ffsort', 'sort'], ['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
+    [['#ffsort', 'sort'], ['#ffwhen', 'when'], ['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
     // Everything a row's buttons do, for the rows drawn with the page and for each batch drawn after.
     function bindRows(root) {
     $$('[data-copy]', root).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
@@ -12444,7 +12457,7 @@
     // happens. Now it says so whether the result is empty or not.
     if ($('#ffClear2', body)) $('#ffClear2', body).onclick = () => { clearFilters(); renderSite(); };
     // A filter that is on should look on, so an empty list is never a mystery.
-    [['#ffcat', ff.cat], ['#ffloc', ff.loc], ['#ffdev', ff.dev], ['#ffwho', ff.who], ['#ffst', ff.st !== 'active' ? ff.st : '']]
+    [['#ffwhen', ff.when], ['#ffcat', ff.cat], ['#ffloc', ff.loc], ['#ffdev', ff.dev], ['#ffwho', ff.who], ['#ffst', ff.st !== 'active' ? ff.st : '']]
       .forEach(([sel, on]) => { const el = $(sel, body); if (el) el.classList.toggle('filter-on', !!on); });
   }
   async function setFinding(s, ids, changes) {

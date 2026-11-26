@@ -623,3 +623,6 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - fstate records now carry `stAt`/`stBy`/`stFor` (the status they belong to), written by `patchFinding` only when the status changes (kept as they were on an assignee-only change). On load (`store.js`), `f.stAt`/`f.stBy` come from them when `stFor === status`, else from `updatedAt`/`updatedBy` — so automatic closes/reopens that copy the old record (rescan-gone, came-back, ai-unclear…) show their own time without touching those writers. Old records fall back to `updatedAt`.
 - app: `stWhen(f)` / `stWhenHtml(f)` under the status select in the items table ("Fri, Nov 27, 12:33 AM" + who, or "fixed on rescan (who)" via `AUTO_HOW` / `f.gone`); title = full date. Sort select `#ffsort` (`state.ff.sort`: '' by ID, 'changed' newest first); not counted as a filter. Optimistic `setFinding` sets `stAt`/`stBy`.
 - Test tk/e2e_stwhen.py. app v106, styles v64.
+
+## 235 — Filter: status changed today / yesterday / last 7 days
+- `state.ff.when` ('' | today | yesterday | 7d), select `#ffwhen` with counts, `changedIn(f, when)` on `stWhen(f).at` using the viewer's local midnight. In `FF_DEFAULTS` (cleared by Clear filters), named in `activeFilters`, highlighted when on. Combine with the status filter (Done + today = closed today). Test in tk/e2e_stwhen.py. app v107.
