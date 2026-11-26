@@ -708,6 +708,15 @@
         'A phrase that formatting split into several links (\u201cauto\u201d + \u201cwindow\u201d + \u201ctinting\u201d) is read whole. A suggested page must be one the scan opened and found working, and one link gets one recommendation',
       ],
     },
+    {
+      v: 62,
+      date: '2026-11-27',
+      title: 'A link is judged by what its page says, not by the town in that page\u2019s SEO title',
+      scope: { fixes: ['LINK_WRONG_PAGE'], ai: true },
+      items: [
+        'A link from the Warminster home page to a service page whose SEO title targets Philadelphia was called wrong, with the same page as the fix. The page a link opens is now judged by its heading and copy; another town in its title is not a reason to call the link wrong, and a suggestion equal to the page it already opens is refused (the link is fine)',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -4815,6 +4824,10 @@
       let exp = normalizePath(String(v.expected || '').replace(/^https?:\/\/[^/]+/i, '').split(/[?#\s]/)[0] || '');
       if (exp && (l.pages || []).map((p) => normalizePath(p)).includes(exp)) return;
       if (l.anchor && l.anchor.found) return;
+      // "Should open" the very page it opens (same page, same section): the answer contradicts itself, so the
+      // link is fine as it is. Fragments count: /x#a and /x#b are different places on a page.
+      const expFrag = (String(v.expected || '').split('#')[1] || '').trim().toLowerCase();
+      if (exp && exp === normalizePath(l.to) && expFrag === String(l.frag || '').toLowerCase()) return;
       // A link whose words name a service ("PPF", "ceramic coating") and that opens that service's page is right.
       const named = SERVICES.filter((sv) => { sv.re.lastIndex = 0; return sv.re.test(String(l.text || '')); }).map((sv) => sv.key);
       if (named.length && servicesOfPath(land).some((k) => named.includes(k))) return;

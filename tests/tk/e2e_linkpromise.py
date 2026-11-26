@@ -12,7 +12,7 @@ OUT = os.path.join(TESTS, 'tk'); APORT, AIPORT = 3998, 8115
 SEEN = {'links': []}
 WRONG = {  # what the stand-in AI wrongly suggests for each link's words
     'VIEW PACKAGES': '/services-overview', 'CQuartz ceramic coatings': '/about-CARPRO-ceramic-coatings', 'STEK film options': '/about-stek-paint-protection-film',
-    'window tint': '/service/window-tinting', 'detailing tips': '/detailing-guide', 'aftercare tips': '/coating-care-guide',
+    'window tint': '/service/window-tinting', 'farm gear': '/service/industrial-and-agricultural-coating', 'detailing tips': '/detailing-guide', 'aftercare tips': '/coating-care-guide',
 }
 class AI(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -43,7 +43,12 @@ L = lambda p: '/site/abc123' + p
 def page(title, body, h1=None): return f'<html><head><title>{title} | Shine Detailing</title></head><body><div id="dmcontent"><h1>{h1 or title}</h1>{body}</div></body></html>'
 PKG = '<h2>Coverage packages</h2><p>Choose from our Partial Front, Full Front and Full Body packages with pricing for every car.</p>'
 PAGES = {
-    '/': page('Home', '<p>Detailing in Warminster, PA.</p>'),
+    '/': page('Home', '<p>We are a Warminster, Pennsylvania detailing team: ceramic coating for street vehicles, boats and '
+        f'<a href="{L("/service/industrial-and-agricultural-coating")}">machinery</a>, and tough finishes for '
+        f'<a href="{L("/service/industrial-and-agricultural-coating")}">farm gear</a> too.</p>'),
+    # #2256: SEO title targets Philadelphia; H1 and copy are about coatings for machinery.
+    '/service/industrial-and-agricultural-coating': '<html><head><title>Industrial Coatings Philadelphia, PA | Shine Detailing</title></head><body><div id="dmcontent">'
+        '<h1>Ceramic Coatings for Industrial and Agricultural Equipment</h1><p>Protective ceramic coatings for heavy machinery, tractors and plant equipment that resist chemicals and weather.</p></div></body></html>',
     '/service/paint-protection-film': page('Paint Protection Film', '<p>Our PPF stops rock chips on any car.</p>' + PKG),
     '/service/vehicle-ceramic-coating': page('Ceramic Coating', '<p>Ceramic coating keeps paint glossy.</p>' + PKG),
     '/service/window-tinting': page('Window Tinting', '<p>Window film for heat and privacy.</p>' + PKG),
@@ -107,7 +112,7 @@ try:
         F = [f for f in S.get('findings') or [] if not f.get('gone')]
         LF = [f for f in F if f['code'].startswith('LINK_')]
         for f in LF: print('  ', f['code'], f['severity'], '|', f.get('found'), '|', f.get('expected'), '| clarify' if f.get('clarify') else '', flush=True)
-        for l in SEEN['links']: print('   sent:', l[:200])
+        for l in SEEN['links']: print('   sent:', l[:900])
         sent = '\n'.join(l.split(' | ')[1] for l in SEEN['links'])
         has = lambda code, txt: [f for f in LF if f['code'] == code and txt in (f.get('found') or '')]
         anyfor = lambda txt: [f for f in LF if txt in (f.get('found') or '')]
@@ -139,6 +144,12 @@ try:
         check(am and am[0].get('clarify') and '#MissingGallery' in am[0]['found'], 'a button scrolling to a section that is not on the page: its own item, for clarification')
         check([f for f in LF if f['code'] == 'LINK_BROKEN_INTERNAL' and '/old-page' in (f.get('found') or '')], 'a link to a page that does not exist is still a broken link')
         check('PROMISE' in SEEN.get('system', '') and 'redirects to' in SEEN.get('system', ''), 'the AI is told to judge links by their promise, sections and redirects')
+        # #2256: a town in the destination's SEO title is not a wrong page, and a "fix" equal to the page is refused.
+        check('machinery' not in sent and not anyfor('"machinery"'), '#2256: "machinery" opening the industrial coatings page (its heading and copy are about machinery): no item, not asked')
+        check(any('farm gear' in l and 'says: ' in l and 'Protective ceramic coatings for heavy machinery' in l for l in SEEN['links']), 'the AI reads the destination\'s copy, not only its SEO title')
+        check(not anyfor('"farm gear"'), 'an AI answer whose "fix" is the page the link already opens is refused (no item)')
+        check(not any((f.get('found') or '').split(' \u2192 ')[-1].split(' (')[0] == (f.get('expected') or '').replace('Should open ', '').split(' (')[0] for f in LF if f['code'] == 'LINK_WRONG_PAGE'), 'no wrong-page item suggests the page it already opens')
+        check('SEO title' in SEEN.get('system', '') and 'Philadelphia' in SEEN.get('system', ''), 'the AI is told a town in the destination\'s title is not a wrong page')
         # One answer per link.
         by = {}
         for f in LF:

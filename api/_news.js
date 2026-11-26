@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-27-link-self', date: '2026-11-27', audience: 'all', tag: 'Checks',
+    title: 'Links: judged by what the page says, never \u201cfixed\u201d to the same page',
+    what: 'A link from the home page to a service page whose SEO title names another town was called wrong, with the same page as the fix. The page a link opens is now judged by its heading and copy, another town in its title is not a reason to call the link wrong, and a suggestion equal to the page the link already opens is refused. Audits catch up with <b>Apply check updates</b>.',
+    where: ['<b>Walkthrough:</b> an audit \u2192 the <b>Apply check updates</b> banner, then the Links items.'],
+  },
+  {
     id: '2026-11-26-link-promise', date: '2026-11-26', audience: 'all', tag: 'Checks',
     title: 'Links are judged by what they promise: far fewer false alarms',
     what: 'A page about a town may link the general service pages, a maker\u2019s page (STEK, LLumar, CARPRO), a vehicle\u2019s page or the packages: no more \u201cgo to the town page instead\u201d for those. Only a link whose own words name the town is offered the town page, as an optional Info idea. A button that scrolls to a section of its own page (\u201cVIEW PACKAGES\u201d) is judged by that section; a link through a redirect by the page it lands on (never \u201cnon-existent\u201d); words split across several links are read as one phrase. A suggested page is always one the scan found working, and each link gets one recommendation. Audits catch up with <b>Apply check updates</b>.',

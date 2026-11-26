@@ -611,3 +611,10 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - Check release v61 (fixes LINK_TOWN_SERVICE, LINK_WRONG_PAGE; adds LINK_ANCHOR_MISSING, LINK_VIA_REDIRECT; ai). Old town warnings close as "check corrected"; False alarm marks stay.
 - Tests: tk/e2e_linkpromise.py (full scan, stand-in AI that calls every link wrong), tk/link_unit.mjs, tk/e2e_towns.py updated (general links on a town page: no item; town-named link: optional Info; packages link: kept). engine v44, app v104.
 - Limits: section detection reads the page HTML (ids, names, Duda anchor attributes); a section placed only by scripts asks for clarification rather than failing. Links to a section of ANOTHER page are kept with their fragment but the section is not checked. Preview vs live is not compared for links (redirects come from the scan's own redirect data).
+
+## 233 — Links: destination copy, not its SEO title's town; no "fix" to the same page
+- Reported #2256: home page "machinery" → /service/industrial-and-agricultural-coating, AI said wrong because the SEO title says Philadelphia (home is Warminster), and "Should open" was the same page.
+- app `linkNeedsJudging(l, dest, destText)`: link words found in the destination's H1 + copy (`res.fit` excerpt) → not asked. Link items carry `toText` (400 chars of the destination's copy); prompt shows `says: …`.
+- `LINK_SYSTEM`: judge by heading and copy, not SEO title/address; another town in the destination's title is not evidence (belongs to that page's own review); never answer with expected = current page.
+- `applyLinkVerdicts`: expected equal to `l.to` with the same fragment → dropped (link fine). Compared before the redirect branch only against `l.to`, so a redirect landing on the suggested page still becomes LINK_VIA_REDIRECT. `/x#b` vs `/x` is a different place and is kept.
+- Cache prefix `l4` (key adds `toText`). Check release v62 (fixes LINK_WRONG_PAGE, ai). Tests: e2e_linkpromise.py (#2256 cases), link_unit.mjs. engine v45, app v105.

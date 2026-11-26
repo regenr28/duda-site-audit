@@ -7837,7 +7837,7 @@
   const GENERIC_LINK = /^(read|learn|see|view|find out|discover|explore|click|tap)?\s*(more|here|details|info|information|all|now|this)?[\s!.›»→>-]*$|^(go|more|details|continue|next)$/i;
   const STOP_LINK = new Set(['the', 'and', 'our', 'your', 'a', 'an', 'of', 'to', 'for', 'in', 'on', 'at', 'with', 'us', 'we', 'more', 'about', 'page', 'view', 'see', 'learn', 'read', 'services', 'service']);
   const linkWords = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter((w) => w.length > 2 && !STOP_LINK.has(w));
-  function linkNeedsJudging(l, dest) {
+  function linkNeedsJudging(l, dest, destText) {
     if (!l.text || !l.to) return false;
     if (dest && dest.notFound) return false; // already a broken-link item
     // A section of its own page: a missing section is its own item; a section that is there is judged by its words.
@@ -7859,6 +7859,9 @@
     if (!words.length) return false;
     // "Ceramic Coating" opening /ceramic-coating: the words are the destination, nothing to ask.
     if (matches(words)) return false;
+    // "machinery" opening a page whose heading and copy are about coatings for machinery: what the page
+    // says, not its SEO title (which may target another town), is what the link promises.
+    if (destText) { const body = new Set(linkWords(destText)); if (words.every((w) => body.has(w) || [...body].some((x) => x.startsWith(w.slice(0, 5))))) return false; }
     // A lead button opening a contact / quote / booking page is what it should do.
     if (A.LEAD_WORDS.test(l.text) && /contact|quote|estimate|book|schedul|appoint|reach|enquir|inquir/i.test([l.to, dest && dest.title, dest && dest.h1].join(' '))) return false;
     return true;
@@ -7969,13 +7972,16 @@
     });
     if (proofItems.length + tooShort < proofTexts.length) log.push(`Proofreading read the first ${proofItems.length} of ${proofTexts.length} blocks of text (service pages first, then blog posts): the website is very large.`);
     const linkItems = [];
+    const fitBy = new Map((res.fit || []).map((p) => [p.path, p]));
     (res.links || []).forEach((l, i) => {
       // Where the link really lands: through the website's redirects, so a renamed page is not taken for a missing one.
       const land = A.finalPage(l.to, byPath);
       const dest = byPath.get(land);
-      if (linkItems.length >= 150 || !linkNeedsJudging(l, dest)) return;
+      const fitOf = fitBy.get(land);
+      const destText = fitOf ? [].concat(fitOf.h1 || []).join(' ') + ' ' + String(fitOf.excerpt || '').slice(0, 1500) : '';
+      if (linkItems.length >= 150 || !linkNeedsJudging(l, dest, destText)) return;
       linkItems.push({ i, text: l.text, context: l.context, near: l.near, from: (l.pages || [])[0] || '/', to: l.to, toTitle: (dest && dest.title) || '', toH1: (dest && dest.h1) || '', button: l.button,
-        ...(land !== l.to ? { final: land } : {}), ...(l.frag ? { frag: l.frag } : {}), ...(l.anchor && l.anchor.text ? { section: l.anchor.text } : {}), ...(dest && dest.pkg ? { pkg: true } : {}), ...(l.parts > 1 ? { parts: l.parts } : {}),
+        ...(land !== l.to ? { final: land } : {}), ...(l.frag ? { frag: l.frag } : {}), ...(l.anchor && l.anchor.text ? { section: l.anchor.text } : {}), ...(dest && dest.pkg ? { pkg: true } : {}), ...(fitOf && fitOf.excerpt ? { toText: String(fitOf.excerpt).replace(/\s+/g, ' ').slice(0, 400) } : {}), ...(l.parts > 1 ? { parts: l.parts } : {}),
         ...(dest && dest.notFound === false && dest.error ? { unverified: true } : {}) });
     });
     const batches = (items, maxChars, maxItems, size) => { const out = []; let cur = [], n = 0; items.forEach((x) => { const s = size(x); if (cur.length && (n + s > maxChars || cur.length >= maxItems)) { out.push(cur); cur = []; n = 0; } cur.push(x); n += s; }); if (cur.length) out.push(cur); return out; };

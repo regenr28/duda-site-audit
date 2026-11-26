@@ -27,5 +27,9 @@ const opt = A.applyLinkVerdicts([], [{ text: 'film for heat', to: '/y', pages: [
 check(opt[0] && opt[0].severity === 'info' && opt[0].optional && /^Optional/.test(opt[0].message), 'an optional alternative is Info, and says so');
 const sec = A.applyLinkVerdicts([], [{ text: 'VIEW PACKAGES', to: '/p', pages: ['/p'], selector: '#b', anchor: { found: true, text: 'Packages' }, frag: 'Pk' }], [{ i: 0, verdict: 'wrong_page', confidence: 0.95, reason: 'same page', expected: '/x' }], pages);
 check(!sec.length, 'a button to a section of its own page that is there is never sent elsewhere');
+const self = A.applyLinkVerdicts([], [{ text: 'machinery', to: '/y', pages: ['/'], selector: '#m' }, { text: 'more', to: '/y', pages: ['/'], selector: '#n' }],
+  [{ i: 0, verdict: 'wrong_page', confidence: 0.85, reason: 'title names another town', expected: '/y' }, { i: 1, verdict: 'wrong_page', confidence: 0.9, reason: 'should open the packages section', expected: '/y#packages' }], pages);
+check(!self.some((f) => f.selector === '#m'), '#2256: a "fix" equal to the page the link already opens is refused (no item)');
+check(self.some((f) => f.selector === '#n'), '…but another section of that page (#packages) is a different place, so that answer is kept');
 check(A.normalizePath('/service/automotive-detailing#FullVehicleDetailingPackages') === '/service/automotive-detailing' && A.normalizePath('/a?b=1') === '/a', 'page addresses stay the same everywhere else (fragment and query dropped)');
 console.log(ok ? 'ALL PASS' : 'SOME FAILED'); process.exit(ok ? 0 : 1);

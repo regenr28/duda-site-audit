@@ -419,6 +419,8 @@ The town of the page a link sits on is background only: a page about a town may 
 "opens" may show a SECTION of the page ("#packages … section: <its heading and words>"): a button that scrolls to a section of its own page that gives what it promises ("VIEW PACKAGES" to the packages section) is FINE. Never send such a button to another page instead.
 "opens" may show "(redirects to /x)": judge the page it finally lands on. A redirect that lands on the right page is not a wrong page and never a "non-existent" page.
 "(one phrase across N links)" means formatting split the words into several links to the same page: read the whole phrase as the link's words.
+Judge the destination by its MAIN HEADING and COPY ("says:"), not by its SEO title or address. A different town in the destination's SEO title or heading is NOT evidence of a wrong page: a Warminster home page may link a service page whose title targets Philadelphia. A town in a title is a matter for the page's own content review, never a reason to call a link wrong; report it only with evidence of an incompatible branch or a service that page does not offer.
+Never answer wrong_page with "expected" equal to the page the link already opens: if that page is the right one, the link is FINE.
 Report "wrong_page" only with evidence that the destination fails the promise (another service, no packages when packages are promised, another business's or branch's offer). "reason" says what the link promises, what the page gives, and why they differ. "expected" must be a page from THE SITE'S PAGES that gives exactly what the link promises; never pick one from its address alone; leave it empty when none clearly does.
 If you are not sure, do not report it. Most items are fine: return nothing for them.
 Respond with JSON only: {"results":[{"i":<number>,"verdict":"wrong_page","confidence":<0..1>,"reason":"<max 30 words: promised, given, why they differ>","expected":"<the address from THE SITE'S PAGES that it should open, or empty>","optional":<true when the current page is fine and another is only a better option>}]}. Use {"results":[]} when every item is fine.`;
@@ -504,7 +506,7 @@ THE SITE'S PAGES (address | title)
 ${[].concat(pages || []).slice(0, 80).map((p) => `${String(p.path || '/').slice(0, 90)} | ${String(p.title || '').slice(0, 90)}`).join('\n')}
 
 BUTTONS AND LINKS (i | words on it | section heading | text around it | on page | opens → title / main heading)
-${items.map((x) => `${x.i} | ${x.button ? '[button] ' : ''}${String(x.text).slice(0, 120)}${x.parts > 1 ? ` (one phrase across ${x.parts} links)` : ''} | ${String(x.context || '-').slice(0, 100)} | ${String(x.near || '-').replace(/\s+/g, ' ').slice(0, 220)} | ${String(x.from || '/').slice(0, 80)} | ${String(x.to || '/').slice(0, 90)}${x.frag ? '#' + String(x.frag).slice(0, 60) : ''}${x.final ? ` (redirects to ${String(x.final).slice(0, 90)})` : ''}${x.section ? ` section: ${String(x.section).replace(/\s+/g, ' ').slice(0, 200)}` : ''} → ${String(x.toTitle || '-').slice(0, 90)} / ${String(x.toH1 || '-').slice(0, 90)}${x.pkg ? ' [shows packages]' : ''}${x.unverified ? ' [could not be read]' : ''}`).join('\n')}`;
+${items.map((x) => `${x.i} | ${x.button ? '[button] ' : ''}${String(x.text).slice(0, 120)}${x.parts > 1 ? ` (one phrase across ${x.parts} links)` : ''} | ${String(x.context || '-').slice(0, 100)} | ${String(x.near || '-').replace(/\s+/g, ' ').slice(0, 220)} | ${String(x.from || '/').slice(0, 80)} | ${String(x.to || '/').slice(0, 90)}${x.frag ? '#' + String(x.frag).slice(0, 60) : ''}${x.final ? ` (redirects to ${String(x.final).slice(0, 90)})` : ''}${x.section ? ` section: ${String(x.section).replace(/\s+/g, ' ').slice(0, 200)}` : ''} → ${String(x.toTitle || '-').slice(0, 90)} / ${String(x.toH1 || '-').slice(0, 90)}${x.toText ? ` says: ${String(x.toText).slice(0, 400)}` : ''}${x.pkg ? ' [shows packages]' : ''}${x.unverified ? ' [could not be read]' : ''}`).join('\n')}`;
 
 /**
  * The two whole-website reads that are not about the business's name: proofreading the copy, and
@@ -521,8 +523,9 @@ async function extraCheck(req, res, b, list, owner) {
   // 'p2': answers from before the second read of grammar flags are not reused.
   // 'l2': link answers from before "a service word linking to its page is fine" are asked again.
   // 'l3': links are judged by their promise; the key holds the section, the redirect and packages, so a change there is asked again.
+  // 'l4': the destination's copy is read (not its SEO title's town), and a "fix" equal to the current page is refused.
   // 'f3': page checks from before the "town pages name their own town; other pages may name the shop's town" rules are asked again.
-  const keyOf = (x) => (fit ? 'f4' : proof ? 'p2' : 'l3') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt]) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1, x.frag || '', x.final || '', x.section || '', x.pkg ? 1 : 0, x.unverified ? 1 : 0, x.from || ''].join('|')).slice(0, 18);
+  const keyOf = (x) => (fit ? 'f4' : proof ? 'p2' : 'l4') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt]) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1, x.frag || '', x.final || '', x.section || '', x.pkg ? 1 : 0, x.unverified ? 1 : 0, x.from || '', x.toText || ''].join('|')).slice(0, 18);
   const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
   const results = []; const todo = [];
   items.forEach((x, k) => {
