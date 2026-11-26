@@ -69,6 +69,21 @@ async function handler(req, res) {
         const d = await aaDetail(String(req.query.id || ''));
         return d ? res.status(200).json(Object.assign(d, { canEdit: me.role === 'admin' })) : res.status(404).json({ error: 'No such auto audit' });
       }
+      // The Auto audits page: every website with something found, and what (one read per such website).
+      if (req.query.op === 'results') {
+        const { WSUM } = await import('./_watch.js');
+        const [raw] = await redis(['HGETALL', WSUM]);
+        const ids = []; for (let i = 0; raw && i < raw.length; i += 2) { const v = jparse(raw[i + 1]); if (v && !v.err && v.n) ids.push([raw[i], v]); }
+        const rows = ids.length ? await redis(...ids.map(([id]) => ['GET', WKEY(id)])) : [];
+        const { auditMap } = await import('./_watch.js');
+        const amap = await auditMap();
+        const sites = ids.map(([id, sum], i) => {
+          const r = jparse(rows[i]) || {};
+          return { id, name: r.name || '', domain: r.domain || '', at: r.at || sum.at, pub: r.pub || '', pages: r.pages || 0, recId: amap[String(id).toLowerCase()] || '',
+            issues: (r.issues || []).map((x) => ({ k: x.k, type: x.type, value: x.value, sev: x.sev, label: x.label, ctx: x.ctx, pages: x.pages || [], verify: !!x.verify, stockId: x.stockId || '', how: x.how || '', img: x.img || '' })) };
+        }).filter((x) => x.issues.length);
+        return res.status(200).json({ sites, read: raw ? raw.length / 2 : 0, canRule: await (await import('./_lib.js')).can(me, 'live.content') });
+      }
       if (req.query.op === 'site') {
         const id = String(req.query.id || '');
         if (!okId(id)) return res.status(400).json({ error: 'Which website?' });

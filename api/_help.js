@@ -1175,6 +1175,16 @@ The write-ups come from the Site Auditor AI from the facts the scan collected (r
 <p>Every exception keeps its history (added, changed, by whom, when, why) and the same lines are in the audit's <b>Activity log</b>, removals included. Changes to sets are in the app's activity log and in each set's history.</p>`,
   },
   {
+    id: 'autoresults', group: 'Audits', title: 'Auto audits page — what the automatic checks found', audience: 'all',
+    html: `<p><b>Auto audits</b> in the left menu (under Websites) lists what the automatic checks found on the live websites. It is kept apart from the <b>Audits</b> tab, which is for audits the team scans by hand.</p>
+<ul><li><b>🔎 Business Info</b>: every website where the Business Info check found another business's phone, email, address, name or social account, or Google business data that does not match. Critical ones first. Filter by kind and severity, or search by website or value.</li>
+<li><b>📷 Editorial photos</b>: every website showing a Shutterstock photo licensed for editorial use only, with the photo, the page it is on and a link to it on Shutterstock.</li>
+<li><b>🌐 Domains</b>: live custom domains that are not working.</li>
+<li><b>📭 Forms gone quiet</b> and <b>🔍 SEO websites</b>: links to where those results live (Lead analysis, and the SEO websites' own full audits).</li></ul>
+<p>Each website shows when it was last read and links to its <b>Website profile</b> and, when the website also has an audit, to <b>Its audit</b>. <b>Not a problem</b> (needs permission to edit live website content) takes a finding off for that website, and it is not reported again.</p>
+<p>The settings (what each auto audit checks, when, and its notifications) are in <b>Settings → 🤖 Auto audits</b>.</p>`,
+  },
+  {
     id: 'autoaudits', group: 'Audits', title: 'Auto audits — checks that run by themselves', audience: 'all',
     html: `<p><b>Settings → 🤖 Auto audits</b> lists every check that runs by itself on every website, one row each, with whether it is on, when it last ran, the last website it read, when it runs next, and who is told. Admins can change them; everyone with DR Websites can see them. The <b>⚙ Settings</b> button on the DR Websites auto audit panel opens it too.</p>
 <ul><li><b>🔎 Business Info check (live websites)</b>: every published website read like a visitor reads it and compared with its Business Info (another business's phone, email, address, name or social account). A website is read again as soon as it is published, and after a set number of days regardless.</li>

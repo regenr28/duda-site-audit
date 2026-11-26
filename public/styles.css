@@ -2536,3 +2536,19 @@ table.findings .rw-status select { max-width: 150px; }
 .aa-live { font-size: 12.5px; margin-top: 6px; padding: 4px 8px; border-radius: 6px; background: var(--panel-2); }
 .aa-live.wait { background: color-mix(in srgb, #f59e0b 14%, transparent); }
 .aa-live.run { background: color-mix(in srgb, #22c55e 14%, transparent); }
+/* Auto audits page (update 230) */
+.ar-tabs .ar-n { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 10px; background: var(--panel-2); font-size: 12px; text-align: center; }
+.ar-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.ar-filters input[type=search] { flex: 1 1 220px; max-width: 360px; }
+.ar-list { display: grid; gap: 10px; }
+.ar-site { padding: 12px 14px; }
+.ar-site > summary { cursor: pointer; list-style: none; display: grid; gap: 4px; }
+.ar-site > summary::-webkit-details-marker { display: none; }
+.ar-s-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ar-items { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.ar-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.ar-i-top { display: flex; gap: 10px; min-width: 0; }
+.ar-i-top > div { min-width: 0; overflow-wrap: anywhere; }
+.ar-thumb { width: 88px; height: 60px; object-fit: cover; border-radius: 6px; flex: none; background: var(--panel-2); }
+.ar-link { padding: 16px; }
+@media (max-width: 640px) { .ar-item { flex-direction: column; } }

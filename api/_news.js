@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-26-auto-page', date: '2026-11-26', audience: 'all', tag: 'Websites',
+    title: 'New Auto audits page: everything the automatic checks found',
+    what: 'The results of the automatic checks now have their own page, apart from the Audits tab (audits done by hand). One tab per check: Business Info, editorial photos, domains, forms gone quiet and SEO websites. Critical findings come first, with filters, a search box, the page each finding is on, and \u201cNot a problem\u201d.',
+    where: ['<b>Walkthrough:</b> left menu → <b>Websites</b> → <b>Auto audits</b>.'],
+  },
+  {
     id: '2026-11-26-scanline-auto', date: '2026-11-26', audience: 'all', tag: 'Scanning',
     title: 'Scan line: automatic jobs say so, and every website has a name',
     what: 'An AI check the app resumes by itself when AI credits come back runs in whichever tab is open. The scan line now shows it as \u201c🤖 Automatic · AI check, started automatically in Dana\u2019s open tab\u201d with the reason, instead of \u201cadded by\u201d that person. Verify fixes and Recheck say what they are too. A website without a business name yet shows its site id instead of \u201cA website\u201d. Automatic jobs no longer hold up the SEO auto audits.',

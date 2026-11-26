@@ -613,6 +613,7 @@
   // showing only what each person's role allows
   // =====================================================================
   const NAV_IC = {
+    auto: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4"/><circle cx="9" cy="13" r="1.3"/><circle cx="15" cy="13" r="1.3"/><path d="M9 17h6"/>',
     home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
     audits: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
     projects: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v10"/>',
@@ -655,6 +656,7 @@
     ].filter(Boolean) });
     g.push({ title: 'Websites', items: [
       can('live.view') && { key: 'live', href: '#/live', label: 'DR Websites', ic: 'live' },
+      can('live.view') && { key: 'auto', href: '#/auto', label: 'Auto audits', ic: 'auto' },
       canCust() && { key: 'customers', href: '#/customers', label: 'Customers', ic: 'user' },
       can('ticket.view') && { key: 'requests', href: '#/requests', label: 'Tickets', ic: 'tickets', count: state.tkNew || 0 },
       { key: 'comments', href: '#/comments', label: 'Duda comments', ic: 'comments', dot: cmtWaiting() > 0, soft: !cmtWaiting() && cmtUnread() > 0 },
@@ -671,6 +673,7 @@
     if (r.name === 'site') return 'sites';
     if (r.name === 'project') return 'projects';
     if (r.name === 'dr') return 'live';
+    if (r.name === 'auto') return 'auto';
     if (r.name === 'live') return r.tab === 'ranks' ? 'ranks' : r.tab === 'trends' ? 'trends' : 'live';
     return r.name;
   }
@@ -6268,6 +6271,7 @@
     { route: 'home', icon: '🏠', label: 'Home', words: 'home dashboard overview start today needs attention my work what to do first', href: '#/home', help: 'home' },
     { route: 'settings', icon: '🎨', label: 'Appearance: dark mode, light mode and colours', words: 'appearance dark mode light mode theme colour color night start page tips look', href: '#/settings/appearance', help: 'home' },
     { route: 'sites', icon: '📋', label: 'Audits', words: 'audits websites list scan home', href: '#/', help: 'audits' },
+    { route: 'auto', icon: '🤖', label: 'Auto audits: what the automatic checks found', words: 'auto audit automatic results found findings business info editorial photos stock shutterstock domains quiet seo critical', href: '#/auto', perm: 'live.view', help: 'autoresults' },
     { route: 'settings', icon: '🤖', label: 'Auto audits: what runs by itself, its schedule and its notifications', words: 'auto audit automatic schedule cron daily notification message format slack business info editorial domain forms quiet presence settings', href: '#/settings/autoaudits', help: 'autoaudits' },
     { route: 'settings', icon: '📷', label: 'Editorial stock photos: Shutterstock images that may not be used on a business website', words: 'shutterstock editorial stock photo license licence commercial use only image list', href: '#/settings/stock', help: 'stock' },
     { route: 'settings', icon: '🚫', label: 'Audit exceptions: manufacturer pages and contact info that are not checked', words: 'exceptions exempt exemption white label manufacturer landing page xpel skip not checked', href: '#/settings/exceptions', perm: 'exempt.global', help: 'exceptions' },
@@ -9383,6 +9387,84 @@
         <span class="tr-r-w">${word[r.t]}</span><a href="#" data-tsite="${esc(r.s)}">${esc((x && (x.n || x.dm)) || r.s)}</a><span class="small faint tr-r-d">${esc(new Date(r.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}${r.approx ? ' (about)' : ''}</span></li>`; }).join('')}</ul>` : '<div class="small muted">Nothing launched, unpublished or back in this range.</div>'}`;
   }
 
+  // =====================================================================
+  // AUTO AUDITS: what the automatic checks found, apart from the Audits tab (which is for audits done by hand)
+  // =====================================================================
+  const autoR = { data: null, loading: false, error: '', q: '', type: '', sev: '', open: {} };
+  const AR_TYPE = { phone: '📞 Phone', email: '✉️ Email', address: '📍 Address', name: '🏷 Business name', social: '🔗 Social account', schema: '🧩 Google business data', stock: '📷 Editorial photo' };
+  async function loadAuto() {
+    autoR.loading = true;
+    try { autoR.data = await api('/api/watch?op=results'); autoR.error = ''; } catch (e) { autoR.error = e.message; }
+    autoR.loading = false;
+    if (route().name === 'auto') renderAuto(route().tab);
+  }
+  function renderAuto(tab) {
+    if (!can('live.view')) { $('#view').innerHTML = '<div class="empty">Your role does not include DR Websites.</div>'; return; }
+    if (!autoR.data && !autoR.loading && !autoR.error) loadAuto();
+    if ((tab === 'domains') && !live.data && !live.loading) loadLive(false).then(() => { if (route().name === 'auto') renderAuto(route().tab); });
+    const d = autoR.data || { sites: [], read: 0 };
+    const isStock = (x) => x.type === 'stock';
+    const bizSites = d.sites.map((x) => Object.assign({}, x, { issues: x.issues.filter((i) => !isStock(i)) })).filter((x) => x.issues.length);
+    const edSites = d.sites.map((x) => Object.assign({}, x, { issues: x.issues.filter(isStock) })).filter((x) => x.issues.length);
+    const domSites = ((live.data && live.data.sites) || []).filter((x) => x.dom && domProblem(x.dom));
+    const tabs = [['bizinfo', '🔎 Business Info', bizSites.length], ['editorial', '📷 Editorial photos', edSites.length], ['domains', '🌐 Domains', live.data ? domSites.length : '…'], ['quiet', '📭 Forms gone quiet', ''], ['seo', '🔍 SEO websites', '']];
+    const head = `<div class="page-head"><div><h1>Auto audits</h1><div class="muted">What the automatic checks found on the live websites, kept apart from the Audits tab (audits done by hand). ${d.read ? `${d.read} websites read so far.` : ''}</div></div>
+      <div class="row-gap"><button class="btn" id="arRefresh" ${autoR.loading ? 'disabled' : ''}>${autoR.loading ? 'Loading\u2026' : '\u21bb Refresh'}</button> <a class="btn ghost" href="#/settings/autoaudits">\u2699 Settings</a></div></div>
+      <div class="tabs ar-tabs" role="tablist">${tabs.map(([k, l, n]) => `<a role="tab" class="tab${k === tab ? ' on' : ''}" href="#/auto/${k}" aria-selected="${k === tab}">${l}${n !== '' ? ` <span class="ar-n">${n}</span>` : ''}</a>`).join('')}</div>`;
+    let body = '';
+    if (autoR.error) body = `<div class="note bad">${esc(autoR.error)}</div>`;
+    else if (tab === 'bizinfo' || tab === 'editorial') {
+      const list0 = tab === 'bizinfo' ? bizSites : edSites;
+      const q = autoR.q.toLowerCase();
+      const list = list0.map((x) => Object.assign({}, x, { issues: x.issues.filter((i) => (!autoR.type || i.type === autoR.type) && (!autoR.sev || (autoR.sev === 'critical' ? i.sev === 'critical' : i.sev !== 'critical'))) }))
+        .filter((x) => x.issues.length && (!q || `${x.name} ${x.domain} ${x.issues.map((i) => i.value + ' ' + i.ctx).join(' ')}`.toLowerCase().includes(q)))
+        .sort((a, b) => b.issues.filter((i) => i.sev === 'critical').length - a.issues.filter((i) => i.sev === 'critical').length || b.issues.length - a.issues.length);
+      const nCrit = list.reduce((n, x) => n + x.issues.filter((i) => i.sev === 'critical').length, 0);
+      const types = [...new Set(list0.flatMap((x) => x.issues.map((i) => i.type)))];
+      const thumb = (i) => (i.stockId ? `<img class="ar-thumb" loading="lazy" alt="Shutterstock ${esc(i.stockId)}" src="${i.img ? '/api/imghash?url=' + encodeURIComponent(i.img) : '/stock/' + esc(i.stockId) + '.jpg'}" onerror="this.src='/stock/${esc(i.stockId)}.jpg';this.onerror=()=>this.remove()">` : '');
+      const item = (x, i) => `<li class="ar-item"><div class="ar-i-top">${thumb(i)}<div>
+          <span class="badge ${i.sev === 'critical' ? 'sev-critical' : i.verify ? 'sev-verify' : 'sev-warning'}">${i.sev === 'critical' ? 'Critical' : i.verify ? 'Verify' : 'Check'}</span>
+          <span class="small faint">${esc(AR_TYPE[i.type] || i.type)}</span> <b>${esc(i.value)}</b>
+          <div class="small">${esc(i.label || '')}</div>
+          ${i.ctx && i.ctx !== i.value ? `<div class="small muted">\u201c${esc(i.ctx)}\u201d</div>` : ''}
+          <div class="small">${(i.pages || []).map((p) => `<a href="https://${esc(x.domain)}${esc(p)}" target="_blank" rel="noopener" class="mono">${esc(p)}</a>`).join(' \u00b7 ')}${i.stockId ? ` \u00b7 <a href="https://www.shutterstock.com/image-photo/${esc(i.stockId)}" target="_blank" rel="noopener">Shutterstock \u2197</a>` : ''}</div></div></div>
+          ${d.canRule ? `<button class="btn sm ghost" data-arok="${esc(x.id)}" data-key="${esc(i.k)}" title="Not a problem for this website: it is not reported again">Not a problem</button>` : ''}</li>`;
+      body = `<div class="ar-filters row-gap">
+          <input type="search" id="arQ" placeholder="Search websites, values\u2026" value="${esc(autoR.q)}">
+          ${tab === 'bizinfo' ? `<select id="arType"><option value="">Every kind</option>${types.map((t) => `<option value="${esc(t)}" ${autoR.type === t ? 'selected' : ''}>${esc(AR_TYPE[t] || t)}</option>`).join('')}</select>` : ''}
+          <select id="arSev"><option value="">Every severity</option><option value="critical" ${autoR.sev === 'critical' ? 'selected' : ''}>Critical</option><option value="check" ${autoR.sev === 'check' ? 'selected' : ''}>To check</option></select>
+          <span class="small muted">${list.length} website${list.length === 1 ? '' : 's'} \u00b7 ${nCrit} critical</span></div>
+        ${!autoR.data ? '<div class="empty">Loading\u2026</div>' : !list.length ? `<div class="empty">${list0.length ? 'Nothing matches these filters.' : tab === 'editorial' ? 'No editorial photos found on the websites read so far.' : 'Nothing found on the websites read so far.'}</div>` : `
+        <div class="ar-list">${list.map((x) => { const crit = x.issues.filter((i) => i.sev === 'critical').length; const open = autoR.open[x.id + tab] !== false;
+          return `<details class="panel ar-site" ${open ? 'open' : ''} data-arsite="${esc(x.id + tab)}"><summary>
+            <div class="ar-s-head"><b>${esc(x.name || x.domain || x.id)}</b> <a class="small" href="https://${esc(x.domain)}" target="_blank" rel="noopener">${esc(x.domain)} \u2197</a>
+              ${crit ? `<span class="badge sev-critical">${crit} critical</span>` : ''}${x.issues.length - crit ? `<span class="badge sev-warning">${x.issues.length - crit} to check</span>` : ''}</div>
+            <div class="small faint">Read ${esc(fmtWhen(x.at))} \u00b7 ${x.pages} pages \u00b7 <a href="#/dr/${esc(x.id)}/auto-audit">Website profile</a>${x.recId ? ` \u00b7 <a href="#/site/${esc(x.recId)}">Its audit</a>` : ''}</div></summary>
+            <ul class="ar-items">${x.issues.map((i) => item(x, i)).join('')}</ul></details>`; }).join('')}</div>`}`;
+    } else if (tab === 'domains') {
+      body = !live.data ? '<div class="empty">Loading\u2026</div>' : !domSites.length ? '<div class="empty">Every live domain is working.</div>' : `<div class="table-wrap"><table class="grid"><thead><tr><th>Website</th><th>Domain</th><th>Problem</th><th></th></tr></thead><tbody>
+        ${domSites.map((x) => `<tr><td>${esc(x.name || x.id)}</td><td><a href="https://${esc(x.domain)}" target="_blank" rel="noopener">${esc(x.domain)} \u2197</a></td><td><span class="badge ${DOM_CLS[x.dom.status] || 'sev-warning'}">${DOM_ICON[x.dom.status] || '\u26a0'} ${esc(x.dom.label || x.dom.status)}</span></td><td><a href="#/dr/${esc(x.id)}">Profile</a></td></tr>`).join('')}</tbody></table></div>
+        <p class="small muted">Registrations running out, and the daily report: <a href="#/live/trends">Domain monitoring</a>.</p>`;
+    } else if (tab === 'quiet') {
+      body = `<div class="panel ar-link"><p>Websites whose forms have gone quiet are listed in <b>Lead analysis</b>, with how long and how often they usually get enquiries.</p><a class="btn primary" href="#/analysis/quiet">Open Forms gone quiet</a></div>`;
+    } else if (tab === 'seo') {
+      body = `<div class="panel ar-link"><p>The SEO websites get a full audit after each publish. Their results are full audits: open them from the SEO websites list, or on the Audits tab with the <b>Audited: auto audited</b> filter.</p>
+        <div class="row-gap"><a class="btn primary" href="#/live/seo">Open SEO websites</a> <button class="btn" id="arSeoAudits">Their audits</button></div></div>`;
+    }
+    $('#view').innerHTML = head + body;
+    $('#arRefresh').onclick = () => { loadAuto(); if (tab === 'domains') loadLive(false).then(() => renderAuto(tab)); };
+    if ($('#arQ')) $('#arQ').oninput = (e) => { autoR.q = e.target.value; clearTimeout(autoR.t); autoR.t = setTimeout(() => { renderAuto(tab); const q = $('#arQ'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 250); };
+    if ($('#arType')) $('#arType').onchange = (e) => { autoR.type = e.target.value; renderAuto(tab); };
+    if ($('#arSev')) $('#arSev').onchange = (e) => { autoR.sev = e.target.value; renderAuto(tab); };
+    $$('[data-arsite]').forEach((el) => (el.ontoggle = () => { autoR.open[el.dataset.arsite] = el.open; }));
+    $$('[data-arok]').forEach((b) => (b.onclick = async (e) => {
+      e.preventDefault(); b.disabled = true;
+      try { await post('/api/watch', { op: 'ok', id: b.dataset.arok, key: b.dataset.key }); toast('Marked not a problem for this website'); await loadAuto(); }
+      catch (er) { toast(er.message); b.disabled = false; }
+    }));
+    if ($('#arSeoAudits')) $('#arSeoAudits').onclick = () => { state.filters.by = 'auto'; location.hash = '#/'; };
+  }
+
   function renderLive() {
     if (live.tab === 'seo') return renderSeo();
     const d = live.data;
@@ -9630,6 +9712,7 @@
     if (parts[0] === 'help') return { name: 'help', section: parts[1] || '' };
     if (parts[0] === 'health') return { name: 'health' };
     if (parts[0] === 'usage') return { name: 'usage' };
+    if (parts[0] === 'auto') return { name: 'auto', tab: parts[1] || 'bizinfo' };
     if (parts[0] === 'settings') return { name: 'settings', section: parts[1] || 'team', sub: parts[2] ? decodeURIComponent(parts[2]) : '' };
     if (parts[0] === 'analysis') return { name: 'analysis', tab: parts[1] || 'quiet' };
     if (parts[0] === 'activity') return { name: 'activity' };
@@ -9689,6 +9772,7 @@
     if (r.name === 'about') return renderAbout();
     if (r.name === 'help') return renderHelp(r.section);
     if (r.name === 'settings') return renderSettings(r.section, r.sub);
+    if (r.name === 'auto') return renderAuto(r.tab);
     if (r.name === 'health') return state.superAdmin ? renderHealth() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
     if (r.name === 'usage') return state.superAdmin ? renderUsage() : ($('#view').innerHTML = '<div class="empty">Not available on this account.</div>');
     if (r.name === 'analysis') return can('leads.view') ? renderAnalysis(r.tab) : ($('#view').innerHTML = '<div class="empty">Your role does not include form submissions.</div>');
