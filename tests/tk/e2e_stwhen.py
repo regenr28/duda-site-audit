@@ -67,6 +67,13 @@ try:
         pg.select_option('#ffst', 'all'); pg.select_option('#ffwhen', '7d'); time.sleep(0.6)
         check('#4' not in ids() and '#1' in ids(), 'Changed in the last 7 days leaves out a change from a week ago')
         check('Changed in the last 7 days' in pg.inner_text('#view'), 'the filter line names the period')
+        pg.select_option('#ffwhen', 'range'); time.sleep(0.6)
+        check(pg.is_visible('#ffFrom') and pg.is_visible('#ffTo') and sorted(ids()) == ['#1', '#2'], 'Custom dates: two date boxes, starting at today')
+        pg.fill('#ffFrom', '2026-11-19'); pg.dispatch_event('#ffFrom', 'change'); time.sleep(0.5)
+        pg.fill('#ffTo', '2026-11-21'); pg.dispatch_event('#ffTo', 'change'); time.sleep(0.6)
+        check(ids() == ['#4'], 'a custom range (Nov 19 \u2013 21) shows only what changed in it')
+        check('Nov 19, 2026 \u2013 Nov 21, 2026' in pg.inner_text('#view'), 'the filter line names the dates')
+        pg.click('#ffClear') if pg.locator('#ffClear').count() else None
         pg.select_option('#ffwhen', ''); time.sleep(0.4)
         tip = pg.get_attribute('#itemRows .st-when', 'title') or ''
         check('on ' in tip, 'hovering shows the full date')

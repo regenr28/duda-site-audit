@@ -626,3 +626,6 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 
 ## 235 — Filter: status changed today / yesterday / last 7 days
 - `state.ff.when` ('' | today | yesterday | 7d), select `#ffwhen` with counts, `changedIn(f, when)` on `stWhen(f).at` using the viewer's local midnight. In `FF_DEFAULTS` (cleared by Clear filters), named in `activeFilters`, highlighted when on. Combine with the status filter (Done + today = closed today). Test in tk/e2e_stwhen.py. app v107.
+
+## 236 — Custom date range for "Changed:"
+- `#ffwhen` option `range` shows `#ffFrom`/`#ffTo` date inputs (`state.ff.from`/`to`, YYYY-MM-DD, local days, both inclusive); picking it with no dates starts at today. `rangeLabel()` names it in the filter line. In `FF_DEFAULTS`. Test in tk/e2e_stwhen.py. app v108, styles v65.

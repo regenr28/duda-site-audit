@@ -5,8 +5,8 @@
 export const NEWS = [
   {
     id: '2026-11-27-changed-today', date: '2026-11-27', audience: 'all', tag: 'Audits',
-    title: 'Filter: changed today, yesterday or in the last 7 days',
-    what: 'A new filter next to the search box shows only the audit items whose status changed today, yesterday or in the last 7 days. Pick <b>Done</b> in the status list too to see what was closed today.',
+    title: 'Filter: changed today, yesterday, in the last 7 days, or between any two dates',
+    what: 'A new filter next to the search box shows only the audit items whose status changed today, yesterday, in the last 7 days, or between two dates you pick (<b>Custom dates\u2026</b>). Pick <b>Done</b> in the status list too to see what was closed today.',
     where: ['<b>Walkthrough:</b> an audit \u2192 <b>Audit items</b> \u2192 <b>Changed: today</b> (and <b>Done</b> in the status list).'],
   },
   {

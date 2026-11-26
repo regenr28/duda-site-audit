@@ -2554,3 +2554,7 @@ table.findings .rw-status select { max-width: 150px; }
 @media (max-width: 640px) { .ar-item { flex-direction: column; } }
 /* When an item's status last changed, under its status (update 234) */
 table.findings .st-when { margin-top: 6px; font-size: 12px; line-height: 1.35; color: var(--muted); }
+/* Custom date range for "Changed:" (update 236) */
+.ff-range { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ff-range label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.ff-range input[type=date] { padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; }
