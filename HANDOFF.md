@@ -618,3 +618,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - `LINK_SYSTEM`: judge by heading and copy, not SEO title/address; another town in the destination's title is not evidence (belongs to that page's own review); never answer with expected = current page.
 - `applyLinkVerdicts`: expected equal to `l.to` with the same fragment → dropped (link fine). Compared before the redirect branch only against `l.to`, so a redirect landing on the suggested page still becomes LINK_VIA_REDIRECT. `/x#b` vs `/x` is a different place and is kept.
 - Cache prefix `l4` (key adds `toText`). Check release v62 (fixes LINK_WRONG_PAGE, ai). Tests: e2e_linkpromise.py (#2256 cases), link_unit.mjs. engine v45, app v105.
+
+## 234 — When an item's status changed, shown in the list
+- fstate records now carry `stAt`/`stBy`/`stFor` (the status they belong to), written by `patchFinding` only when the status changes (kept as they were on an assignee-only change). On load (`store.js`), `f.stAt`/`f.stBy` come from them when `stFor === status`, else from `updatedAt`/`updatedBy` — so automatic closes/reopens that copy the old record (rescan-gone, came-back, ai-unclear…) show their own time without touching those writers. Old records fall back to `updatedAt`.
+- app: `stWhen(f)` / `stWhenHtml(f)` under the status select in the items table ("Fri, Nov 27, 12:33 AM" + who, or "fixed on rescan (who)" via `AUTO_HOW` / `f.gone`); title = full date. Sort select `#ffsort` (`state.ff.sort`: '' by ID, 'changed' newest first); not counted as a filter. Optimistic `setFinding` sets `stAt`/`stBy`.
+- Test tk/e2e_stwhen.py. app v106, styles v64.

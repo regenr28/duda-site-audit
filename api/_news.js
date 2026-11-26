@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-27-status-when', date: '2026-11-27', audience: 'all', tag: 'Audits',
+    title: 'See when each item\u2019s status changed, right in the list',
+    what: 'Under every audit item\u2019s status is now the date and time it last changed and who did it, or \u201cfixed on rescan\u201d when a rescan closed it. A new <b>Sort: last status change first</b> puts the most recent changes on top. Changing only the assignee does not move the date.',
+    where: ['<b>Walkthrough:</b> an audit \u2192 <b>Audit items</b> \u2192 status filter <b>Done</b> \u2192 <b>Sort: last status change first</b>.'],
+  },
+  {
     id: '2026-11-27-link-self', date: '2026-11-27', audience: 'all', tag: 'Checks',
     title: 'Links: judged by what the page says, never \u201cfixed\u201d to the same page',
     what: 'A link from the home page to a service page whose SEO title names another town was called wrong, with the same page as the fix. The page a link opens is now judged by its heading and copy, another town in its title is not a reason to call the link wrong, and a suggestion equal to the page the link already opens is refused. Audits catch up with <b>Apply check updates</b>.',

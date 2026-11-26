@@ -299,7 +299,8 @@ export const HELP_SECTIONS = [
   },
   {
     id: 'statuses', group: 'Audit items', title: 'Audit item statuses', audience: 'all',
-    html: `<table class="help-table"><tbody>
+    html: `<p><b>When a status changed:</b> under each item's status in the list is the date and time it last changed and who changed it, or "fixed on rescan", "check corrected" and the like when the app closed it after a rescan. Hover it for the full date. Changing only the assignee does not move it. <b>Sort: last status change first</b> (next to the search box) puts the most recent changes on top; pick <b>Done</b> in the status filter to see what was closed and when. Every change is also in the audit's <b>Activity log</b>.</p>
+<table class="help-table"><tbody>
 <tr><td><b>Open</b></td><td>Needs fixing. The default.</td></tr>
 <tr><td><b>For clarification</b></td><td>"I have a question before I can fix this." Picking it <b>asks you what the question is</b> and who can answer — see below.</td></tr>
 <tr><td><b>Done</b></td><td>Fixed in the Duda editor. Confirm later with <b>Verify on live site</b>.</td></tr>

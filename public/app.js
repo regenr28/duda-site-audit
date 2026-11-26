@@ -23,7 +23,7 @@
     config: {}, me: null, users: [], sites: [], current: null,
     scanning: {}, line: [], workers: [], running: 0, skipAI: {}, aiAbort: {}, claims: {},
     filters: { q: '', status: '', assignee: '', oldChecks: false, clar: false },
-    ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '', cmt: false },
+    ff: { q: '', sev: '', cat: '', dev: '', st: 'active', who: '', loc: '', cmt: false, sort: '' },
     refTab: 'info',
     fixedChecks: {},
     notifs: { items: [], unread: 0 }, presence: {}, commentScope: 'general', gfilter: '', sfilter: 'open', auth: { mode: 'login', email: '', remember: true },
@@ -11002,7 +11002,27 @@
       if (ff.q) { const q = ff.q.replace(/^#/, ''); if (!(String(f.num) === q || [f.message, f.found, f.expected, f.path, f.selector, f.location].join(' ').toLowerCase().includes(ff.q.toLowerCase()))) return false; }
       if (ff.cmt && !f.comments) return false;
       return true;
-    }).sort((a, b) => (a.num || 0) - (b.num || 0));
+    }).sort(ff.sort === 'changed' ? (a, b) => (Date.parse(stWhen(b).at) || 0) - (Date.parse(stWhen(a).at) || 0) || (a.num || 0) - (b.num || 0) : (a, b) => (a.num || 0) - (b.num || 0));
+  }
+  /**
+   * When an item's status last changed, and how: by a person, or closed by a rescan / a corrected check.
+   * { at, who, how } — at is '' for an item nobody has changed since it was found.
+   */
+  const AUTO_HOW = { 'rescan-gone': 'fixed on rescan', 'check-corrected': 'check corrected', 'recheck-gone': 'gone on recheck', 'retired-page': 'page now redirects', 'came-back': 'back after a rescan', 'still-there': 'still there after rescan', 'ai-unclear': 'AI unsure', 'client-comment': 'client comment', 'reference-changed': 'reference changed', challenged: 'reopened' };
+  function stWhen(f) {
+    if (f.gone && f.gone.at) return { at: f.gone.at, who: f.gone.byName || nameOf(f.gone.by, ''), how: f.gone.why === 'check-corrected' ? 'check corrected' : f.gone.why === 'retired-page' ? 'page now redirects' : 'fixed on rescan' };
+    const at = f.stAt || '';
+    if (!at) return { at: '', who: '', how: '' };
+    const how = f.auto && AUTO_HOW[f.auto.why] ? AUTO_HOW[f.auto.why] : '';
+    return { at, who: f.stBy ? nameOf(f.stBy, '') : '', how };
+  }
+  /** The line under the status: "Nov 26, 3:12 PM · Reymark" or "Nov 26, 3:12 PM · fixed on rescan (Reymark)". */
+  function stWhenHtml(f) {
+    const w = stWhen(f); if (!w.at) return '';
+    const t = Date.parse(w.at); if (!t) return '';
+    const by = w.how ? `${w.how}${w.who ? ` (${w.who})` : ''}` : w.who || '';
+    const label = f.gone ? 'Closed' : (FLABEL[f.status] || 'Changed');
+    return `<div class="st-when" title="${esc(`${label} on ${fmtFull(new Date(t).toISOString())}${by ? ' · ' + by : ''}`)}">${esc(fmtWhen(t))}${by ? `<br><span class="faint">${esc(by)}</span>` : ''}</div>`;
   }
 
   let siteComposer = null;
@@ -12258,7 +12278,7 @@
               <td class="rw-where"><a href="${esc(previewUrl(s, f.path, dev))}" target="_blank" rel="noopener" class="mono small rw-path" title="${esc(f.path)} · open the ${esc(A.DEVICE_LABEL[dev])} preview">${esc(f.path)}</a>
                 ${f.pages && f.pages.length > 1 ? `<div class="small muted">+${f.pages.length - 1} more page${f.pages.length === 2 ? '' : 's'}</div>` : ''}
                 ${where ? `<div class="small muted rw-loc">${where}</div>` : ''}${pvLivePills(s, f)}</td>
-              <td class="rw-status">${statusSelect(f, 'data-fst')}</td>
+              <td class="rw-status">${statusSelect(f, 'data-fst')}${stWhenHtml(f)}</td>
               <td><span class="member-select" data-stop>${avatar(effWho(f, s))}<select data-fwho="${esc(f.id)}" data-people>${userOptions(f.assignee, s.assignee && user(s.assignee) ? `${user(s.assignee).name} (site default)` : 'Unassigned', true)}</select></span></td>
             </tr>`;
     };
@@ -12281,6 +12301,7 @@
             <option value="all" ${ff.st === 'all' ? 'selected' : ''}>All (${findings.length})</option>
           </select>
           <input type="search" id="ffq" placeholder="Search, or #12 to jump to an ID…" value="${esc(ff.q)}">
+          <select id="ffsort" title="Order of the list"><option value="">Sort: by ID</option><option value="changed" ${ff.sort === 'changed' ? 'selected' : ''}>Sort: last status change first</option></select>
           <select id="ffcat"><option value="">All categories</option>${findings.some((f) => f.ai) ? `<option value="__ai" ${ff.cat === '__ai' ? 'selected' : ''}>✨ AI-reviewed (${findings.filter((f) => f.ai).length})</option>` : ''}${cats.map((c) => `<option ${c === ff.cat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="ffloc"><option value="">All locations</option>${locs.map((c) => `<option ${c === ff.loc ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="ffdev"><option value="">All devices</option>${A.DEVICES.map((d) => `<option value="${d}" ${ff.dev === d ? 'selected' : ''}>Visible on ${A.DEVICE_LABEL[d]}</option>`).join('')}<option value="hidden" ${ff.dev === 'hidden' ? 'selected' : ''}>Hidden on all devices</option></select>
@@ -12340,7 +12361,7 @@
     if ($('#ffCmt', body)) $('#ffCmt', body).onclick = () => { ff.cmt = !ff.cmt; renderSite(); };
     runHint();
     $('#ffq') && ($('#ffq').oninput = (e) => { ff.q = e.target.value; const p = e.target.selectionStart; renderSite(); const i = $('#ffq'); i.focus(); i.setSelectionRange(p, p); });
-    [['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
+    [['#ffsort', 'sort'], ['#ffst', 'st'], ['#ffcat', 'cat'], ['#ffloc', 'loc'], ['#ffdev', 'dev'], ['#ffwho', 'who']].forEach(([sel, k]) => { const el = $(sel, body); if (el) el.onchange = (e) => { ff[k] = e.target.value; renderSite(); }; });
     // Everything a row's buttons do, for the rows drawn with the page and for each batch drawn after.
     function bindRows(root) {
     $$('[data-copy]', root).forEach((c) => (c.onclick = () => copy(c.dataset.copy, 'Selector copied')));
@@ -12501,6 +12522,7 @@
       else if (send.status && send.status !== before.get(f.id).status) f.assignee = state.me.email;
       // As the server records it: whoever changed the item last, and when.
       f.updatedAt = at; f.updatedBy = state.me.email; f.statusAt = at; f.statusBy = state.me.email;
+      if (send.status && send.status !== before.get(f.id).status) { f.stAt = at; f.stBy = state.me.email; delete f.auto; }
     });
     // The button pressed lights up on this frame; the rest of the page follows on the next.
     if (send.status) $$('#drawer [data-set]').forEach((b) => b.classList.toggle('on', b.dataset.set === send.status));

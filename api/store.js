@@ -62,6 +62,10 @@ async function loadSite(id) {
     }
     f.assignee = s.assignee !== undefined ? s.assignee : (f.assignee || '');
     f.statusBy = s.updatedBy || ''; f.statusAt = s.updatedAt || '';
+    // When the STATUS itself last changed (an assignee change alone does not move it). Saved with the
+    // status it belongs to, so an automatic close that copies the old record falls back to its own time.
+    if (s.stFor && s.stFor === f.status) { f.stAt = s.stAt || ''; f.stBy = s.stBy || ''; }
+    else if (s.status) { f.stAt = s.updatedAt || ''; f.stBy = s.updatedBy || ''; }
     if (s.auto) f.auto = { why: s.auto, at: s.autoAt || '', ref: s.autoRef || '', note: s.autoNote || '' };
     // The last quick recheck of this one item ({at, by, r: 'gone' | 'still'}). Any later status change
     // writes a fresh state without it, so it never outlives the decision it was about.
@@ -1594,7 +1598,8 @@ async function handler(req, res) {
         const cmds = []; const touched = [];
         l.site.findings.filter((f) => ids.includes(f.id)).forEach((f) => {
           const next = { status: f.status, assignee: f.assignee, updatedAt: now(), updatedBy: me.email };
-          if ('status' in ch && FSTATUS.includes(ch.status) && ch.status !== f.status) { next.status = ch.status; touched.push({ f, kind: 'status', from: f.status, to: ch.status }); }
+          if (f.stAt) Object.assign(next, { stAt: f.stAt, stBy: f.stBy || '', stFor: f.status });
+          if ('status' in ch && FSTATUS.includes(ch.status) && ch.status !== f.status) { next.status = ch.status; Object.assign(next, { stAt: now(), stBy: me.email, stFor: ch.status }); touched.push({ f, kind: 'status', from: f.status, to: ch.status }); }
           if ('assignee' in ch && ch.assignee !== f.assignee) { next.assignee = ch.assignee; touched.push({ f, kind: 'assign', to: ch.assignee }); }
           // Whoever changes an item's status takes it: it is assigned to them (said in the same activity line).
           else if (!('assignee' in ch) && next.status !== f.status && f.assignee !== me.email) { next.assignee = me.email; const st = touched.find((t) => t.f === f && t.kind === 'status'); if (st) st.took = true; }
