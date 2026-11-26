@@ -1416,7 +1416,7 @@ async function handler(req, res) {
           // What kind of scan (rescan by hand, rescan all, SEO auto audit, chosen pages) and, for a tab's
           // whole line sent in order, each website's place in it.
           const kinds = b.k && typeof b.k === 'object' ? b.k : {};
-          const KIND = /^(manual|bulk|seo|pages)$/;
+          const KIND = /^(manual|bulk|seo|pages|update|ai|verify|recheck)$/;
           ok.forEach((id) => {
             const k = String(kinds[id] || (typeof b.k === 'string' ? b.k : '') || '');
             const pos = b.line ? ids.indexOf(id) + 1 : 0;
@@ -1424,7 +1424,8 @@ async function handler(req, res) {
             const m0 = b.m && typeof b.m === 'object' && b.m[id] && typeof b.m[id] === 'object' ? b.m[id] : null;
             const meta = m0 ? { ...(m0.why ? { why: String(m0.why).slice(0, 160) } : {}), ...(m0.at && !isNaN(Date.parse(m0.at)) ? { qat: String(m0.at) } : {}),
               ...(m0.mv && m0.mv.n ? { mv: { n: String(m0.mv.n).slice(0, 60), at: String(m0.mv.at || '').slice(0, 40), to: Number(m0.mv.to) || 0 } } : {}) } : {};
-            claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}), ...(KIND.test(k) ? { k } : {}), ...(pos ? { pos, of: ids.length } : {}), ...meta, ...(prevItem[id] ? { item: prevItem[id] } : {}) };
+            // auto: started by the app itself in this tab (AI credits came back…), not by the person signed in.
+            claims[id] = { by: me.email, byName: me.name, cid, state: st, at: now(), until, ...(prog && ids.length === 1 ? { p: prog } : {}), ...(KIND.test(k) ? { k } : {}), ...(b.auto === true ? { auto: true } : {}), ...(pos ? { pos, of: ids.length } : {}), ...meta, ...(prevItem[id] ? { item: prevItem[id] } : {}) };
           });
           await redis(['HSET', P + 'scanclaims', ...ok.flatMap((id) => [id, JSON.stringify(claims[id])])]);
         }

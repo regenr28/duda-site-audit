@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-26-scanline-auto', date: '2026-11-26', audience: 'all', tag: 'Scanning',
+    title: 'Scan line: automatic jobs say so, and every website has a name',
+    what: 'An AI check the app resumes by itself when AI credits come back runs in whichever tab is open. The scan line now shows it as \u201c🤖 Automatic · AI check, started automatically in Dana\u2019s open tab\u201d with the reason, instead of \u201cadded by\u201d that person. Verify fixes and Recheck say what they are too. A website without a business name yet shows its site id instead of \u201cA website\u201d. Automatic jobs no longer hold up the SEO auto audits.',
+    where: ['<b>Walkthrough:</b> the 🔄 scan chip in the top bar → <b>Scan line</b>.'],
+  },
+  {
     id: '2026-11-25-auto-roundclock', date: '2026-11-25', audience: 'all', tag: 'Settings',
     title: 'Auto audits keep reading around the clock',
     what: 'The Business Info and editorial photo checks now read the next websites every 10 minutes, with nobody\u2019s app open, until every website is done. With nothing waiting, each run is a single quick look.',

@@ -473,7 +473,10 @@
   function claimText(c) {
     const who = c.by === (state.me && state.me.email) ? 'you in another tab' : c.byName || 'another member';
     if (c.line) return `Queued: number ${c.pos} of ${c.of} in the scan line`;
-    return c.state === 'queued' ? `Queued by ${who}` : `Being scanned by ${who}`;
+    const what = { ai: 'An AI check', verify: 'A live check of the fixes', recheck: 'A recheck' }[c.k] || '';
+    // Started by the app on its own: whose open tab it runs in, not who "did" it.
+    if (c.auto) return `${what || 'An automatic job'} is running by itself in ${c.by === (state.me && state.me.email) ? 'your other open tab' : `${c.byName || 'someone'}\u2019s open tab`}`;
+    return c.state === 'queued' ? `Queued by ${who}` : what ? `${what} is running (started by ${who})` : `Being scanned by ${who}`;
   }
   async function loadNotifs() { try { state.notifs = await api('/api/store?op=notifs'); renderBell(); } catch (e) { /* ignore */ } }
   async function loadSite(id) { state.current = await api('/api/store?op=site&id=' + encodeURIComponent(id)); return state.current; }
@@ -7188,10 +7191,13 @@
   // at once. Nothing waits inside one browser, so closing or reloading a tab loses nothing: what it
   // was scanning goes back to the front and another open tab starts it again. Everybody sees the same
   // line, and dragging it changes it for everyone at once.
-  const KIND_LABEL = { manual: 'Rescan', bulk: 'Rescan all', seo: '🔍 SEO auto audit', pages: 'Chosen pages', update: '⚡ Check updates' };
+  const KIND_LABEL = { manual: 'Rescan', bulk: 'Rescan all', seo: '🔍 SEO auto audit', pages: 'Chosen pages', update: '⚡ Check updates', ai: '✨ AI check', verify: '✅ Verify fixes', recheck: '🔁 Recheck items' };
   const kindOf = (id) => (state.kind || {})[id] || '';
   const lineOf = (id) => (state.line || []).find((x) => x.id === id) || null;
-  const siteName = (id) => (state.sites.find((y) => y.id === id) || {}).businessName || (state.current && state.current.id === id ? state.current.businessName : '') || ((lineOf(id) || {}).name) || ((((state.claims || {})[id] || {}).item || {}).name) || 'A website';
+  // Never "A website": the business name, else the name Duda gives it (DR Websites), else its site id.
+  const siteName = (id) => { const rec = state.sites.find((y) => y.id === id) || (state.current && state.current.id === id ? state.current : null) || {};
+    const dr = rec.siteId ? liveOf(rec.siteId) : null;
+    return rec.businessName || ((lineOf(id) || {}).name) || ((((state.claims || {})[id] || {}).item || {}).name) || (dr && dr.name) || (rec.siteId ? `Site ${rec.siteId}` : `Site ${id}`); };
   /** Why and when a website joined the line, and the last time somebody moved it (for a scan running here). */
   const qmeta = (id) => { state.qmeta = state.qmeta || {}; return (state.qmeta[id] = state.qmeta[id] || {}); };
   const metaOut = (id) => { const m = (state.qmeta || {})[id] || {}; return { why: m.why || '', at: m.at || '', ...(m.mv ? { mv: m.mv } : {}) }; };
@@ -7365,7 +7371,7 @@
     const runnerOf = (c) => (c.cid === CID ? 'this tab' : c.by === me ? 'your other tab' : `${c.byName || 'someone'}’s browser`);
     const scanning = Object.entries(state.claims || {}).filter(([, c]) => c && c.state !== 'queued' && c.until > nowS).map(([id, c]) => {
       const it = c.item || {};
-      return { id, name: siteName(id), k: c.k || it.k || '', p: c.p || null, l: c.cid === CID ? state.scanning[id] : null, runner: runnerOf(c), mine: c.cid === CID, why: c.why || it.why || '', at: c.qat || it.at || c.at, mv: c.mv || null, back: it.back || null, by: it.by || c.by, byName: it.byName || c.byName };
+      return { id, name: siteName(id), k: c.k || it.k || '', auto: !!(c.auto || it.auto), p: c.p || null, l: c.cid === CID ? state.scanning[id] : null, runner: runnerOf(c), mine: c.cid === CID, why: c.why || it.why || '', at: c.qat || it.at || c.at, mv: c.mv || null, back: it.back || null, by: it.by || c.by, byName: it.byName || c.byName };
     });
     Object.keys(state.scanning).forEach((id) => {
       const l = state.scanning[id];
@@ -7399,8 +7405,9 @@
   }
   const progTxt = (l) => (l && l.total ? `${l.done}/${l.total}` : l && (l.message || l.msg) ? String(l.message || l.msg).slice(0, 40) : 'starting');
   /** Auto audit or added by a person, and which kind. */
-  const kindChip = (k) => (k === 'seo' ? '<span class="badge ln-auto-chip">🤖 Auto audit · SEO</span>'
-    : k ? `<span class="badge ln-hand-chip">👤 By hand · ${esc(KIND_LABEL[k] || k)}</span>` : '<span class="badge subtle ln-kind" title="That tab runs an older version of the app, which does not say what kind of scan it is. Reload that tab.">kind not known</span>');
+  const kindChip = (k, auto) => (k === 'seo' ? '<span class="badge ln-auto-chip">🤖 Auto audit · SEO</span>'
+    : auto ? `<span class="badge ln-auto-chip" title="Started by the app itself, not by a person">🤖 Automatic · ${esc(KIND_LABEL[k] || k || 'background job')}</span>`
+    : k ? `<span class="badge ln-hand-chip">👤 By hand · ${esc(KIND_LABEL[k] || k)}</span>` : '<span class="badge subtle ln-kind" title="This job did not say what it is (sent before this was recorded)">kind not recorded</span>');
   /** What a scan is doing right now, in words: the step, and how fresh that news is. */
   function stepTxt(x) {
     if (x.l) {
@@ -7422,8 +7429,10 @@
   function metaTxt(x) {
     const bits = [];
     const who = x.by === state.me.email ? 'you' : esc(x.byName || 'someone');
-    bits.push(x.k === 'seo' ? `added automatically${x.at ? ' at ' + esc(shortTime(x.at)) : ''}` : `added by ${who}${x.at ? ' at ' + esc(shortTime(x.at)) : ''}`);
-    bits.push(x.why ? `<b>Why:</b> ${esc(x.why)}` : '<b>Why:</b> not recorded (added from a tab on an older version of the app)');
+    const tab = x.by === state.me.email ? 'your open tab' : `${esc(x.byName || 'someone')}\u2019s open tab`;
+    // Started by the app on its own: say whose open tab it runs in, never that this person started it.
+    bits.push(x.k === 'seo' ? `added automatically${x.at ? ' at ' + esc(shortTime(x.at)) : ''}` : x.auto ? `started automatically in ${tab}${x.at ? ' at ' + esc(shortTime(x.at)) : ''}` : `added by ${who}${x.at ? ' at ' + esc(shortTime(x.at)) : ''}`);
+    bits.push(x.why ? `<b>Why:</b> ${esc(x.why)}` : '<b>Why:</b> not recorded');
     if (x.mv && x.mv.n) bits.push(`↕ moved to ${x.mv.to} by ${esc(x.mv.n)}${x.mv.at ? ' at ' + esc(shortTime(x.mv.at)) : ''}`);
     if (x.back) bits.push(`↻ back in line at ${esc(shortTime(x.back.at))}: ${x.back.by === state.me.email ? 'your' : esc(x.back.n || 'a') + '’s'} tab ${x.back.why === 'closed' ? 'was closed' : 'stopped'} in the middle of scanning it, so it starts again from the beginning`);
     return bits.join(' · ');
@@ -7441,7 +7450,7 @@
   function scanBarHtml() {
     const m = lineModel();
     if (!m.n.scanning && !m.n.queued) return '';
-    const now = m.scanning.map((x) => `<a href="#/site/${esc(x.id)}">${esc(x.name)}</a> ${kindChip(x.k)} <span class="faint">${esc(stepTxt(x))} · ${esc(x.runner)}</span>`);
+    const now = m.scanning.map((x) => `<a href="#/site/${esc(x.id)}">${esc(x.name)}</a> ${kindChip(x.k, x.auto)} <span class="faint">${esc(stepTxt(x))} · ${esc(x.runner)}</span>`);
     return `<div class="panel scan-bar" id="scanBar"><div class="row-between" style="gap:12px;align-items:flex-start">
       <div class="grow"><div><b>🔄 Scanning now (${m.n.scanning})</b>${now.length ? ': ' + now.join(' <span class="faint">·</span> ') : ': nothing'}</div>
         ${m.n.queued ? `<div class="small" style="margin-top:4px"><b>⏳ ${m.n.queued} waiting in the team’s line</b>${m.queued.length ? ` · next: <a href="#/site/${esc(m.queued[0].id)}">${esc(m.queued[0].name)}</a>` : ''}${!workersTxt().length ? ' · <b class="db-worse">no open tab can scan right now</b>' : ''}</div>` : ''}</div>
@@ -7455,7 +7464,7 @@
       ? `<span class="ln-acts">${x.pos > 1 ? `<button class="linkbtn" data-lnfront="${esc(x.id)}">Move to the front</button>` : '<span class="small faint">next</span>'} <button class="linkbtn" data-cancelq="${esc(x.id)}">Remove</button></span>` : '';
     const drag = opts.edit && x.pos;
     return `<li class="ln-row${drag ? ' ln-drag' : ''}"${drag ? ` draggable="true" data-lnid="${esc(x.id)}"` : ''}>${drag ? '<span class="ln-grip" aria-hidden="true" title="Drag to change the order">⋮⋮</span>' : ''}${num}
-      <div class="ln-main"><div><a href="#/site/${esc(x.id)}" data-lnlink="1">${esc(x.name)}</a> ${x.adding ? '<span class="small faint">adding…</span>' : kindChip(x.k)}${x.paths ? ` <span class="small faint">${x.paths.length} chosen page${x.paths.length === 1 ? '' : 's'}</span>` : ''}
+      <div class="ln-main"><div><a href="#/site/${esc(x.id)}" data-lnlink="1">${esc(x.name)}</a> ${x.adding ? '<span class="small faint">adding…</span>' : kindChip(x.k, x.auto)}${x.paths ? ` <span class="small faint">${x.paths.length} chosen page${x.paths.length === 1 ? '' : 's'}</span>` : ''}
         ${pr && pr.total ? `<span class="ln-prog"><span class="progress"><i style="width:${Math.round((pr.done / pr.total) * 100)}%"></i></span><span class="small faint">${pr.done}/${pr.total}</span></span>` : ''}</div>
         ${opts.now ? `<div class="small ln-step">${esc(stepTxt(x))} · <b>in ${esc(x.runner)}</b></div>` : ''}
         ${x.adding ? '' : `<div class="small faint ln-meta">${metaTxt(x)}</div>`}</div>${acts}</li>`;
@@ -7512,7 +7521,7 @@
     const ap = state.autoPause;
     if (ap && ap.on) return `paused by ${ap.byName || 'someone'}`;
     const team = (state.line || []).filter((x) => x.k !== 'seo').length
-      + Object.values(state.claims || {}).filter((c) => c && c.until > srvNow() && c.state !== 'queued' && c.k && c.k !== 'seo').length;
+      + Object.values(state.claims || {}).filter((c) => c && c.until > srvNow() && c.state !== 'queued' && c.k && c.k !== 'seo' && !c.auto).length;
     return team ? `waiting for ${team} scan${team === 1 ? '' : 's'} by the team to finish` : '';
   }
   async function setAutoPause(on) {
@@ -8285,9 +8294,11 @@
     try {
       const lock = await store({ op: 'aiLock', id: siteId });
       if (!lock.ok) { if (manual) toast('Someone else is already resuming this AI check'); return; }
-      const sl = await store({ op: 'scanClaim', ids: [siteId], cid: CID, state: 'scanning' });
+      // What the scan line shows: an AI check, started by hand or by the app itself when AI credits came back.
+      const aiWhy = { k: 'ai', auto: !manual, m: { [siteId]: { why: manual ? 'Run AI check now clicked' : 'AI credits came back: the paused AI check carries on by itself', at: new Date().toISOString() } }, p: { done: 0, total: 0, msg: 'Resuming the AI check' } };
+      const sl = await store(Object.assign({ op: 'scanClaim', ids: [siteId], cid: CID, state: 'scanning' }, aiWhy));
       if (!(sl.ok || []).includes(siteId)) { await store({ op: 'aiUnlock', id: siteId }); if (manual) toast(claimText((sl.taken || [])[0] || {}) + '. Try again when it finishes.'); return; }
-      aiBeat = setInterval(() => store({ op: 'scanClaim', ids: [siteId], cid: CID, state: 'scanning' }).catch(() => {}), 60000);
+      aiBeat = setInterval(() => store(Object.assign({ op: 'scanClaim', ids: [siteId], cid: CID, state: 'scanning' }, aiWhy, { p: { done: 0, total: 0, msg: 'Running the AI check' } })).catch(() => {}), 60000);
       const s = await api('/api/store?op=site&id=' + encodeURIComponent(siteId));
       const open = (s.findings || []).filter((f) => /^AI_PENDING/.test(f.code) && f.status !== 'done' && f.status !== 'false');
       if (!open.length) { await store({ op: 'aiUnlock', id: siteId }); return; }
@@ -11168,9 +11179,10 @@
       const n = (s.findings || []).filter((f) => f.status === 'done' && f.statusAt && new Date(f.statusAt) > new Date(info.publishedAt)).length;
       if (!confirm(`Last published: ${fmtFull(info.publishedAt)}.\n\n${n} item(s) were marked Done after that, so those fixes are probably not live yet. Publish the site in Duda first.\n\nCheck the live site anyway?`)) return;
     }
-    const got = await store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => ({ ok: [] }));
+    const vWhy = { k: 'verify', m: { [s.id]: { why: 'Verify fixes on the live website clicked', at: new Date().toISOString() } }, p: { done: 0, total: 0, msg: 'Checking the live website' } };
+    const got = await store(Object.assign({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }, vWhy)).catch(() => ({ ok: [] }));
     if (!(got.ok || []).includes(s.id)) return toast(claimText((got.taken || [])[0] || {}) + '. Try again when it finishes.');
-    const beat = setInterval(() => store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => {}), 60000);
+    const beat = setInterval(() => store(Object.assign({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }, vWhy)).catch(() => {}), 60000);
     state.verifying = s.id;
     state.scanning[s.id] = { done: 0, total: 0, message: `Checking the live site ${info.domain}…` }; renderSite();
     const log = [];
@@ -11222,7 +11234,8 @@
   async function liveCheckItem(s, f) {
     if (!can('site.scan')) return toast('Your role does not allow scanning websites.');
     if (state.scanning[s.id] || state.verifying) return toast('This website is already being scanned. Try again when it finishes.');
-    const got = await store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => ({ ok: [] }));
+    const rWhy = { k: 'recheck', m: { [s.id]: { why: 'Recheck clicked on an audit item', at: new Date().toISOString() } }, p: { done: 0, total: 0, msg: 'Rechecking on the live website' } };
+    const got = await store(Object.assign({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }, rWhy)).catch(() => ({ ok: [] }));
     if (!(got.ok || []).includes(s.id)) return toast(claimText((got.taken || [])[0] || {}) + '. Try again when it finishes.');
     const paths = recheckPages(f);
     state.scanning[s.id] = { done: 0, total: 0, message: '🌐 Checking the live website…' }; renderSite();
@@ -11251,9 +11264,10 @@
     }
     const paths = [...new Set(items.flatMap(recheckPages))];
     if (paths.length > RECHECK_MAX_PAGES && !confirm(`These items are on ${paths.length} pages. A full Rescan may be just as quick.\n\nRecheck them anyway?`)) return;
-    const got = await store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => ({ ok: [] }));
+    const rWhy = { k: 'recheck', m: { [s.id]: { why: 'Recheck clicked on audit items', at: new Date().toISOString() } }, p: { done: 0, total: 0, msg: 'Rechecking items' } };
+    const got = await store(Object.assign({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }, rWhy)).catch(() => ({ ok: [] }));
     if (!(got.ok || []).includes(s.id)) return toast(claimText((got.taken || [])[0] || {}) + '. Try again when it finishes.');
-    const beat = setInterval(() => store({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }).catch(() => {}), 60000);
+    const beat = setInterval(() => store(Object.assign({ op: 'scanClaim', ids: [s.id], cid: CID, state: 'scanning' }, rWhy)).catch(() => {}), 60000);
     const label = items.length === 1 ? `#${items[0].num}` : `${items.length} items`;
     state.scanning[s.id] = { done: 0, total: 0, message: `Rechecking ${label} on ${paths.length} page${paths.length === 1 ? '' : 's'}…` };
     renderSite();

@@ -584,3 +584,8 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 ## 228 — Auto audits around the clock (Vercel Pro)
 - vercel.json cron `*/10 * * * *` → `/api/watch?op=tick` (CRON_SECRET like the daily one): skipped when bizinfo `roundClock` is false, not today, or `cwdue` is 0 after a fresh `watchStatus`; otherwise `runWatch({ budgetMs: 90000, by: 'cron' })` (the lock, Duda's breaks and the reading speed apply as always).
 - `aaList`: bizinfo/editorial rows get `next` = the next 10-minute mark (or the end of a break) with `nextKind: 'tick'` while websites are waiting; the page labels it "Next run (every 10 min)". Field `roundClock` (default on). Tests in e2e_autoaudits.py. app v100.
+
+## 229 — Scan line: automatic jobs, names
+- The "kind not known · added by <person> · added from a tab on an older version" rows were automatic AI-check resumes (`aiResume`, started by any open tab when AI credits return), and verify/recheck runs: all claimed without `k`/why. Now: `aiResume` sends `k: 'ai'`, `auto: !manual`, a why and progress; verify (`k: 'verify'`) and recheck (`k: 'recheck'`) send a why and progress. store.js `scanClaim` keeps `ai|verify|recheck|update` kinds and `auto: true`.
+- Scan line: `kindChip(k, auto)` → "🤖 Automatic · ✨ AI check"; `metaTxt` → "started automatically in <name>'s open tab" (never "added by"); missing why reads "not recorded" (no version guess). `claimText` says "An AI check is running by itself in …". `siteName` falls back to the Duda name (DR Websites) or "Site <site id>", never "A website". `autoHeld` ignores automatic claims.
+- Test: tk/e2e_scanline_auto.py. app v101.
