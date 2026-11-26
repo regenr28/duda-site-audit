@@ -685,6 +685,17 @@
         'A background in a section hidden on every device is now found even when the section is not in the page as served (its picture is still in the page\u2019s styles). It is reported as a warning, in a hidden section',
       ],
     },
+    {
+      v: 60,
+      date: '2026-11-26',
+      title: 'Grammar: the smallest fix that keeps the meaning, the real problem named, wrong words apart',
+      scope: { fixes: ['TEXT_GRAMMAR'], adds: ['TEXT_WORD_CHOICE'], ai: true },
+      items: [
+        'A grammar fix is now chosen after reading the whole sentence: the smallest change that keeps the meaning, tone and business message. \u201cWe believe in treating your vehicle is treated\u201d mixes two sentence structures; the fix is now \u201cin treating your vehicle\u201d (a statement of values), not \u201cthat your vehicle is treated\u201d. The fix is put into the sentence and the whole corrected sentence is read again before it is suggested',
+        'The explanation names the real problem (mixed sentence structure, wrong verb form, missing word\u2026), not \u201csubject\u2013verb agreement\u201d or \u201cduplicated\u201d for everything',
+        'A real word used in the wrong place (\u201ccartouches\u201d for coatings) is its own item, \u201cWrong word\u201d, separate from any grammar mistake in the same sentence. An optional style improvement, when reported, is an Info item that says it is not a mistake. Grammar items found before are checked again',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -4639,11 +4650,14 @@
       spelling: ['TEXT_SPELLING', 'warning', 'Content', 'Spelling mistake'],
       grammar: ['TEXT_GRAMMAR', 'warning', 'Content', 'Grammar mistake'],
       punctuation: ['TEXT_PUNCTUATION', 'warning', 'Content', 'Punctuation mistake'],
+      wordchoice: ['TEXT_WORD_CHOICE', 'warning', 'Content', 'Wrong word'],
       incomplete: ['TEXT_INCOMPLETE', 'warning', 'Content', 'Unfinished or placeholder text'],
     };
     issues.forEach((v) => {
       const blk = texts[v.i];
       if (!blk || !RULES[v.type] || (!v.clarify && Number(v.confidence) < (v.type === 'spelling' ? 0.75 : 0.85))) return;
+      // An optional style improvement is not a mistake: never a warning, and it says so.
+      const optional = !!v.optional && !v.clarify;
       if (AI_LABEL_ONLY(v.quote, [v.reason, v.suggestion].join(' '))) return;
       const q = String(v.quote || '').trim();
       // The words have to really be there: an answer about text the block does not contain is dropped.
@@ -4651,11 +4665,11 @@
       if (q && v.suggestion && q.toLowerCase() === String(v.suggestion).trim().toLowerCase()) return;
       const [code, severity0, category0, message0] = RULES[v.type];
       // An unfamiliar word or wording the AI is not sure about is a question, not a mistake.
-      const severity = v.clarify ? 'info' : severity0;
+      const severity = v.clarify || optional ? 'info' : severity0;
       // Alt text and the SEO title / description say where the slip is, so it is fixed in the right place.
       const where = blk.location === 'Image alt text' ? ' in the alt text' : blk.selector === 'head > title' ? ' in the SEO title' : /meta\[name="description"\]/.test(blk.selector || '') ? ' in the meta description' : '';
       const category = blk.location === 'Image alt text' ? 'Images / Alt' : where ? 'Meta / SEO' : category0;
-      const message = (v.clarify ? (v.type === 'grammar' ? 'Wording to confirm (no sure correction; a product claim may need checking)' : 'Wording to confirm (the term may be correct)') : message0) + where;
+      const message = (optional ? 'Optional style improvement (not a mistake)' : v.clarify ? (v.type === 'grammar' ? 'Wording to confirm (no sure correction; a product claim may need checking)' : 'Wording to confirm (the term may be correct)') : message0) + where;
       // Placeholder text the rules already caught ("Lorem ipsum") is one item, not two.
       if (v.type === 'incomplete' && findings.some((f) => f.code === 'PLACEHOLDER' && f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)))) return;
       const pages = blk.pages.slice().sort();
@@ -4665,12 +4679,13 @@
       const f = {
         code, severity, category, message,
         found: q ? `"${q}"` : context,
-        expected: v.suggestion ? 'Suggested: ' + v.suggestion : '',
+        expected: v.suggestion ? (optional ? 'Optional: ' : 'Suggested: ') + v.suggestion : '',
         path: pages[0], pages, devices: blk.devices, visibleOn: blk.visibleOn, hiddenOn: blk.hiddenOn,
         selector: blk.selector, location: blk.location, snippet: context,
         ai: { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: q },
       };
       if (v.clarify) f.clarify = true;
+      if (optional) f.optional = true;
       f.id = hash([f.code, f.selector, f.found, pages.length > 1 ? '*' : f.path].join('|'));
       if (!findings.some((x) => x.id === f.id)) findings.push(f);
     });

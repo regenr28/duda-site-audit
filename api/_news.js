@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-26-grammar-fix', date: '2026-11-26', audience: 'all', tag: 'Checks',
+    title: 'Grammar items: the smallest fix that keeps the meaning, and the real problem named',
+    what: 'A grammar correction is now chosen after reading the whole sentence and checked inside the corrected sentence before it is suggested. \u201cWe believe in treating your vehicle is treated with care\u201d now suggests \u201cin treating your vehicle\u201d (keeping the statement of values) and explains that two sentence structures are mixed. A real word used wrongly (\u201ccartouches\u201d for coatings) is its own \u201cWrong word\u201d item, and an optional style improvement is an Info item that says it is not a mistake. Audits pick this up with <b>Apply check updates</b>.',
+    where: ['<b>Walkthrough:</b> an audit → the <b>Apply check updates</b> banner, then the Content items.'],
+  },
+  {
     id: '2026-11-26-auto-page', date: '2026-11-26', audience: 'all', tag: 'Websites',
     title: 'New Auto audits page: everything the automatic checks found',
     what: 'The results of the automatic checks now have their own page, apart from the Audits tab (audits done by hand). One tab per check: Business Info, editorial photos, domains, forms gone quiet and SEO websites. Critical findings come first, with filters, a search box, the page each finding is on, and \u201cNot a problem\u201d.',

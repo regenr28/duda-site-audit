@@ -7725,7 +7725,7 @@
     if (state.current && state.current.id === id) await loadSite(id);
   }
   // ---------- AI alt-text judgement ----------
-  const AI_LABEL = { describes_image: 'Describes the photo (OK)', this_business: 'Refers to this business (OK)', other_business: 'Names another business', wrong_location: "Location doesn't match", placeholder: 'Placeholder / stock text', unclear: 'Unclear', partner_logo: 'Brand / partner logo (OK)', name_variant: 'Business name written differently', spelling: 'Spelling', grammar: 'Grammar', incomplete: 'Unfinished text', wrong_page: 'Opens the wrong page' };
+  const AI_LABEL = { describes_image: 'Describes the photo (OK)', this_business: 'Refers to this business (OK)', other_business: 'Names another business', wrong_location: "Location doesn't match", placeholder: 'Placeholder / stock text', unclear: 'Unclear', partner_logo: 'Brand / partner logo (OK)', name_variant: 'Business name written differently', spelling: 'Spelling', grammar: 'Grammar', wordchoice: 'Wrong word', incomplete: 'Unfinished text', wrong_page: 'Opens the wrong page' };
   async function aiAltCheck(res, id, log) {
     if (!state.ai || !state.ai.enabled || !(res.alts || []).length) return null;
     const t = res.truth || {};
@@ -8022,8 +8022,8 @@
    *    wrapper (ssrWrap-…). That is the widget's own blank template (the accordion's "Title or
    *    Question"), which Duda's scripts replace when the page loads and which is not in the editor.
    */
-  const WORDING = /^(PLACEHOLDER|REPEATED_WORD|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_INCOMPLETE)$/;
-  const TEXTISH = /^(PLACEHOLDER|REPEATED_WORD|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_INCOMPLETE|AI_TEXT_|TEXT_OTHER_BUSINESS|NAME_SPELLING|DESIGNER_CREDIT)/;
+  const WORDING = /^(PLACEHOLDER|REPEATED_WORD|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_WORD_CHOICE|TEXT_INCOMPLETE)$/;
+  const TEXTISH = /^(PLACEHOLDER|REPEATED_WORD|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_WORD_CHOICE|TEXT_INCOMPLETE|AI_TEXT_|TEXT_OTHER_BUSINESS|NAME_SPELLING|DESIGNER_CREDIT)/;
   const inWidgetTemplate = (f) => /ssrWrap-/.test(f.selector || '');
   function hiddenRuntime(id, sels) {
     function why(el) {
@@ -9665,7 +9665,7 @@
     if (!f.ai) return '';
     const ok = ['describes_image', 'this_business', 'partner_logo'].includes(f.ai.verdict);
     return `<div class="ai-note ${ok ? 'ok' : 'bad'}"><span class="badge ai-badge">✨ AI</span> <b>${esc(AI_LABEL[f.ai.verdict] || f.ai.verdict)}</b>${f.ai.reason ? ' · ' + esc(f.ai.reason) : ''} <span class="faint">(${Math.round((f.ai.confidence || 0) * 100)}% sure)</span>
-      ${full && f.ai.suggestion ? `<div class="ai-sugg">${/^TEXT_(SPELLING|GRAMMAR|INCOMPLETE)$/.test(f.code) ? 'Suggested correction' : f.code === 'LINK_WRONG_PAGE' ? 'Should open' : /^AI_(TEXT|PAGE)/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
+      ${full && f.ai.suggestion ? `<div class="ai-sugg">${f.optional ? 'Optional rewording' : /^TEXT_(SPELLING|GRAMMAR|WORD_CHOICE|PUNCTUATION|INCOMPLETE)$/.test(f.code) ? 'Suggested correction' : f.code === 'LINK_WRONG_PAGE' ? 'Should open' : /^AI_(TEXT|PAGE)/.test(f.code) ? 'Suggested wording' : 'Suggested alt text'}: <b>${esc(f.ai.suggestion)}</b> <button class="btn sm ghost" data-copy="${esc(f.ai.suggestion)}">Copy</button></div>` : ''}</div>`;
   }
 
   async function checkProfiles(truth) {
@@ -11199,7 +11199,7 @@
   }
   // Checks the live read does not run (the full scan's AI proofreading, page fit and link checks): their items
   // are judged by their words on the live page, never called fixed just because the live read did not raise them.
-  const LIVE_UNCHECKED = /^(AI_|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_INCOMPLETE|TEXT_PUNCT|LINK_WRONG_PAGE|NAME_SPELLING|PAGE_TOPIC|PAGE_WRONG_CITY)/;
+  const LIVE_UNCHECKED = /^(AI_|TEXT_SPELLING|TEXT_GRAMMAR|TEXT_WORD_CHOICE|TEXT_INCOMPLETE|TEXT_PUNCT|LINK_WRONG_PAGE|NAME_SPELLING|PAGE_TOPIC|PAGE_WRONG_CITY)/;
   /** Each item against the live website: 't' it is there too, 'o' it is not (fine on live), 'u' can't be told. */
   function liveResults(s, res, aiGap) {
     const keys = new Set(res.findings.map(vKey)); const out = {};

@@ -65,7 +65,7 @@ const DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 0);
 const AGENCIES = (process.env.AGENCY_NAMES || 'Detailers Roadmap, 8bit Creative').split(',').map((s) => s.trim()).filter(Boolean);
 const ALT_VERDICTS = ['describes_image', 'this_business', 'partner_logo', 'other_business', 'wrong_location', 'placeholder', 'unclear'];
 const TEXT_TYPES = ['other_business', 'wrong_location', 'name_variant'];
-const PROOF_TYPES = ['spelling', 'grammar', 'punctuation', 'incomplete'];
+const PROOF_TYPES = ['spelling', 'grammar', 'wordchoice', 'punctuation', 'incomplete'];
 const FIT_TYPES = ['wrong_service', 'wrong_city', 'name_variant', 'editor_note'];
 const FIT_PARTS = ['title', 'h1', 'desc', 'body'];
 
@@ -392,16 +392,19 @@ const PROOF_SYSTEM = `You proofread the WEBSITE COPY of one small business, the 
 Report ONLY clear mistakes a visitor would notice:
 - "spelling": a word whose LETTERS are wrong ("recieve", "proffesional", "detialing", "teh"); the fix is the same word spelled right. Never brand, product, car, place or people names, or deliberate marketing spellings. Automotive and detailing terms are real words even when unfamiliar: wheel barrels (the inner cylinder of a wheel), wheel wells, wheel faces, lug nuts, calipers, rotors, door jambs, A-pillars, rocker panels, headliner, trim, emblems, PPF, ceramic, graphene, decon, clay bar, iron remover, compound, polish, glaze, sealant, paint correction, swirl marks, holograms, water spots, overspray, tint, VLT, vinyl, wrap, satin, matte, gloss, hydrophobic, self-healing, ballistic, IR film. Read the whole sentence: an uncommon term that makes sense there is not a mistake. A correction must keep the same component, product or service: never replace a valid word with a different valid word ("wheel barrels" → "wheel wells" changes the part; it is NOT a spelling fix). If you are not sure the word is wrong, do not report it as spelling: report it only with "clarify": true and say in "reason" what is uncertain; never give high confidence without clear evidence.
 - "grammar": an OBJECTIVE grammar error that any editor would fix: a wrong word (your/you're, its/it's, then/than, there/their, loose/lose), a verb that does not agree with its own subject ("the films is"), a missing or doubled word that breaks the sentence ("we we offer", "to the your car"). Sentences that are correct but could be written differently are NOT errors: "it is easy to end up with…", "there are…", long lists, passive voice, starting with "And"/"But", informal or salesy wording.
-  Before suggesting a grammar fix, read the complete sentence and the paragraph around it. The fix must keep the original meaning, subject and comparison: read your corrected sentence as a whole and check it is both grammatical AND logical (on a page about films, "a clear bra … is not as glossy as a film" compares a clear bra with a film, but a clear bra IS a film: that fix is wrong). Know automotive synonyms: "clear bra" is paint protection film (PPF); "ceramic" is ceramic coating; "tint" is window film. Subject–verb agreement counts with the real subject, even far from its verb ("A paint protection film that guards against chips are…" → "is").
+  How to fix grammar, in this order: (1) read the COMPLETE sentence and the paragraph around it before choosing a fix; (2) choose the SMALLEST correction that keeps the intended meaning, tone and business message (often removing the stray words is enough); (3) put your fix into the sentence and read the whole corrected sentence: it must read naturally; (4) name the REAL problem in "reason". Mixed constructions are common: two ways of saying it merged into one ("We believe in treating your vehicle is treated with care" mixes "believe in treating your vehicle" and "believe that your vehicle is treated"). Keep the structure that matches the intent: a statement of the company's values keeps "believe in treating", so quote "in treating your vehicle is treated" and suggest "in treating your vehicle" (reason: "Two sentence structures are mixed: 'believe in treating' and 'believe that … is treated'"), NOT "that your vehicle is treated", which changes a value into a description. Name problems accurately: subject–verb agreement only when a verb does not agree with its subject; "doubled word" only when a word is repeated; otherwise say what it is (mixed sentence structure, wrong verb form, missing word, wrong article, wrong preposition, run-on).
+  The fix must keep the original meaning, subject and comparison: read your corrected sentence as a whole and check it is both grammatical AND logical (on a page about films, "a clear bra … is not as glossy as a film" compares a clear bra with a film, but a clear bra IS a film: that fix is wrong). Know automotive synonyms: "clear bra" is paint protection film (PPF); "ceramic" is ceramic coating; "tint" is window film. Subject–verb agreement counts with the real subject, even far from its verb ("A paint protection film that guards against chips are…" → "is").
   Grammar is not facts: a claim about how products perform ("not as hydrophobic as a ceramic coating") is never yours to correct; when such a claim may need checking, set "clarify": true and say so in "reason". If you cannot give a correction you are sure keeps the meaning, set "clarify": true, explain the problem in "reason", and leave "suggestion" empty rather than guessing.
+- "wordchoice": a real, correctly spelled word that is plainly the wrong word in its place, so the sentence says something the business cannot mean ("high-quality cartouches with lasting protection" on a coating page: a cartouche is a carved frame, the word meant is "coatings"). Report it SEPARATELY from any grammar problem in the same sentence (one result each). Not for synonyms, tone, or a word you would merely prefer; automotive terms (see above) are right in their place. If you cannot tell which word was meant, set "clarify": true and leave "suggestion" empty.
 - "punctuation": punctuation that is plainly wrong: a missing full stop between two sentences that run together ("call us today we are open"), a doubled mark ("today!!", "services,,"), a missing closing bracket or quote, a stray mark ("car ."). Never a missing Oxford comma, dashes vs hyphens, or a list without full stops.
 - "incomplete": a sentence or paragraph that stops mid-thought, a heading or button left as a template placeholder ("Add your text here", "Lorem ipsum", "Title goes here", "[City]"), or copy that clearly belongs to a template and was never filled in.
-Do NOT report: style, tone, word choice, clarity, rephrasing, capitalisation, title case, missing commas, American vs British spelling, short punchy fragments used on purpose ("Fast. Reliable. Local."), lists without full stops, emoji, or anything you are unsure about. Most blocks have no mistakes: return nothing for them.
+Every result is a REQUIRED fix (a real mistake) unless you mark it "optional": true. Optional is only for a sentence that is grammatical but reads so awkwardly that a visitor would stumble ("Our team of technicians they are trained…" is grammar; "We offer the offering of…" may be optional): give the smallest rewording and say in "reason" why it is optional. Never mark a real mistake optional, and never report taste as optional.
+Do NOT report: style, tone, a preferred synonym, clarity, rephrasing, capitalisation, title case, missing commas, American vs British spelling, short punchy fragments used on purpose ("Fast. Reliable. Local."), lists without full stops, emoji, or anything you are unsure about. Most blocks have no mistakes: return nothing for them.
 The "suggestion" must be the quoted words with the SMALLEST change that fixes them (usually one or two words), never a rewrite, a longer version or added content. If the fix would be a rewrite, it is a style opinion: do not report it.
 Each block is one whole paragraph, heading or list item, with the words of its links in place: judge it as written, and never call a block unfinished because it ends with a link's words.
 Blocks marked "Image alt text" are the descriptions of pictures: proofread their spelling and punctuation, but a short phrase without a full stop is normal there.
-Keep the types apart: "spelling" is only wrong letters in a word; "grammar" only a real grammar error; optional rewording is never reported.
-Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|punctuation|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 20 words>","suggestion":"<the corrected words>","clarify":<true when the wording is only uncertain, not a confirmed mistake>}]}. Use {"results":[]} when there is nothing to fix.`;
+Keep the types apart: "spelling" is only wrong letters in a word; "grammar" only a real grammar error; "wordchoice" only a real word used wrongly; two different problems in one sentence are two results.
+Respond with JSON only: {"results":[{"i":<block number>,"type":"spelling|grammar|wordchoice|punctuation|incomplete","quote":"<the exact wrong words from the block, max 12 words>","confidence":<0..1>,"reason":"<max 20 words: the actual problem>","suggestion":"<the corrected words>","clarify":<true when the wording is only uncertain, not a confirmed mistake>,"optional":<true only for an optional style improvement>}]}. Use {"results":[]} when there is nothing to fix.`;
 
 const LINK_SYSTEM = `You check that the BUTTONS and LINKS on a small business website open the page a visitor expects. ${CONTEXT}
 Each item gives the words on the button or link, the heading of the section it sits in, the text around it, the page it is on, and the page it opens (its address, title and main heading).
@@ -441,11 +444,25 @@ Copy: ${String(x.excerpt || '').replace(/\s+/g, ' ').slice(0, 2400)}`).join('\n'
 // A second, stricter read of what the first one called a grammar mistake or unfinished copy. The
 // first pass is told to be careful and still sometimes "corrects" a sentence that was fine; a reader
 // asked only "is this definitely wrong?" catches those.
-const PROOF_VERIFY_SYSTEM = `You are a senior copy editor double-checking another proofreader's flags on a small business website. For each flag you get the full sentence or paragraph, the words flagged, the claimed problem and the suggested fix.
+const PROOF_VERIFY_SYSTEM = `You are a senior copy editor double-checking another proofreader's flags on a small business website. For each flag you get the full sentence or paragraph, the words flagged, the claimed problem, the suggested fix, and the whole sentence with the fix applied.
 Answer "error": true ONLY if the flagged words are definitely wrong in standard English (a real grammar mistake, or text that is clearly unfinished or a template placeholder) and the fix is needed, not just a different way of saying it. Answer false for anything correct but improvable, any style or wording preference, any sentence that is grammatical as written (for example "it is easy to end up with X, Y, and Z" is correct), and whenever you are not sure.
-Then judge the suggested fix: put it into the full sentence and read the result. "fix_ok": true only if the corrected sentence is grammatical AND keeps the original meaning, subject and comparison (know that a clear bra is paint protection film, a film: "a clear bra is not as glossy as a film" changes the comparison, so fix_ok is false). When the error is real but the fix is not right, give "better": a corrected version of the flagged words that keeps the meaning, or "" if you cannot be sure.
-Respond with JSON only: {"results":[{"i":<number>,"error":true|false,"confidence":<0..1>,"fix_ok":true|false,"better":"<corrected words or empty>"}]}`;
-const verifyPrompt = (flags) => flags.map((f) => `${f.i} | ${f.type} | text: ${String(f.text).replace(/\s+/g, ' ').slice(0, 900)} | flagged: "${f.quote}" | problem: ${f.reason} | suggested: "${f.suggestion}"`).join('\n');
+Then judge the suggested fix by reading the CORRECTED SENTENCE you are given as a whole. "fix_ok": true only if the corrected sentence is grammatical AND keeps the original meaning, subject and comparison (know that a clear bra is paint protection film, a film: "a clear bra is not as glossy as a film" changes the comparison, so fix_ok is false). Prefer the smallest fix that keeps the intended meaning, tone and business message: in a mixed construction ("We believe in treating your vehicle is treated with care"), removing the stray words ("in treating your vehicle") keeps a statement of values, while "that your vehicle is treated" changes it, so fix_ok is false and better is "in treating your vehicle". When the error is real but the fix is not right, give "better": a corrected version of the FLAGGED WORDS ONLY that keeps the meaning, or "" if you cannot be sure.
+Check the claimed problem too: "reason_ok": false when it names the wrong problem (calls a mixed sentence structure "subject-verb agreement" or "duplicated subject", calls a misused real word grammar), and give "why": the accurate problem in max 20 words.
+Type "wordchoice" is a correctly spelled real word used wrongly: error is true only if the word plainly cannot be what the business meant. Type "optional" is a style improvement, not a mistake: answer error false, and "optional_ok": true only if the sentence really reads awkwardly and the fix clearly improves it without changing the meaning.
+Respond with JSON only: {"results":[{"i":<number>,"error":true|false,"confidence":<0..1>,"fix_ok":true|false,"better":"<corrected words or empty>","reason_ok":true|false,"why":"<accurate problem, or empty>","optional_ok":true|false}]}`;
+const verifyPrompt = (flags) => flags.map((f) => `${f.i} | ${f.type} | text: ${String(f.text).replace(/\s+/g, ' ').slice(0, 900)} | flagged: "${f.quote}" | problem: ${f.reason} | suggested: "${f.suggestion}" | corrected sentence: ${f.corrected || '(no fix given)'}`).join('\n');
+/** The sentence holding the quoted words, as written and with the suggested fix in place, so the fix is judged in its sentence. */
+function correctedSentence(text, quote, suggestion) {
+  const t = String(text || '').replace(/\s+/g, ' '); const q = String(quote || '').trim();
+  const at = q ? t.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (at < 0 || !String(suggestion || '').trim()) return '';
+  const fixed = t.slice(0, at) + suggestion + t.slice(at + q.length);
+  const end0 = at + String(suggestion).length;
+  const start = Math.max(0, ...['. ', '! ', '? '].map((m) => fixed.lastIndexOf(m, at - 1) + 2).filter((n) => n > 1));
+  const ends = ['. ', '! ', '? '].map((m) => fixed.indexOf(m, end0)).filter((n) => n >= 0);
+  const end = ends.length ? Math.min(...ends) + 1 : fixed.length;
+  return fixed.slice(start, end).trim().slice(0, 600);
+}
 /** Is the suggestion a correction of the quoted words (a word or two changed), or a rewrite? */
 function minimalFix(quote, suggestion, type) {
   const a = String(quote || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
@@ -461,6 +478,7 @@ function minimalFix(quote, suggestion, type) {
   for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
   const changed = Math.max(a.length, b.length) - L[0][0];
   if (type === 'spelling') return changed <= 2 && b.length <= a.length + 1 && spellingEdit(a, b);
+  if (type === 'wordchoice') return changed <= 2 && b.length <= a.length + 1;
   return changed <= 3 && b.length <= a.length + 2;
 }
 /** A spelling fix changes the letters of a word, not the word: "detialing" → "detailing" yes, "barrels" → "wells" no. */
@@ -506,7 +524,8 @@ async function extraCheck(req, res, b, list, owner) {
     if (raw === '0') return;
     const c = jparse(raw); if (!c) return todo.push(x);
     // A spelling flag from before the industry-terms rules is asked again (only those blocks).
-    if (proof && (c.r || []).some((r) => (r.type === 'spelling' && r.sv !== 2) || (r.type === 'grammar' && r.gv !== 2))) return todo.push(x);
+    // gv 3: grammar flags from before "smallest fix, judged in its corrected sentence, the real problem named" are asked again.
+    if (proof && (c.r || []).some((r) => (r.type === 'spelling' && r.sv !== 2) || (r.type === 'grammar' && r.gv !== 3))) return todo.push(x);
     (c.r || []).forEach((r) => results.push(Object.assign({}, r, { i: Number(x.i), cached: true })));
   });
   let used = null;
@@ -531,7 +550,7 @@ async function extraCheck(req, res, b, list, owner) {
       const r = fit
         ? (FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240), ...(x.clarify === true ? { clarify: true } : {}) } : null)
         : proof
-        ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200), sv: 2, gv: 2, ...(x.clarify === true ? { clarify: true } : {}) } : null)
+        ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200), sv: 2, gv: 3, ...(x.clarify === true ? { clarify: true } : {}), ...(x.optional === true && x.clarify !== true && x.type !== 'incomplete' ? { optional: true } : {}) } : null)
         : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 200), expected: String(x.expected || '').slice(0, 160) } : null);
       if (!r) return;
       // A "correction" that rewrites the words or adds to them is a style opinion, not a mistake.
@@ -541,13 +560,19 @@ async function extraCheck(req, res, b, list, owner) {
     // Grammar and unfinished-copy flags get a second, stricter read before they become audit items.
     const doubt = proof ? found.filter((r) => r.type !== 'spelling') : [];
     if (doubt.length) {
-      const flags = doubt.map((r, k) => ({ i: k, type: r.type, text: (todo.find((x) => Number(x.i) === r.i) || {}).text || '', quote: r.quote, reason: r.reason, suggestion: r.suggestion }));
+      const flags = doubt.map((r, k) => { const text = (todo.find((x) => Number(x.i) === r.i) || {}).text || '';
+        return { i: k, type: r.optional ? 'optional' : r.type, text, quote: r.quote, reason: r.reason, suggestion: r.suggestion, corrected: correctedSentence(text, r.quote, r.suggestion) }; });
       let ok = new Set();
       try {
         const v = await callChain(list, PROOF_VERIFY_SYSTEM, verifyPrompt(flags));
         (v.parsed.results || []).forEach((x) => {
+          const k0 = Number(x && x.i); const r0 = doubt[k0];
+          // An optional style improvement is kept only when the second reader agrees it helps; it stays optional.
+          if (r0 && r0.optional) { if (x.optional_ok === true && Number(x.confidence || 0) >= 0.8) ok.add(k0); return; }
           if (!x || x.error !== true || Number(x.confidence || 0) < 0.8) return;
           const k = Number(x.i); ok.add(k);
+          // The problem named wrongly ("duplicated subject" for a mixed sentence): the second reader's words.
+          if (doubt[k] && x.reason_ok === false && String(x.why || '').trim()) doubt[k].reason = String(x.why).trim().slice(0, 200);
           // A real mistake, but the suggested fix changes the meaning: the second reader's version, or none
           // (the item then explains the problem and asks for clarification instead of offering a wrong fix).
           const r = doubt[k];
