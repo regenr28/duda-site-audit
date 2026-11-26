@@ -580,3 +580,7 @@ Why: the hhceramiccoatings.com owner scanned his website and found what the audi
 - Production logs showed the reading backing off 5 → 10 → 20 → 40 min ("Websites stopped answering us (could not be reached)") after ~142 websites: Duda's servers refusing connections when read fast. Nothing was stopped; the row only showed the daily cron time.
 - `PACE` in `_watch.js` (normal 4 pages/300 ms/1.5 s per site, gentle 2/800 ms/4 s, slow 1/1.5 s/8 s); `runSettings().pace` from bizinfo field `pace` (default gentle).
 - `aaList` adds `live` { pending, reading, running, waitUntil, waitWhy } to the bizinfo/editorial rows; the page shows it (`aaLive`) and labels the column "Next daily run". Tests in e2e_autoaudits.py. app v99, styles v62.
+
+## 228 — Auto audits around the clock (Vercel Pro)
+- vercel.json cron `*/10 * * * *` → `/api/watch?op=tick` (CRON_SECRET like the daily one): skipped when bizinfo `roundClock` is false, not today, or `cwdue` is 0 after a fresh `watchStatus`; otherwise `runWatch({ budgetMs: 90000, by: 'cron' })` (the lock, Duda's breaks and the reading speed apply as always).
+- `aaList`: bizinfo/editorial rows get `next` = the next 10-minute mark (or the end of a break) with `nextKind: 'tick'` while websites are waiting; the page labels it "Next run (every 10 min)". Field `roundClock` (default on). Tests in e2e_autoaudits.py. app v100.

@@ -75,6 +75,10 @@
     {
       "path": "/api/watch?op=cron",
       "schedule": "20 22 * * *"
+    },
+    {
+      "path": "/api/watch?op=tick",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

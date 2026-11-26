@@ -33,11 +33,31 @@ async function cron(req, res) {
   return res.status(200).json(Object.assign({ reported }, r));
 }
 
+/**
+ * Every 10 minutes from Vercel's scheduler: read the next websites, so the auto audit keeps going with
+ * nobody's app open. Only when Settings → Auto audits allows it (on, today, "around the clock"); a break
+ * Duda asked for is respected, and with nothing waiting it costs one quick look.
+ */
+async function tick(req, res) {
+  if (isCopy()) return res.status(200).json({ skipped: 'this is the copy' });
+  const secret = process.env.CRON_SECRET;
+  if (secret && String(req.headers.authorization || '') !== 'Bearer ' + secret) return res.status(401).json({ error: 'Not allowed' });
+  const { aaCfg, aaToday } = await import('./_autoaudits.js');
+  const [biz, ed] = await Promise.all([aaCfg('bizinfo'), aaCfg('editorial')]);
+  if (biz.fields.roundClock === false) return res.status(200).json({ skipped: 'around the clock is off (Settings \u2192 Auto audits)' });
+  if (!aaToday(biz) && !aaToday(ed)) return res.status(200).json({ skipped: 'not a day it runs' });
+  const [due] = await redis(['GET', P + 'cwdue']);
+  if (due !== null && Number(due) === 0) { await watchStatus().catch(() => {}); const [again] = await redis(['GET', P + 'cwdue']); if (!Number(again)) return res.status(200).json({ skipped: 'nothing waiting' }); }
+  const r = await runWatch({ budgetMs: 90000, by: 'cron' });
+  return res.status(200).json({ done: (r.done || []).length, pending: r.pending || 0, wait: r.wait || 0, off: !!r.off, busy: !!r.busy });
+}
+
 async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   appUrl(req);   // links in the alerts point back at this app
   try {
     if (req.method === 'GET' && req.query.op === 'cron') return await cron(req, res);
+    if (req.method === 'GET' && req.query.op === 'tick') return await tick(req, res);
     const me = await requireUser(req, res);
     if (!me) return;
     if (await denyUnless(res, me, 'live.view', 'Your role does not include Live DR Sites.')) return;

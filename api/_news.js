@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-25-auto-roundclock', date: '2026-11-25', audience: 'all', tag: 'Settings',
+    title: 'Auto audits keep reading around the clock',
+    what: 'The Business Info and editorial photo checks now read the next websites every 10 minutes, with nobody\u2019s app open, until every website is done. With nothing waiting, each run is a single quick look.',
+    where: ['<b>Walkthrough:</b> <b>Settings → 🤖 Auto audits</b> → <b>Business Info check</b> → <b>Keep reading around the clock</b>.'],
+  },
+  {
     id: '2026-11-25-auto-pace', date: '2026-11-25', audience: 'all', tag: 'Settings',
     title: 'Auto audits: see what it is doing now, and a gentler reading speed',
     what: 'The Business Info and editorial photo rows now say whether a website is being read, how many are waiting, or that it is taking a break (and until when). Duda\u2019s servers refuse connections when websites are read too fast, which caused long breaks; reading is now gentler by default, and the speed is a setting.',

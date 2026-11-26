@@ -10,6 +10,7 @@ const DAY = 86400000;
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 // The daily runs Vercel starts (vercel.json crons), in UTC.
 const CRON = { watch: [22, 20], sweep: [21, 50] };
+export const TICK_MIN = 10;   // the reading's own run, every 10 minutes (vercel.json /api/watch?op=tick)
 
 /**
  * The auto audits. `checks` is the tree shown with checkboxes (a group's children are the specific
@@ -43,6 +44,7 @@ export const AA = [
     fields: [
       { k: 'recheckDays', label: 'Read every website again after (days), even when it was not published', type: 'number', min: 7, max: 90, def: 30 },
       { k: 'maxPages', label: 'Pages read per website, at most', type: 'number', min: 10, max: 300, def: 100 },
+      { k: 'roundClock', label: 'Keep reading around the clock (every 10 minutes, with nobody\u2019s app open), not only at the daily run and while the app is open', type: 'bool', def: true },
       { k: 'pace', label: 'Reading speed (every website is on Duda\u2019s servers, which refuse connections when asked too fast)', type: 'select', def: 'gentle',
         options: [['gentle', 'Gentle: 2 pages at a time, a short pause between websites (recommended)'], ['slow', 'Slow: 1 page at a time, a longer pause (if it keeps taking breaks)'], ['normal', 'Fast: 4 pages at a time (may be refused and take breaks)']] },
       { k: 'toAudits', label: 'Add what it finds as audit items on the Audits tab', type: 'select', def: 'auto',
@@ -301,7 +303,13 @@ export async function aaList() {
   const nowR = jparse(nowRaw); const wait = jparse(waitRaw) || {}; const stat = jparse(statRaw) || {};
   const live = { pending: stat.pending || 0, reading: nowR ? (nowR.name || nowR.domain || '') : '', running: !!lockRaw,
     waitUntil: wait.until > Date.now() ? wait.until : 0, waitWhy: wait.until > Date.now() ? wait.why || '' : '' };
-  [biz, ed].forEach((r) => { r.live = live; });
+  const bizCfg = await aaCfg('bizinfo');
+  const round = bizCfg.fields.roundClock !== false;
+  [biz, ed].forEach((r) => {
+    r.live = Object.assign({ round }, live);
+    // Around the clock: the next of the 10-minute runs, while there is something to read (or a break to wait out).
+    if (r.on && round && (live.pending || live.waitUntil)) { const step = TICK_MIN * 60000; const t = Math.ceil((Date.now() + 1000) / step) * step; r.next = Math.max(t, live.waitUntil || 0); r.nextKind = 'tick'; }
+  });
   const read = sums.filter((s) => s.at && !s.err);
   biz.summary = `${read.length} websites read · ${read.filter((s) => s.c && (!s.t || Object.keys(s.t).some((t) => t !== 'stock'))).length} with serious problems`;
   const [ver] = await redis(['GET', P + 'stock:ver']);

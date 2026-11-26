@@ -6654,7 +6654,7 @@
     if (x.paused) return '';
     if (L.waitUntil) return `<div class="aa-live wait">\u23f3 Taking a break until <b>${esc(t(L.waitUntil))}</b>: ${esc(L.waitWhy || 'the websites asked us to slow down')}. It carries on by itself after that${L.pending ? ` \u00b7 <b>${L.pending}</b> websites waiting` : ''}.</div>`;
     if (L.reading) return `<div class="aa-live run">\u25cf Reading now: <b>${esc(L.reading)}</b>${L.pending ? ` \u00b7 <b>${L.pending}</b> websites waiting` : ''}</div>`;
-    if (L.pending) return `<div class="aa-live queue">\u25cb <b>${L.pending}</b> websites waiting. Reading carries on whenever anyone on the team has the app open (and at the daily run).</div>`;
+    if (L.pending) return `<div class="aa-live queue">\u25cb <b>${L.pending}</b> websites waiting. ${L.round ? 'Reading carries on every 10 minutes, around the clock.' : 'Reading carries on whenever anyone on the team has the app open (and at the daily run).'}</div>`;
     return '';
   };
   /** Settings → Auto audits: every check that runs by itself, one row each. */
@@ -6671,7 +6671,7 @@
         <dl class="aa-facts small">
           <div><dt>Last run</dt><dd>${x.last && x.last.at ? `${esc(aaWhen(x.last.at))} <span class="faint">${who(x.last)}</span>` : '<span class="faint">not yet</span>'}</dd></div>
           <div><dt>Last website</dt><dd>${x.last && x.last.site && x.last.site.name ? esc(x.last.site.name) : '<span class="faint">\u2014</span>'}</dd></div>
-          <div><dt>${x.id === 'bizinfo' || x.id === 'editorial' ? 'Next daily run' : 'Next run'}</dt><dd>${x.next ? `${esc(aaWhen(x.next))} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : x.on && x.nextText ? `${esc(x.nextText)} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : '<span class="faint">off</span>'}</dd></div>
+          <div><dt>${x.nextKind === 'tick' ? 'Next run (every 10 min)' : x.id === 'bizinfo' || x.id === 'editorial' ? 'Next daily run' : 'Next run'}</dt><dd>${x.next ? `${esc(aaWhen(x.next))} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : x.on && x.nextText ? `${esc(x.nextText)} <span class="faint">(${esc(aaDaysWord(x.days))})</span>` : '<span class="faint">off</span>'}</dd></div>
           <div><dt>Notifications</dt><dd>${x.notify ? (x.notify.on ? [x.notify.instant && 'at once', x.notify.daily && 'daily report'].filter(Boolean).join(' + ') + ` \u00b7 ${x.notify.to === 'people' ? `${x.notify.people} ${x.notify.people === 1 ? 'person' : 'people'}` : 'admins'}` : 'off') : '<span class="faint">none</span>'}</dd></div>
         </dl><span class="aa-go" aria-hidden="true">\u203a</span></a>`).join('')}</div>
       <p class="small faint">Your own notifications (like a scan you started finishing) are in <a href="#/settings/notifications">Your notifications</a>. Each person also chooses there whether these messages reach their bell, pop-ups or Slack.</p>`;
