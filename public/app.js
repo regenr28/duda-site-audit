@@ -8014,7 +8014,12 @@
     // because a page about the wrong service is the costliest mistake a client can find.
     const fitPages = (res.fit || []).filter((p) => p.path && (p.urlServices && p.urlServices.length || p.urlPlace || p.title));
     if (fitPages.length) {
-      const fitItems = fitPages.slice(0, 160).map((p, i) => ({ i: res.fit.indexOf(p), path: p.path, title: p.title, description: p.description, h1: p.h1, heads: p.heads, excerpt: p.excerpt, urlServices: p.urlServices, urlPlace: p.urlPlace }));
+      // Towns the rules found on a page that is about another place: the AI says whether each lies inside it.
+      const kindOf = new Map((res.pages || []).map((x) => [x.path, x]));
+      const pageKind = (path) => { const x = kindOf.get(path) || {}; return x.blog || /\/(blog|post|news|article)s?\//i.test(path) ? 'blog post' : A.placeOfPath(path) ? 'location / town landing page' : (A.servicesOfPath(path) || []).length ? 'service page' : path === '/' ? 'home page' : 'page'; };
+      const townsOf = {};
+      res.findings.forEach((f) => { if (/^PAGE_WRONG_CITY(_BODY)?$/.test(f.code) && f.place && f.geo === 'ask') { const l = townsOf[f.path] = townsOf[f.path] || []; const t = f.place.replace(/\b\w/g, (c) => c.toUpperCase()); if (!l.includes(t)) l.push(t); } });
+      const fitItems = fitPages.slice(0, 160).map((p, i) => ({ i: res.fit.indexOf(p), path: p.path, title: p.title, description: p.description, h1: p.h1, heads: p.heads, excerpt: p.excerpt, urlServices: p.urlServices, urlPlace: p.urlPlace, kind: pageKind(p.path), ...(townsOf[p.path] ? { towns: townsOf[p.path].slice(0, 6) } : {}) }));
       out.fit = { pages: fitItems.length, of: (res.fit || []).length, flagged: 0 };
       const verdicts = await run('pagefit', batches(fitItems, 18000, 6, (x) => (x.excerpt || '').length + 600), 'reading each page against its address', { pages });
       const before = res.findings.length;

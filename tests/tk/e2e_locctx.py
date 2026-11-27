@@ -64,7 +64,7 @@ try:
     r = post({'op': 'text', 'business': BIZ, 'items': [{'i': 0, 'text': P2, 'location': 'Body', 'page': '/'}]})
     check(SEEN['calls'] == n1 and r.get('cachedCount') == 1, 'an old clean answer is reused without asking the AI again')
     r = post({'op': 'text', 'business': BIZ, 'items': [{'i': 0, 'text': P3, 'location': 'Body', 'page': '/', 'title': 'Home | Shine Detailing', 'h1': 'Shine Detailing in Warminster, PA'}]})
-    check(SEEN['calls'] == n1 + 1 and any(x.get('lv') == 3 for x in r['results']), 'an old answer that flagged a town is asked again under the new rules')
+    check(SEEN['calls'] == n1 + 1 and any(x.get('lv') == 4 for x in r['results']), 'an old answer that flagged a town is asked again under the new rules')
     check(not redis(['HGET', CK, legacy(P2)])[0] and not redis(['HGET', CK, legacy(P3)])[0], 'the old cache entries are removed, so a later page change is always asked again')
     # Unrelated caches untouched: a proofreading entry stays.
     redis(['HSET', CK, 'p2keep', '0']); post({'op': 'text', 'business': BIZ, 'items': [{'i': 0, 'text': P2, 'location': 'Body', 'page': '/'}]})

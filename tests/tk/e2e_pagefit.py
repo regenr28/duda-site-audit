@@ -19,6 +19,9 @@ class AI(BaseHTTPRequestHandler):
         elif 'is about what its ADDRESS' in system:
             for m in re.finditer(r'^=== \[(\d+)\] (\S+)\nAddress says: ([^\n]*)', user, re.M):
                 SEEN['fit'].append((m.group(2), m.group(3)))
+                # The geography question for a town the rules found (update 238): Copperas Cove is not in Temple.
+                g = re.search(r'Other places named on it \(answer "geo" for each\): ([^\n]+)', user[m.end():].split('\n=== ')[0])
+                if g: [results.append({'i': int(m.group(1)), 'type': 'geo', 'town': t.strip(), 'inside': False, 'confidence': 0.95, 'reason': 'different towns'}) for t in g.group(1).split(',')]
                 if m.group(2) == '/paint-correction':
                     results.append({'i': int(m.group(1)), 'type': 'wrong_service', 'part': 'body', 'quote': 'the kind a car wash leaves', 'confidence': 0.8, 'reason': 'Unclear whether this page sells paint correction or washes', 'suggestion': '', 'clarify': True})
                 if m.group(2) == '/locations/belton-tx/window-tint':

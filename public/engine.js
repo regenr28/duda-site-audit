@@ -726,6 +726,17 @@
         'The location check now reads each paragraph with its page\u2019s SEO title, H1, section heading and the page\u2019s other facility or partner sentences. A town the page itself describes (\u201cStorage in Warminster and New Britain through a partner\u201d) is a warning For clarification asking whether it is another facility or a partner, instead of a critical \u201cleftover from another client\u201d with a replacement town. A town that contradicts the page and the business is still reported. Only that page counts: a town described on one page is not approved for the others',
       ],
     },
+    {
+      v: 64,
+      date: '2026-11-27',
+      title: 'Town pages: geography, not mention counts',
+      scope: { fixes: ['PAGE_WRONG_CITY', 'PAGE_WRONG_CITY_BODY', 'AI_PAGE_CITY', 'AI_TEXT_LOCATION'], ai: true },
+      items: [
+        'How often a page names a town is now only a reason to look: an optional targeting review (Info), never a confirmed mistake. A county or region page whose title or H1 names a town is asked about (is the town in that county?), and the AI\u2019s geography answer settles it: inside the county, an optional targeting review; outside it, a real mismatch',
+        'Similar names are never taken for the same place (\u201cWest Chester\u201d is not \u201cChester\u201d). A shop claim (\u201cvisit our West Chester shop\u201d) on a county page is no longer approved because the county\u2019s name shares a word with it',
+        'The AI now says how a place relates to the page\u2019s place (the same, inside it, the county around it, unrelated or unknown) and states the specific contradiction. A Warminster page whose H1 speaks to Bucks County is no longer a wrong town. A town called wrong without a stated contradiction, or with a relation the AI cannot establish, is For clarification, not critical; a different town name found by the rules alone stays a question until the geography is answered. A claim that the business is physically somewhere is still checked against its confirmed locations',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -3523,6 +3534,18 @@
   }
 
   /**
+   * Mentions of a place, leaving out those that are part of a LONGER place the website names
+   * ("Chester" inside "West Chester"): similar names are never taken for the same place.
+   */
+  function placeCountOnly(place, text, places) {
+    let n = placeCount(place, text);
+    (places || []).forEach((L) => { if (L !== place && L.length > place.length && placeRe(place).test(L)) n -= placeCount(L, text); });
+    return Math.max(0, n);
+  }
+  /** A county, parish, region… rather than a town: a town inside it may well belong on its page. */
+  const AREA_WORD = /\b(county|counties|parish|borough|region|valley|metro|township|shore|coast|area)$/i;
+
+  /**
    * pages: [{ path, title, description, h1: [{text, selector}], heads: [..], body: 'all body text' }]
    * Returns audit items (critical when the title or H1 is wrong, warning when only the body copy is).
    */
@@ -3588,27 +3611,39 @@
       // --- the town ---
       const own = placeOfPath(p.path);
       if (own && places.size >= 2) {
-        const rivals = [...places].filter((q) => q !== own && !q.includes(own) && !own.includes(q));
-        let named = false;
+        // Only the same place is the same place: "West Chester" is not "Chester", whatever the letters.
+        const all = [...places];
+        const rivals = all.filter((q) => q !== own);
+        // A county or region page naming a town: the town may lie inside it (then it is a targeting
+        // choice, not a mistake). That cannot be told from the words, so it is asked, not asserted; the
+        // AI's geography answer (applyPageFit) settles it either way.
+        const area = AREA_WORD.test(own);
         ['h1', 'title', 'desc'].forEach((part) => {
           const t = parts[part];
-          if (!t.trim() || placeCount(own, t) > 0) return;
-          const q = rivals.find((x) => placeCount(x, t) > 0);
+          if (!t.trim() || placeCountOnly(own, t, all) > 0) return;
+          const q = rivals.find((x) => placeCountOnly(x, t, all) > 0);
           if (!q) return;
-          named = true;
           const w = where(part);
           const what = part === 'title' ? 'SEO title' : part === 'h1' ? 'H1 heading' : 'meta description';
-          out.push(base(p, { code: 'PAGE_WRONG_CITY', severity: 'critical', category: 'Location',
-            message: `The ${what} names ${titleCase(q)}, but this is the ${titleCase(own)} page`,
-            found: cut(w.found, 200), expected: `${titleCase(own)} in the ${what}`, selector: w.selector, location: w.location, place: q, urlPlace: own }));
+          // A different name is a candidate, not a verdict: it stays a question (For clarification) until the
+          // AI's geography answer settles it — never Critical on its own, never dropped.
+          out.push(base(p, { code: 'PAGE_WRONG_CITY', severity: 'warning', clarify: true, category: 'Location',
+            message: area ? `The ${what} names ${titleCase(q)}, not ${titleCase(own)}: is ${titleCase(q)} in ${titleCase(own)}?`
+              : `The ${what} names ${titleCase(q)}, but this is the ${titleCase(own)} page: to confirm`,
+            found: cut(w.found, 200), expected: area ? `If ${titleCase(q)} is in ${titleCase(own)}, this is only a targeting choice (Info). If it is not, ${titleCase(own)} in the ${what}` : `${titleCase(own)} in the ${what}, unless ${titleCase(q)} belongs on this page`,
+            selector: w.selector, location: w.location, place: q, urlPlace: own, geo: 'ask' }));
         });
+        // How often towns are named is a reason to look, never proof of a mistake: an optional review
+        // (Info). The AI's reading of the page (wrong_city) and its geography answer decide the rest.
         if (!isBlogPath(p.path)) {
-          const ownN = placeCount(own, parts.body) + placeCount(own, parts.heads);
+          const ownN = placeCountOnly(own, parts.body, all) + placeCountOnly(own, parts.heads, all);
           rivals.filter((q) => !homeTowns.has(q)).forEach((q) => {
-            const n = placeCount(q, parts.body) + placeCount(q, parts.heads);
-            if (n >= 3 && n > ownN) out.push(base(p, { code: 'PAGE_WRONG_CITY_BODY', severity: named ? 'critical' : 'warning', category: 'Location',
-              message: `The copy names ${titleCase(q)} ${n} times and ${titleCase(own)} ${ownN === 0 ? 'not once' : ownN + ' time' + (ownN > 1 ? 's' : '')}, on the ${titleCase(own)} page`,
-              found: `${titleCase(q)}: ${n} · ${titleCase(own)}: ${ownN}`, expected: `Copy about ${titleCase(own)}`, selector: '(page)', location: 'Body', place: q, urlPlace: own }));
+            const n = placeCountOnly(q, parts.body, all) + placeCountOnly(q, parts.heads, all);
+            if (n >= 3 && n > ownN) out.push(base(p, { code: 'PAGE_WRONG_CITY_BODY', severity: 'info', optional: true, category: 'Location',
+              message: `Optional targeting review: the copy names ${titleCase(q)} ${n} times and ${titleCase(own)} ${ownN === 0 ? 'not once' : ownN + ' time' + (ownN > 1 ? 's' : '')}, on the ${titleCase(own)} page`,
+              found: `${titleCase(q)}: ${n} · ${titleCase(own)}: ${ownN}`,
+              expected: area ? `Fine if ${titleCase(q)} is in ${titleCase(own)}. To target ${titleCase(own)} more broadly, name it (or more of its towns) in the copy` : `Check that the copy is about ${titleCase(own)}`,
+              selector: '(page)', location: 'Body', place: q, urlPlace: own, geo: 'ask' }));
           });
         }
       }
@@ -4511,14 +4546,19 @@
     return new RegExp('\\b(?:in|near|serving)\\s+' + pat + '\\b|\\b' + pat + ',\\s*[A-Z]{2}\\b', 'i').test(heads) ? town : '';
   }
   function pathNamesPlace(paths, text, truth) {
-    const hay = compact(text);
-    if (!hay) return false;
+    const t = String(text || '');
+    if (!compact(t)) return false;
     // A word that is part of the business's own name proves nothing about place.
     const own = compact([(truth && truth.businessName) || '', ...((truth && truth.names) || [])].join(' '));
-    return [].concat(paths || []).some((p) => placeWordsInPath(p).some((w) => {
-      const c = compact(w);
-      return c.length >= 4 && !own.includes(c) && hay.includes(c);
-    }));
+    // The place as a whole name, not a piece of a longer one: "Chester County" in the address is not
+    // named by "West Chester", and "Chester" is not named by "Westchester" or "West Chester".
+    const PREFIX = '(?<!\\b(?:west|east|north|south|new|old|upper|lower|fort|port|mount|mt|lake|saint|st|san|santa|el|la|los|las|glen|palm|grand|little|big)[\\s-]+)';
+    const named = (phrase) => new RegExp(PREFIX + '\\b' + phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '[\\s-]+') + '\\b', 'i').test(t);
+    return [].concat(paths || []).some((p) => {
+      const pl = placeOfPath(p);
+      if (pl) return !own.includes(compact(pl)) && named(pl);
+      return placeWordsInPath(p).some((w) => { const c = compact(w); return c.length >= 4 && !own.includes(c) && named(w); });
+    });
   }
 
   function applyAltVerdicts(findings, alts, verdicts, truth) {
@@ -4648,15 +4688,22 @@
       let described = '';
       if (v.type === 'wrong_location' && pageList) {
         const ctx = placeContext(texts, pageList, blk.pages[0], blk.text);
-        const hay = compact([ctx.title, ctx.h1].concat(ctx.facility).join(' '));
+        // A claim that the business IS there ("visit our X shop") is softened only by the page describing a
+        // facility there; a title or H1 aimed at the town is targeting, not a facility.
+        const hay = compact((v.physical === true ? [] : [ctx.title, ctx.h1]).concat(ctx.facility).join(' '));
         described = placesIn(v.quote).find((t) => hay.includes(compact(t))) || '';
         // The paragraph itself presents it as an ADDITIONAL place ("our second shop in Doylestown", "storage
         // through our partner in …"): not the main address, so it is asked about too.
         if (!described && /\b(second|other|another|additional|extra|partner(s|ed|ship)?|sister|affiliate|through)\b/i.test(blk.para || blk.text) && FACILITY_RE.test(blk.para || blk.text)) described = placesIn(v.quote)[0] || '';
       }
+      // The same place, one inside the other, or the county around it, and no claim that the business is
+      // physically there: not a wrong location. A physical claim is still checked, county or not.
+      if (v.type === 'wrong_location' && v.lv === 4 && ['same', 'inside', 'contains'].includes(v.relation) && !v.physical) return;
+      // No specific contradiction stated, or a relation the AI could not establish: asked, not asserted.
+      const noCase = v.type === 'wrong_location' && v.lv === 4 && (!String(v.contradiction || '').trim() || v.relation === 'unknown');
       // Uncertain location wording ("Detailing experts in Willow Grove" on a Montgomery County page) is a
       // question for the team, not a confirmed wrong location: a warning that starts as For clarification.
-      const unsure = v.type === 'wrong_location' && (v.clarify || Number(v.confidence) < 0.8 || !!described);
+      const unsure = v.type === 'wrong_location' && (v.clarify || Number(v.confidence) < 0.8 || !!described || noCase);
       const severity = unsure ? 'warning' : severity0;
       // Already caught by a rule on the same element? Attach the AI opinion instead of duplicating
       const existing = findings.find((f) => f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)) && /OTHER_BUSINESS|COPYRIGHT_NAME/.test(f.code) && v.type === 'other_business');
@@ -4717,6 +4764,29 @@
       editor_note: ['AI_PAGE_NOTE', 'Content', /^PLACEHOLDER$/, 'AI: a note from the writer or the team was left in the text'],
     };
     const PART = { title: ['head > title', 'Head / Meta', 'SEO title'], h1: ['h1', 'Body', 'H1 heading'], desc: ['meta[name="description"]', 'Head / Meta', 'meta description'], body: ['(page)', 'Body', 'page copy'] };
+    // The AI's geography answer for a town the rules found on a page: inside the page's area → only a
+    // targeting choice (Info); not inside → a real mismatch; unknown → stays a question.
+    (issues || []).forEach((v) => {
+      const pg = fit[v.i];
+      if (!pg || v.type !== 'geo' || Number(v.confidence) < 0.7 || typeof v.inside !== 'boolean') return;
+      const town = compact(v.town || '');
+      findings.filter((f) => /^PAGE_WRONG_CITY(_BODY)?$/.test(f.code) && f.place && compact(f.place) === town && (f.pages || [f.path]).includes(pg.path)).forEach((f) => {
+        const Q = titleCase(f.place), Own = titleCase(f.urlPlace || '');
+        f.geo = v.inside ? 'inside' : 'outside';
+        f.ai = { verdict: 'geo', confidence: v.confidence, reason: v.reason || (v.inside ? `${Q} is in ${Own}` : `${Q} is not in ${Own}`), suggestion: '' };
+        delete f.clarify;
+        const what = f.code === 'PAGE_WRONG_CITY_BODY' ? 'copy' : (f.location === 'Head / Meta' ? (f.selector === 'head > title' ? 'SEO title' : 'meta description') : 'H1 heading');
+        if (v.inside) {
+          Object.assign(f, { severity: 'info', optional: true,
+            message: `Optional targeting review: ${Q} is in ${Own}; the ${what} focuses on ${Q} rather than ${Own}`,
+            expected: `Fine as it is. To target ${Own} more broadly, name ${Own}${f.code === 'PAGE_WRONG_CITY_BODY' ? ' (or more of its towns)' : ''} in the ${what}` });
+        } else if (f.code === 'PAGE_WRONG_CITY') {
+          Object.assign(f, { severity: 'critical', optional: false, message: `The ${what} names ${Q}, which is not in ${Own}: this is the ${Own} page`, expected: `${Own} in the ${what}` });
+        } else {
+          Object.assign(f, { severity: 'warning', optional: false, message: `The copy is mostly about ${Q}, which is not in ${Own}, on the ${Own} page`, expected: `Copy about ${Own}` });
+        }
+      });
+    });
     (issues || []).forEach((v) => {
       const pg = fit[v.i];
       const rule = RULES[v.type];
@@ -4738,12 +4808,33 @@
       // (a detailer's /service/enclosed-vehicle-towing-services with a towing title and heading is fine).
       if (v.type === 'wrong_service' && (NOT_OFFERED.test([v.reason, v.suggestion].join(' ')) || pageAgrees(pg, v.quote))) return;
       const [code, category, sameRe, message] = rule;
+      // A town called wrong is judged by how the places relate, not by the AI's confidence: the same place,
+      // one inside the other, or the county around it is not a wrong town (a Warminster page may say Bucks
+      // County). At most an optional targeting idea. No stated contradiction, or an unknown relation: asked.
+      let cityOptional = false;
+      if (v.type === 'wrong_city' && v.rv === 2) {
+        if (['same', 'inside', 'contains'].includes(v.relation)) {
+          const rel = findings.filter((f) => /^PAGE_WRONG_CITY/.test(f.code) && (f.pages || [f.path]).includes(pg.path) && f.place && compact(String(v.quote || '')).includes(compact(f.place)));
+          rel.forEach((f) => Object.assign(f, { severity: 'info', optional: true, geo: 'inside', message: f.message.replace(/: (is .* in .*\?|to confirm)$/, '') + ' (optional targeting review)' }) && delete f.clarify);
+          if (!v.optional) return;
+          cityOptional = true;
+        } else if (!v.contradiction || v.relation === 'unknown') v = Object.assign({}, v, { clarify: true });
+      }
       const part = PART[v.part] ? v.part : 'body';
       const ai = { verdict: v.type, confidence: v.confidence, reason: v.reason, suggestion: v.suggestion, quote: v.quote };
       const quote = String(v.quote || '').toLowerCase();
       const same = findings.find((f) => sameRe.test(f.code) && (f.pages || [f.path]).includes(pg.path)
         && (v.type !== 'name_variant' && v.type !== 'editor_note' ? true : quote && String(f.found || '').toLowerCase().includes(quote.slice(0, 30))));
-      if (same) { same.ai = ai; return; }
+      if (same) {
+        // The AI read the page and found the town wrong: a count-based review (Info) or an open question
+        // becomes the mistake it confirms. Not when its own geography answer put the town inside the area.
+        if (v.type === 'wrong_city' && same.geo !== 'inside' && (same.severity === 'info' || same.clarify) && !v.clarify) {
+          const top = (PART[v.part] ? v.part : 'body') !== 'body';
+          Object.assign(same, { severity: top || same.code === 'PAGE_WRONG_CITY' ? 'critical' : 'warning', optional: false }); delete same.clarify;
+          if (same.code === 'PAGE_WRONG_CITY_BODY') same.message = same.message.replace(/^Optional targeting review: /, '').replace(/^./, (c) => c.toUpperCase());
+        }
+        same.ai = ai; return;
+      }
       // "Cut off mid-thought": when the page's own paragraph goes on after the quoted words, the sentence
       // is not unfinished (the AI was shown it in pieces): nothing to report.
       if (v.type === 'editor_note' && locate && /incomplete|cut off|fragment|unfinished|trailing|mid-thought|mid thought/i.test([v.reason, v.suggestion].join(' '))) {
@@ -4760,6 +4851,7 @@
         selector: part === 'h1' && pg.h1Sel ? pg.h1Sel : selector, location, snippet: cut(v.reason || '', 160), ai,
         // The AI could not tell what the page is meant to offer: a question for the team, not a mistake.
         ...(v.clarify ? { clarify: true, severity: 'warning' } : {}),
+        ...(cityOptional ? { severity: 'info', optional: true, message: 'Optional targeting review: the page names a wider or narrower area than its address (' + what + ')' } : {}),
       };
       f.id = hash([f.code, f.selector, f.found, f.message, f.path].join('|'));
       // Words in the page copy: the element that holds them, so the item opens on the page at them

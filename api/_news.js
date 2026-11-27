@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-27-geo', date: '2026-11-27', audience: 'all', tag: 'Checks',
+    title: 'Town checks: geography, not name matching or mention counts',
+    what: 'A town inside the county a page targets (West Chester on a Chester County page), or the county around the page\u2019s town (Bucks County on a Warminster page), is no longer a wrong location: at most an optional targeting review (Info). The AI now states how the places relate and the specific contradiction before anything is called wrong; when it cannot, the item is For clarification instead of Critical. Real mismatches and false shop claims are still reported. Audits catch up with <b>Apply check updates</b>.',
+    where: ['<b>Walkthrough:</b> an audit \u2192 <b>Apply check updates</b>, then the Location items.'],
+  },
+  {
     id: '2026-11-27-loc-facility', date: '2026-11-27', audience: 'all', tag: 'Checks',
     title: 'Locations: a second facility or partner on the page is asked about, not called wrong',
     what: 'The location check now reads each paragraph with its page\u2019s title, H1, section heading and the page\u2019s facility or partner sentences. A town the page describes as another facility or a partner (for example a storage site in another town) is a warning For clarification asking you to confirm, instead of a critical \u201cleftover from another client\u201d with a replacement town. Real contradictions are still critical. Audits catch up with <b>Apply check updates</b> or <b>Recheck</b>.',

@@ -66,8 +66,10 @@ const AGENCIES = (process.env.AGENCY_NAMES || 'Detailers Roadmap, 8bit Creative'
 const ALT_VERDICTS = ['describes_image', 'this_business', 'partner_logo', 'other_business', 'wrong_location', 'placeholder', 'unclear'];
 const TEXT_TYPES = ['other_business', 'wrong_location', 'name_variant'];
 const PROOF_TYPES = ['spelling', 'grammar', 'wordchoice', 'punctuation', 'incomplete'];
-const FIT_TYPES = ['wrong_service', 'wrong_city', 'name_variant', 'editor_note'];
+const FIT_TYPES = ['wrong_service', 'wrong_city', 'name_variant', 'editor_note', 'geo'];
 const FIT_PARTS = ['title', 'h1', 'desc', 'body'];
+// How a place named on a page relates to the place it is judged against (wrong_city / wrong_location).
+const REL_TYPES = ['same', 'inside', 'contains', 'nearby', 'unrelated', 'unknown'];
 
 const env = (k, d) => (process.env[k] !== undefined && process.env[k] !== '' ? process.env[k] : d);
 const CATALOG = {
@@ -382,13 +384,14 @@ Report these problem types:
   Ambiguous wording that could be read as a location claim ("Auto Detailing Experts in Willow Grove, PA" on a Montgomery County page) is NOT a confirmed error: report it only with "clarify": true and a wording suggestion, explaining in "reason" what is uncertain.
   On a page whose URL names a town (/locations/temple-tx/…), a title or heading presenting the shop as another town's provider ("Copperas Cove's top provider") is still wrong_location. A page whose own URL names a town IS that town's page: never report it for naming that town.
   Tell the business's MAIN address apart from its OTHER places: a second facility, a storage site, a partner's location ("vehicle storage in New Britain through Car Heads Auto Group"), or a service area. A town that is not in the business details or in a location page's address is NOT wrong for that reason alone. Read the block's "page:" line (the page's SEO title, H1 and the section heading) and "also on this page:" (other sentences from the same page about a facility or partner): when they describe the town as a facility, partner or service location, the paragraph is consistent with its page. If that relationship cannot be verified, set "clarify": true and ask in "reason" whether the town is another facility or a partner; do NOT say the text came from another client and do NOT suggest replacing the town.
+  For every wrong_location give "relation" (how the quoted place relates to the business's confirmed location or the page's place: same|inside|contains|nearby|unrelated|unknown, in either direction, from real geography, never from similar names), "physical": true only when the words claim the business IS physically there ("our West Chester shop", "visit us in…"), and "contradiction": the specific contradiction in one sentence. A place that is "same", "inside" or "contains" and is not a physical claim is NOT wrong_location (a county the town is in, a town in the county). A physical claim is checked against the business's confirmed locations even when the town is in the same county.
   Say a town is "left over from another client" only with evidence in the text (another business's name, another state far from the business, a page about a different service). Confidence is not evidence.
   Never infer a mismatch from how often towns are mentioned. When you cannot verify the geography or the service coverage, say so in "reason" and set "clarify": true instead of asserting an error.
 - "name_variant": this business's own name written in a clearly different way (different or missing words, e.g. "Upscale Detailing Co" vs "Upscale Detail Co."). Ignore capitalization, punctuation, "&" vs "and", and adding/removing LLC/Inc/Co.
 A block can be only PART of a paragraph: the words up to a link or a bold word. Then "in" gives the whole paragraph. Read the block inside it: a block that stops before a link ("our team at" + the link "86 Auto Lab") is not cut off and does not name another business. Report only what the block itself says.
 "other_business" needs another business's NAME in the quote. A missing name, an unfinished sentence or generic words ("our team", "the shop") are never "other_business".
 Do not report spelling, grammar, style or anything else. Most blocks have no problem: return nothing for them.
-Respond with JSON only: {"results":[{"i":<block number>,"type":"<type>","quote":"<the exact words from the block, max 15 words>","confidence":<0..1>,"reason":"<max 25 words>","suggestion":"<corrected wording>","clarify":<true when it is only uncertain wording, not a confirmed error>}]}. Use {"results":[]} if there are no problems.`;
+Respond with JSON only: {"results":[{"i":<block number>,"type":"<type>","quote":"<the exact words from the block, max 15 words>","confidence":<0..1>,"reason":"<max 25 words>","suggestion":"<corrected wording>","clarify":<true when it is only uncertain wording, not a confirmed error>,"relation":"<same|inside|contains|nearby|unrelated|unknown (wrong_location only)>","physical":<true for a claim of where the business is>,"contradiction":"<wrong_location only: the specific contradiction>"}]}. Use {"results":[]} if there are no problems.`;
 
 const PROOF_SYSTEM = `You proofread the WEBSITE COPY of one small business, the way a careful editor would before it goes live. ${CONTEXT}
 Report ONLY clear mistakes a visitor would notice:
@@ -439,12 +442,15 @@ Report:
 - "wrong_city": the title, H1, meta description or copy presents the page as being for a DIFFERENT town than the one in its address (the Temple page whose heading says "Copperas Cove's top provider"). On a town's page, other towns may be mentioned only in passing ("we also serve…", "minutes from…"). The business's own name may contain a town (e.g. "Harker Heights Ceramic Coatings"): that is the name, not a location claim. The town comes from the ADDRESS, never from where the business is: a page whose address names a town (/brentwood-window-tinting, /locations/temple-tx) is meant to say that town even when the shop is in another town. Never report a page for naming its own address's town, and never suggest replacing it with the business's town. When the address names NO town (/paint-protection-film, /about), the business's own town from the business details is correct anywhere on the page ("Franklin, TN's top choice for PPF"): never report it. A town inside the county or region the address targets (Willow Grove on /car-detailing-montgomery-county-pa) belongs to that page's area: not wrong_city; if the wording could read as a shop location claim ("Detailing experts in Willow Grove"), report it only with "clarify": true and a wording suggestion. Use your knowledge of geography, not exact name matching.
 - "name_variant": this business's name written differently from its official name, including a missing or extra letter or "s" ("Ceramic Coating" for "Ceramic Coatings"), in any capitals.
 - "editor_note": a note from a writer, the agency or the client left in the text: "[Matthew: confirm this is free before publishing.]", "TBD", "insert photo here", "need price from client", a stray default label like "Button" sitting in the copy.
+- "geo": for each place listed under "Other places named on it", say whether it lies INSIDE the area the address names (a town inside the county or region; a neighbourhood inside the town): {"type":"geo","town":"<the place>","area":"<the address's place>","inside":true|false|null,"confidence":<0..1>,"reason":"<max 15 words>"}. Use real geography (West Chester is in Chester County, PA). Never decide from similar names or shared words ("Chester" is not "West Chester"; "Chester County" is not the town of Chester). Use null when you do not know. A town inside the county is NOT wrong_city on that county's page: naming it there is only a targeting choice; inside or not says nothing about where the shop is.
+For every "wrong_city", judge the place in context, not by matching names: the address is supporting evidence, not a rule that the title or H1 must repeat its town. Give "relation": how the quoted place relates to the address's place: "same", "inside" (the quoted place lies inside the address's area), "contains" (the quoted place contains it: a Warminster page whose H1 says Bucks County — Warminster is in Bucks County), "nearby", "unrelated" or "unknown" — in either direction, from real geography, never from similar names. Give "contradiction": the specific contradiction in one sentence. A place that is "same", "inside" or "contains" is NOT wrong_city: a page may speak to its wider county or a town within it; at most it is an optional SEO targeting idea — then set "optional": true. Tell a passing reference from the page's main subject, and the business's physical location (Business details) from the audience it serves. If the relation cannot be established, set "clarify": true and say what needs confirming. Never invent service-area exclusions, and confidence is not evidence.
 Quote the exact words. "part" says where: "title", "h1", "desc" (meta description) or "body". Be strict about the address: the shop owner reads these pages. But do not report pages that are fine. Most pages are fine: return nothing for them.
-Respond with JSON only: {"results":[{"i":<page number>,"type":"wrong_service|wrong_city|name_variant|editor_note","part":"title|h1|desc|body","quote":"<exact words, max 20 words>","confidence":<0..1>,"reason":"<max 25 words, plain English>","suggestion":"<the corrected words, or empty>","clarify":<true only when the intended offering is unclear>}]}. Use {"results":[]} when every page is fine.`;
+Respond with JSON only: {"results":[{"i":<page number>,"type":"wrong_service|wrong_city|name_variant|editor_note|geo","part":"title|h1|desc|body","quote":"<exact words, max 20 words>","confidence":<0..1>,"reason":"<max 25 words, plain English>","suggestion":"<the corrected words, or empty>","clarify":<true only when the intended offering or the place is unclear>,"relation":"<same|inside|contains|nearby|unrelated|unknown (wrong_city only)>","contradiction":"<wrong_city only: the specific contradiction>","optional":<true for an optional targeting idea>}]}. Use {"results":[]} when every page is fine.`;
 const fitPrompt = (b, items) => `${businessHeader(b)}
 PAGES
 ${items.map((x) => `=== [${x.i}] ${String(x.path || '/').slice(0, 120)}
 Address says: service = ${[].concat(x.urlServices || []).join(', ') || 'none (location or general page)'}; town = ${x.urlPlace || 'none'}
+Page type: ${x.kind || 'page'}${(x.towns || []).length ? `\nOther places named on it (answer "geo" for each): ${[].concat(x.towns).slice(0, 6).map((t) => String(t).slice(0, 60)).join(', ')}` : ''}
 SEO title: ${String(x.title || '-').slice(0, 160)}
 H1: ${[].concat(x.h1 || []).join(' | ').slice(0, 300) || '-'}
 Meta description: ${String(x.description || '-').slice(0, 300)}
@@ -527,7 +533,7 @@ async function extraCheck(req, res, b, list, owner) {
   // 'l3': links are judged by their promise; the key holds the section, the redirect and packages, so a change there is asked again.
   // 'l4': the destination's copy is read (not its SEO title's town), and a "fix" equal to the current page is refused.
   // 'f3': page checks from before the "town pages name their own town; other pages may name the shop's town" rules are asked again.
-  const keyOf = (x) => (fit ? 'f4' : proof ? 'p2' : 'l4') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt]) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1, x.frag || '', x.final || '', x.section || '', x.pkg ? 1 : 0, x.unverified ? 1 : 0, x.from || '', x.toText || ''].join('|')).slice(0, 18);
+  const keyOf = (x) => (fit ? ((x.towns || []).length ? 'f5' : 'f4') : proof ? 'p2' : 'l4') + sha(fit ? JSON.stringify([x.path, x.title, x.description, x.h1, x.heads, x.excerpt].concat((x.towns || []).length ? [x.towns] : [])) : proof ? x.text : [x.text, x.context, x.near, x.to, x.toTitle, x.toH1, x.frag || '', x.final || '', x.section || '', x.pkg ? 1 : 0, x.unverified ? 1 : 0, x.from || '', x.toText || ''].join('|')).slice(0, 18);
   const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
   const results = []; const todo = [];
   items.forEach((x, k) => {
@@ -538,6 +544,8 @@ async function extraCheck(req, res, b, list, owner) {
     // A spelling flag from before the industry-terms rules is asked again (only those blocks).
     // gv 3: grammar flags from before "smallest fix, judged in its corrected sentence, the real problem named" are asked again.
     if (proof && (c.r || []).some((r) => (r.type === 'spelling' && r.sv !== 2) || (r.type === 'grammar' && r.gv !== 3))) return todo.push(x);
+    // rv 2: a town called wrong before the AI had to say how the places relate and what contradicts: asked again (only those pages).
+    if (fit && (c.r || []).some((r) => r.type === 'wrong_city' && r.rv !== 2)) return todo.push(x);
     (c.r || []).forEach((r) => results.push(Object.assign({}, r, { i: Number(x.i), cached: true })));
   });
   let used = null;
@@ -560,7 +568,9 @@ async function extraCheck(req, res, b, list, owner) {
       const i = Number(x && x.i); if (!byI.has(i)) return;
       const confidence = Math.max(0, Math.min(1, Number(x.confidence) || 0));
       const r = fit
-        ? (FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240), ...(x.clarify === true ? { clarify: true } : {}) } : null)
+        ? (x.type === 'geo' ? (String(x.town || '').trim() ? { type: 'geo', town: String(x.town).slice(0, 80), area: String(x.area || '').slice(0, 80), inside: x.inside === true ? true : x.inside === false ? false : null, confidence, reason: String(x.reason || '').slice(0, 200) } : null)
+          : FIT_TYPES.includes(x.type) ? { type: x.type, part: FIT_PARTS.includes(x.part) ? x.part : 'body', quote: String(x.quote || '').slice(0, 240), confidence, reason: String(x.reason || '').slice(0, 240), suggestion: String(x.suggestion || '').slice(0, 240), ...(x.clarify === true ? { clarify: true } : {}),
+            ...(x.type === 'wrong_city' ? { rv: 2, relation: REL_TYPES.includes(x.relation) ? x.relation : 'unknown', contradiction: String(x.contradiction || '').slice(0, 240), ...(x.optional === true ? { optional: true } : {}) } : {}) } : null)
         : proof
         ? (PROOF_TYPES.includes(x.type) ? { type: x.type, quote: String(x.quote || '').slice(0, 200), confidence, reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 200), sv: 2, gv: 3, ...(x.clarify === true ? { clarify: true } : {}), ...(x.optional === true && x.clarify !== true && x.type !== 'incomplete' ? { optional: true } : {}) } : null)
         : (x.verdict === 'wrong_page' ? { verdict: 'wrong_page', confidence, reason: String(x.reason || '').slice(0, 240), expected: String(x.expected || '').slice(0, 160), ...(x.optional === true ? { optional: true } : {}) } : null);
@@ -959,7 +969,8 @@ async function handler(req, res) {
       if (!c) return todo.push(x);
       // A town flagged before the location rules were refined is asked again (only those blocks).
       // lv 3: answered with the page's context and the facility/partner rules.
-      if (b.op === 'text' && (c.issues || []).some((iss) => iss.type === 'wrong_location' && iss.lv !== 3)) return todo.push(x);
+      // lv 4: with the place relation, physical claim and the stated contradiction.
+      if (b.op === 'text' && (c.issues || []).some((iss) => iss.type === 'wrong_location' && iss.lv !== 4)) return todo.push(x);
       if (b.op === 'alt') results.push({ i: x.i, cached: true, verdict: c.v || c.verdict, confidence: c.c !== undefined ? c.c : c.confidence, reason: c.r || c.reason || '', suggestion: c.s || c.suggestion || '' });
       else (c.issues || []).forEach((iss) => results.push(Object.assign({}, iss, { i: x.i, cached: true })));
       if (b.op === 'text') results.push({ i: x.i, cachedOnly: true });
@@ -1004,7 +1015,7 @@ async function handler(req, res) {
         clean.filter((x) => TEXT_TYPES.includes(x.type)).forEach((x) => {
           const r = { i: Number(x.i), type: x.type, quote: String(x.quote || '').slice(0, 200), confidence: Math.max(0, Math.min(1, Number(x.confidence) || 0)), reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 300),
             // lv: answered under the location rules that tell a shop's location from a service area (older answers are asked again).
-            ...(x.type === 'wrong_location' ? { lv: 3, ...(x.clarify === true ? { clarify: true } : {}) } : {}) };
+            ...(x.type === 'wrong_location' ? { lv: 4, relation: REL_TYPES.includes(x.relation) ? x.relation : 'unknown', physical: x.physical === true, contradiction: String(x.contradiction || '').slice(0, 240), ...(x.clarify === true ? { clarify: true } : {}) } : {}) };
           results.push(r); byI.get(r.i).push(r);
         });
         // Cache every block, including the ones with no problems
