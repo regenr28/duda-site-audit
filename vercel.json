@@ -1,5 +1,29 @@
 {
   "outputDirectory": "public",
+  "redirects": [
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "^duda-site-audit(-git-main|-[a-z0-9]{9})?-8bitcreative\\.vercel\\.app$"
+        }
+      ],
+      "destination": "https://audits.8bitcreative.com/",
+      "permanent": false
+    },
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "^duda-site-audit\\.vercel\\.app$"
+        }
+      ],
+      "destination": "https://audits.8bitcreative.com/",
+      "permanent": false
+    }
+  ],
   "functions": {
     "api/capture.js": {
       "maxDuration": 120,
