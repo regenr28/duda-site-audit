@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-28-links-home', date: '2026-11-28', audience: 'all', tag: 'Notifications',
+    title: 'Slack links open the app again, not a Vercel sign-in page',
+    what: 'Links in Slack messages sent by the automatic checks pointed at a one-off Vercel address that asks for a Vercel sign-in. They now always point at the app\u2019s own address.',
+    where: ['Nothing to do: new messages carry the right link.'],
+  },
+  {
     id: '2026-11-27-geo', date: '2026-11-27', audience: 'all', tag: 'Checks',
     title: 'Town checks: geography, not name matching or mention counts',
     what: 'A town inside the county a page targets (West Chester on a Chester County page), or the county around the page\u2019s town (Bucks County on a Warminster page), is no longer a wrong location: at most an optional targeting review (Info). The AI now states how the places relate and the specific contradiction before anything is called wrong; when it cannot, the item is For clarification instead of Critical. Real mismatches and false shop claims are still reported. Audits catch up with <b>Apply check updates</b>.',

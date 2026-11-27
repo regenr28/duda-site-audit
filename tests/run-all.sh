@@ -9,7 +9,7 @@ for f in tk/e2e_geo.py tk/e2e_locctx.py tk/e2e_stwhen.py tk/e2e_linkpromise.py t
   timeout 420 python3 -I $f "$A" "$T" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED|Traceback|.*Error|no page|errors:|light |dark )" | head -20
 done
 echo "######## unit"
-node tk/owner_alert.mjs "$A" "$T" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"; node tk/net_unit.mjs "$A" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"; node tk/stock_unit.mjs "$A" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"; node tk/link_unit.mjs "$A" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"
+node tk/owner_alert.mjs "$A" "$T" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"; node tk/net_unit.mjs "$A" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"; node tk/stock_unit.mjs "$A" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"; node tk/link_unit.mjs "$A" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"; node tk/appurl_unit.mjs "$A" 2>&1 | grep -E "^(FAIL|ALL PASS|SOME FAILED)"
 node tk/api_test.mjs "$A" "$T" 2>&1 | tail -3
 node tk/watch_unit.mjs "$A" 2>&1 | tail -1
 node domains.mjs "$A" 2>&1 | tail -1; node tk/analytics_shapes.mjs "$A" 2>&1 | tail -1; node tk/psi_key.mjs "$A" 2>&1 | tail -1; node tk/contacts_spam.mjs "$A" 2>&1 | tail -1

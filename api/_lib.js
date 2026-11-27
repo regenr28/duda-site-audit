@@ -256,10 +256,24 @@ export function parseEditorLink(input) {
   return { host, siteId };
 }
 let lastBase = '';
+/**
+ * A one-off deployment address (duda-site-audit-39fyt678j-8bitcreative.vercel.app): Vercel's scheduled
+ * runs call those, and they sit behind Vercel's own sign-in, so a link to one opens a Vercel page.
+ */
+export const isDeploymentHost = (h) => /^[a-z0-9-]+-[a-z0-9]{9}-[a-z0-9-]+\.vercel\.app$/i.test(String(h || ''));
+/** The project's own address on Vercel (its production domain), when Vercel says it. */
+const productionBase = () => (process.env.VERCEL_PROJECT_PRODUCTION_URL ? 'https://' + String(process.env.VERCEL_PROJECT_PRODUCTION_URL).replace(/^https?:\/\//, '').replace(/\/+$/, '') : '');
+/**
+ * The address links in Slack, emails and notifications point at. APP_URL when it is set; otherwise
+ * the address people use to open the app. A one-off deployment address (where scheduled runs land)
+ * is never used: the production domain, or the last real address seen, is used instead.
+ */
 export function appUrl(req) {
   if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, '');
-  if (!req) return lastBase;
-  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const fallback = () => (lastBase && !isDeploymentHost(lastBase.replace(/^https:\/\//, '')) ? lastBase : productionBase() || lastBase);
+  if (!req) return fallback();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  if (!host || isDeploymentHost(host)) return fallback() || (host ? `https://${host}` : '');
   lastBase = `https://${host}`;
   return lastBase;
 }
