@@ -381,6 +381,8 @@ Report these problem types:
   Report as wrong_location only an EXPLICIT physical-location claim that conflicts with the business's confirmed location ("Visit our Willow Grove shop", "our Dallas location" when the business has no shop there), or a town clearly left over from another client (another state, a town unrelated to the business and the page's target).
   Ambiguous wording that could be read as a location claim ("Auto Detailing Experts in Willow Grove, PA" on a Montgomery County page) is NOT a confirmed error: report it only with "clarify": true and a wording suggestion, explaining in "reason" what is uncertain.
   On a page whose URL names a town (/locations/temple-tx/…), a title or heading presenting the shop as another town's provider ("Copperas Cove's top provider") is still wrong_location. A page whose own URL names a town IS that town's page: never report it for naming that town.
+  Tell the business's MAIN address apart from its OTHER places: a second facility, a storage site, a partner's location ("vehicle storage in New Britain through Car Heads Auto Group"), or a service area. A town that is not in the business details or in a location page's address is NOT wrong for that reason alone. Read the block's "page:" line (the page's SEO title, H1 and the section heading) and "also on this page:" (other sentences from the same page about a facility or partner): when they describe the town as a facility, partner or service location, the paragraph is consistent with its page. If that relationship cannot be verified, set "clarify": true and ask in "reason" whether the town is another facility or a partner; do NOT say the text came from another client and do NOT suggest replacing the town.
+  Say a town is "left over from another client" only with evidence in the text (another business's name, another state far from the business, a page about a different service). Confidence is not evidence.
   Never infer a mismatch from how often towns are mentioned. When you cannot verify the geography or the service coverage, say so in "reason" and set "clarify": true instead of asserting an error.
 - "name_variant": this business's own name written in a clearly different way (different or missing words, e.g. "Upscale Detailing Co" vs "Upscale Detail Co."). Ignore capitalization, punctuation, "&" vs "and", and adding/removing LLC/Inc/Co.
 A block can be only PART of a paragraph: the words up to a link or a bold word. Then "in" gives the whole paragraph. Read the block inside it: a block that stops before a link ("our team at" + the link "86 Auto Lab") is not cut off and does not name another business. Report only what the block itself says.
@@ -643,7 +645,7 @@ ALT TEXTS (i | page | where | logo type | alt text | image file)
 ${items.map((x) => `${x.i} | ${String((x.pages && x.pages[0]) || x.page || '/').slice(0, 80)} | ${x.location || 'Body'} | ${x.isLogo ? 'site-logo' : x.brandLogo ? `brand-logo${x.logoRow >= 3 ? ` (in a row of ${x.logoRow} logos)` : ''}` : '-'} | ${String(x.alt).replace(/\s+/g, ' ').slice(0, 300)} | ${String(x.file || '').slice(0, 80)}`).join('\n')}`;
 const textPrompt = (b, items) => `${businessHeader(b)}
 TEXT BLOCKS (each starts with [i] then where it appears; "in:" is the whole paragraph when the block is only part of it; "(link to /…)" when the block is the words of a link to one of the website's own pages)
-${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}${x.in ? `\n    in: ${String(x.in).replace(/\s+/g, ' ').slice(0, 1500)}` : ''}`).join('\n')}`;
+${items.map((x) => `[${x.i}] (${x.location || 'Body'} · ${x.page || '/'}) ${String(x.text).replace(/\s+/g, ' ').slice(0, 1500)}${x.in ? `\n    in: ${String(x.in).replace(/\s+/g, ' ').slice(0, 1500)}` : ''}${x.title || x.h1 || x.sec ? `\n    page: ${[x.title ? `SEO title "${String(x.title).slice(0, 160)}"` : '', x.h1 ? `H1 "${String(x.h1).slice(0, 200)}"` : '', x.sec ? `section "${String(x.sec).slice(0, 160)}"` : ''].filter(Boolean).join(' · ')}` : ''}${x.ctx ? `\n    also on this page: ${String(x.ctx).replace(/\s+/g, ' ').slice(0, 600)}` : ''}`).join('\n')}`;
 
 // ---------- look at the actual image (Gemini can see images; used only for alts flagged as another business) ----------
 const IMG_HOSTS = /(^|\.)(cdn-website\.com|multiscreensite\.com|dudamobile\.com|cdn\.dudaone\.com|irp\.cdn-website\.com)$/i;
@@ -931,9 +933,24 @@ async function handler(req, res) {
     // One small hash per business holds every cached answer for it (much lighter than one key per item)
     const cacheKey = P + 'aic:' + sha([business.name, business.city, business.region, (business.areaPages || []).length].join('|')).slice(0, 20);
     // A piece of text sent with its whole paragraph ("in") is a different question from the piece alone.
-    const keyOf = (x) => (b.op === 'alt' ? 'a2' : x.in ? 't2' : 't') + sha([x[field], x.isLogo ? 1 : 0, b.op === 'alt' ? (x.brandLogo ? 'b' : '') + (x.logoRow || 0) : '', x.in || ''].join('|')).slice(0, 18);
-    const [cachedRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)]);
-    const cached = cachedRaw || [];
+    // 't3': the page's title, H1, section heading and facility sentences are part of the question, so a
+    // change there (same paragraph, different page) is asked again.
+    const keyOf = (x) => (b.op === 'alt' ? 'a2' : 't3') + sha([x[field], x.isLogo ? 1 : 0, b.op === 'alt' ? (x.brandLogo ? 'b' : '') + (x.logoRow || 0) : '', x.in || '', b.op === 'alt' ? '' : [x.title || '', x.h1 || '', x.sec || '', x.ctx || ''].join('~')].join('|')).slice(0, 18);
+    // Answers from before the page context was sent (keys 't' / 't2'): one with no location problem is
+    // still right and is moved to the new key (no AI credit spent); one that flagged a town is asked again.
+    // The old key is removed either way, so a later change to the page's context is always asked again.
+    const legacyOf = (x) => (x.in ? 't2' : 't') + sha([x[field], x.isLogo ? 1 : 0, '', x.in || ''].join('|')).slice(0, 18);
+    const [cachedRaw, legacyRaw] = await redis(['HMGET', cacheKey, ...items.map(keyOf)], ...(b.op === 'text' ? [['HMGET', cacheKey, ...items.map(legacyOf)]] : []));
+    const cached = (cachedRaw || []).slice();
+    const moved = [], dropLegacy = [];
+    if (b.op === 'text') items.forEach((x, k) => {
+      const old = (legacyRaw || [])[k]; if (old == null) return;
+      dropLegacy.push(legacyOf(x));
+      if (cached[k] != null) return;
+      const c = old === '0' ? { issues: [] } : jparse(old);
+      if (c && !(c.issues || []).some((iss) => iss.type === 'wrong_location')) { cached[k] = old; moved.push(keyOf(x), old); }
+    });
+    if (moved.length || dropLegacy.length) await redis(...(moved.length ? [['HSET', cacheKey, ...moved]] : []), ...(dropLegacy.length ? [['HDEL', cacheKey, ...dropLegacy]] : []));
     const results = []; const todo = [];
     items.forEach((x, k) => {
       const raw = cached[k];
@@ -941,7 +958,8 @@ async function handler(req, res) {
       const c = raw === '0' ? { issues: [] } : jparse(raw);
       if (!c) return todo.push(x);
       // A town flagged before the location rules were refined is asked again (only those blocks).
-      if (b.op === 'text' && (c.issues || []).some((iss) => iss.type === 'wrong_location' && iss.lv !== 2)) return todo.push(x);
+      // lv 3: answered with the page's context and the facility/partner rules.
+      if (b.op === 'text' && (c.issues || []).some((iss) => iss.type === 'wrong_location' && iss.lv !== 3)) return todo.push(x);
       if (b.op === 'alt') results.push({ i: x.i, cached: true, verdict: c.v || c.verdict, confidence: c.c !== undefined ? c.c : c.confidence, reason: c.r || c.reason || '', suggestion: c.s || c.suggestion || '' });
       else (c.issues || []).forEach((iss) => results.push(Object.assign({}, iss, { i: x.i, cached: true })));
       if (b.op === 'text') results.push({ i: x.i, cachedOnly: true });
@@ -986,7 +1004,7 @@ async function handler(req, res) {
         clean.filter((x) => TEXT_TYPES.includes(x.type)).forEach((x) => {
           const r = { i: Number(x.i), type: x.type, quote: String(x.quote || '').slice(0, 200), confidence: Math.max(0, Math.min(1, Number(x.confidence) || 0)), reason: String(x.reason || '').slice(0, 200), suggestion: String(x.suggestion || '').slice(0, 300),
             // lv: answered under the location rules that tell a shop's location from a service area (older answers are asked again).
-            ...(x.type === 'wrong_location' ? { lv: 2, ...(x.clarify === true ? { clarify: true } : {}) } : {}) };
+            ...(x.type === 'wrong_location' ? { lv: 3, ...(x.clarify === true ? { clarify: true } : {}) } : {}) };
           results.push(r); byI.get(r.i).push(r);
         });
         // Cache every block, including the ones with no problems

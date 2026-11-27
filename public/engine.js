@@ -717,6 +717,15 @@
         'A link from the Warminster home page to a service page whose SEO title targets Philadelphia was called wrong, with the same page as the fix. The page a link opens is now judged by its heading and copy; another town in its title is not a reason to call the link wrong, and a suggestion equal to the page it already opens is refused (the link is fine)',
       ],
     },
+    {
+      v: 63,
+      date: '2026-11-27',
+      title: 'Locations: a second facility or partner described on the page is asked about, not called wrong',
+      scope: { fixes: ['AI_TEXT_LOCATION'], ai: true },
+      items: [
+        'The location check now reads each paragraph with its page\u2019s SEO title, H1, section heading and the page\u2019s other facility or partner sentences. A town the page itself describes (\u201cStorage in Warminster and New Britain through a partner\u201d) is a warning For clarification asking whether it is another facility or a partner, instead of a critical \u201cleftover from another client\u201d with a replacement town. A town that contradicts the page and the business is still reported. Only that page counts: a town described on one page is not approved for the others',
+      ],
+    },
   ];
   const CHECKS_VERSION = CHECK_RELEASES[CHECK_RELEASES.length - 1].v;
   /** Releases of the check list newer than the one a scan ran with. Scans older than this feature count as v1. */
@@ -3250,7 +3259,9 @@
         // is cut where the link "86 Auto Lab" starts, and read alone it looks unfinished or nameless.
         const box = x.el.closest && x.el.closest('p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, .dmNewParagraph, [data-element-type="paragraph"]');
         const para = box ? textNoLabels(box) : '';
-        return { text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '', ...(hd ? { heading: hd.tagName } : {}), ...(para && para.length > x.text.length + 2 && para.length < 3000 ? { para } : {}) };
+        // The section heading it sits under (for the location check: "Storage in New Britain" above a paragraph).
+        const sec = !hd ? sectionOf(x.el) : '';
+        return { text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '', ...(hd ? { heading: hd.tagName } : {}), ...(sec ? { sec } : {}), ...(para && para.length > x.text.length + 2 && para.length < 3000 ? { para } : {}) };
       }),
       prose: prose.map((x) => ({ text: x.text, selector: uniqueSelector(x.el), location: locationOf(x.el), hiddenBy: hiddenReason(x.el, device) || '' })),
       ...(ctx.copy ? { copy: pageCopy(body, device) } : {}),
@@ -4339,7 +4350,7 @@
       (rows || textIdx).forEach((x) => {
         if (x.text.length < (rows ? 12 : 25)) return;
         let m = map.get(x.text);
-        if (!m) { if (map.size >= 2500) return; m = { text: x.text, selector: x.selector, location: x.location, pages: [], devices: [], visibleOn: [], hiddenOn: [], ...(x.para ? { para: x.para } : {}) }; map.set(x.text, m); }
+        if (!m) { if (map.size >= 2500) return; m = { text: x.text, selector: x.selector, location: x.location, pages: [], devices: [], visibleOn: [], hiddenOn: [], ...(x.para ? { para: x.para } : {}), ...(x.sec ? { sec: x.sec } : {}) }; map.set(x.text, m); }
         if (!m.pages.includes(x.path)) m.pages.push(x.path);
         if (!m.devices.includes(x.device)) m.devices.push(x.device);
         if (!x.hiddenBy) { if (!m.visibleOn.includes(x.device)) m.visibleOn.push(x.device); } else if (m.hiddenOn.length < 6) m.hiddenOn.push(`${DEVICE_LABEL[x.device]} (${x.hiddenBy})`);
@@ -4563,7 +4574,42 @@
     });
   }
   /** Apply AI page-text issues ({ i, type, quote, confidence, reason, suggestion }, i = index into texts). */
-  function applyTextIssues(findings, texts, issues, truth, links) {
+  /**
+   * What a page says about places besides the paragraph being judged: its SEO title, its H1, and up to
+   * three sentences from the page's OTHER text that describe a facility, a partner or a location
+   * ("Vehicle storage in New Britain through Car Heads Auto Group"). Kept to that one page, so a town
+   * described on one page is never approved for the whole website.
+   */
+  const FACILITY_RE = /\b(facilit(y|ies)|storage|warehouse|garage|showroom|branch|location|locations|second shop|our other|partner(s|ed|ing|ship)?|through|in partnership|affiliate|sister)\b/i;
+  function placeContext(texts, pages, path, except) {
+    const pg = (pages || []).find((p) => p.path === path) || {};
+    const h1 = Array.isArray(pg.h1) ? pg.h1.join(' | ') : String(pg.h1 || '');
+    const sentences = [];
+    (texts || []).forEach((b) => {
+      if (sentences.length >= 3 || b.text === except || !(b.pages || []).includes(path) || b.location === 'Head / Meta') return;
+      String(b.para || b.text).split(/(?<=[.!?])\s+/).forEach((x) => {
+        if (sentences.length >= 3 || x.length < 20 || !FACILITY_RE.test(x) || !/\b[A-Z][a-z]{2,}/.test(x.replace(/^\S+\s*/, ''))) return;
+        const t = cut(x.trim(), 220); if (!sentences.includes(t) && !String(except || '').includes(x.trim())) sentences.push(t);
+      });
+    });
+    return { title: cut(String(pg.title || ''), 160), h1: cut(h1, 200), facility: sentences };
+  }
+  const STATE_NAMES = /^(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|[a-z]{2})$/i;
+  /**
+   * Place names in a quote ("New Britain" in "conditions in New Britain, Pennsylvania"): capitalised words
+   * after in/at/near/from…, or before ", PA" / ", Pennsylvania". Plain capitalised words ("Luxury Vehicle
+   * Storage") are not places. States are left out.
+   */
+  function placesIn(quote) {
+    const q = String(quote || ''), out = new Set();
+    const NAME = "([A-Z][a-z]+(?:[\\s-]+[A-Z][a-z]+){0,2})";
+    const add = (w) => { w = String(w || '').trim(); if (w.length >= 4 && !STATE_NAMES.test(w)) out.add(w); };
+    for (const m of q.matchAll(new RegExp('\\b(?:in|at|near|from|around|serving|outside|of|to)\\s+' + NAME, 'g'))) add(m[1]);
+    for (const m of q.matchAll(new RegExp(NAME + ',\\s*(?:[A-Z]{2}\\b|[A-Z][a-z]+)', 'g'))) add(m[1]);
+    for (const m of q.matchAll(new RegExp('\\bour\\s+' + NAME + '(?:\\s+[a-z]+)?\\s+(?:location|shop|facility|branch|store|office|studio|garage)', 'g'))) add(m[1]);
+    return [...out];
+  }
+  function applyTextIssues(findings, texts, issues, truth, links, pageList) {
     const RULES = {
       other_business: ['AI_TEXT_OTHER_BUSINESS', 'critical', 'Business name', 'AI: text names a different business'],
       wrong_location: ['AI_TEXT_LOCATION', 'critical', 'Location', "AI: text mentions a location that doesn't match this business"],
@@ -4596,9 +4642,21 @@
         if (namesOwnTown(v.quote, truth)) return;
       }
       const [code, severity0, category, message] = RULES[v.type];
+      // The same page describes that town elsewhere (its title, its H1, a facility or partner paragraph):
+      // it may be another facility, a partner or a storage site, not another client's leftover. Asked,
+      // not asserted — whatever the AI's confidence. Only this page counts.
+      let described = '';
+      if (v.type === 'wrong_location' && pageList) {
+        const ctx = placeContext(texts, pageList, blk.pages[0], blk.text);
+        const hay = compact([ctx.title, ctx.h1].concat(ctx.facility).join(' '));
+        described = placesIn(v.quote).find((t) => hay.includes(compact(t))) || '';
+        // The paragraph itself presents it as an ADDITIONAL place ("our second shop in Doylestown", "storage
+        // through our partner in …"): not the main address, so it is asked about too.
+        if (!described && /\b(second|other|another|additional|extra|partner(s|ed|ship)?|sister|affiliate|through)\b/i.test(blk.para || blk.text) && FACILITY_RE.test(blk.para || blk.text)) described = placesIn(v.quote)[0] || '';
+      }
       // Uncertain location wording ("Detailing experts in Willow Grove" on a Montgomery County page) is a
       // question for the team, not a confirmed wrong location: a warning that starts as For clarification.
-      const unsure = v.type === 'wrong_location' && (v.clarify || Number(v.confidence) < 0.8);
+      const unsure = v.type === 'wrong_location' && (v.clarify || Number(v.confidence) < 0.8 || !!described);
       const severity = unsure ? 'warning' : severity0;
       // Already caught by a rule on the same element? Attach the AI opinion instead of duplicating
       const existing = findings.find((f) => f.selector === blk.selector && (f.pages || [f.path]).some((p) => blk.pages.includes(p)) && /OTHER_BUSINESS|COPYRIGHT_NAME/.test(f.code) && v.type === 'other_business');
@@ -4624,6 +4682,11 @@
       // The spelling as written, picked out of the quote, so reports can group by it.
       if (v.type === 'name_variant' && truth) { const nv = nameVariants([{ text: v.quote || t }], truth)[0]; if (nv) f.variant = nv.found; }
       if (unsure) Object.assign(f, { clarify: true, message: 'AI: location wording to confirm (the town may be a service area, not a claim about where the shop is)' });
+      if (described) Object.assign(f, {
+        message: `AI: location to confirm \u2014 this page also describes ${described} (another facility, a partner or a service area?)`,
+        expected: `Confirm whether ${described} is one of the business\u2019s facilities or partners. If it is, nothing to fix; if not, correct it`,
+        ai: Object.assign({}, f.ai, { reason: `${described} is also named in this page\u2019s title, H1 or another paragraph, so it may be a second facility or a partner. The AI said: ${v.reason || ''}`.slice(0, 300), suggestion: '' }),
+      });
       f.id = hash([f.code, f.selector, f.found, f.message, pages.length > 1 ? '*' : f.path].join('|'));
       if (!findings.some((x) => x.id === f.id)) findings.push(f);
     });
@@ -5007,6 +5070,6 @@
     EXEMPT_GROUPS, exemptGroupOf, exemptPath, exemptMatch, exemptRuleFor, exemptIssueRule,
     DEVICES, DEVICE_LABEL, CHECKS_VERSION, CHECK_RELEASES, checksSince, fixedSince, updatePlan, codeIn,
     buildTruth, auditDocument, runScan, extractSchema, mergeDevices, groupAcrossPages, buildFontSystem, fontFindings,
-    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, stockMeasure, photosUsed, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, finalPage, LEAD_WORDS,
+    matchesBusiness, normPhone, fmtPhone, uniqueSelector, truthWithout, allowedFonts, allowedImages, imageKey, measureImage, graphicReason, hamming, duplicatePhotoFindings, fingerprintPhotos, stockIdOf, editorialStockFindings, stockMeasure, photosUsed, fontOf, fontBase, fontWeight, hiddenReason, placeNameFromUrl, placeIdFromUrl, socialHandle, postLink, isShareLink, isThankYouPath, textRisk, nameVariants, pageFitFindings, placeOfPath, servicesOfPath, applyPageFit, allowKey, allowValueOf, filterAllowed, socialUrl, toCSV, fingerprint, hash, normalizePath, applyAltVerdicts, applyTextIssues, placeContext, placesIn, applyProofIssues, applyLinkVerdicts, applyPhotoVerdicts, finalPage, LEAD_WORDS,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

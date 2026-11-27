@@ -14,6 +14,7 @@ class AI(BaseHTTPRequestHandler):
         results = []
         if 'You proofread WEBSITE TEXT' in system:
             if 'Towns this business serves' in user and 'Littleton' in user: SEEN['areas_in_prompt'] = True
+            if 'page: SEO title "Does PPF Thickness Matter? | Denver Auto Shield"' in user and 'section "Does PPF Thickness Matter?"' in user: SEEN['page_line'] = True
             for m in re.finditer(r'^\[(\d+)\] \([^)]*\) (.*)$', user, re.M):
                 if 'Littleton driver' in m.group(2): results.append({'i': int(m.group(1)), 'type': 'wrong_location', 'quote': 'A Littleton driver who mainly travels', 'confidence': 0.7, 'reason': 'Littleton is nearby but not the primary location', 'suggestion': 'local driver'})
                 if 'Boulder' in m.group(2): results.append({'i': int(m.group(1)), 'type': 'wrong_location', 'quote': 'our Boulder shop', 'confidence': 0.9, 'reason': 'Boulder is not served', 'suggestion': 'our Englewood shop'})
@@ -77,6 +78,7 @@ try:
         print('  location:', [f.get('found') for f in loc], flush=True)
         for f in tl: print('  town link:', f['found'], '|', f['expected'], flush=True)
         check(SEEN['areas_in_prompt'], 'the AI is told which towns the business serves')
+        check(SEEN.get('page_line'), 'in a real scan, each paragraph reaches the AI with its page title and section heading')
         check(not any('Littleton' in (f.get('found') or '') for f in loc), 'a blog post naming a town the business serves is not "a location that doesn\'t match"')
         check(any('Boulder' in (f.get('found') or '') for f in loc), 'a town it does not serve still is')
         # A post about Littleton may link the GENERAL service pages: the page's town alone asks for nothing.

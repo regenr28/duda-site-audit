@@ -4,6 +4,12 @@
 
 export const NEWS = [
   {
+    id: '2026-11-27-loc-facility', date: '2026-11-27', audience: 'all', tag: 'Checks',
+    title: 'Locations: a second facility or partner on the page is asked about, not called wrong',
+    what: 'The location check now reads each paragraph with its page\u2019s title, H1, section heading and the page\u2019s facility or partner sentences. A town the page describes as another facility or a partner (for example a storage site in another town) is a warning For clarification asking you to confirm, instead of a critical \u201cleftover from another client\u201d with a replacement town. Real contradictions are still critical. Audits catch up with <b>Apply check updates</b> or <b>Recheck</b>.',
+    where: ['<b>Walkthrough:</b> an audit \u2192 <b>Apply check updates</b>, then the Location items.'],
+  },
+  {
     id: '2026-11-27-changed-today', date: '2026-11-27', audience: 'all', tag: 'Audits',
     title: 'Filter: changed today, yesterday, in the last 7 days, or between any two dates',
     what: 'A new filter next to the search box shows only the audit items whose status changed today, yesterday, in the last 7 days, or between two dates you pick (<b>Custom dates\u2026</b>). Pick <b>Done</b> in the status list too to see what was closed today.',

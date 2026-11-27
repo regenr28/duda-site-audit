@@ -7799,7 +7799,11 @@
     res.texts.forEach((b, i) => {
       if (skip.has('text|' + ((b.pages || [])[0] || '/'))) return;
       if (!worth(b)) { skipped++; return; }
-      if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, CUT), location: b.location, page: b.pages[0], ...(b.para ? { in: b.para.slice(0, 1500) } : {}), ...(linkTo(b) ? { to: linkTo(b) } : {}) }); total += Math.min(CUT, b.text.length) + (b.para ? Math.min(1500, b.para.length) / 3 : 0); }
+      // Where it sits: the page's SEO title and H1, its section heading, and the page's own facility or
+      // partner sentences (that page only), so a second facility the page describes is read as such.
+      const pc = A.placeContext(res.texts, res.pages, b.pages[0], b.text);
+      const where = { ...(pc.title ? { title: pc.title } : {}), ...(pc.h1 ? { h1: pc.h1 } : {}), ...(b.sec ? { sec: String(b.sec).slice(0, 160) } : {}), ...(pc.facility.length ? { ctx: pc.facility.join(' / ').slice(0, 600) } : {}) };
+      if (total < MAX_CHARS) { blocks.push({ i, text: b.text.slice(0, CUT), location: b.location, page: b.pages[0], ...(b.para ? { in: b.para.slice(0, 1500) } : {}), ...(linkTo(b) ? { to: linkTo(b) } : {}), ...where }); total += Math.min(CUT, b.text.length) + (b.para ? Math.min(1500, b.para.length) / 3 : 0); }
     });
     const batches = []; let cur = [], size = 0;
     blocks.forEach((b) => { if (cur.length && (size + b.text.length > BATCH_CHARS || cur.length >= BATCH_ITEMS)) { batches.push(cur); cur = []; size = 0; } cur.push(b); size += b.text.length; });
@@ -7824,7 +7828,7 @@
       }
     }
     const before = res.findings.length;
-    res.findings = A.applyTextIssues(res.findings, res.texts, issues, res.truth, res.links);
+    res.findings = A.applyTextIssues(res.findings, res.texts, issues, res.truth, res.links, res.pages);
     return { blocks: sent, of: res.texts.length, skipped, truncated: sent + skipped < res.texts.length, cached, flagged: res.findings.length - before, errors, used: [...used], paused, pending };
   }
   /**
